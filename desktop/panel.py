@@ -31,6 +31,16 @@ if os.environ.get("ORBIT_PANEL_PRELOADED") != "1" and LAYER_SHELL_LIBRARY:
     os.environ["ORBIT_PANEL_PRELOADED"] = "1"
     os.execv(sys.executable, [sys.executable, *sys.argv])
 
+# A layer-shell surface only exists on Wayland, so the choice is not GTK's to make. A shell that
+# lost WAYLAND_DISPLAY, an agent's terminal for instance, still has the compositor's socket in the
+# runtime directory.
+os.environ["GDK_BACKEND"] = "wayland"
+if not os.environ.get("WAYLAND_DISPLAY"):
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    sockets = sorted(n for n in os.listdir(runtime_dir) if n.startswith("wayland-") and not n.endswith(".lock")) if os.path.isdir(runtime_dir) else []
+    if sockets:
+        os.environ["WAYLAND_DISPLAY"] = sockets[-1]
+
 # A strip of text needs no GPU. The Cairo renderer is the cheapest GTK 4 has, and it is the one that
 # works on a software-rendered display too, where the GPU renderers retry failing surfaces in a loop.
 os.environ.setdefault("GSK_RENDERER", "cairo")
