@@ -7,7 +7,7 @@ import { swayRequest } from "./sway-ipc";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
-  | { type: "key"; key: string };
+  | { type: "key"; key: string } | { type: "scroll"; x: number; y: number; deltaY: number };
 export function parseNativeAction(value: unknown): NativeAction {
   const a = record(value);
   if (a.type === "launch") {
@@ -22,6 +22,12 @@ export function parseNativeAction(value: unknown): NativeAction {
     if (!Number.isInteger(a.x) || !Number.isInteger(a.y) || Number(a.x) < 0 || Number(a.y) < 0 || Number(a.x) >= 1280 || Number(a.y) >= 800)
       throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
     return { type: "pointer", x: Number(a.x), y: Number(a.y) };
+  }
+  if (a.type === "scroll") {
+    if (!Number.isInteger(a.x) || !Number.isInteger(a.y) || Number(a.x) < 0 || Number(a.x) >= 1280 || Number(a.y) < 0 || Number(a.y) >= 800
+      || !Number.isInteger(a.deltaY) || Number(a.deltaY) === 0 || Math.abs(Number(a.deltaY)) > 20)
+      throw new OrbitError("INVALID_REQUEST", "Scroll requires viewport coordinates and nonzero integer wheel steps from -20 to 20");
+    return { type: "scroll", x: Number(a.x), y: Number(a.y), deltaY: Number(a.deltaY) };
   }
   if (a.type === "text") {
     if (typeof a.text !== "string" || a.text.length > 2048 || /[^\x20-\x7e]/.test(a.text))
@@ -38,7 +44,7 @@ export function parseNativeAction(value: unknown): NativeAction {
       throw new OrbitError("UNSUPPORTED", "Unsupported native key");
     return { type: "key", key: String(a.key) };
   }
-  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, text and paste");
+  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text and paste");
 }
 const project = resolve(import.meta.dir, "..");
 const runtime = join(project, ".runtime/sway");
@@ -59,7 +65,7 @@ async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> 
 }
 export class FedoraBackend {
   parseAction = parseNativeAction;
-  readonly capabilities = ["launch", "pointer", "text", "paste", "key", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
   private children: ChildProcessWithoutNullStreams[] = [];
@@ -204,7 +210,7 @@ export class FedoraBackend {
       return { applied: true, clipboard: "session", shortcut: "Ctrl+V" };
     }
     const acknowledgement = this.reply("ok");
-    this.device!.stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
+    this.device!.stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "scroll" ? `scroll ${action.x} ${action.y} ${action.deltaY}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
     await acknowledgement;
     return { applied: true };
   }

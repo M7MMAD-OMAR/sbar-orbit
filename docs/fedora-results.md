@@ -44,7 +44,7 @@ Each run makes a new mode-700 runtime directory. The compositor environment remo
 
 ## What changed after failures
 
-Short-lived `wtype` input produced missing or wrongly mapped characters with Xwayland. The final helper keeps a standard US keymap, virtual keyboard and pointer alive across both tests. It waits for a mapped window and allows 500 ms for application focus to settle. This delay needs an observable readiness replacement before production. The helper supports printable ASCII, clicks and Ctrl+V paste. Only Ctrl+A, Ctrl+S, Ctrl+O, Ctrl+L, Enter, Tab and Escape are currently accepted as agent key actions. Other shortcuts, scrolling and dragging remain unsupported.
+Short-lived `wtype` input produced missing or wrongly mapped characters with Xwayland. The final helper keeps a standard US keymap, virtual keyboard and pointer alive across both tests. It waits for a mapped window and allows 500 ms for application focus to settle. This delay needs an observable readiness replacement before production. The helper supports printable ASCII, clicks and Ctrl+V paste. Only Ctrl+A, Ctrl+S, Ctrl+O, Ctrl+L, Enter, Tab and Escape are currently accepted as agent key actions. Other shortcuts and dragging remain unsupported. Vertical scrolling is described below.
 
 ## Broker integration
 
@@ -139,3 +139,15 @@ This is one model-driven native Wayland workflow, beyond the scripted GTK fixtur
 Claude Code also passed the same editor task through the identical Orbit tools: three screenshots, correct original-code readback, exact Arabic/emoji file replacement, unchanged neighboring file and a closed application. [validation summary](validation.md) and [validation summary](validation.md). Run `bun run scripts/limited.ts bun run experiments/native-model-task.ts claude`; omitting the host still selects Codex. Claude uses a temporary strict MCP config, disables built-in tools and hooks, avoids session persistence and has a $1 API budget ceiling. Both hosts use existing authentication. No persistent connector settings changed.
 
 These are individual successful tasks with the same Wayland application, not repeated reliability or X11 model tests. The selected host only changes the command and response parsing; file verification and application checks are shared.
+
+## Vertical scrolling (unreleased)
+
+Native agents can send `{"type":"scroll","x":200,"y":200,"deltaY":3}` through CLI, broker RPC or MCP. Coordinates are integers inside 1280 x 800. `deltaY` is a nonzero integer wheel-step count from -20 to 20: positive scrolls down, negative up. It is not a requested pixel distance; applications choose their scroll amount. The private pointer moves to the requested point without clicking, then sends vertical wheel events. Pause rejects agent scroll actions. The viewer does not yet expose native wheel control.
+
+The integration test observes actual GTK text-view vertical adjustments, verifies reverse direction, unchanged horizontal position, invalid input rejection and resume. Wayland works with the default input configuration. GTK 3 through Xwayland currently needs the explicitly opted-in application environment `GDK_CORE_DEVICE_EVENTS=1` in this test. Its default XInput2 path receives wheel events but did not move content in the local trial; changing the fixture widget, clicking first and adding a diagnostic delay did not resolve that failure. No delay or automatic environment override was retained. This remains an open compatibility issue, not a claim of unrestricted X11 scrolling support.
+
+```sh
+ORBIT_TEST_NATIVE=1 bun run verify tests/native-scroll.test.ts
+```
+
+Rebuild the private input helper using the documented bootstrap after updating its source. The initial tagged alpha archive predates this action.

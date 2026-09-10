@@ -59,6 +59,22 @@ int main(int argc, char **argv) {
     unsigned x, y;
     char line[4096];
     while (fgets(line, sizeof(line), stdin)) {
+        if (strncmp(line, "scroll ", 7) == 0) {
+            int steps;
+            char trailing;
+            if (sscanf(line, "scroll %u %u %d %c", &x, &y, &steps, &trailing) != 3
+                || x >= 1280 || y >= 800 || steps == 0 || steps < -20 || steps > 20) return 15;
+            zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, 1280, 800);
+            zwlr_virtual_pointer_v1_frame(pointer);
+            if (wl_display_roundtrip(display) < 0) return 6;
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+            zwlr_virtual_pointer_v1_axis_discrete(pointer, timestamp(), WL_POINTER_AXIS_VERTICAL_SCROLL,
+                wl_fixed_from_int(steps * 10), steps);
+            zwlr_virtual_pointer_v1_frame(pointer);
+            if (wl_display_roundtrip(display) < 0) return 7;
+            puts("ok"); fflush(stdout);
+            continue;
+        }
         if (strncmp(line, "key ", 4) == 0) {
             uint32_t code = 0, modifiers = 0;
             if (strcmp(line, "key Ctrl+A\n") == 0) code = KEY_A;

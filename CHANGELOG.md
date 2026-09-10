@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added native vertical wheel actions through broker, CLI and MCP. GTK X11 scrolling currently requires an explicit core-input compatibility option; default XInput2 remains unresolved.
+
 - Strengthened native crash checks to inspect all task threads and require zombie reaping.
 - Repeated browser/native recovery and real-editor file reservation suites three times on Fedora.
 - Human takeover and broader application compatibility remain under validation.
