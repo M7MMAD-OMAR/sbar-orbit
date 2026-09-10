@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Fixed publication-path validation so example environment files cannot bypass private-directory exclusions; index auditing and packaging now share one policy.
+
 - Defaulted preview to 1 FPS, added on-demand and opt-in Smooth modes, stopped hidden-tab polling and added reconnect backoff. Scheduling tests pass; desktop CPU acceptance remains unresolved.
 
 - Added named workspaces, current page/application identity, action status and a labelled pointer overlay for following agent work and manual takeover.

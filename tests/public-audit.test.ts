@@ -1,5 +1,6 @@
+import { isPublicSourcePath } from "../scripts/public-paths";
 import { test, expect } from "bun:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 test("publication audit checks staged blobs and reports identifiers without their values", async () => {
@@ -22,7 +23,24 @@ test("publication audit checks staged blobs and reports identifiers without thei
   expect((await run(command)).code).toBe(1);
   await run(["git", "add", "README.md"]);
   expect((await run(command)).code).toBe(0);
+  await mkdir(join(root, ".private"));
+  await writeFile(join(root, ".private/.env.example"), "FIXTURE_ONLY=example");
+  await run(["git", "add", ".private/.env.example"]);
+  const hiddenExample = JSON.parse((await run(command)).output);
+  expect(hiddenExample.findings).toContainEqual({ file: ".private/.env.example", rule: "private-or-generated-path" });
+  await run(["git", "rm", "--cached", ".private/.env.example"]);
+  await writeFile(join(root, ".env.example"), "FIXTURE_ONLY=example");
+  await run(["git", "add", ".env.example"]);
+  expect((await run(command)).code).toBe(0);
   await writeFile(join(root, ".env"), "FIXTURE_ONLY=example");
   await run(["git", "add", ".env"]);
   expect((await run(command)).output).toContain("private-or-generated-path");
+});
+
+
+test("publication path policy keeps private directories excluded even for example filenames", () => {
+  for (const path of [".private/.env.example", "output/.env.example", "docs/evidence/.env.example", ".git/config", ".env.production.env.example", "../README.md", "docs//README.md", "docs/../README.md"])
+    expect(isPublicSourcePath(path)).toBe(false);
+  for (const path of [".env.example", "examples/.env.example", "README.md", ".github/workflows/checks.yml"])
+    expect(isPublicSourcePath(path)).toBe(true);
 });

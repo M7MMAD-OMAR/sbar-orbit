@@ -1,3 +1,4 @@
+import { isPublicSourcePath } from "./public-paths";
 /** Inspect index blobs, not the working tree, so the exact staged publication is checked. */
 const git = async (...args: string[]) => {
   const child = Bun.spawn(["git", ...args], { stdout: "pipe", stderr: "ignore" });
@@ -9,7 +10,7 @@ const files = (await git("ls-files", "--cached", "-z")).toString().split("\0").f
 if (!files.length) throw new Error("Stage the intended public files before auditing");
 const findings: { file: string; rule: string }[] = [];
 for (const file of files) {
-  if (/(^|\/)(output|node_modules|\.private|\.runtime|\.secrets|__pycache__)(\/|$)|^docs\/(evidence|superpowers)\/|(^|\/)\.env(?:\.|$)|\.(?:pem|key|log|pyc|tar\.gz)$/.test(file) && !file.endsWith(".env.example"))
+  if (!isPublicSourcePath(file))
     findings.push({ file, rule: "private-or-generated-path" });
   const bytes = await git("show", `:${file}`);
   if (bytes.includes(0)) { findings.push({ file, rule: "binary-needs-explicit-publication-review" }); continue; }

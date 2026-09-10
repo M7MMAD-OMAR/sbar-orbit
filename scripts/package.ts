@@ -1,3 +1,4 @@
+import { isPublicSourcePath } from "./public-paths";
 import { mkdir, mkdtemp, readFile, writeFile, chmod, lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -21,9 +22,8 @@ if (fromIndex) {
   const source = JSON.parse(await readFile(join(project, "SOURCE-MANIFEST.json"), "utf8"));
   paths = source.files.map((entry: { path: string }) => entry.path);
 }
-const denied = /(^|\/)(output|node_modules|\.private|\.runtime|\.secrets|__pycache__)(\/|$)|^docs\/(evidence|superpowers)\/|(^|\/)\.env(?:\.|$)|\.(?:pem|key|log|pyc|tar\.gz)$/;
 for (const path of paths) {
-  if (typeof path !== "string" || path.startsWith("/") || path.split("/").includes("..") || (denied.test(path) && !path.endsWith(".env.example")))
+  if (!isPublicSourcePath(path))
     throw new Error("Private or invalid package input");
 }
 if (!paths.includes("LICENSE") || !paths.includes("NOTICE")) throw new Error("License and NOTICE must be included");
