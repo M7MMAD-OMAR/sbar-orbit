@@ -42,7 +42,7 @@ export function createMcpServer(socket: string) {
   server.registerTool("orbit_status", { description: "Read broker capabilities and current session states.", inputSchema: {} }, () => invoke("session.list"));
   server.registerTool("orbit_create", {
     description: "Create a background browser or a private Fedora display. Fedora requires the local native bootstrap. accountName restores an Orbit-owned saved account snapshot. profileKey only prevents concurrent use of a label; it does not restore login state.",
-    inputSchema: { backend: z.enum(["browser", "fedora"]).default("browser"), profileKey: id.optional(), accountName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional() },
+    inputSchema: { agentName: z.string().min(1).max(80).optional(), taskName: z.string().min(1).max(80).optional(), backend: z.enum(["browser", "fedora"]).default("browser"), profileKey: id.optional(), accountName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional() },
   }, params => invoke("session.create", params));
   server.registerTool("orbit_act", {
     description: "Perform a supported browser or native action in one session. Actions are ordered and request IDs prevent duplicate execution.",

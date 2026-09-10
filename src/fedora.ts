@@ -61,6 +61,7 @@ async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> 
 }
 export class FedoraBackend {
   parseAction = parseNativeAction;
+  private pointer: { x: number; y: number } | null = null;
   readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
@@ -208,6 +209,7 @@ export class FedoraBackend {
     const acknowledgement = this.reply("ok");
     this.device!.stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "scroll" ? `scroll ${action.x} ${action.y} ${action.deltaY}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
     await acknowledgement;
+    if (action.type === "pointer" || action.type === "scroll") this.pointer = { x: action.x, y: action.y };
     return { applied: true };
   }
   control(value: unknown) {
@@ -222,7 +224,11 @@ export class FedoraBackend {
     const capturedAt = Date.now();
     this.ensureOpen();
     const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-"], this.env);
-    return { mimeType: "image/png", image: image.toString("base64"), capturedAt, width: 1280, height: 800 };
+    const tree = await this.ipc("-t", "get_tree");
+    const focused = (node: any): any => node.focused && node.pid ? node : [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].map(focused).find(Boolean);
+    const app = focused(tree);
+    return { mimeType: "image/png", image: image.toString("base64"), capturedAt, width: 1280, height: 800,
+      presence: { title: String(app?.name ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer } };
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;

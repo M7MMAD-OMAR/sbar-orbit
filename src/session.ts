@@ -9,6 +9,7 @@ import { resourceStatus } from "./resource-budget";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
+  agentName: string; taskName: string; activity?: { type: string; actor: string; state: string; sequence: number };
   id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
@@ -29,7 +30,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, accountName: session.account?.name, capabilities: session.backend.capabilities }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -40,6 +41,13 @@ export class Sessions {
   private async createOwned(input: Record<string, unknown>) {
     if (!["browser", "fedora"].includes(String(input.backend))) throw new OrbitError("UNSUPPORTED", "Unknown backend");
     if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
+    const label = (value: unknown, fallback: string) => {
+      if (value === undefined) return fallback;
+      if (typeof value !== "string" || !value.trim() || value.length > 80 || /[\x00-\x1f\x7f]/.test(value))
+        throw new OrbitError("INVALID_REQUEST", "Session labels require 1 to 80 printable characters");
+      return value.trim();
+    };
+    const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Agent workspace");
     const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
     if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Profile key is leased to another session");
     this.leases.add(lease);
@@ -57,7 +65,7 @@ export class Sessions {
         catch (error) { await backend.close(); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, state: "running", backend, account, kind: String(input.backend), lease, tail: Promise.resolve(), requests: new Map() };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, tail: Promise.resolve(), requests: new Map() };
       this.sessions.set(id, session);
       backend.onClose(() => { session.state = "closed"; this.leases.delete(lease); session.releasing ??= session.tail.then(() => account?.release()); });
       account?.onLost(() => { void this.stop(session); });
@@ -97,9 +105,15 @@ export class Sessions {
     }
     if (session.state !== "running") throw new OrbitError("PAUSED", "Session is paused or pausing");
     if (session.requests.size >= 10000) throw new OrbitError("LIMIT_REACHED", "Session action limit reached");
-    const result = this.enqueue(session, () => session.backend.act(action));
+    const result = this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
     session.requests.set(requestId, { fingerprint, result });
     return result;
+  }
+  private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
+    const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
+    session.activity = activity;
+    try { const result = await work(); activity.state = "done"; return result; }
+    catch (error) { activity.state = "failed"; throw error; }
   }
   async stop(session: Session) {
     if (session.closing) return session.closing;
@@ -136,7 +150,7 @@ export class Sessions {
     }
     if (request.method === "session.control") {
       if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before manual input");
-      return this.enqueue(session, () => session.backend.control(params.input));
+      return this.enqueue(session, () => this.track(session, "human", String(record(params.input).type), () => session.backend.control(params.input)));
     }
     if (request.method === "session.pause") {
       if (!session.paused) {

@@ -1,3 +1,4 @@
+import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
 import { launchChrome } from "./chrome";
@@ -26,13 +27,17 @@ export function parseAction(value: unknown): Action {
 export class BrowserBackend {
   readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "observe", "pause", "resume", "stop"];
   parseAction = parseAction;
+  private pointer: () => Promise<{ x: number; y: number } | null> = async () => null;
   onClose(listener: () => void) { this.owned.onClose(listener); }
   private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, readonly page: Page) {}
   static async create(profile: string): Promise<BrowserBackend> {
     const owned = await launchChrome(profile);
     owned.context.setDefaultTimeout(3000);
     owned.context.setDefaultNavigationTimeout(10000);
-    return new BrowserBackend(owned, owned.context, owned.page);
+    const backend = new BrowserBackend(owned, owned.context, owned.page);
+    try { backend.pointer = await observeBrowserPointer(owned.context, owned.page); }
+    catch (error) { await owned.close(); throw error; }
+    return backend;
   }
   async act(value: unknown): Promise<unknown> {
     const action = parseAction(value);
@@ -47,7 +52,11 @@ export class BrowserBackend {
   async observe() {
     const capturedAt = Date.now();
     const image = (await this.page.screenshot({ timeout: 3000 })).toString("base64");
-    return { mimeType: "image/png", image, capturedAt, width: 1280, height: 800 };
+    const url = new URL(this.page.url());
+    const location = url.protocol === "about:" ? "New page" : `${url.origin}${url.pathname}`;
+    const title = (await this.page.title()).slice(0, 160);
+    return { mimeType: "image/png", image, capturedAt, width: 1280, height: 800,
+      presence: { title, location, pageCount: this.context.pages().length, pageIndex: this.context.pages().indexOf(this.page) + 1, pointer: await this.pointer() } };
   }
   async control(value: unknown) {
     const input = record(value);

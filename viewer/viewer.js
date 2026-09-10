@@ -1,5 +1,7 @@
 const element = id => document.getElementById(id);
 const token = location.hash.slice(1);
+const pointer = element('agent-pointer');
+let agentName = 'SbarOrbit', actor = 'agent';
 const frame = element('frame'), sessions = element('sessions');
 let selected = '', state = '', backend = '', accountName = '', capturedAt = 0, imageWidth = 1280, imageHeight = 800, busy = false;
 function error(message) { element('error').textContent = message; element('error').hidden = !message; }
@@ -33,19 +35,27 @@ async function refreshSessions() {
   const previous = selected;
   if (!list.some(s => s.sessionId === selected)) selected = list.find(s => s.state !== 'closed')?.sessionId || list[0]?.sessionId || '';
   sessions.replaceChildren(...list.map(s => {
-    const option = document.createElement('option'); option.value = s.sessionId; option.textContent = `${s.sessionId.slice(0, 8)} / ${s.backend || "browser"} / ${s.state}`; return option;
+    const option = document.createElement('option'); option.value = s.sessionId; option.textContent = `${s.agentName || "SbarOrbit"} · ${s.taskName || s.backend} · ${s.sessionId.slice(0, 4)} / ${s.state}`; return option;
   }));
   if (!list.length) { const option = document.createElement('option'); option.textContent = 'No sessions'; sessions.append(option); }
   sessions.value = selected;
-  if (previous !== selected) { element('account-result').textContent = ''; capturedAt = 0; frame.hidden = true; }
-  state = list.find(s => s.sessionId === selected)?.state || '';
+  if (previous !== selected) { element('account-result').textContent = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  }
+  const current = list.find(s => s.sessionId === selected);
+  agentName = current?.agentName || 'SbarOrbit';
+  actor = current?.activity?.actor || 'agent';
+  element('agent-name').textContent = agentName;
+  element('task-name').textContent = current?.taskName || 'Agent workspace';
+  const activity = current?.activity;
+  const verbs = { navigate: 'Open page', fill: 'Fill field', click: 'Click', read: 'Read page', scroll: 'Scroll', pointer: 'Click', text: 'Type', paste: 'Paste', key: 'Press key', launch: 'Open application' };
+  element('activity').textContent = activity ? `${activity.actor === 'human' ? 'You' : agentName}: ${verbs[activity.type] || 'Input'} · ${activity.state} · Step ${activity.sequence}` : 'No actions yet';
+  state = current?.state || '';
   backend = list.find(s => s.sessionId === selected)?.backend || '';
   accountName = list.find(s => s.sessionId === selected)?.accountName || '';
   element('empty').hidden = !!selected && !frame.hidden;
-  if (state === 'closed') { capturedAt = 0; frame.hidden = true; element('empty').hidden = false; element('empty').textContent = 'This session has stopped.'; }
+  if (state === 'closed') { capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  element('empty').hidden = false; element('empty').textContent = 'This session has stopped.'; }
   controls();
 }
-sessions.addEventListener('change', () => { selected = sessions.value; state = ''; capturedAt = 0; frame.hidden = true; controls(); });
+sessions.addEventListener('change', () => { selected = sessions.value; state = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  controls(); });
 async function command(method, params = {}) {
   if (busy || !selected) return;
   busy = true; controls(); error('');
@@ -97,6 +107,18 @@ async function poll() {
             capturedAt = image.capturedAt; imageWidth = image.width; imageHeight = image.height;
             frame.dataset.capturedAt = String(capturedAt);
             frame.hidden = false; element('empty').hidden = true;
+            const presence = image.presence;
+            element('page-title').textContent = presence?.title || 'Untitled page or application';
+            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount ? ` · Controlled tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''}`;
+            const position = presence?.pointer;
+            pointer.hidden = !position;
+            if (position) {
+              pointer.style.left = `${position.x / imageWidth * 100}%`;
+              pointer.style.top = `${position.y / imageHeight * 100}%`;
+              pointer.classList.toggle('human', actor === 'human');
+              pointer.classList.toggle('near-right', position.x > imageWidth * 0.75);
+              element('pointer-label').textContent = actor === 'human' ? 'You' : agentName;
+            }
           }
         } finally { bitmap.close(); }
       }
@@ -108,6 +130,7 @@ setInterval(() => {
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
   element('freshness').textContent = capturedAt ? `Frame age: ${(age / 1000).toFixed(1)}s` : 'Waiting for a frame';
   element('freshness').classList.toggle('stale', age > 1000);
+  if (age > 1000) pointer.hidden = true;
 }, 100);
 if (!token) { element('connection').textContent = 'Access link required'; error('Open the complete preview link printed by Orbit.'); }
 else poll();

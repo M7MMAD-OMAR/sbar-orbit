@@ -22,14 +22,14 @@ const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
     if (value === phrase) accepted = true;
     return new Response(value === phrase ? "Accepted" : "Try the displayed phrase");
   }
-  return new Response(`<html><style>body{font:24px system-ui;padding:32px;background:white;color:#182d45}input,button{font:22px system-ui;padding:12px;margin:8px}section{margin:24px 0;padding:16px;border:1px solid #aaa}</style><h1>Orbit takeover trial</h1><section><h2>Agent work</h2><input id="agent"><button id="agent-save" onclick="document.querySelector('#result').textContent=document.querySelector('#agent').value">Update counter</button><output id="result">Starting</output></section><section><h2>Your turn after Pause</h2><p>Enter <strong>${phrase}</strong>, then click Confirm phrase. Resume afterward.</p><input id="human" placeholder="Test phrase"><button id="human-save" onclick="fetch('/',{method:'POST',body:document.querySelector('#human').value}).then(r=>r.text()).then(t=>document.querySelector('#manual-result').textContent=t)">Confirm phrase</button><output id="manual-result">Waiting</output></section></html>`, { headers: { "Content-Type": "text/html" } });
+  return new Response(`<html><title>Orbit form update demo</title><style>body{font:24px system-ui;padding:32px;background:white;color:#182d45}input,button{font:22px system-ui;padding:12px;margin:8px}section{margin:24px 0;padding:16px;border:1px solid #aaa}</style><h1>Orbit takeover trial</h1><section><h2>Agent work</h2><input id="agent"><button id="agent-save" onclick="document.querySelector('#result').textContent=document.querySelector('#agent').value">Update counter</button><output id="result">Starting</output></section><section><h2>Your turn after Pause</h2><p>Enter <strong>${phrase}</strong>, then click Confirm phrase. Resume afterward.</p><input id="human" placeholder="Test phrase"><button id="human-save" onclick="fetch('/',{method:'POST',body:document.querySelector('#human').value}).then(r=>r.text()).then(t=>document.querySelector('#manual-result').textContent=t)">Confirm phrase</button><output id="manual-result">Waiting</output></section></html>`, { headers: { "Content-Type": "text/html" } });
 } });
 const broker = await startBroker();
 const focus = await startFocusMonitor(async () => new Set((await readFile(join(group, "cgroup.procs"), "utf8")).trim().split(/\s+/).map(Number)));
 const started = performance.now();
 const deadline = started + 600_000;
 try {
-  const session = await call(broker.socket, "session.create", { backend: "browser" }) as { sessionId: string };
+  const session = await call(broker.socket, "session.create", { backend: "browser", agentName: "SbarOrbit", taskName: "Form updates · scripted demo" }) as { sessionId: string };
   const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
   await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}` });
   const { url } = await call(broker.socket, "preview.open") as { url: string };
@@ -46,7 +46,10 @@ try {
     if (state === "running") {
       try {
         const value = `Agent step ${submissions + 1}`;
+        await act({ type: "click", selector: "#agent" });
+        await Bun.sleep(250);
         await act({ type: "fill", selector: "#agent", text: value });
+        await Bun.sleep(250);
         await act({ type: "click", selector: "#agent-save" });
         const result = await act({ type: "read", selector: "#result" }) as { text: string };
         if (result.text !== value) throw new Error("Agent readback mismatch");

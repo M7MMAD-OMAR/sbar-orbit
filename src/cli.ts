@@ -24,7 +24,7 @@ try {
     else if (command === "account" && verb === "save") { method = "session.account.save"; params = { sessionId: arg }; }
     else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list"].includes(verb ?? "")) {
       method = `session.${verb}`;
-      params = verb === "create" ? { backend: arg ?? "browser", accountName } : { sessionId: arg };
+      params = verb === "create" ? { backend: arg ?? "browser", accountName, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME } : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };

@@ -73,3 +73,15 @@ The [validation summary](validation.md) passed 5 tests and 35 assertions across 
 The Browser plugin was not available; verification used the repository's Playwright/Chrome harness. This is an automated takeover-path test, not evidence of human participation. The resource wrapper cleans its process scope afterward.
 
 Browser wheel coverage: `bun run verify tests/browser-scroll.test.ts` checks the actual page scroll offset after agent and viewer input. Wheel deltas in the viewer are converted to bounded steps: approximately 100 pixel units, 3 line units or one fifth of a page unit per step. Input arriving while busy is not queued. This is basic wheel support; continuous trackpad gesture fidelity remains a separate improvement.
+
+## Identify the workspace and follow input
+
+Each session has `agentName` and `taskName`, supplied when it is created through RPC or MCP. The CLI reads `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. Defaults are SbarOrbit and Agent workspace. These are descriptive labels, not authenticated agent identities. The selector retains a short session identifier to distinguish duplicate names.
+
+The viewer shows the controlled page title, URL origin/path without query or fragment, controlled tab index and owned tab count. Native sessions show their focused private application title. This identifies Orbit's page or private application, not a tab in the user's personal browser. Browser popup switching is not implemented yet.
+
+Activity reports only action kind, actor, sequence and working/done/failed state. It does not store input text, selectors, command arguments or full URLs. Page titles and screenshots can still contain the application's private content and remain available only through the local access-controlled viewer.
+
+The blue arrow labelled with the agent name follows the last trusted pointer event in the controlled browser's top-level page. Its listener runs in a separate JavaScript world; synthetic page events and page globals cannot set it. Navigation clears it, and stale frames hide the marker. Native sessions show the last acknowledged pointer/scroll target. Green You marks the latest manual input actor. Keyboard-only actions do not invent mouse movement. Embedded-frame pointer coverage and continuous native cursor sampling remain unverified; this overlay is a following aid, not a security or no-interference proof.
+
+`bun run verify tests/workspace-presence.test.ts` checks names, title/location, actual click coordinates, synthetic-event rejection, input-text omission, navigation reset, manual ownership and desktop/mobile layout.
