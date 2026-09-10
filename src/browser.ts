@@ -54,8 +54,11 @@ export class BrowserBackend {
   }
   static async create(profile: string, size: Viewport = defaultViewport): Promise<BrowserBackend> {
     const owned = await launchChrome(profile, size);
-    owned.context.setDefaultTimeout(3000);
-    owned.context.setDefaultNavigationTimeout(10000);
+    // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
+    // seconds with four other sessions working; that is contention, not a missing element. Ten
+    // seconds made a missing element cost every caller ten seconds, so this sits in between.
+    owned.context.setDefaultTimeout(5000);
+    owned.context.setDefaultNavigationTimeout(15000);
     const backend = new BrowserBackend(owned, owned.context, owned.page, size);
     // A site that opens a login or consent tab must become reachable, so follow the newest page
     // the way a person would, and fall back to a survivor when the active page goes away.
@@ -141,13 +144,10 @@ export class BrowserBackend {
       }
     }
   }
-  async observe() {
-    const capturedAt = Date.now();
+  /** What the session is showing, without a frame. Cheap enough to poll from a desktop indicator. */
+  async presence() {
     const page = this.page;
     try { await this.bindPointer(page); } catch {}
-    // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
-    // which matters because every frame is captured, base64 encoded and decoded again per poll.
-    const image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: 3000 })).toString("base64");
     const url = new URL(page.url());
     const location = url.protocol === "about:" ? "New page" : `${url.origin}${url.pathname}`;
     const title = (await page.title()).slice(0, 160);
@@ -155,9 +155,16 @@ export class BrowserBackend {
     // Tab labels come from the URL, which is already in memory, rather than asking every tab for its
     // title, so the strip in the viewer costs nothing per frame.
     const tabs = pages.map((open, index) => ({ tab: index + 1, label: label(open, open === page ? title : ""), active: open === page }));
-    return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height,
-      presence: { title, location, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1, tabs,
-        pointer: await (this.pointers.get(page) ?? (async () => null))() } };
+    return { title, location, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1, tabs,
+      pointer: await (this.pointers.get(page) ?? (async () => null))() };
+  }
+  async observe() {
+    const capturedAt = Date.now();
+    const page = this.page;
+    // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
+    // which matters because every frame is captured, base64 encoded and decoded again per poll.
+    const image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: 3000 })).toString("base64");
+    return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   async control(value: unknown) {
     const input = record(value);

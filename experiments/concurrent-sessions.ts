@@ -32,6 +32,9 @@ const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
 const broker = await startBroker();
 const report: Record<string, unknown> = { date: new Date().toISOString().slice(0, 10), browsers, natives, rounds };
 const errors: string[] = [];
+// Outcomes live outside the per-session functions, so rounds a session finished before it failed
+// are still counted rather than lost with the thrown error.
+const outcomes = new Map<string, unknown[]>();
 try {
   const before = await readCpuSample();
   const startedAt = performance.now();
@@ -40,7 +43,8 @@ try {
     const name = `browser-${index + 1}`;
     const session = await call(broker.socket, "session.create", { backend: "browser", agentName: `Agent ${index + 1}`, taskName: name }) as { sessionId: string };
     const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
-    const outcomes: unknown[] = [];
+    const mine: unknown[] = [];
+    outcomes.set(name, mine);
     try {
       await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/?who=${name}` });
       for (let round = 0; round < rounds; round++) {
@@ -57,18 +61,19 @@ try {
         const after = await act({ type: "read", selector: "#echo" }) as { text: string };
         const ok = echoed.text === phrase && heading.text === `Desk ${name}` && after.text === phrase && frame.presence.pageCount >= 2;
         if (!ok) errors.push(`${name} round ${round + 1}: ${JSON.stringify({ echoed, heading, after, presence: frame.presence })}`);
-        outcomes.push({ round: round + 1, ok, ms: Math.round(performance.now() - t), tabs: frame.presence.pageCount });
+        mine.push({ round: round + 1, ok, ms: Math.round(performance.now() - t), tabs: frame.presence.pageCount });
         if (frame.presence.pageCount > 1) await act({ type: "close-tab", tab: frame.presence.pageCount });
       }
     } finally { await call(broker.socket, "session.stop", session).catch(() => {}); }
-    return { name, outcomes };
+    return { name, outcomes: mine };
   };
 
   const nativeWork = async (index: number) => {
     const name = `native-${index + 1}`;
     const session = await call(broker.socket, "session.create", { backend: "fedora", agentName: `Agent N${index + 1}`, taskName: name }) as { sessionId: string };
     const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
-    const outcomes: unknown[] = [];
+    const mine: unknown[] = [];
+    outcomes.set(name, mine);
     try {
       const file = join(root, `${name}.json`);
       await act({ type: "launch", toolkit: "wayland", argv: ["/usr/bin/python3", resolve("experiments/fedora-display/fixture.py"), file] });
@@ -78,19 +83,26 @@ try {
         await act({ type: "pointer", x: 280, y: 184 });
         await act({ type: "key", key: "Ctrl+A" });
         await act({ type: "paste", text: phrase });
-        await act({ type: "key", key: "Enter" });
-        let saved: { text?: string } = {};
+        // Paste is acknowledged when the shortcut is delivered, not when the application has read
+        // the clipboard, so the next click waits for the text to show, as the tool contract says.
+        let saved: { text?: string; saved?: string | null } = {};
         for (let i = 0; i < 60; i++) {
           try { saved = JSON.parse(await Bun.file(file).text()); if (saved.text === phrase) break; } catch {}
           await Bun.sleep(100);
         }
+        // The fixture's save button, so the round proves a click landed as well as a paste.
+        await act({ type: "pointer", x: 590, y: 184 });
+        for (let i = 0; i < 60; i++) {
+          try { saved = JSON.parse(await Bun.file(file).text()); if (saved.saved === phrase) break; } catch {}
+          await Bun.sleep(100);
+        }
         const frame = await call(broker.socket, "session.observe", session) as { presence: { pageCount: number; title: string } };
-        const ok = saved.text === phrase;
+        const ok = saved.saved === phrase;
         if (!ok) errors.push(`${name} round ${round + 1}: ${JSON.stringify(saved)}`);
-        outcomes.push({ round: round + 1, ok, ms: Math.round(performance.now() - t), windows: frame.presence.pageCount, title: frame.presence.title });
+        mine.push({ round: round + 1, ok, ms: Math.round(performance.now() - t), windows: frame.presence.pageCount, title: frame.presence.title });
       }
     } finally { await call(broker.socket, "session.stop", session).catch(() => {}); }
-    return { name, outcomes };
+    return { name, outcomes: mine };
   };
 
   const results = await Promise.allSettled([
@@ -99,13 +111,16 @@ try {
   ]);
   const cpu = cpuInterval(before, await readCpuSample());
   report.elapsedMs = Math.round(performance.now() - startedAt);
-  report.sessions = results.map(result => result.status === "fulfilled" ? result.value : { failed: true, message: result.reason instanceof Error ? result.reason.message : String(result.reason) });
+  const names = [...Array.from({ length: browsers }, (_, i) => `browser-${i + 1}`), ...Array.from({ length: natives }, (_, i) => `native-${i + 1}`)];
+  report.sessions = results.map((result, index) => result.status === "fulfilled" ? result.value
+    : { name: names[index], failed: true, message: result.reason instanceof Error ? result.reason.message : String(result.reason), code: (result.reason as { code?: string })?.code, outcomes: outcomes.get(names[index]!) ?? [] });
   report.cpu = { orbitOneCorePercent: Number(cpu.orbitOneCorePercent.toFixed(1)), orbitMachinePercent: Number(cpu.orbitMachinePercent.toFixed(2)), hostBusyPercent: Number(cpu.hostBusyPercent.toFixed(1)) };
-  const all = results.flatMap(r => r.status === "fulfilled" ? (r.value.outcomes as { ok: boolean; ms: number }[]) : []);
-  report.totals = { rounds: all.length, passed: all.filter(o => o.ok).length, failed: all.filter(o => !o.ok).length + results.filter(r => r.status === "rejected").length,
+  const all = [...outcomes.values()].flat() as { ok: boolean; ms: number }[];
+  report.totals = { rounds: all.length, passed: all.filter(o => o.ok).length, failedRounds: all.filter(o => !o.ok).length,
+    sessionsFailed: results.filter(r => r.status === "rejected").length,
     medianRoundMs: all.length ? [...all].sort((a, b) => a.ms - b.ms)[Math.floor(all.length / 2)]!.ms : null };
   report.errors = errors;
-  report.status = errors.length || results.some(r => r.status === "rejected") ? "failed" : "passed";
+  report.status = !all.length || errors.length || results.some(r => r.status === "rejected") ? "failed" : "passed";
   report.notes = [
     "Every session runs its own loop with no coordination, so this is contention, not a benchmark of one session.",
     "CPU is the whole shared budget over the whole run, including session creation and teardown.",

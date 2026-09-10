@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { AccountLease } from "./profiles";
 import { join } from "node:path";
@@ -22,6 +22,10 @@ export class Sessions {
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();
   private creating = new Set<Promise<unknown>>();
+  // Backends start one at a time. Several agents creating sessions in the same second is common,
+  // and several Chromes or compositors booting together on one core made each other time out
+  // where one after another all start; the queue costs the later ones only the earlier ones' start.
+  private creationTail: Promise<unknown> = Promise.resolve();
   private shuttingDown = false;
   constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts")) {}
   private get(id: unknown): Session {
@@ -62,7 +66,17 @@ export class Sessions {
       const restoredState = await account?.restore();
       const profile = await mkdtemp(join(this.root, "profile-"));
       const surface = input.viewport === undefined ? defaultViewport : parseViewport(input.viewport);
-      const backend = input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface);
+      const queued = Date.now();
+      const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
+        // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
+        if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+        if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
+        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface);
+      });
+      this.creationTail = start.catch(() => {});
+      let backend: BrowserBackend | FedoraBackend;
+      try { backend = await start; }
+      catch (error) { await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       if (account && backend instanceof BrowserBackend) {
         try { if (restoredState) await backend.context.setStorageState(restoredState); }
         catch (error) { await backend.close(); throw error; }
@@ -138,10 +152,12 @@ export class Sessions {
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
-    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.control", "session.account.save"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     if (request.method === "session.stop") return this.stop(session);
     this.ensureOpen(session);
+    // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.
+    if (request.method === "session.presence") return session.backend.presence().catch(error => { this.ensureOpen(session); throw error; });
     if (request.method === "session.account.save") {
       if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause before saving account state");
       const { backend, account } = session;

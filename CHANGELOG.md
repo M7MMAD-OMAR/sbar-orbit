@@ -4,6 +4,20 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Removed a session's tmpfs runtime directory when it closes, and a private broker's socket directory when it stops. Nothing had, and on Fedora tmpfs pages stay charged to the cgroup that wrote them, so a day of sessions left 1.5 GB charged to the shared slice with nothing running and the kernel throttling everything under `MemoryHigh`. That throttling, not processor time, was behind a compositor that stopped answering, an input helper that missed its acknowledgement and screenshots that outlasted their deadline. Recorded in [resources](docs/resources.md).
+
+- Removed the GitHub Actions workflow. It could run only the pure unit tests, never the suite that matters, and a partial green check reads as more than it is. Every gate runs locally and is documented in CONTRIBUTING.
+
+- Applications in a private display now look the way they look on the desktop. The person's GTK, Qt and KDE theme settings, icon and cursor choices, colour schemes and fonts are carried into the session's private configuration, and nothing else: no desktop entries, MIME associations, recent files, dialog state or caches. `kdeglobals` is filtered to its appearance groups. Fonts are named by their real path in a fontconfig fragment because a copy or a link would make every session rescan every installed font, which on this workstation held the compositor for 3.9 seconds and stopped sessions starting at all. See [appearance](docs/appearance.md).
+
+- Added `sbar-orbit status`, a read-only view of every session with tabs, windows, activity and pointer, a `--watch` mode that prints only on change, and `session.presence`, which is `observe` without the frame. Added `sbar-orbit panel`, a wlr-layer-shell edge strip that shows session and tab counts, expands on hover into one row per session and opens the viewer on click; it runs outside the shared budget as the person's own desktop process, uses the Cairo renderer, polls off its main thread and opens only a loopback viewer link. Captured inside a private display by `experiments/panel-check.ts`.
+
+- Started backends one at a time, with a 30 second queue deadline, and widened the browser action timeout to 5 seconds, navigation to 15 and the Chrome connection wait to 20. `experiments/concurrent-sessions.ts` drives several sessions from independent loops on one broker: three Chromes and two compositors booting together on one core had timed each other out, and a locator that resolves in 200 ms alone took over three seconds with four other sessions working, which was being reported as a missing element. With the fixes, three browser sessions and two private displays complete 20 of 20 rounds in 9.8 seconds at 93 percent of one core.
+
+- Kept each private display's compositor output in `compositor.log` beside the session, bounded, because it is the only evidence when a display fails to start.
+
+- Raised the native launch deadline to thirty seconds for Electron applications on a software-rendered display. Docker Desktop still does not open there: its launcher requires the session bus, which a private display deliberately lacks, and the Electron binary underneath did not map a window in that time.
+
 - Closed the secret-scanning gap. Gitleaks now runs, the whole history scanned clean across 28 commits, and the pre-commit gate was verified by staging a fabricated key and watching it refuse. Recorded what the publication audit and Gitleaks each catch, since neither sees what the other does. Also brought `scripts` under `tsconfig.json`, which needed no code changes, and added the theme and surface unit tests to continuous integration.
 
 - Added `open-tab`, so an agent can open a tab itself instead of only following one a site opened. A trial with a local agent host found the gap: the host tried to open a second tab, could not, and reported that Orbit did not support it.

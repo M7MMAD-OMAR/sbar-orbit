@@ -4,7 +4,12 @@ import { OrbitError } from "./errors";
 
 const [command, verb, arg, accountName] = process.argv.slice(2);
 try {
-  if (command === "serve") {
+  if (command === "status") {
+    // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
+    const { readStatus, summarize, socketFromEnvironment } = await import("./status");
+    const status = await readStatus(socketFromEnvironment());
+    console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
+  } else if (command === "serve") {
     // A managed broker binds the fixed path a service unit and generated host configuration expect.
     const managed = process.argv.includes("--managed-socket");
     const broker = await startBroker(managed ? { socketPath: serviceSocketPath() } : {});
@@ -31,7 +36,7 @@ try {
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, doctor, preview, session create/list/stop/pause/resume/observe, or act ID JSON");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, doctor, preview, session create/list/stop/pause/resume/observe, or act ID JSON");
     console.log(JSON.stringify({ ok: true, result: await call(socket, method, params) }));
   }
 } catch (error) {

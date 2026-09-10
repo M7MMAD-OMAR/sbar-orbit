@@ -76,7 +76,7 @@ test("pause drains accepted work and rejects new input; timeout permits recovery
     const frame = await run("session.observe", session) as { image: string };
     expectDeclaredImage(frame, "image/jpeg");
   } finally { await broker.close(); }
-}, 15000);
+}, 30000);
 
 test("CLI creates a session, acts on it, observes it and closes it", async () => {
   const broker = await startBroker();
@@ -95,4 +95,4 @@ test("CLI creates a session, acts on it, observes it and closes it", async () =>
     expectDeclaredImage(frame.result, "image/jpeg");
     expect(await cli("session", "stop", sessionId)).toMatchObject({ result: { state: "closed" } });
   } finally { await broker.close(); fixture.stop(true); }
-}, 15000);
+}, 30000);

@@ -1,12 +1,13 @@
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { requireResourceBudget } from "./resource-budget";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
-import { applyAppearance } from "./appearance";
+import { applyAppearance, inheritedAppearance } from "./appearance";
 import { nativeRuntimePaths } from "./runtime-paths";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
@@ -97,7 +98,7 @@ export class FedoraBackend {
       throw new OrbitError("UNSUPPORTED", "Run the documented Fedora native bootstrap first");
     const directory = await mkdtemp("/tmp/orbit-native-");
     const env = { ...process.env };
-    for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY"])
+    for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
       delete env[key];
     // Private base directories, so an application cannot restore the person's own previous session
     // or recent documents into the agent's workspace. System XDG_DATA_DIRS still resolve normally.
@@ -116,7 +117,15 @@ export class FedoraBackend {
     const cursor = appearance.cursor ? `seat seat0 xcursor_theme ${appearance.cursor.theme} ${appearance.cursor.size}\n` : "";
     await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
     const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), "-c", config], { env, detached: true });
-    compositor.stdout.resume(); compositor.stderr.resume();
+    // The compositor's own output is the only evidence when a display fails to start, so keep it
+    // beside the session rather than discarding it. Bounded, because sway can log per frame.
+    const log = createWriteStream(join(directory, "compositor.log"), { mode: 0o600 });
+    log.on("error", () => {});
+    let logged = 0;
+    const keep = (chunk: Buffer) => { if (logged < 262144 && !log.writableEnded) { logged += chunk.length; log.write(chunk); } };
+    compositor.stdout.on("data", keep); compositor.stderr.on("data", keep);
+    // close, not exit: the pipes can still hold output after the process is gone.
+    compositor.once("close", () => log.end());
     const backend = new FedoraBackend(directory, env, compositor, size);
     try {
       await backend.wait(async () => {
@@ -146,8 +155,8 @@ export class FedoraBackend {
   onClose(listener: () => void) { this.listeners.push(listener); if (this.closed) listener(); }
   get surface(): Viewport { return this.size; }
   private ensureOpen() { if (this.closed) throw new OrbitError("SESSION_CLOSED", "Native display is closed"); }
-  private async wait(probe: () => Promise<boolean>) {
-    const deadline = Date.now() + 10000;
+  private async wait(probe: () => Promise<boolean>, timeoutMs = 10000) {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) { this.ensureOpen(); if (await probe()) return; await sleep(50); }
     throw new OrbitError("DEADLINE_EXCEEDED", "Private display operation timed out");
   }
@@ -206,7 +215,8 @@ export class FedoraBackend {
         const tree = await this.ipc("-t", "get_tree");
         const find = (node: any): boolean => (node.pid === applicationPid && node.visible) || [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].some(find);
         return find(tree);
-      });
+      // Electron applications on a software-rendered display take well over ten seconds to map.
+      }, 30000);
       await this.ipc(`[pid=${applicationPid}]`, "focus");
       await sleep(500);
       return { pid: applicationPid, applied: true, selectedFiles };
@@ -278,17 +288,20 @@ export class FedoraBackend {
     if (!window) throw new OrbitError("INVALID_REQUEST", `Window ${tab} is not open; observe reports ${windows.length} open`);
     return window.id;
   }
+  /** Focused window and window list from the compositor tree, no frame. Measured at under a millisecond. */
+  async presence() {
+    this.ensureOpen();
+    const windows = this.windows(await this.ipc("-t", "get_tree"));
+    const app = windows.find(window => window.focused);
+    return { title: String(app?.title ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer,
+      pageCount: windows.length, pageIndex: app ? windows.indexOf(app) + 1 : 0,
+      tabs: windows.map((window, index) => ({ tab: index + 1, label: window.title, active: window.focused })) };
+  }
   async observe() {
     const capturedAt = Date.now();
     this.ensureOpen();
     const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-t", capture.type, "-q", capture.quality, "-"], this.env);
-    const tree = await this.ipc("-t", "get_tree");
-    const windows = this.windows(tree);
-    const app = windows.find(window => window.focused);
-    return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height,
-      presence: { title: String(app?.title ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer,
-        pageCount: windows.length, pageIndex: app ? windows.indexOf(app) + 1 : 0,
-        tabs: windows.map((window, index) => ({ tab: index + 1, label: window.title, active: window.focused })) } };
+    return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
@@ -302,6 +315,10 @@ export class FedoraBackend {
         const timer = setTimeout(() => child.kill("SIGKILL"), 4000);
         try { await exited; } finally { clearTimeout(timer); }
       }));
+      // The runtime directory lives on tmpfs, and tmpfs pages are charged to the cgroup that wrote
+      // them. Left behind, closed sessions kept filling the shared memory budget until the kernel
+      // throttled everything that was still running.
+      await rm(this.directory, { recursive: true, force: true }).catch(() => {});
       for (const listener of this.listeners) listener();
     })();
     return this.closing;

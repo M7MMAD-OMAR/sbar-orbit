@@ -48,7 +48,9 @@ export async function launchChrome(profile: string, size = defaultViewport) {
     socket = new WebSocket(endpoint);
     const connected = socket;
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { connected.close(); reject(new OrbitError("DEADLINE_EXCEEDED", "Local Chrome connection timed out")); }, 5000);
+      // Chrome has already published its endpoint by now; what remains is its own startup work,
+      // which on the shared budget can take well over five seconds while other sessions start.
+      const timer = setTimeout(() => { connected.close(); reject(new OrbitError("DEADLINE_EXCEEDED", "Local Chrome connection timed out")); }, 20000);
       connected.onopen = () => { clearTimeout(timer); resolve(); };
       connected.onerror = () => { clearTimeout(timer); reject(new OrbitError("BACKEND_FAILED", "Local Chrome connection failed")); };
     });

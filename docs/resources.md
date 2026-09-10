@@ -23,6 +23,22 @@ Browser workspaces use private disk-backed directories. Retained profiles on tmp
 
 Diagnostics sample shared and per-run accounting separately. File cache, retained files and active application memory are different contributors. Do not sum per-process RSS as if shared pages were unique. The timing experiment stops above 1900 MiB shared charged memory, before the unchanged hard cap.
 
+## Several sessions at once
+
+`experiments/concurrent-sessions.ts` runs independent loops against one broker, each doing real work and checking its result: browser sessions fill a field, read the echo back across two tabs; private displays paste Arabic into a fixture and click its save button. Three browsers and two displays: 20 of 20 rounds correct in 9.8 seconds, median round 494 ms, 93.2 percent of one core, which is 3.9 percent of this 24 thread machine. The budget is the ceiling, not the session count: everything Orbit owns shares one core, so adding sessions stretches every round rather than failing any, until a deadline is reached. At six browsers and three displays, five sessions started and completed 20 of 20 rounds at a median of 2.0 seconds per round, and four were refused with `DEADLINE_EXCEEDED` after waiting 30 seconds behind the others to start; that refusal is the intended answer, since a caller has a deadline of its own and a backend nobody waits for is pure cost. That run also coincided with 85 percent host load from other work, so its round times are an upper bound.
+
+Two things had to change for that to hold. Backends now start one at a time, because several Chromes and compositors booting together on one core timed each other out. And a paste is acknowledged when the shortcut is delivered, not when the application has read the clipboard, so an agent that clicks immediately after pasting can lose the click; the tool contract already says to wait for the text to appear, and the experiment does.
+
+## Temporary files are memory
+
+`/tmp` is tmpfs on Fedora, and tmpfs pages are charged to the cgroup that wrote them, for as long as the files exist. Private displays keep their runtime directory there: sockets, a copy of the person's theme, the compositor log, an application cache. Until this was fixed nothing removed those directories when a session closed. After a day of tests and experiments 2,942 of them held 1.5 GB, all charged to `sbarorbit.slice`, which sat at 1.28 GB of shared memory with no session running, 400 MB under `MemoryHigh`.
+
+That is where the day's unexplained slowness came from. Above `MemoryHigh` the kernel does not kill, it throttles: every allocation in the slice stalls while pages are reclaimed. `memory.events` showed 3.2 million `high` events. The symptoms were a compositor that stopped answering its socket within five seconds, an input helper that missed its acknowledgement, a screenshot that took longer than three seconds, all at 45 percent of one core, which is what waiting looks like. Sessions and brokers now remove their directories when they close. `sbar-orbit doctor` reports `memory.current` and the `high` counter; a slice that is heavy while idle is this problem again.
+
+## When the host is busy
+
+The slice carries `CPUWeight=10`, a tenth of the default. That is deliberate: the person's own work always wins. The consequence is that Orbit is not merely capped at one core, it is the first thing starved when the rest of the machine is busy. Measured on this workstation during another agent's test run, host load 20 to 32 on 24 logical CPUs, private displays failed to start and applications failed to map within their deadlines, while the same commands on a quiet host succeed in seconds. A report from a busy host measures the host, not Orbit; every experiment records `hostBusyPercent` so the two are not confused.
+
 ## Session surface size
 
 A session starts at 1280 by 800 and can be created or resized up to a total of 1,920 by 1,200 pixels. The cap is on the total pixel count rather than on each side, so an unusual shape is allowed while the cost of a frame stays bounded.

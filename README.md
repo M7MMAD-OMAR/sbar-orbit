@@ -42,6 +42,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Accounts](docs/accounts.md), [files](docs/files.md) | Explicit shared state |
 | [Packaging](docs/packaging.md) | Versioned source artifacts |
 | [Research](docs/research.md) | Primary technical sources |
-| [Desktop presence](docs/desktop-presence.md) | Proposal for a permanent on-screen indicator |
+| [Desktop presence](docs/desktop-presence.md) | Status source and edge panel, what remains proposed |
+| [Appearance](docs/appearance.md) | Applications in a private display look like the desktop |
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)

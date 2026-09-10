@@ -1,76 +1,64 @@
-# Desktop presence proposal
+# Desktop presence
 
-Status: proposal, nothing here is implemented. It records what was asked for, which parts are feasible on this workstation, and what each part costs.
+Status: the status source and the edge panel exist and are measured. The working indicator and a shell-native module remain proposals.
 
 ## The request
 
-Orbit sessions are invisible. Nothing on the desktop says an agent is working, so the person has to remember to open a viewer. The request is a permanent, customizable presence on the desktop: an edge docked element or a tray icon that reacts on hover with an animation and expands into a side panel, plus a visible signal on screen while an agent is working, in the style of a glow around the screen edges.
+Orbit sessions are invisible. Nothing on the desktop says an agent is working, so the person has to remember to open a viewer. The request is a permanent, customizable presence on the desktop: an edge docked element or a tray icon that reacts on hover with an animation and expands into a side panel showing the sessions, the tabs and windows open in each, and what the agent is doing, plus a visible signal on screen while an agent is working, in the style of a glow around the screen edges.
 
 ## One correction before the design
 
 Two parts of the request assume Orbit sessions live on the person's desktop. They do not, and that is the property that makes the separation real.
 
-- **"Switch to the workspace the agent is working in."** A session is a private compositor on its own `HEADLESS-1` output, or a headless browser with no window at all. No Hyprland workspace contains it, so no workspace switch can reach it. What the panel can do is name the session and open its viewer.
-- **"See where the agent's mouse is."** The agent's pointer exists only inside its own session. That is why no operating system pointer moves while it works. The panel can show the pointer's coordinates within the session and draw it on the session image, which is what the viewer already does.
-
-So the honest version of the feature is: the desktop presence tells you an agent is working, which session, what it is doing, and gets you into the viewer in one click. It is a launcher and a status light, not a window onto a desktop workspace.
+- **"Switch to the workspace the agent is working in."** A session is a private compositor on its own `HEADLESS-1` output, or a headless browser with no window at all. No desktop workspace contains it, so no workspace switch can reach it. What the panel does is name the session and open its viewer in one click.
+- **"See where the agent's mouse is."** The agent's pointer exists only inside its own session. That is why no operating system pointer moves while it works. The panel shows the pointer's coordinates within the session, and the viewer draws it on the session image.
 
 If the goal really is "the agent's window sits among my windows", that is a different architecture: run the application on the person's own compositor instead of a private one. It would make the work navigable and would remove display separation at the same time. It is a legitimate option, and it is the opposite trade to the one Orbit currently makes.
 
-## What this workstation actually runs
+## What exists
 
-Checked, not assumed:
+### The status source
 
-| Fact | Value |
-|---|---|
-| Shell | quickshell, `qs -c ii`, providing `quickshell:bar`, `quickshell:background`, `quickshell:screenCorners`, `quickshell:overview` layers |
-| Bar | quickshell, not waybar, although waybar is installed |
-| Layer shell libraries | `gtk4-layer-shell` 1.3.0 and `gtk-layer-shell` 0.10.0 present |
-| Monitors | `eDP-1` 2560x1600 at scale 1.333, `HDMI-A-5` 3840x2160 at scale 1.5 |
+```sh
+sbar-orbit status
+sbar-orbit status --watch
+```
 
-This matters for two reasons. The person's shell is QML, so a native module would be QML, and it lives in their own configuration repository rather than in this project. And the second monitor is 4K at fractional scale, which is the surface any full screen effect has to paint.
+One read-only JSON view of everything the broker owns: each session's agent, task, state, backend, current activity, surface size, title, location, tabs or windows and pointer position, with counts on top and a one-line summary for a bar. It reaches the managed broker without `ORBIT_SOCKET`. `--watch` prints a line only when something changed, so a quiet desktop prints nothing.
 
-## Feasibility, part by part
+It never captures a frame. It uses `session.list` and a new `session.presence` method, which returns what `observe` returns minus the image: a page title read for a browser session, a compositor tree query for a private display, both measured under a millisecond of broker time. Polling once a second costs one list call and one presence call per open session.
 
-| Requested | Feasible | How, and what it costs |
-|---|---|---|
-| Permanent element docked to a screen edge | Yes | `wlr-layer-shell`, which is what the existing shell already uses. A small always visible surface on the `top` layer, anchored to one edge. |
-| Reacts on hover and expands into a side panel | Yes | The surface keeps a narrow input region while collapsed and grows on pointer enter. Animation is a local property animation on a small surface, not a compositor effect. |
-| Tray icon | Yes, with a caveat | Requires a StatusNotifierItem host. quickshell's `ii` config provides one; a standalone application would publish the item and let the shell render it. |
-| Panel shows sessions, state and current activity | Yes | This data already exists. `session.list` returns session id, backend, state, agent name, task name and the current activity kind, actor and sequence. |
-| Panel shows the agent's pointer position | Yes, within the session | `session.observe` already returns `presence.pointer`, plus title, location, and for the browser `pageCount` and `pageIndex`. |
-| Click to open the session | Yes | The panel calls `preview.open` and hands the returned link to a browser. |
-| "Navigate to the workspace it is working in" | No, as described | See the correction above. A session is not on a workspace. |
-| Glow on the screen edges while an agent works | Yes, with a cost decision | A static border is a layer surface with an empty input region and a transparent centre. An animated pulse across 3840x2160 at fractional scale is a different proposition on this machine, where compositor effects are deliberately kept off and where a processor complaint started this work. Ship the static border, measure before animating. |
+### The edge panel
 
-## What the panel should show
+```sh
+sbar-orbit panel                  # right edge, current monitor
+sbar-orbit panel --edge left --monitor 1
+```
 
-The request left this open. Everything below is already available from the broker, so the panel needs no new backend work except a read only status endpoint.
+A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks the protocol, and it never becomes one of the person's windows. Collapsed it is a dot and `sessions/tabs`: grey when idle, green while an agent is working, amber when a session is paused. Hovering expands it into one row per session: agent and task, what is on screen, the state and current action, which tab or window of how many, and the pointer position. Clicking a row opens the viewer.
 
-Per session: the agent name and task name, the backend, the state (running, pausing, paused, closing, closed), the current action kind and whether it is working, done or failed, and its sequence number. For a browser session, the page title, the origin and path without query or fragment, and which tab of how many is being followed. For a native session, the focused application title. Plus the pointer position inside the session.
+It is written against GTK 4 with the Cairo renderer, because a strip of text needs no GPU and the GPU renderers retry failing surfaces in a loop on a software display. It runs as the person's own desktop process, outside Orbit's shared budget on purpose: it is part of their shell, not of the agents' work.
 
-Summary line: how many sessions are running, and whether the shared budget is under pressure, which `doctor` already reports.
+Verified where it can be captured without touching the person's screen: inside a private display, which is a layer-shell compositor like the desktop it is meant for, with a text editor and a calculator open. `experiments/panel-check.ts` saves the collapsed and the expanded frame. The strip read `1/2` for one session with two windows; the expanded row read `Hermes · Editing a document · Calculator · running · pointer · done · window 2 of 2 · pointer 1265,400`.
 
-Deliberately not shown: action text, selectors, command arguments and full URLs. The broker already withholds these from its activity record, and the panel must not reintroduce them.
+The link the panel opens carries a fresh access token. It is requested at the moment of the click and handed to `Gtk.UriLauncher`, never written to a file or printed. On a desktop where the browser is already running the URL travels over its remoting channel rather than a new process's command line.
 
-## Security constraint that shapes the design
+## What does not exist yet
 
-`preview.open` mints a fresh access token per call and returns it inside the viewer link. That link is a credential. It must never be written to a file, passed in a command line that other processes can read from `/proc`, logged, or displayed. The panel must request it at the moment of opening and hand it directly to the browser it spawns.
+**The working indicator.** A second layer surface on the overlay layer, click through, drawn only while at least one session is running, a static border first. This machine keeps compositor effects off because two displays at 4K and 2560 by 1600 with fractional scaling make them expensive, and this whole line of work started with a processor complaint, so an animated pulse across 3840 by 2160 is not something to ship before it is measured. A static frame with a transparent centre is cheap and would be measured with the same sampling the viewer cost work used.
 
-For the same reason the panel talks to the broker over the existing Unix socket, which is mode 600 inside a mode 700 directory, and it needs no new privileges of any kind. It reads status and opens viewers. It never needs to write to a session.
+**A shell-native module.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work.
 
-## Plan
+**A tray icon.** Needs a StatusNotifierItem host; quickshell provides one. Not started, because the edge panel covers the same need without depending on the shell.
 
-Four steps, each independently useful, in the order that delivers something visible soonest.
+## Working beside the person's browser
 
-1. **A read only status source in this project.** One CLI subcommand that prints the current sessions and their presence as JSON, and a `--watch` mode that emits a line whenever it changes. Everything it prints already exists in `session.list` and `session.observe`. This is the contract every front end uses, and it is testable without any graphical code.
+A related request: "I have a tab open in my browser; I want the agent to read it and work on it in parallel, and I want to see that." The second half is what Orbit does. The first half has a boundary in it worth stating plainly.
 
-2. **A standalone edge panel in this project**, built on `gtk4-layer-shell`, which is already installed. Collapsed it is a small anchored strip. On hover it expands into the session list described above. Clicking a session opens its viewer. This keeps the feature inside the project, works on any `wlr-layer-shell` compositor rather than only this machine's shell, and does not touch the person's configuration repository.
+Orbit never attaches to the person's own browser. That is the rule that keeps an agent's clicks out of their windows and their logged-in sessions out of the agent's reach, and it is what makes "in parallel" true rather than a race for one pointer. So the agent cannot read the person's tab as such. What it can do is open the same page in its own session: the person hands over the address, by pasting it or by asking the agent for it, and the agent navigates there in an isolated tab, visibly, in the viewer. If the page needs a login, an Orbit-owned account snapshot supplies one that the person saved on purpose, once, from inside a session; the person's own browser cookies are never copied. See [accounts](accounts.md).
 
-3. **The working indicator.** A second layer surface on the overlay layer, click through, drawn only while at least one session is running, a static border first. Measure it with the sampling already built for the viewer cost work before considering animation, and record the number the way every other claim in this project is recorded.
-
-4. **An optional quickshell module.** Once step 1 exists, a QML module for the `ii` configuration is a small piece of work that matches the person's actual shell and their existing bar. It belongs in their configuration repository, not here, because that repository is theirs and is swept by their own autosave timer.
+Something in between, where a click in the person's browser sends the current address to Orbit, is a small browser extension and a broker method that does not exist yet. It would still open a separate tab in a separate session; it would only save the paste.
 
 ## What is not decided
 
-Which edge and which monitor the panel should occupy, whether the indicator should be per monitor or only on the one showing the viewer, and whether the panel should also expose pause and stop or stay read only. Read only is the safer default, since the viewer already offers pause, manual control and stop behind an access token.
+Which edge and which monitor the panel should occupy by default, whether the indicator should be per monitor or only on the one showing the viewer, and whether the panel should also expose pause and stop or stay read only. It is read only today, since the viewer already offers pause, manual control and stop behind an access token.

@@ -16,7 +16,10 @@ const candidates = [
   { name: "Files", argv: ["/usr/bin/nautilus"], toolkit: "wayland" as const },
   { name: "Text Editor", argv: ["/usr/bin/gnome-text-editor"], toolkit: "wayland" as const },
   { name: "Dolphin", argv: ["/usr/bin/dolphin"], toolkit: "wayland" as const },
-  { name: "Docker Desktop", argv: ["/opt/docker-desktop/bin/docker-desktop"], toolkit: "x11" as const },
+  // The docker-desktop launcher dials the session bus and exits when there is none, by design of
+  // the private display. The Electron application underneath reaches its backend over HOME.
+  { name: "Docker Desktop", argv: ["/opt/docker-desktop/Docker Desktop"], toolkit: "x11" as const },
+  { name: "Docker Desktop (wayland, no GPU)", argv: ["/opt/docker-desktop/Docker Desktop", "--ozone-platform=wayland", "--disable-gpu"], toolkit: "wayland" as const },
 ];
 const broker = await startBroker();
 const report: Record<string, unknown> = { date: new Date().toISOString().slice(0, 10) };
