@@ -67,6 +67,12 @@ int main(int argc, char **argv) {
             zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, 1280, 800);
             zwlr_virtual_pointer_v1_frame(pointer);
             if (wl_display_roundtrip(display) < 0) return 6;
+            /* Establish an unchanged axis baseline before the requested wheel delta. */
+            zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
+            zwlr_virtual_pointer_v1_axis_discrete(pointer, timestamp(), WL_POINTER_AXIS_VERTICAL_SCROLL,
+                wl_fixed_from_int(0), 0);
+            zwlr_virtual_pointer_v1_frame(pointer);
+            if (wl_display_roundtrip(display) < 0) return 7;
             zwlr_virtual_pointer_v1_axis_source(pointer, WL_POINTER_AXIS_SOURCE_WHEEL);
             zwlr_virtual_pointer_v1_axis_discrete(pointer, timestamp(), WL_POINTER_AXIS_VERTICAL_SCROLL,
                 wl_fixed_from_int(steps * 10), steps);

@@ -5,7 +5,7 @@ import sys
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, Gdk
 
 target = Path(sys.argv[1])
 window = Gtk.Window(title="Orbit scroll fixture")
@@ -20,7 +20,8 @@ window.add(scroll)
 def record(*_args):
     temporary = target.with_suffix(".tmp")
     temporary.write_text(json.dumps({"vertical": scroll.get_vadjustment().get_value(),
-                                     "horizontal": scroll.get_hadjustment().get_value()}))
+                                     "horizontal": scroll.get_hadjustment().get_value(),
+                                     "deviceManager": Gdk.Display.get_default().get_device_manager().__gtype__.name}))
     temporary.replace(target)
     return False
 
