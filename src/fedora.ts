@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
+import { applyAppearance } from "./appearance";
 import { nativeRuntimePaths } from "./runtime-paths";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
@@ -105,11 +106,15 @@ export class FedoraBackend {
       base[key] = join(directory, name);
       await mkdir(base[key]!, { recursive: true, mode: 0o700 });
     }
-    Object.assign(env, base, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
+    // The person's theme, icons, cursor and fonts, so applications look the way they do on the
+    // desktop. Documents, history and credentials are not part of it.
+    const appearance = await applyAppearance(base.XDG_CONFIG_HOME!);
+    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
-    await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\nxwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
+    const cursor = appearance.cursor ? `seat seat0 xcursor_theme ${appearance.cursor.theme} ${appearance.cursor.size}\n` : "";
+    await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
     const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), "-c", config], { env, detached: true });
     compositor.stdout.resume(); compositor.stderr.resume();
     const backend = new FedoraBackend(directory, env, compositor, size);
