@@ -33,7 +33,7 @@ try {
     await Bun.sleep(250);
     const chooser = await sessions.dispatch({ method: "session.observe", params: session }) as { image: string };
     await mkdir("output/native", { recursive: true });
-    await Bun.write("output/native/file-dialog.png", Buffer.from(chooser.image, "base64"));
+    await Bun.write("output/native/file-dialog.jpg", Buffer.from(chooser.image, "base64"));
     await act({ type: "key", key: "Enter" });
     await Bun.sleep(1000);
   }
@@ -55,7 +55,7 @@ try {
   }
   const frame = await sessions.dispatch({ method: "session.observe", params: session }) as { image: string };
   await mkdir("output/native", { recursive: true });
-  await Bun.write(`output/native/${dialog ? "editor-dialog-result" : "editor"}.png`, Buffer.from(frame.image, "base64"));
+  await Bun.write(`output/native/${dialog ? "editor-dialog-result" : "editor"}.jpg`, Buffer.from(frame.image, "base64"));
   report.actualText = actual;
   if (actual !== expected) throw new Error("Editor did not save the expected text");
   if (await readFile(untouched, "utf8") !== "Must remain unchanged\n") throw new Error("Unselected file changed");

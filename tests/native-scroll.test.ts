@@ -33,7 +33,7 @@ import { startBroker, call } from "../src/ipc";
       if (toolkit === "x11") expect((await state()).deviceManager).toContain("XI2");
       const scroll = { type: "scroll", x: 200, y: 200, deltaY: 3 };
       const frame = await call(broker.socket, "session.observe", session) as { image: string };
-      await Bun.write(`output/scroll-${toolkit}.png`, Buffer.from(frame.image, "base64"));
+      await Bun.write(`output/scroll-${toolkit}.jpg`, Buffer.from(frame.image, "base64"));
       expect((await client.callTool({ name: "orbit_act", arguments: { ...session, requestId: crypto.randomUUID(), action: scroll } })).isError).not.toBe(true);
       const down = await wait(value => value.vertical > 0);
       expect(down.horizontal).toBe(0);

@@ -108,6 +108,6 @@ async function waitGone(pids: number[]) {
       await Bun.sleep(20);
     }
     await expect(call(broker.socket, "session.observe", a)).rejects.toMatchObject({ code: "SESSION_CLOSED" });
-    expect(await call(broker.socket, "session.observe", b)).toMatchObject({ mimeType: "image/png" });
+    expect(await call(broker.socket, "session.observe", b)).toMatchObject({ mimeType: "image/jpeg" });
   } finally { await broker.close(); }
 }, 20000);

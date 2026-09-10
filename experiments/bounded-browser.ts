@@ -32,7 +32,7 @@ try {
   if (result.text !== "Bounded Orbit works") throw new Error("Incorrect form result");
   report.formResult = result.text;
   const frame = await sessions.dispatch({ method: "session.observe", params: session }) as { image: string };
-  await Bun.write("output/bounded-browser.png", Buffer.from(frame.image, "base64"));
+  await Bun.write("output/bounded-browser.jpg", Buffer.from(frame.image, "base64"));
   const stopping = performance.now();
   await sessions.dispatch({ method: "session.stop", params: session });
   report.stopMs = Math.round(performance.now() - stopping);

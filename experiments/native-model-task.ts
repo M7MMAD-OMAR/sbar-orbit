@@ -95,7 +95,7 @@ finally {
     "Temporary selected file and isolated application state; not a concurrent-file lease test.",
     "Application exit checks its launch PID; separate lifecycle tests cover sampled descendants.",
     "No host focus telemetry or simultaneous human-work test in this probe."];
-  for (let i = 0; i < frames.length; i++) await Bun.write(`output/connectors/${host}-native-${i + 1}.png`, frames[i]!);
+  for (let i = 0; i < frames.length; i++) await Bun.write(`output/connectors/${host}-native-${i + 1}.jpg`, frames[i]!);
   await Bun.write(`output/connectors/${host}-native.json`, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report, null, 2));
 }

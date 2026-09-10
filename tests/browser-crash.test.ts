@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { expectDeclaredImage } from "./frame-format";
 import { readFile, readdir } from "node:fs/promises";
 import { call, startBroker } from "../src/ipc";
 
@@ -44,7 +45,7 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
       await expect(call(fresh.socket, "session.observe", session)).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
       const replacement = await call(fresh.socket, "session.create", { backend: "browser" }) as { sessionId: string };
       const frame = await call(fresh.socket, "session.observe", replacement) as { image: string };
-      expect(Buffer.from(frame.image, "base64").subarray(1, 4).toString()).toBe("PNG");
+      expectDeclaredImage(frame, "image/jpeg");
       expect(await call(fresh.socket, "session.stop", replacement)).toMatchObject({ state: "closed" });
     } finally { await fresh.close(); }
   } finally {

@@ -13,7 +13,7 @@ const scratch = await mkdtemp("/tmp/orbit-claude-task-");
 const broker = await startBroker();
 const expected = `orbit-${crypto.randomUUID()}`;
 const submissions: string[] = [];
-const events: { method: unknown; action?: unknown; selector?: unknown; succeeded: boolean; errorCode?: string; pngBytes?: number }[] = [];
+const events: { method: unknown; action?: unknown; selector?: unknown; succeeded: boolean; errorCode?: string; frameBytes?: number }[] = [];
 const dispatch = broker.sessions.dispatch.bind(broker.sessions);
 broker.sessions.dispatch = async value => {
   const request = value as { method?: unknown; params?: { action?: { type?: unknown; selector?: unknown } } };
@@ -25,7 +25,7 @@ broker.sessions.dispatch = async value => {
       const frame = result as { image: string };
       const bytes = Buffer.from(frame.image, "base64");
       if (!bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw new Error("Invalid PNG");
-      event.pngBytes = bytes.length;
+      event.frameBytes = bytes.length;
     }
     return result;
   } catch (error) { event.errorCode = (error as { code?: string }).code; throw error; }
@@ -80,7 +80,7 @@ try {
       answerMatches = answer.result === expected && answer.visualCode === visualCode;
     } catch { answerMatches = false; }
     const pause = events.findIndex(e => e.method === "session.pause" && e.succeeded);
-    const observe = events.findIndex(e => e.method === "session.observe" && e.succeeded && (e.pngBytes ?? 0) > 0);
+    const observe = events.findIndex(e => e.method === "session.observe" && e.succeeded && (e.frameBytes ?? 0) > 0);
     const denied = events.findIndex(e => e.action === "fill" && !e.succeeded && e.errorCode === "PAUSED");
     const resume = events.findIndex(e => e.method === "session.resume" && e.succeeded);
     const fill = events.findIndex(e => e.action === "fill" && e.succeeded);

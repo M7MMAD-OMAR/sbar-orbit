@@ -22,7 +22,7 @@ flowchart LR
 | Display | One private `HEADLESS-1` output, 1280 x 800; no DRM backend requested |
 | Wayland | Saved `Orbit wayland independent input` |
 | X11 | Saved `Orbit x11 independent input` |
-| Capture | PNG for each backend, visually inspected against saved state |
+| Capture | JPEG quality 80 for each backend, visually inspected against saved state |
 | Host observation | 3 samples, no owned app or compositor PID in Hyprland clients or active window |
 | Shutdown | Owned compositor exited with code 0 |
 | File access | Fixtures wrote their own JSON on this filesystem, without a VM |
@@ -110,7 +110,7 @@ The test deliberately changes each entry with keyboard input before requesting t
 
 GNOME Text Editor 50.1, GTK 4.22.4 and GtkSourceView 5.20.0 completed one selected-file workflow on the private Wayland display. Orbit launched a standalone instance with temporary XDG config/data/cache/state directories, opened a disposable file, selected all, pasted Arabic/emoji and Latin text, and invoked Ctrl+S. Reading the file from disk matched the expected UTF-8 content exactly. A second sentinel file remained unchanged and the editor process exited after session stop.
 
-[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts`. The captured application image is `output/native/editor.png`; disk readback, rather than the title-bar save indicator, establishes persistence.
+[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts`. The captured application image is `output/native/editor.jpg`; disk readback, rather than the title-bar save indicator, establishes persistence.
 
 Early attempts exposed two application details. An explicit final newline in the pasted text produced an extra saved newline, consistent with [GtkSourceView's implicit trailing newline](https://api.pygobject.gnome.org/GtkSource-5/class-Buffer.html). Another attempt selected content before asynchronous file loading/focus settled. The passing probe clicks the editor at a known location and uses short application-specific delays before selection, paste and save. This is a real app proof with those assumptions, not a general readiness solution. Concurrent file editing and comprehensive filesystem write auditing remain open; checking one sentinel does not prove the app cannot write elsewhere.
 
@@ -118,7 +118,7 @@ Early attempts exposed two application details. An explicit final newline in the
 
 The same editor also passed an actual file-picker workflow. Starting with no file argument, Orbit sent Ctrl+O, opened the location field with Ctrl+L, pasted only the temporary file path and confirmed with Enter. The chooser was captured on the private display and visually inspected. Subsequent Arabic/emoji editing and Ctrl+S produced exactly the expected bytes on disk; the sentinel file stayed unchanged and the application exited after stop.
 
-[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts --dialog`. Images: `output/native/file-dialog.png` and `output/native/editor-dialog-result.png`. This tests GNOME Text Editor's chooser with private display endpoints and its host session bus removed. Portal-backed dialogs, other applications and simultaneous file editing are not proven. The application-specific focus and settle limitations above still apply.
+[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts --dialog`. Images: `output/native/file-dialog.jpg` and `output/native/editor-dialog-result.jpg`. This tests GNOME Text Editor's chooser with private display endpoints and its host session bus removed. Portal-backed dialogs, other applications and simultaneous file editing are not proven. The application-specific focus and settle limitations above still apply.
 
 ## Combined-suite transport fix
 
@@ -134,7 +134,7 @@ Codex CLI completed a GNOME Text Editor task through the real Orbit MCP tools. I
 
 [validation summary](validation.md) and [validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-model-task.ts`. The experiment permits only the exact editor launch, four Orbit tools and one Fedora session, disables shell/web tools, and limits the model process to 120 seconds under the shared resource caps. No fixed click coordinates or original code are supplied in the prompt. The model chooses focus using screenshots.
 
-This is one model-driven native Wayland workflow, beyond the scripted GTK fixtures and editor probe. It does not establish all-app compatibility, X11 model coverage, concurrent file ownership, human takeover, continuous no-interference telemetry or repeated reliability. Three private-display PNGs were returned; the saved image was visually inspected.
+This is one model-driven native Wayland workflow, beyond the scripted GTK fixtures and editor probe. It does not establish all-app compatibility, X11 model coverage, concurrent file ownership, human takeover, continuous no-interference telemetry or repeated reliability. Three private-display frames were returned; the saved image was visually inspected.
 
 Claude Code also passed the same editor task through the identical Orbit tools: three screenshots, correct original-code readback, exact Arabic/emoji file replacement, unchanged neighboring file and a closed application. [validation summary](validation.md) and [validation summary](validation.md). Run `bun run scripts/limited.ts bun run experiments/native-model-task.ts claude`; omitting the host still selects Codex. Claude uses a temporary strict MCP config, disables built-in tools and hooks, avoids session persistence and has a $1 API budget ceiling. Both hosts use existing authentication. No persistent connector settings changed.
 

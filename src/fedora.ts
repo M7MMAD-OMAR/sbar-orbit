@@ -46,6 +46,9 @@ export function parseNativeAction(value: unknown): NativeAction {
 const project = resolve(import.meta.dir, "..");
 const { runtime, executables } = nativeRuntimePaths(project);
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+// One frame format for the private display. Measured on this output, PNG deflate added about 70 ms per frame
+// on top of a 7 ms raw readback, while JPEG at quality 80 added almost nothing.
+const capture = { type: "jpeg", quality: "80", mimeType: "image/jpeg" } as const;
 async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> {
   const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
   const timeout = setTimeout(() => child.kill(), 5000);
@@ -223,11 +226,11 @@ export class FedoraBackend {
   async observe() {
     const capturedAt = Date.now();
     this.ensureOpen();
-    const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-"], this.env);
+    const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-t", capture.type, "-q", capture.quality, "-"], this.env);
     const tree = await this.ipc("-t", "get_tree");
     const focused = (node: any): any => node.focused && node.pid ? node : [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].map(focused).find(Boolean);
     const app = focused(tree);
-    return { mimeType: "image/png", image: image.toString("base64"), capturedAt, width: 1280, height: 800,
+    return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: 1280, height: 800,
       presence: { title: String(app?.name ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer } };
   }
   close(): Promise<void> {

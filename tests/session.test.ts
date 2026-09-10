@@ -1,5 +1,6 @@
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { test, expect } from "bun:test";
+import { expectDeclaredImage } from "./frame-format";
 import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ test("pause drains accepted work and rejects new input; timeout permits recovery
     expect(await paused).toMatchObject({ state: "paused" });
     expect(await run("session.resume", session)).toMatchObject({ state: "running" });
     const frame = await run("session.observe", session) as { image: string };
-    expect(Buffer.from(frame.image, "base64").subarray(1, 4).toString()).toBe("PNG");
+    expectDeclaredImage(frame, "image/jpeg");
   } finally { await broker.close(); }
 }, 15000);
 
@@ -91,7 +92,7 @@ test("CLI creates a session, acts on it, observes it and closes it", async () =>
     await cli("act", sessionId, JSON.stringify({ type: "navigate", url: `http://127.0.0.1:${fixture.port}` }));
     expect(await cli("act", sessionId, JSON.stringify({ type: "read", selector: "#result" }))).toMatchObject({ result: { text: "CLI connected" } });
     const frame = await cli("session", "observe", sessionId);
-    expect(Buffer.from(frame.result.image, "base64").subarray(1, 4).toString()).toBe("PNG");
+    expectDeclaredImage(frame.result, "image/jpeg");
     expect(await cli("session", "stop", sessionId)).toMatchObject({ result: { state: "closed" } });
   } finally { await broker.close(); fixture.stop(true); }
 }, 15000);

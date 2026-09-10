@@ -1,5 +1,6 @@
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { test, expect } from "bun:test";
+import { expectDeclaredImage } from "./frame-format";
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Sessions } from "../src/session";
@@ -31,8 +32,8 @@ const enabled = process.env.ORBIT_TEST_NATIVE === "1";
       await act(session.sessionId, { type: "pointer", x: 550, y: 180 });
       expect(await saved(files[i]!, i ? "Session B" : "Session A")).toBe(true);
     }
-    const frame = await run("session.observe", a) as { image: string };
-    expect(Buffer.from(frame.image, "base64").subarray(0, 8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+    const frame = await run("session.observe", a) as { image: string; mimeType: string };
+    expectDeclaredImage(frame, "image/jpeg");
     await run("session.pause", a);
     await expect(act(a.sessionId, { type: "text", text: "denied" })).rejects.toMatchObject({ code: "PAUSED" });
     await run("session.control", { ...a, input: { type: "click", x: 120, y: 180 } });
