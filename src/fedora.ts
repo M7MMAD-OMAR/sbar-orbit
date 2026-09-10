@@ -5,6 +5,7 @@ import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { swayRequest } from "./sway-ipc";
+import { nativeRuntimePaths } from "./runtime-paths";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
@@ -43,8 +44,7 @@ export function parseNativeAction(value: unknown): NativeAction {
   throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text and paste");
 }
 const project = resolve(import.meta.dir, "..");
-const runtime = join(project, ".runtime/sway");
-const executables = join(runtime, "root/usr/bin");
+const { runtime, executables } = nativeRuntimePaths(project);
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> {
   const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });

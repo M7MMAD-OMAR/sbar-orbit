@@ -11,6 +11,7 @@ Sbar Orbit, local agent workspace prototype
 
   sbar-orbit serve               Start the broker with shared resource limits
   sbar-orbit doctor              Inspect the running broker and its resources
+  sbar-orbit preflight           Check prerequisites without starting applications
   sbar-orbit preview             Print the optional viewer link
   sbar-orbit session create      Create an owned browser session
   sbar-orbit session create fedora
@@ -23,6 +24,10 @@ Sbar Orbit, local agent workspace prototype
 Set ORBIT_SOCKET to the socket printed by serve for client commands.
 Requires Bun and installed project dependencies. Fedora/Linux prototype.
 HELP
+    ;;
+  preflight)
+    shift
+    exec bun run "$orbit_root/scripts/preflight.ts" "$@"
     ;;
   serve)
     shift

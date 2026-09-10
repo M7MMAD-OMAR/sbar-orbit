@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added standalone `sbar-orbit preflight` to report browser/native prerequisite availability without launching applications or requiring a broker socket.
+
 - Added local source launcher activation, atomic upgrade/rollback and link-only uninstall. Retained source and account/workspace data are preserved; dependencies remain a separate preparation step.
 
 - Stopped hidden preview tabs from decoding or drawing late-arriving frames, and skipped their freshness updates. Already-started capture/decoding can finish; bitmaps are still released.

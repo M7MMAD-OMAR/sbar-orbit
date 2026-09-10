@@ -60,3 +60,17 @@ bun run scripts/limited.ts bun run scripts/local-install.ts uninstall "$HOME/.lo
 Removal deletes only the recognized launcher link. Source versions, dependencies, accounts and retained browser workspaces stay in place. It refuses ordinary files, unrelated links and symlinked prefix/bin directories. A missing or invalid source makes a link unrecognizable; inspect it manually instead of forcing removal. A concurrent or interrupted install lock causes refusal; inspect `PREFIX/bin/.sbar-orbit-install-lock` before retrying. No lock is automatically declared stale.
 
 Filesystem tests cover install, upgrade, rollback, removal, preserved data, refused collisions and failed replacement. The real checkout launcher also returned help through a temporary prefix outside the checkout. These checks launch no browser or agent. Fresh-machine dependency installation and a complete installed native runtime remain unverified.
+
+## Check prerequisites without starting a session
+
+```sh
+./bin/sbar-orbit preflight
+```
+
+This new checkout command requires Bun, but no broker socket or installed project dependencies to load its checks. It only checks files, executable permissions and module resolution. It does not start a browser, compositor, broker or system service, download anything, or record personal paths. `doctor` remains the separate command for a running broker.
+
+The JSON report separates browser and native prerequisites, gives a remedy for missing items, and lists what is not verified. Exit status is 0 when browser prerequisites are found, otherwise 1. Inspect `nativePrerequisitesFound` separately if using native apps. This is an availability check, not a successful runtime or resource-acceptance result.
+
+Browser candidates currently match the owned launcher: `/opt/google/chrome/chrome`, `/usr/bin/chromium`, `/usr/bin/chromium-browser`. Native files must exist in this source version's `.runtime/sway`, alongside system Python, Xwayland, grim and wl-clipboard. The existing native bootstrap is `experiments/fedora-display/bootstrap.sh`; inspect its pinned Fedora package versions before using it on another release. Shared-library compatibility, cgroup delegation, private disk-backed storage and real application behavior need separate validation.
+
+On the development workstation the read-only command found both prerequisite groups. Three focused tests cover missing browser/native/common inputs, unsupported OS, executable-check semantics and standalone invocation without ORBIT_SOCKET. No live trial was restarted for this check.
