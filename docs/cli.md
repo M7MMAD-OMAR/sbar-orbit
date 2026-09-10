@@ -30,6 +30,22 @@ bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
 
 `session observe ID` returns a JPEG as base64 JSON, with the format named in the `mimeType` field. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
 
+## Keeping a broker available
+
+`sbar-orbit serve` runs in the foreground and binds a fresh socket each time, so every client must be told the new path. A managed broker instead binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so generated host configuration survives a restart.
+
+```sh
+sbar-orbit service install
+systemctl --user daemon-reload
+systemctl --user enable --now sbar-orbit.service
+```
+
+`service install` writes two files into `~/.config/systemd/user`: `sbarorbit.slice` carrying the shared CPU, memory, swap and task budget, and `sbar-orbit.service` bound to that slice. The budget must live on the slice because the broker looks for `sbarorbit.slice` in its own cgroup path. Enabling, starting and stopping stay with `systemctl`, so nothing changes your session without you running the command. Stop with `systemctl --user stop sbar-orbit.service`, and remove the units with `sbar-orbit service uninstall` followed by `systemctl --user daemon-reload`.
+
+Note that `~/.config` is a Git repository on this workstation, so the written units appear as changes there.
+
+What this does and does not give you. The broker starts at login and restarts on failure; surviving a full logout additionally needs `loginctl enable-linger`, which requires elevation. Only one managed broker can run: a second refuses with `PROFILE_BUSY` rather than displacing the first, while a socket file nothing answers on is treated as stale and replaced. Sessions do not survive a broker restart: `Sessions.close` stops every session on shutdown, so a restarted broker comes back empty. The per-lifetime caps of 32 sessions and 10,000 action IDs were written assuming restarts, so a long-lived broker eventually refuses new work and must be restarted.
+
 ## Contract
 
 The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:true,result}` or `{ok:false,error:{code,message}}`. The TypeScript client is `call(socket, method, params)` in `src/ipc.ts`.

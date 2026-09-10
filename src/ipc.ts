@@ -6,12 +6,21 @@ import { Sessions } from "./session";
 import { OrbitError } from "./errors";
 import { startPreview } from "./preview";
 import { createWorkspaceDirectory } from "./workspace-storage";
+import { claimSocket } from "./service";
 
-export async function startBroker(options: { accountRoot?: string } = {}) {
+export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
   await requireResourceBudget();
-  const root = await mkdtemp(join(tmpdir(), "orbit-broker-"));
-  await chmod(root, 0o700);
-  const socket = join(root, "broker.sock");
+  // A managed broker binds one fixed path so host configuration survives restarts. Every other
+  // broker keeps a private directory, so tests and experiments cannot collide with each other.
+  let socket = options.socketPath;
+  if (socket) await claimSocket(socket, async path => {
+    try { await call(path, "doctor"); return true; } catch { return false; }
+  });
+  else {
+    const root = await mkdtemp(join(tmpdir(), "orbit-broker-"));
+    await chmod(root, 0o700);
+    socket = join(root, "broker.sock");
+  }
   const sessions = new Sessions(await createWorkspaceDirectory("broker"), options.accountRoot);
   let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({

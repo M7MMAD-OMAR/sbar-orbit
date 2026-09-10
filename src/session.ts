@@ -15,7 +15,8 @@ interface Session {
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
 }
-const capabilities = ["navigate", "fill", "click", "read", "observe", "pause", "resume", "stop"];
+// Reported by doctor before any session exists. A live session reports its own backend's list.
+const capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "observe", "pause", "resume", "stop"];
 export class Sessions {
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();

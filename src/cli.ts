@@ -1,11 +1,14 @@
 import { startBroker, call } from "./ipc";
+import { serviceSocketPath } from "./service";
 import { OrbitError } from "./errors";
 
 const [command, verb, arg, accountName] = process.argv.slice(2);
 try {
   if (command === "serve") {
-    const broker = await startBroker();
-    console.log(JSON.stringify({ socket: broker.socket }));
+    // A managed broker binds the fixed path a service unit and generated host configuration expect.
+    const managed = process.argv.includes("--managed-socket");
+    const broker = await startBroker(managed ? { socketPath: serviceSocketPath() } : {});
+    console.log(JSON.stringify({ socket: broker.socket, managed }));
     let stopping = false;
     const stop = async () => {
       if (stopping) return;

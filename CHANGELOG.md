@@ -4,6 +4,10 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added an optional managed broker: `sbar-orbit service install` writes a `systemd --user` service bound to a slice that carries the shared budget, and `serve --managed-socket` binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`. A second managed broker refuses rather than displacing the first; a socket nothing answers on is treated as stale. Generated MCP configuration now prefers that socket, so it survives a restart. Enabling, starting and stopping stay with `systemctl`. Sessions still do not survive a restart. Brokers started by tests and experiments keep their own private sockets and are unaffected.
+
+- Corrected the capability list `doctor` reports, which still omitted scroll and the tab actions.
+
 - Added `experiments/live-trial.ts` and `experiments/pointer-separation.ts`, recording measured session cost and evidence that a session holds no connection to the host display. Corrected the MCP observe description, the preview limits and the project milestones, which still described one page per session, PNG capture and an unmoved resource gate.
 
 - Followed browser tabs that a site opens by itself, so a login, consent or payment window is now reachable instead of leaving the agent bound to the opening tab for the life of the session. Added `select-tab` and `close-tab` actions keyed to the 1-based number observation reports, sized adopted tabs to the session viewport so reported and captured dimensions agree, moved the pointer overlay to whichever tab is followed, and fell back to a surviving tab when the followed one closes. Each action and each frame now resolves the followed tab once, so a tab opened mid-action cannot redirect it.

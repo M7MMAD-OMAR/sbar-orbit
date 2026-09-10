@@ -10,7 +10,7 @@ Start the broker, set `ORBIT_SOCKET` to its printed path, then run:
 ./bin/sbar-orbit connector-config
 ```
 
-Register the generated server through your host's MCP settings. The command prints configuration without editing personal settings. Preserve existing servers and regenerate configuration after restarting the broker because its socket changes.
+Register the generated server through your host's MCP settings. The command prints configuration without editing personal settings. Preserve existing servers. A broker started by hand uses a fresh socket each time, so regenerate configuration after restarting it. The managed service binds one fixed socket instead, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so its configuration stays valid across restarts.
 
 Tool approval and selection belong to the host. An API model requires a runtime that executes its tool calls. An app with no custom tool interface cannot automatically use Orbit. See the [MCP architecture](https://modelcontextprotocol.io/specification/2024-11-05/architecture) and [Claude MCP setup](https://code.claude.com/docs/en/mcp).
 

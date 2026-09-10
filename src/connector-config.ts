@@ -1,9 +1,15 @@
 import { call } from "./ipc";
+import { serviceSocketPath } from "./service";
 import { join } from "node:path";
-const socket = process.env.ORBIT_SOCKET;
-if (!socket) { console.error("Set ORBIT_SOCKET to the running broker socket"); process.exit(1); }
+// Prefer the managed broker's fixed socket, so generated configuration survives a restart.
+let socket = process.env.ORBIT_SOCKET, managed = false;
+if (!socket) {
+  const path = serviceSocketPath();
+  try { await call(path, "doctor"); socket = path; managed = true; } catch {}
+}
+if (!socket) { console.error("Start the managed service, or set ORBIT_SOCKET to a running broker socket"); process.exit(1); }
 await call(socket, "doctor");
 console.log(JSON.stringify({ mcpServers: { orbit: {
   command: process.execPath, args: [join(import.meta.dir, "mcp.ts")],
   env: { ORBIT_SOCKET: socket },
-} } }, null, 2));
+} }, managedSocket: managed }, null, 2));

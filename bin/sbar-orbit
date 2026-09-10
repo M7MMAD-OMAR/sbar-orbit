@@ -10,6 +10,10 @@ case "${1:-help}" in
 Sbar Orbit, local agent workspace prototype
 
   sbar-orbit serve               Start the broker with shared resource limits
+  sbar-orbit serve --managed-socket
+                                 Bind the fixed socket a service unit expects
+  sbar-orbit service install     Write the user service and slice units
+  sbar-orbit service uninstall   Remove only the units Orbit wrote
   sbar-orbit doctor              Inspect the running broker and its resources
   sbar-orbit preflight           Check prerequisites without starting applications
   sbar-orbit preview             Print the optional viewer link
@@ -28,6 +32,10 @@ HELP
   preflight)
     shift
     exec bun run "$orbit_root/scripts/preflight.ts" "$@"
+    ;;
+  service)
+    shift
+    exec bun run "$orbit_root/scripts/service.ts" "$@"
     ;;
   serve)
     shift
