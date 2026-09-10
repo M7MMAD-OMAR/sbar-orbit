@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added bounded read-only CPU observation, separating Orbit one-core and machine percentages from host busy/iowait totals. This does not establish the cause of the participant CPU spike.
+
 - Fixed publication-path validation so example environment files cannot bypass private-directory exclusions; index auditing and packaging now share one policy.
 
 - Defaulted preview to 1 FPS, added on-demand and opt-in Smooth modes, stopped hidden-tab polling and added reconnect backoff. Scheduling tests pass; desktop CPU acceptance remains unresolved.

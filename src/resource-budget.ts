@@ -1,6 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
+import { parseHostCpu, type CpuSample } from "./cpu-sample";
+
+/** Aggregate counters only: no process arguments, page content or credentials. */
+export async function readCpuSample(): Promise<CpuSample> {
+  await requireResourceBudget();
+  const root = await budgetRoot();
+  const [orbit, host] = await Promise.all([
+    readFile(join(root, "cpu.stat"), "utf8"), readFile("/proc/stat", "utf8"),
+  ]);
+  const usage = /^usage_usec\s+(\d+)$/m.exec(orbit)?.[1];
+  if (!usage || !Number.isSafeInteger(Number(usage))) throw new Error("Invalid Orbit CPU counter");
+  return { monotonicMs: performance.now(), orbitUsec: Number(usage), ...parseHostCpu(host) };
+}
 
 async function budgetRoot() {
   if (process.platform !== "linux") throw new Error("Linux required");
