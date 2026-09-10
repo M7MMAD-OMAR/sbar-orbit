@@ -6,7 +6,8 @@ import { OrbitError } from "./errors";
 import { chromeExecutables } from "./runtime-paths";
 
 /** Own Chrome separately from its CDP connection, including failed startup. */
-export async function launchChrome(profile: string, viewport = { width: 1280, height: 800 }) {
+export const viewport = { width: 1280, height: 800 };
+export async function launchChrome(profile: string, size = viewport) {
   await requireResourceBudget();
   const executable = chromeExecutables.find(path => Bun.file(path).size > 0);
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");
@@ -60,7 +61,7 @@ export async function launchChrome(profile: string, viewport = { width: 1280, he
     const context = browser.contexts()[0];
     if (!context) throw new OrbitError("BACKEND_FAILED", "Owned Chrome has no default context");
     const page = context.pages()[0] ?? await context.newPage();
-    await page.setViewportSize(viewport);
+    await page.setViewportSize(size);
     const { pid } = JSON.parse(await readFile(join(profile, "owner.json"), "utf8"));
     if (await readFile(`/proc/${pid}/cgroup`, "utf8") !== await readFile("/proc/self/cgroup", "utf8"))
       throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome moved outside its resource scope");
