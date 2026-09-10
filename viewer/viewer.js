@@ -6,7 +6,11 @@ let previewMode = 'balanced', captureQueued = false, pollFailures = 0;
 let lastCost = 0, lastGap = 0, lastRpc = 0, lastDecode = 0, lastDraw = 0;
 element('preview-mode').addEventListener('change', () => { previewMode = element('preview-mode').value; captureQueued = false; });
 element('refresh-frame').onclick = () => { captureQueued = true; };
-const frame = element('frame'), sessions = element('sessions');
+const frame = element('frame'), sessions = element('sessions'), tabStrip = element('tabs');
+// Sizes an agent or a person can pick. The broker caps the total pixel count, because every frame
+// at the chosen size is captured, encoded and decoded again on each poll.
+const surfaces = [[1280, 800], [1440, 900], [1600, 1000], [1920, 1080], [1920, 1200]];
+let tabs = [], surfaceValue = '1280x800';
 let selected = '', state = '', backend = '', accountName = '', capturedAt = 0, imageWidth = 1280, imageHeight = 800, busy = false;
 function error(message) { element('error').textContent = message; element('error').hidden = !message; }
 async function rpc(method, params = {}) {
@@ -32,7 +36,27 @@ function controls() {
   element('account-controls').hidden = !accountName;
   element('account-label').textContent = accountName ? `Account snapshot: ${accountName}. Pause, then save to reuse its login later.` : '';
   element('save-account').disabled = !accountName || !live || busy || state !== 'paused';
-  frame.classList.toggle('controllable', live && !busy && state === 'paused');
+  const adjustable = live && !busy && state === 'paused';
+  element('surface').disabled = !adjustable;
+  for (const id of ['fullscreen', 'restore']) { element(id).hidden = backend !== 'fedora'; element(id).disabled = !adjustable; }
+  for (const button of tabStrip.children || []) button.disabled = !adjustable;
+  frame.classList.toggle('controllable', adjustable);
+}
+/** One entry per browser tab or per window of the private display, numbered the way observe reports them. */
+function renderTabs(list) {
+  const same = list.length === tabs.length && list.every((entry, index) => entry.label === tabs[index].label && entry.active === tabs[index].active);
+  tabs = list;
+  tabStrip.hidden = list.length < 2;
+  if (same) return;
+  tabStrip.replaceChildren(...list.map(entry => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'tab'; button.textContent = entry.label || `Tab ${entry.tab}`;
+    button.setAttribute('role', 'tab'); button.setAttribute('aria-selected', String(!!entry.active));
+    button.onclick = () => command('session.control', { input: backend === 'fedora'
+      ? { type: 'window', command: 'focus', tab: entry.tab } : { type: 'select-tab', tab: entry.tab } });
+    return button;
+  }));
+  controls();
 }
 async function refreshSessions() {
   const list = await rpc('session.list');
@@ -54,6 +78,19 @@ async function refreshSessions() {
   element('activity').textContent = activity ? `${activity.actor === 'human' ? 'You' : agentName}: ${verbs[activity.type] || 'Input'} · ${activity.state} · Step ${activity.sequence}` : 'No actions yet';
   state = current?.state || '';
   backend = list.find(s => s.sessionId === selected)?.backend || '';
+  const size = current?.surface;
+  if (size) {
+    const value = `${size.width}x${size.height}`;
+    if (value !== surfaceValue || !(element('surface').options || []).length) {
+      surfaceValue = value;
+      const choices = surfaces.some(([w, h]) => `${w}x${h}` === value) ? surfaces : [...surfaces, [size.width, size.height]];
+      element('surface').replaceChildren(...choices.map(([w, h]) => {
+        const option = document.createElement('option');
+        option.value = `${w}x${h}`; option.textContent = `${w} × ${h}`; return option;
+      }));
+      element('surface').value = value;
+    }
+  }
   accountName = list.find(s => s.sessionId === selected)?.accountName || '';
   element('empty').hidden = !!selected && !frame.hidden;
   if (state === 'closed') { capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  element('empty').hidden = false; element('empty').textContent = 'This session has stopped.'; }
@@ -67,6 +104,12 @@ async function command(method, params = {}) {
   catch (e) { error(e.message); }
   finally { busy = false; controls(); }
 }
+element('surface').addEventListener('change', () => {
+  const [width, height] = element('surface').value.split('x').map(Number);
+  if (width && height) command('session.control', { input: { type: 'resize', width, height } });
+});
+element('fullscreen').onclick = () => command('session.control', { input: { type: 'window', command: 'fullscreen' } });
+element('restore').onclick = () => command('session.control', { input: { type: 'window', command: 'restore' } });
 element('save-account').onclick = () => command('session.account.save');
 for (const name of ['pause', 'resume', 'stop']) element(name).onclick = () => command(`session.${name}`);
 element('send').onclick = () => command('session.control', { input: { type: backend === 'fedora' ? 'paste' : 'text', text: element('text').value } });
@@ -121,7 +164,8 @@ async function poll() {
             frame.hidden = false; element('empty').hidden = true;
             const presence = image.presence;
             element('page-title').textContent = presence?.title || 'Untitled page or application';
-            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount ? ` · Controlled tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''}`;
+            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount ? ` · Controlled tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''} · ${image.width} × ${image.height}`;
+            renderTabs(Array.isArray(presence?.tabs) ? presence.tabs : []);
             const position = presence?.pointer;
             pointer.hidden = !position;
             if (position) {

@@ -1,15 +1,18 @@
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
-import { launchChrome, viewport } from "./chrome";
+import { launchChrome } from "./chrome";
+import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
 
 export type Action = { type: "navigate"; url: string } | { type: "fill"; selector: string; text: string }
-  | { type: "click" | "read"; selector: string } | { type: "select-tab" | "close-tab"; tab: number } | ScrollInput;
-export function parseAction(value: unknown): Action {
+  | { type: "click" | "read"; selector: string } | { type: "select-tab" | "close-tab"; tab: number }
+  | { type: "resize"; width: number; height: number } | ScrollInput;
+export function parseAction(value: unknown, size: Viewport = defaultViewport): Action {
   const action = record(value);
   switch (action.type) {
-    case "scroll": return parseScrollInput(action);
+    case "scroll": return parseScrollInput(action, size);
+    case "resize": return { type: "resize", ...parseViewport(action) };
     case "navigate": {
       const url = text(action.url, "url");
       let parsed: URL;
@@ -29,20 +32,29 @@ export function parseAction(value: unknown): Action {
     default: throw new OrbitError("UNSUPPORTED", "No backend supports this action");
   }
 }
+/** A short, stable tab label. Falls back to the host and path when a tab has no title yet. */
+function label(page: Page, title: string): string {
+  if (title) return title.slice(0, 60);
+  try {
+    const url = new URL(page.url());
+    return (url.protocol === "about:" ? "New tab" : `${url.host}${url.pathname === "/" ? "" : url.pathname}`).slice(0, 60);
+  } catch { return "New tab"; }
+}
 export class BrowserBackend {
-  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "observe", "pause", "resume", "stop"];
-  parseAction = parseAction;
+  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
+  parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
   private active: Page;
   onClose(listener: () => void) { this.owned.onClose(listener); }
-  private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, page: Page) {
+  get surface(): Viewport { return this.size; }
+  private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, page: Page, private size: Viewport) {
     this.active = page;
   }
-  static async create(profile: string): Promise<BrowserBackend> {
-    const owned = await launchChrome(profile);
+  static async create(profile: string, size: Viewport = defaultViewport): Promise<BrowserBackend> {
+    const owned = await launchChrome(profile, size);
     owned.context.setDefaultTimeout(3000);
     owned.context.setDefaultNavigationTimeout(10000);
-    const backend = new BrowserBackend(owned, owned.context, owned.page);
+    const backend = new BrowserBackend(owned, owned.context, owned.page, size);
     // A site that opens a login or consent tab must become reachable, so follow the newest page
     // the way a person would, and fall back to a survivor when the active page goes away.
     owned.context.on("page", page => { backend.adopt(page); });
@@ -55,7 +67,7 @@ export class BrowserBackend {
   private adopt(page: Page) {
     this.watch(page);
     this.active = page;
-    void page.setViewportSize(viewport).catch(() => {});
+    void page.setViewportSize(this.size).catch(() => {});
   }
   private watch(page: Page) {
     page.once("close", () => {
@@ -85,7 +97,7 @@ export class BrowserBackend {
     return page;
   }
   async act(value: unknown): Promise<unknown> {
-    const action = parseAction(value);
+    const action = this.parseAction(value);
     const page = this.page;
     switch (action.type) {
       case "scroll": return this.control(action);
@@ -97,6 +109,16 @@ export class BrowserBackend {
         this.active = this.select(action.tab);
         await this.active.bringToFront();
         return { tab: action.tab, url: this.active.url() };
+      }
+      case "resize": {
+        // Every open tab is resized, not only the followed one, so a tab switch does not change
+        // the meaning of the coordinates an agent just read from observe.
+        const size = { width: action.width, height: action.height };
+        const results = await Promise.allSettled(this.context.pages().map(open => open.setViewportSize(size)));
+        const failed = results.filter(result => result.status === "rejected").length;
+        if (failed === results.length) throw new OrbitError("BACKEND_FAILED", "The owned browser refused the new surface size");
+        this.size = size;
+        return { ...size, tabsResized: results.length - failed, tabCount: results.length };
       }
       case "close-tab": {
         const page = this.select(action.tab);
@@ -116,24 +138,30 @@ export class BrowserBackend {
     const url = new URL(page.url());
     const location = url.protocol === "about:" ? "New page" : `${url.origin}${url.pathname}`;
     const title = (await page.title()).slice(0, 160);
-    return { mimeType: "image/jpeg", image, capturedAt, width: 1280, height: 800,
-      presence: { title, location, pageCount: this.context.pages().length, pageIndex: this.context.pages().indexOf(page) + 1,
+    const pages = this.context.pages();
+    // Tab labels come from the URL, which is already in memory, rather than asking every tab for its
+    // title, so the strip in the viewer costs nothing per frame.
+    const tabs = pages.map((open, index) => ({ tab: index + 1, label: label(open, open === page ? title : ""), active: open === page }));
+    return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height,
+      presence: { title, location, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1, tabs,
         pointer: await (this.pointers.get(page) ?? (async () => null))() } };
   }
   async control(value: unknown) {
     const input = record(value);
+    // Tab and surface changes are session state rather than page input, so they reuse the parsed action.
+    if (["select-tab", "close-tab", "resize"].includes(String(input.type))) return this.act(input);
     const page = this.page;
     switch (input.type) {
       case "scroll": {
-        const scroll = parseScrollInput(input);
+        const scroll = parseScrollInput(input, this.size);
         await page.mouse.move(scroll.x, scroll.y);
         await page.mouse.wheel(0, scroll.deltaY * 100);
         break;
       }
-      case "click":
-        if (typeof input.x !== "number" || typeof input.y !== "number" || !Number.isFinite(input.x) || !Number.isFinite(input.y)
-          || input.x < 0 || input.y < 0 || input.x >= 1280 || input.y >= 800) throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
-        await page.mouse.click(input.x, input.y); break;
+      case "click": {
+        const at = requireInside(this.size, input.x, input.y);
+        await page.mouse.click(at.x, at.y); break;
+      }
       case "text":
         if (typeof input.text !== "string" || input.text.length > 16384) throw new OrbitError("INVALID_REQUEST", "Invalid text");
         await page.keyboard.insertText(input.text); break;

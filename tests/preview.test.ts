@@ -128,7 +128,7 @@ test("frame age includes capture work", async () => {
   const page = { url: () => "about:blank", title: async () => "", isClosed: () => false, screenshot: async () => { await Bun.sleep(80); return Buffer.from("fixture"); } };
   // Built on the real prototype so the active-tab getter is exercised rather than bypassed.
   const fake = Object.assign(Object.create(BrowserBackend.prototype), {
-    pointers: new Map(), active: page, context: { pages: () => [page] } });
+    pointers: new Map(), active: page, size: { width: 1280, height: 800 }, context: { pages: () => [page] } });
   const frame = await BrowserBackend.prototype.observe.call(fake as typeof BrowserBackend.prototype);
   expect(Date.now() - frame.capturedAt).toBeGreaterThanOrEqual(60);
 });

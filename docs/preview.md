@@ -19,6 +19,18 @@ Preview now defaults to a 1000 ms target cadence. Choose On demand to stop autom
 
 The viewer draws into a reusable Canvas and closes each decoded ImageBitmap immediately after drawing, including discarded frames. This replaces the image-element path that retained hundreds of MiB of renderer shared memory. See the [memory investigation](viewer-memory.md) for measurements; the scripted sustained run passed, while simultaneous human-work confirmation remains open.
 
+## Tabs, windows and surface size
+
+Below the settings row the viewer shows one entry per tab of a browser session, or per window of a private display, numbered the way `observe` reports them. Selecting one follows that tab, or focuses that window. Native sessions also get **Fullscreen window** and **Restore window**.
+
+The **Size** control changes the session surface. Browser sessions resize every open tab, not only the followed one, so switching tabs does not change what a coordinate means. Native sessions resize the private display itself.
+
+All of these are manual control, so they require **Pause agent** first, for the same reason typing does: they change what the coordinates an agent just read refer to. An agent changes them for itself with the `resize`, `select-tab`, `close-tab` and `window` actions. Sizes are capped by total pixel count; the [measured cost curve](resources.md) is why.
+
+## Theming
+
+The viewer takes the desktop's own colour scheme when one is available, and otherwise uses its shipped palette. See [theming](theming.md).
+
 ## Boundaries
 
 API requests require both the per-broker token and the exact loopback origin. The viewer exposes only listing, observation, pause/resume/stop, manual control and explicit account snapshot saving. Session creation and arbitrary agent actions are not exposed through its HTTP route. Responses are not cached; the page disallows external scripts and framing.
@@ -37,7 +49,7 @@ The token is for the local viewer, not a per-agent security boundary. Programs r
 
 Browser skill was not listed, so the existing Playwright workflow was used headlessly. Viewports: 1280 by 1120 and 390 by 844. Screenshots: `output/playwright/viewer-desktop.png` and `viewer-mobile.png`. Mobile verifies layout, not comfortable operation of every desktop-sized target.
 
-Known limits: fixed 1280 by 800 browser viewport, no zoom, drag or uploads, and no tab picker in the viewer. The viewer shows which tab is followed but cannot switch it; only the agent can, through select-tab. Live account login, a 10-minute simultaneous-work session, sustained/native frame-rate distributions remain unverified. Native fixture preview and paused manual clicks/text pass the optional Fedora integration suite. Native shortcut controls are disabled. The full T3/T4 release gates remain open.
+Known limits: no zoom, drag or uploads. Live account login, a 10-minute simultaneous-work session, sustained/native frame-rate distributions remain unverified. Native fixture preview and paused manual clicks/text pass the optional Fedora integration suite. Native shortcut controls are disabled. The full T3/T4 release gates remain open.
 
 ### Viewer cost and scheduling
 
@@ -84,7 +96,7 @@ Browser wheel coverage: `bun run verify tests/browser-scroll.test.ts` checks the
 
 Each session has `agentName` and `taskName`, supplied when it is created through RPC or MCP. The CLI reads `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. Defaults are SbarOrbit and Agent workspace. These are descriptive labels, not authenticated agent identities. The selector retains a short session identifier to distinguish duplicate names.
 
-The viewer shows the controlled page title, URL origin/path without query or fragment, controlled tab index and owned tab count. Native sessions show their focused private application title. This identifies Orbit's page or private application, not a tab in the user's personal browser. A tab the site opens by itself becomes the followed tab, and the agent returns to another with select-tab; the viewer has no tab picker of its own.
+The viewer shows the controlled page title, URL origin/path without query or fragment, controlled tab index and owned tab count. Native sessions show their focused private application title. This identifies Orbit's page or private application, not a tab in the user's personal browser. A tab the site opens by itself becomes the followed tab. The viewer lists the session's tabs, or the windows of a private display, and switching between them is a manual action like any other, so it requires pause.
 
 Activity reports only action kind, actor, sequence and working/done/failed state. It does not store input text, selectors, command arguments or full URLs. Page titles and screenshots can still contain the application's private content and remain available only through the local access-controlled viewer.
 

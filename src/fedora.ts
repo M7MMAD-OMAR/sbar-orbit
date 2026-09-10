@@ -4,14 +4,27 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
+import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
 import { nativeRuntimePaths } from "./runtime-paths";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
-  | { type: "key"; key: string } | ScrollInput;
-export function parseNativeAction(value: unknown): NativeAction {
+  | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
+  | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
+/** Window management inside the private display. Nothing here can reach a window on the person's desktop. */
+const windowCommands = ["fullscreen", "restore", "focus", "close"] as const;
+export type WindowCommand = (typeof windowCommands)[number];
+export function parseNativeAction(value: unknown, size: Viewport = defaultViewport): NativeAction {
   const a = record(value);
+  if (a.type === "resize") return { type: "resize", ...parseViewport(a) };
+  if (a.type === "window") {
+    if (!windowCommands.includes(a.command as WindowCommand))
+      throw new OrbitError("UNSUPPORTED", `Window command must be one of ${windowCommands.join(", ")}`);
+    if (a.tab !== undefined && (!Number.isInteger(a.tab) || Number(a.tab) < 1 || Number(a.tab) > 64))
+      throw new OrbitError("INVALID_REQUEST", "Window tab requires the 1-based number reported by observe");
+    return { type: "window", command: a.command as WindowCommand, ...(a.tab === undefined ? {} : { tab: Number(a.tab) }) };
+  }
   if (a.type === "launch") {
     if (!Array.isArray(a.argv) || !a.argv.length || a.argv.length > 128 || a.argv.some(v => typeof v !== "string" || v.length > 4096 || v.includes("\0")) || !a.argv[0].startsWith("/"))
       throw new OrbitError("INVALID_REQUEST", "Launch requires an absolute executable and argument array");
@@ -21,11 +34,11 @@ export function parseNativeAction(value: unknown): NativeAction {
     return { type: "launch", argv: a.argv, toolkit: a.toolkit, ...(a.selectedFiles !== undefined ? { selectedFiles: a.selectedFiles as string[] } : {}) };
   }
   if (a.type === "pointer") {
-    if (!Number.isInteger(a.x) || !Number.isInteger(a.y) || Number(a.x) < 0 || Number(a.y) < 0 || Number(a.x) >= 1280 || Number(a.y) >= 800)
-      throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
-    return { type: "pointer", x: Number(a.x), y: Number(a.y) };
+    if (!Number.isInteger(a.x) || !Number.isInteger(a.y)) throw new OrbitError("INVALID_REQUEST", "Pointer coordinates must be whole pixels");
+    const at = requireInside(size, Number(a.x), Number(a.y));
+    return { type: "pointer", x: at.x, y: at.y };
   }
-  if (a.type === "scroll") return parseScrollInput(a);
+  if (a.type === "scroll") return parseScrollInput(a, size);
   if (a.type === "text") {
     if (typeof a.text !== "string" || a.text.length > 2048 || /[^\x20-\x7e]/.test(a.text))
       throw new OrbitError("UNSUPPORTED", "Native text currently supports up to 2048 printable ASCII characters");
@@ -41,7 +54,7 @@ export function parseNativeAction(value: unknown): NativeAction {
       throw new OrbitError("UNSUPPORTED", "Unsupported native key");
     return { type: "key", key: String(a.key) };
   }
-  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text and paste");
+  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text, paste, resize and window");
 }
 const project = resolve(import.meta.dir, "..");
 const { runtime, executables } = nativeRuntimePaths(project);
@@ -63,20 +76,20 @@ async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> 
   } finally { clearTimeout(timeout); }
 }
 export class FedoraBackend {
-  parseAction = parseNativeAction;
+  parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
-  readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
   private children: ChildProcessWithoutNullStreams[] = [];
   private device?: ChildProcessWithoutNullStreams;
   private clipboard?: ChildProcessWithoutNullStreams;
   private closing?: Promise<void>;
-  private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams) {
+  private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams, private size: Viewport) {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
-  static async create() {
+  static async create(size: Viewport = defaultViewport) {
   await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Fedora backend requires Linux");
     if (!await Bun.file(join(executables, "sway")).exists() || !await Bun.file(join(runtime, "pointer")).exists())
@@ -96,10 +109,10 @@ export class FedoraBackend {
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
-    await writeFile(config, "output HEADLESS-1 mode 1280x800\nseat seat0 fallback true\nxwayland force\ndefault_border none\nfocus_follows_mouse no\n");
+    await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\nxwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
     const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), "-c", config], { env, detached: true });
     compositor.stdout.resume(); compositor.stderr.resume();
-    const backend = new FedoraBackend(directory, env, compositor);
+    const backend = new FedoraBackend(directory, env, compositor, size);
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -126,6 +139,7 @@ export class FedoraBackend {
     } catch (error) { await backend.close(); throw error; }
   }
   onClose(listener: () => void) { this.listeners.push(listener); if (this.closed) listener(); }
+  get surface(): Viewport { return this.size; }
   private ensureOpen() { if (this.closed) throw new OrbitError("SESSION_CLOSED", "Native display is closed"); }
   private async wait(probe: () => Promise<boolean>) {
     const deadline = Date.now() + 10000;
@@ -151,8 +165,22 @@ export class FedoraBackend {
     });
   }
   async act(value: unknown): Promise<unknown> {
-    const action = parseNativeAction(value);
+    const action = this.parseAction(value);
     this.ensureOpen();
+    if (action.type === "resize") {
+      // The private display has one output, so resizing it is what gives an application more room.
+      // The pointer position is kept only if it still lands on the new surface.
+      await this.ipc("output", "HEADLESS-1", "mode", "--custom", `${action.width}x${action.height}`);
+      this.size = { width: action.width, height: action.height };
+      if (this.pointer && (this.pointer.x >= action.width || this.pointer.y >= action.height)) this.pointer = null;
+      return { width: action.width, height: action.height };
+    }
+    if (action.type === "window") {
+      const target = action.tab === undefined ? "" : `[con_id=${await this.windowAt(action.tab)}] `;
+      const command = { fullscreen: "fullscreen enable", restore: "fullscreen disable", focus: "focus", close: "kill" }[action.command];
+      await this.ipc(`${target}${command}`);
+      return { applied: true, command: action.command, ...(action.tab === undefined ? {} : { tab: action.tab }) };
+    }
     if (action.type === "launch") {
       if (this.children.length >= 32) throw new OrbitError("LIMIT_REACHED", "Native session application limit reached");
       const executable = action.argv[0]!;
@@ -224,21 +252,38 @@ export class FedoraBackend {
   }
   control(value: unknown) {
     const input = record(value);
-    if (input.type === "text" || input.type === "paste" || input.type === "scroll") return this.act(parseNativeAction(input));
-    if (input.type !== "click") throw new OrbitError("UNSUPPORTED", "Native manual control supports clicks, vertical scrolling, ASCII text and Unicode paste");
-    if (typeof input.x !== "number" || typeof input.y !== "number" || !Number.isFinite(input.x) || !Number.isFinite(input.y) || input.x < 0 || input.y < 0 || input.x >= 1280 || input.y >= 800)
-      throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
-    return this.act({ type: "pointer", x: Math.floor(input.x), y: Math.floor(input.y) });
+    if (["text", "paste", "scroll", "resize", "window"].includes(String(input.type))) return this.act(this.parseAction(input));
+    if (input.type !== "click") throw new OrbitError("UNSUPPORTED", "Native manual control supports clicks, vertical scrolling, ASCII text, Unicode paste, resize and window commands");
+    const at = requireInside(this.size, input.x, input.y);
+    return this.act({ type: "pointer", x: Math.floor(at.x), y: Math.floor(at.y) });
+  }
+  /** Windows of the private display, in tree order, so a person and an agent number them the same way. */
+  private windows(tree: any): { id: number; title: string; pid: number; focused: boolean }[] {
+    const found: { id: number; title: string; pid: number; focused: boolean }[] = [];
+    const walk = (node: any) => {
+      if (node.pid) found.push({ id: node.id, title: String(node.name ?? "Window").slice(0, 160), pid: node.pid, focused: !!node.focused });
+      for (const child of [...(node.nodes ?? []), ...(node.floating_nodes ?? [])]) walk(child);
+    };
+    walk(tree);
+    return found;
+  }
+  private async windowAt(tab: number): Promise<number> {
+    const windows = this.windows(await this.ipc("-t", "get_tree"));
+    const window = windows[tab - 1];
+    if (!window) throw new OrbitError("INVALID_REQUEST", `Window ${tab} is not open; observe reports ${windows.length} open`);
+    return window.id;
   }
   async observe() {
     const capturedAt = Date.now();
     this.ensureOpen();
     const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-t", capture.type, "-q", capture.quality, "-"], this.env);
     const tree = await this.ipc("-t", "get_tree");
-    const focused = (node: any): any => node.focused && node.pid ? node : [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].map(focused).find(Boolean);
-    const app = focused(tree);
-    return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: 1280, height: 800,
-      presence: { title: String(app?.name ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer } };
+    const windows = this.windows(tree);
+    const app = windows.find(window => window.focused);
+    return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height,
+      presence: { title: String(app?.title ?? "Private desktop").slice(0, 160), location: "Orbit private display", pointer: this.pointer,
+        pageCount: windows.length, pageIndex: app ? windows.indexOf(app) + 1 : 0,
+        tabs: windows.map((window, index) => ({ tab: index + 1, label: window.title, active: window.focused })) } };
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;

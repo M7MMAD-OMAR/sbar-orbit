@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { chromeExecutables } from "./runtime-paths";
+import { defaultViewport } from "./viewport";
 
 /** Own Chrome separately from its CDP connection, including failed startup. */
-export const viewport = { width: 1280, height: 800 };
-export async function launchChrome(profile: string, size = viewport) {
+export async function launchChrome(profile: string, size = defaultViewport) {
   await requireResourceBudget();
   const executable = chromeExecutables.find(path => Bun.file(path).size > 0);
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");

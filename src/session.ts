@@ -6,6 +6,7 @@ import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
+import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
@@ -16,7 +17,7 @@ interface Session {
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
-const capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "observe", "pause", "resume", "stop"];
+const capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
 export class Sessions {
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();
@@ -31,7 +32,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -60,7 +61,8 @@ export class Sessions {
       }
       const restoredState = await account?.restore();
       const profile = await mkdtemp(join(this.root, "profile-"));
-      const backend = input.backend === "fedora" ? await FedoraBackend.create() : await BrowserBackend.create(profile);
+      const surface = input.viewport === undefined ? defaultViewport : parseViewport(input.viewport);
+      const backend = input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface);
       if (account && backend instanceof BrowserBackend) {
         try { if (restoredState) await backend.context.setStorageState(restoredState); }
         catch (error) { await backend.close(); throw error; }

@@ -37,7 +37,8 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Roadmap](docs/roadmap.md) | Remaining milestones |
 | [Connectors](docs/connectors.md) | MCP host setup |
 | [Resource limits](docs/resources.md) | Aggregate CPU/RAM limits |
-| [Preview](docs/preview.md) | Viewing and takeover |
+| [Preview](docs/preview.md) | Viewing, takeover, tabs and surface size |
+| [Theming](docs/theming.md) | Matching the desktop colour scheme |
 | [Accounts](docs/accounts.md), [files](docs/files.md) | Explicit shared state |
 | [Packaging](docs/packaging.md) | Versioned source artifacts |
 | [Research](docs/research.md) | Primary technical sources |

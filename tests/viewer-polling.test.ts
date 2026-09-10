@@ -12,6 +12,8 @@ async function harness(costPerCall = 0) {
   const intervals: (() => void)[] = [];
   const makeElement = () => ({ value: "", hidden: false, textContent: "", disabled: false,
     dataset: {}, style: {}, classList: { toggle() {} }, listeners: new Map<string, () => void>(),
+    children: [] as unknown[], options: [] as unknown[], type: "", className: "", onclick: undefined,
+    setAttribute() {},
     addEventListener(name: string, callback: () => void) { this.listeners.set(name, callback); },
     replaceChildren() {}, append() {}, getContext() { return { drawImage() { drawn++; } }; },
   });

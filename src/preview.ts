@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Sessions } from "./session";
 import { OrbitError, record } from "./errors";
+import { loadTheme } from "./theme";
 
 export function startPreview(sessions: Sessions) {
   const token = crypto.randomUUID() + crypto.randomUUID();
@@ -17,6 +18,9 @@ export function startPreview(sessions: Sessions) {
       };
       const file = files[url.pathname];
       if (request.method === "GET" && url.pathname === "/favicon.ico") return new Response(null, { status: 204, headers });
+      // Read per request so a desktop that regenerates its palette is picked up by the next viewer load.
+      if (request.method === "GET" && url.pathname === "/theme.css")
+        return new Response(await loadTheme(), { headers: { ...headers, "Content-Type": "text/css; charset=utf-8" } });
       if (request.method === "GET" && file) return new Response(Bun.file(join(import.meta.dir, "../viewer", file)), { headers });
       if (request.method !== "POST" || url.pathname !== "/rpc") return new Response("Not found", { status: 404, headers });
       if (request.headers.get("origin") !== expected || request.headers.get("authorization") !== `Bearer ${token}`)

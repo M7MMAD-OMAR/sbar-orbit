@@ -66,3 +66,43 @@ test("a tab that closes itself hands control back to a surviving tab", async () 
     expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Main page" });
   } finally { await broker.close(); fixture.stop(true); }
 }, 30000);
+
+/** An application that needs room must be able to get it, and every tab must agree on the size. */
+test("a session can be created at a chosen size and resized while running", async () => {
+  const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(
+    '<!doctype html><title>Room</title><h1 id="who">Room</h1><button id="open" onclick="window.open(location.href)">Open</button><output id="size"></output>'
+    + '<script>const show=()=>document.querySelector("#size").textContent=`${innerWidth}x${innerHeight}`;show();addEventListener("resize",show)</script>',
+    { headers: { "Content-Type": "text/html" } }) });
+  const broker = await startBroker();
+  try {
+    await expect(call(broker.socket, "session.create", { backend: "browser", viewport: { width: 3840, height: 2160 } }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+
+    const session = await call(broker.socket, "session.create", { backend: "browser", viewport: { width: 1024, height: 640 } }) as { sessionId: string };
+    const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const observe = () => call(broker.socket, "session.observe", session) as Promise<{ width: number; height: number; presence: { tabs: { tab: number; label: string; active: boolean }[] } }>;
+
+    await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/` });
+    expect(await observe()).toMatchObject({ width: 1024, height: 640 });
+    expect(await act({ type: "read", selector: "#size" })).toEqual({ text: "1024x640" });
+
+    await act({ type: "click", selector: "#open" });
+    for (let i = 0; i < 100 && (await observe()).presence.tabs.length < 2; i++) await Bun.sleep(30);
+    expect(await act({ type: "resize", width: 1600, height: 1000 })).toMatchObject({ width: 1600, height: 1000, tabsResized: 2, tabCount: 2 });
+
+    const frame = await observe();
+    expect(frame).toMatchObject({ width: 1600, height: 1000 });
+    expect(frame.presence.tabs).toMatchObject([{ tab: 1, active: false }, { tab: 2, active: true }]);
+    expect(await act({ type: "read", selector: "#size" })).toEqual({ text: "1600x1000" });
+
+    // The opener tab was resized too, so switching back does not change what a coordinate means.
+    await act({ type: "select-tab", tab: 1 });
+    expect(await act({ type: "read", selector: "#size" })).toEqual({ text: "1600x1000" });
+
+    // Coordinates now follow the larger surface instead of the size the session started with.
+    await call(broker.socket, "session.pause", session);
+    expect(await call(broker.socket, "session.control", { ...session, input: { type: "click", x: 1500, y: 900 } })).toEqual({ applied: true });
+    await expect(call(broker.socket, "session.control", { ...session, input: { type: "click", x: 1700, y: 900 } }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+  } finally { await broker.close(); fixture.stop(true); }
+}, 45000);

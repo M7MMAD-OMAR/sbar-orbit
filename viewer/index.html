@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="stylesheet" href="/style.css"><script src="/viewer.js" defer></script></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"><script src="/viewer.js" defer></script></head>
 <body><main>
 <header><div><p class="eyebrow">SBAR ORBIT</p><h1>Your agent's workspace</h1><p class="intro">Watch here. Keep working everywhere else.</p></div><span id="connection" role="status">Connecting</span></header>
 <section class="toolbar" aria-label="Session controls">
@@ -8,12 +8,13 @@
 <div class="actions"><button id="pause" disabled>Pause agent</button><button id="resume" disabled>Resume agent</button><button id="stop" disabled>Stop session</button></div>
 </section>
 <div id="error" role="alert" hidden></div>
-<section class="view-settings" aria-label="Preview refresh settings"><label for="preview-mode">Preview</label><select id="preview-mode"><option value="balanced" selected>Low cost · 1 frame/second</option><option value="manual">On demand</option><option value="smooth">Smooth · up to 5 frames/second</option></select><button id="refresh-frame">Refresh image</button><span id="preview-note">Image refresh does not pause the agent.</span></section>
+<section class="view-settings" aria-label="Preview and surface settings"><label for="preview-mode">Preview</label><select id="preview-mode"><option value="balanced" selected>Low cost · 1 frame/second</option><option value="manual">On demand</option><option value="smooth">Smooth · up to 5 frames/second</option></select><button id="refresh-frame">Refresh image</button><label for="surface">Size</label><select id="surface" disabled></select><button id="fullscreen" hidden disabled>Fullscreen window</button><button id="restore" hidden disabled>Restore window</button><span id="preview-note">Image refresh does not pause the agent. Pause to change the size or the tab.</span></section>
 <section class="workspace-identity" aria-label="Workspace identity">
 <div><span id="agent-name" class="agent-badge">SbarOrbit</span><strong id="task-name">Agent workspace</strong></div>
 <p id="page-title">Waiting for the current page or application</p>
 <p id="page-location"></p><p id="activity" role="status">No actions yet</p>
 </section>
+<div id="tabs" class="tabs" role="tablist" aria-label="Session tabs" hidden></div>
 <section class="stage" aria-label="Session preview"><div id="empty">Create an Orbit session from your agent or CLI.</div><canvas id="frame" role="img" aria-label="Live image of the selected Orbit session" hidden></canvas><div id="agent-pointer" hidden aria-hidden="true"><svg viewBox="0 0 24 28" width="24" height="28"><path d="M2 2 L3 23 L9 17 L14 26 L18 24 L13 15 L22 14 Z" fill="currentColor" stroke="white" stroke-width="2"/></svg><span id="pointer-label">SbarOrbit</span></div></section>
 <div class="caption"><span id="freshness">Waiting for a frame</span><span id="cost"></span><span>Closing this viewer keeps the session running.</span></div>
 <section id="manual" aria-label="Manual input">

@@ -23,6 +23,32 @@ Browser workspaces use private disk-backed directories. Retained profiles on tmp
 
 Diagnostics sample shared and per-run accounting separately. File cache, retained files and active application memory are different contributors. Do not sum per-process RSS as if shared pages were unique. The timing experiment stops above 1900 MiB shared charged memory, before the unchanged hard cap.
 
+## Session surface size
+
+A session starts at 1280 by 800 and can be created or resized up to a total of 1,920 by 1,200 pixels. The cap is on the total pixel count rather than on each side, so an unusual shape is allowed while the cost of a frame stays bounded.
+
+The cap comes from this measurement, not from a guess. One size at a time, one backend at a time, 24 frames requested back to back with no viewer attached, on the shared one-core budget:
+
+| Browser surface | Pixels | Median capture | Frame size | Back to back | Projected at 1 frame/second |
+|---|---|---|---|---|---|
+| 1280 by 800 | 1,024,000 | 50.9 ms | 92 KiB | 51.2% | 5.1% |
+| 1600 by 1000 | 1,600,000 | 51.4 ms | 147 KiB | 67.5% | 5.1% |
+| 1920 by 1080 | 2,073,600 | 50.9 ms | 213 KiB | 76.3% | 5.1% |
+| 1920 by 1200 | 2,304,000 | 52.6 ms | 227 KiB | 77.6% | 5.3% |
+
+| Private display | Pixels | Median capture | Frame size | Back to back | Projected at 1 frame/second |
+|---|---|---|---|---|---|
+| 1280 by 800 | 1,024,000 | 16.4 ms | 42 KiB | 71.9% | 1.6% |
+| 1600 by 1000 | 1,600,000 | 16 ms | 58 KiB | 91.1% | 1.6% |
+| 1920 by 1080 | 2,073,600 | 16.9 ms | 70 KiB | 99.3% | 1.7% |
+| 1920 by 1200 | 2,304,000 | 16.8 ms | 77 KiB | 100.8% | 1.7% |
+
+Two things follow from this. Capture latency is almost flat across the range, because it is dominated by the round trip and the encoder's fixed cost rather than by pixels, so at the viewer's default cadence of one frame per second a larger surface costs roughly what a small one costs. Continuous capture is not flat: the private display already reaches a whole core at the cap, which is where the headroom ends and why the cap sits there.
+
+The cheaper way to give one application room is `window` with `fullscreen` on a native session. It changes nothing about the captured size, so it costs nothing per frame.
+
+Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/surface-cost.ts`. Run it alone: a second bounded command splits the same budget and the numbers then describe the contention instead of the surface.
+
 ## Read-only CPU observation
 
 ```sh
