@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Closed the secret-scanning gap. Gitleaks now runs, the whole history scanned clean across 28 commits, and the pre-commit gate was verified by staging a fabricated key and watching it refuse. Recorded what the publication audit and Gitleaks each catch, since neither sees what the other does. Also brought `scripts` under `tsconfig.json`, which needed no code changes, and added the theme and surface unit tests to continuous integration.
+
 - Added `open-tab`, so an agent can open a tab itself instead of only following one a site opened. A trial with a local agent host found the gap: the host tried to open a second tab, could not, and reported that Orbit did not support it.
 
 - Rewrote the MCP tool descriptions to lead with what each tool is for and to name every action it can perform, rather than opening with constraints, and described the session labelling fields so an agent names itself in the viewer. What decided whether a host reached for Orbit at all was the wording of the request, not the descriptions; the trial is recorded in [connectors](docs/connectors.md).

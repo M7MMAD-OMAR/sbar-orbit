@@ -11,6 +11,7 @@ These are alpha measurements, not guarantees for arbitrary applications. Raw wor
 | Default and native tests | 27 distinct tests passed across default and native-enabled executions before public packaging | `bun run verify`, then native tests with `ORBIT_TEST_NATIVE=1` |
 | Session surface cost | Capture latency nearly flat from 1280 by 800 to 1920 by 1200; continuous native capture rises 71.9% to 100.8% of one core across the same range | `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/surface-cost.ts` |
 | Viewer theming | Generated stylesheet renders in owned headless Chrome; malformed colours and font names are dropped rather than escaped | `bun test tests/theme.test.ts`, `experiments/theme-preview.ts` |
+| Secret scan | Gitleaks 8.30.0 over all 28 commits: no leaks. The pre-commit gate was verified by staging a fabricated key, which it refused | `gitleaks git --redact --no-banner` |
 | Agent hosts | Claude Code and Codex completed browser tasks and native editor saves in opt-in trials | Model-host experiments; authenticated host required |
 | Source archive | Extraction, source checksums, browser capture and packaged Canvas rendering passed for `0.1.0-alpha.1` | `scripts/package.ts`, `experiments/package-smoke.ts` |
 
