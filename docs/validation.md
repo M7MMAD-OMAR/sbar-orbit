@@ -26,3 +26,11 @@ ORBIT_TEST_NATIVE=1 bun run verify tests/native-crash.test.ts tests/browser-cras
 ```
 
 Repeat the command three times for this check. This is repeatability evidence on one Fedora host, not power-loss recovery, independent supervisor death, arbitrary application compatibility or proof that a snapshot captures later descendants. Human takeover remains unconfirmed.
+
+## Participant trial: resource acceptance failed
+
+The participant explicitly confirmed that workspace names and the labelled pointer were visible. They then reported stopping the trial because CPU consumption was unacceptable. The runner recorded pause and participant stop after approximately 123 seconds; the manual phrase/resume workflow was not completed. This is not a successful human-work or resource-acceptance result.
+
+A second trial had already started before the resource report arrived. It was terminated immediately after that report. Both runners reached terminal state and the Orbit slice had zero remaining tasks. A post-stop process sample cannot establish which process caused the earlier spike. No causal attribution is claimed from that sample.
+
+The participant's desktop viewer runs outside Orbit's runtime cgroup. Prior headless-viewer measurements do not prove acceptable cost inside the actual desktop app. Further interactive trials are on hold pending investigation of capture/decode/compositing cost and a participant-controlled low-cost viewing mode. Preserve the failed result when judging release readiness.

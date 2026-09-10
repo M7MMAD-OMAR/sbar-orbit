@@ -10,7 +10,7 @@
 
 ## Next acceptance gates
 
-1. Confirm human work and takeover during a live agent task.
+1. Resolve the participant-reported CPU problem before another interactive trial. Names/pointer visibility were confirmed; takeover and resource acceptance were not.
 2. Broaden failure and native application/account coverage. Three repeated recovery runs pass; independent supervisor death remains uncovered.
 3. Verify local installation, upgrade and uninstall without touching retained profiles.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts.
