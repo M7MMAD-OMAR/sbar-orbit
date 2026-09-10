@@ -1,8 +1,9 @@
 import { isPublicSourcePath } from "./public-paths";
-import { mkdir, mkdtemp, readFile, writeFile, chmod, lstat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, chmod } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { requireResourceBudget } from "../src/resource-budget";
+import { readVerifiedSource } from "./source-manifest";
 
 await requireResourceBudget();
 const project = resolve(import.meta.dir, "..");
@@ -14,13 +15,15 @@ const git = async (...args: string[]) => {
 const top = await git("rev-parse", "--show-toplevel");
 const fromIndex = top.code === 0 && top.bytes.toString().trim() === project;
 let paths: string[];
+const verifiedFiles = new Map<string, { bytes: Buffer; executable: boolean }>();
 if (fromIndex) {
   const audit = Bun.spawn([process.execPath, join(project, "scripts/public-audit.ts")], { cwd: project, stdout: "inherit", stderr: "inherit" });
   if (await audit.exited) throw new Error("Public index audit failed");
   paths = (await git("ls-files", "--cached", "-z")).bytes.toString().split("\0").filter(Boolean);
 } else {
-  const source = JSON.parse(await readFile(join(project, "SOURCE-MANIFEST.json"), "utf8"));
-  paths = source.files.map((entry: { path: string }) => entry.path);
+  const source = await readVerifiedSource(project);
+  for (const file of source.files) verifiedFiles.set(file.path, file);
+  paths = source.files.map(file => file.path);
 }
 for (const path of paths) {
   if (!isPublicSourcePath(path))
@@ -28,7 +31,11 @@ for (const path of paths) {
 }
 if (!paths.includes("LICENSE") || !paths.includes("NOTICE")) throw new Error("License and NOTICE must be included");
 const bytesFor = async (path: string) => {
-  if (!fromIndex) return readFile(join(project, path));
+  if (!fromIndex) {
+    const file = verifiedFiles.get(path);
+    if (!file) throw new Error("Missing verified source bytes");
+    return file.bytes;
+  }
   const result = await git("show", `:${path}`);
   if (result.code) throw new Error("Cannot read staged package input");
   return result.bytes;
@@ -47,9 +54,9 @@ for (const path of [...new Set(paths)].sort()) {
     if (!["100644", "100755"].includes(mode ?? "")) throw new Error("Package inputs must be regular files");
     executable = mode === "100755";
   } else {
-    const info = await lstat(join(project, path));
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Package inputs must be regular files");
-    executable = Boolean(info.mode & 0o111);
+    const file = verifiedFiles.get(path);
+    if (!file) throw new Error("Missing verified source metadata");
+    executable = file.executable;
   }
   const bytes = await bytesFor(path), target = join(root, path);
   await mkdir(resolve(target, ".."), { recursive: true });

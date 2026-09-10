@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Enforced source-manifest content hashes during extracted-release repackaging, rejecting invalid paths, linked inputs and version mismatches before archive creation. Added a standalone content verifier.
+
 - Added standalone `sbar-orbit preflight` to report browser/native prerequisite availability without launching applications or requiring a broker socket.
 
 - Added local source launcher activation, atomic upgrade/rollback and link-only uninstall. Retained source and account/workspace data are preserved; dependencies remain a separate preparation step.

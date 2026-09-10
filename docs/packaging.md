@@ -14,6 +14,18 @@ bun run scripts/limited.ts bun run experiments/package-smoke.ts
 
 The packager uses the tracked public file set, not a recursive copy of local directories. An extracted source release can use its source manifest instead. Private records, profiles, dependencies, runtime binaries and generated outputs are rejected as package inputs. A SHA-256 manifest covers every packaged source file.
 
+When repackaging an extracted release, current tooling verifies every listed content digest, required release files and package-version consistency first. It rejects duplicate/private paths, symlinks anywhere below the selected source root and multiply linked files. Verified bytes are retained for copying, rather than reread later. Unlisted files are not copied. Bounds are 5000 entries, 10 MiB per source file and 64 MiB total source content.
+
+To verify an existing extracted release using the current checkout:
+
+```sh
+bun run scripts/limited.ts bun run scripts/verify-source.ts /path/to/extracted-source
+```
+
+This checks content consistency, not publisher identity; verify the archive digest from a trusted release channel separately. It does not authenticate file permission metadata. A concurrent same-user filesystem writer is outside this check's security boundary. Modifications intended for a new release should be reviewed and committed in Git, with a new version, instead of repackaging an altered release against its old manifest.
+
+The verifier accepted all 98 source entries in the existing `0.1.0-alpha.1` archive. A packager regression test accepted altered content before the fix and rejected it afterward. No browser or agent was launched for these checks, and the original release archive was not overwritten.
+
 ## Use
 
 ```sh
