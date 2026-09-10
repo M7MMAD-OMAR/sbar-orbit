@@ -81,6 +81,7 @@ try {
   });
   const { url } = await call(broker.socket, "preview.open") as { url: string };
   await page.goto(url);
+  await page.locator("#preview-mode").selectOption("smooth");
   await page.locator("#frame").waitFor({ state: "visible" });
   await page.waitForFunction(() => {
     const frame = document.querySelector("#frame");

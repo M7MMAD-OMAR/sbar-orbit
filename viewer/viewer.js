@@ -2,11 +2,14 @@ const element = id => document.getElementById(id);
 const token = location.hash.slice(1);
 const pointer = element('agent-pointer');
 let agentName = 'SbarOrbit', actor = 'agent';
+let previewMode = 'balanced', captureQueued = false, pollFailures = 0;
+element('preview-mode').addEventListener('change', () => { previewMode = element('preview-mode').value; captureQueued = false; });
+element('refresh-frame').onclick = () => { captureQueued = true; };
 const frame = element('frame'), sessions = element('sessions');
 let selected = '', state = '', backend = '', accountName = '', capturedAt = 0, imageWidth = 1280, imageHeight = 800, busy = false;
 function error(message) { element('error').textContent = message; element('error').hidden = !message; }
 async function rpc(method, params = {}) {
-  const response = await fetch('/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ method, params }) });
+  const response = await fetch('/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(response.status === 403 ? 'Open the complete preview link printed by Orbit, including its access token.' : 'Viewer connection failed.');
   const result = await response.json();
   if (!result.ok) throw new Error(result.error.message);
@@ -90,10 +93,12 @@ frame.addEventListener('wheel', event => {
 async function poll() {
   const started = performance.now();
   try {
+    if (document.hidden) { setTimeout(poll, 1000); return; }
     await refreshSessions();
     element('connection').textContent = 'Connected locally';
     const id = selected;
-    if (id && !['closed', 'closing'].includes(state) && !document.hidden) {
+    if (id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
+      captureQueued = false;
       const image = await rpc('session.observe', { sessionId: id });
       if (selected === id && !['closed', 'closing'].includes(state)) {
         const bytes = Uint8Array.from(atob(image.image), character => character.charCodeAt(0));
@@ -123,14 +128,17 @@ async function poll() {
         } finally { bitmap.close(); }
       }
     }
-  } catch (e) { element('connection').textContent = 'Connection interrupted'; error(e.message); }
-  setTimeout(poll, document.hidden ? 1000 : Math.max(0, 200 - (performance.now() - started)));
+  pollFailures = 0;
+  } catch (e) { pollFailures++; element('connection').textContent = 'Connection interrupted'; error(e.message); }
+  const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
+  setTimeout(poll, Math.max(0, cadence - (performance.now() - started)));
 }
 setInterval(() => {
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
   element('freshness').textContent = capturedAt ? `Frame age: ${(age / 1000).toFixed(1)}s` : 'Waiting for a frame';
-  element('freshness').classList.toggle('stale', age > 1000);
-  if (age > 1000) pointer.hidden = true;
-}, 100);
+  const staleAfter = previewMode === 'smooth' ? 1000 : 2000;
+  element('freshness').classList.toggle('stale', age > staleAfter);
+  if (age > staleAfter) pointer.hidden = true;
+}, 250);
 if (!token) { element('connection').textContent = 'Access link required'; error('Open the complete preview link printed by Orbit.'); }
 else poll();

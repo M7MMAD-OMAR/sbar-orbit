@@ -8,6 +8,7 @@
 <div class="actions"><button id="pause" disabled>Pause agent</button><button id="resume" disabled>Resume agent</button><button id="stop" disabled>Stop session</button></div>
 </section>
 <div id="error" role="alert" hidden></div>
+<section class="view-settings" aria-label="Preview refresh settings"><label for="preview-mode">Preview</label><select id="preview-mode"><option value="balanced" selected>Low cost · 1 frame/second</option><option value="manual">On demand</option><option value="smooth">Smooth · up to 5 frames/second</option></select><button id="refresh-frame">Refresh image</button><span id="preview-note">Image refresh does not pause the agent.</span></section>
 <section class="workspace-identity" aria-label="Workspace identity">
 <div><span id="agent-name" class="agent-badge">SbarOrbit</span><strong id="task-name">Agent workspace</strong></div>
 <p id="page-title">Waiting for the current page or application</p>
