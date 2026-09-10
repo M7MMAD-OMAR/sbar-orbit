@@ -97,14 +97,14 @@ async function poll() {
     await refreshSessions();
     element('connection').textContent = 'Connected locally';
     const id = selected;
-    if (id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
+    if (!document.hidden && id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
       captureQueued = false;
       const image = await rpc('session.observe', { sessionId: id });
-      if (selected === id && !['closed', 'closing'].includes(state)) {
+      if (!document.hidden && selected === id && !['closed', 'closing'].includes(state)) {
         const bytes = Uint8Array.from(atob(image.image), character => character.charCodeAt(0));
         const bitmap = await createImageBitmap(new Blob([bytes], { type: image.mimeType }));
         try {
-          if (selected === id && !['closed', 'closing'].includes(state)) {
+          if (!document.hidden && selected === id && !['closed', 'closing'].includes(state)) {
             if (frame.width !== image.width || frame.height !== image.height) {
               frame.width = image.width; frame.height = image.height;
             }
@@ -134,6 +134,7 @@ async function poll() {
   setTimeout(poll, Math.max(0, cadence - (performance.now() - started)));
 }
 setInterval(() => {
+  if (document.hidden) return;
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
   element('freshness').textContent = capturedAt ? `Frame age: ${(age / 1000).toFixed(1)}s` : 'Waiting for a frame';
   const staleAfter = previewMode === 'smooth' ? 1000 : 2000;

@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Stopped hidden preview tabs from decoding or drawing late-arriving frames, and skipped their freshness updates. Already-started capture/decoding can finish; bitmaps are still released.
+
 - Added bounded read-only CPU observation, separating Orbit one-core and machine percentages from host busy/iowait totals. This does not establish the cause of the participant CPU spike.
 
 - Fixed publication-path validation so example environment files cannot bypass private-directory exclusions; index auditing and packaging now share one policy.

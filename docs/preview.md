@@ -88,6 +88,8 @@ The blue arrow labelled with the agent name follows the last trusted pointer eve
 
 ## Low-cost viewing validation
 
-Following the participant's CPU report, live trials remain stopped. The two tests in `tests/viewer-polling.test.ts` execute the actual viewer script with a deterministic DOM, clock and RPC fixture, without launching Chrome or an Orbit agent. They verify the 1000 ms default, zero repeated captures in On demand mode, one capture after Refresh image, zero hidden-tab requests, explicit 200 ms Smooth mode, bounded reconnect backoff and bitmap closure.
+Following the participant's CPU report, live trials remain stopped. The five tests in `tests/viewer-polling.test.ts` execute the actual viewer script with a deterministic DOM, clock and RPC fixture, without launching Chrome or an Orbit agent. They verify the 1000 ms default, zero repeated captures in On demand mode, one capture after Refresh image, zero hidden-tab requests, explicit 200 ms Smooth mode, bounded reconnect backoff and bitmap closure.
+
+Visibility is rechecked after session listing, capture and bitmap decoding. A tab hidden during those waits starts no subsequent capture or decode, and does not draw the returned bitmap. Already-started server capture or decoding may still finish; decoded bitmaps are always closed. The freshness timer skips hidden-page updates. Two race tests failed before these checks and passed afterward. Returning to the visible page resumes the existing polling chain without a second loop.
 
 These are scheduling checks, not measurements of CPU, rendering performance or the participant's desktop app. The new settings have not yet undergone rendered-browser validation. The timing experiment explicitly selects Smooth so its historical 5 FPS target is not silently replaced with a lower bar. That experiment was not rerun after the participant report.
