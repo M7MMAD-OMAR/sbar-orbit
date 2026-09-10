@@ -4,7 +4,9 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
-- Further human takeover, application compatibility and recovery validation.
+- Strengthened native crash checks to inspect all task threads and require zombie reaping.
+- Repeated browser/native recovery and real-editor file reservation suites three times on Fedora.
+- Human takeover and broader application compatibility remain under validation.
 
 ## 0.1.0-alpha.1 - 2026-09-10
 

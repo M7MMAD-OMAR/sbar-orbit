@@ -11,7 +11,7 @@
 ## Next acceptance gates
 
 1. Confirm human work and takeover during a live agent task.
-2. Repeat failure/recovery tests and broaden native application/account coverage.
+2. Broaden failure and native application/account coverage. Three repeated recovery runs pass; independent supervisor death remains uncovered.
 3. Verify local installation, upgrade and uninstall without touching retained profiles.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts.
 5. Publish capabilities from evidence; unsupported closed tools remain explicit.

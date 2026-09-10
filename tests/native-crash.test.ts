@@ -1,19 +1,29 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { call } from "../src/ipc";
 
 const enabled = process.env.ORBIT_TEST_NATIVE === "1";
 async function descendants(pid: number): Promise<number[]> {
   try {
-    const children = (await readFile(`/proc/${pid}/task/${pid}/children`, "utf8")).trim().split(/\s+/).filter(Boolean).map(Number);
-    return [...children, ...(await Promise.all(children.map(descendants))).flat()];
-  } catch { return []; }
+    const children = new Set<number>();
+    for (const tid of await readdir(`/proc/${pid}/task`)) {
+      try {
+        for (const child of (await readFile(`/proc/${pid}/task/${tid}/children`, "utf8")).trim().split(/\s+/).filter(Boolean)) children.add(Number(child));
+      } catch (error) {
+        if (!["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      }
+    }
+    return [...children, ...(await Promise.all([...children].map(descendants))).flat()];
+  } catch (error) {
+    if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return [];
+    throw error;
+  }
 }
 async function waitGone(pids: number[]) {
   for (let i = 0; i < 150; i++) {
     const alive = await Promise.all(pids.map(async pid => {
-      try { return (await readFile(`/proc/${pid}/stat`, "utf8")).split(") ")[1]?.[0] !== "Z"; } catch { return false; }
+      return await Bun.file(`/proc/${pid}/stat`).exists();
     }));
     if (!alive.some(Boolean)) return true;
     await Bun.sleep(30);
