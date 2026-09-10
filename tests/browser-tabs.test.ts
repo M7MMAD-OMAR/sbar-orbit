@@ -135,3 +135,29 @@ test("open-tab adds a followed tab, with or without a URL", async () => {
     await expect(act({ type: "open-tab", url: "file:///etc/passwd" })).rejects.toMatchObject({ code: "UNSUPPORTED" });
   } finally { await broker.close(); fixture.stop(true); }
 }, 45000);
+
+/** The tab number open-tab hands back must be the tab the session then follows and reports. */
+test("the tab number open-tab returns is the tab observation reports", async () => {
+  const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const path = new URL(request.url).pathname;
+    // A slow response keeps the session inside goto, which is the window where an adopted page
+    // could otherwise take over as the followed tab.
+    if (path === "/slow") await Bun.sleep(700);
+    return new Response(`<!doctype html><title>Page ${path}</title><h1 id="who">Page ${path}</h1>`, { headers: { "Content-Type": "text/html" } });
+  } });
+  const broker = await startBroker();
+  try {
+    const session = await call(broker.socket, "session.create", { backend: "browser" }) as { sessionId: string };
+    const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const observe = () => call(broker.socket, "session.observe", session) as Promise<{ presence: { pageIndex: number; pageCount: number } }>;
+
+    await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/first` });
+    const opened = await act({ type: "open-tab", url: `http://127.0.0.1:${fixture.port}/slow` }) as { tab: number; tabCount: number };
+    expect(opened).toMatchObject({ tab: 2, tabCount: 2 });
+
+    const presence = (await observe()).presence;
+    expect(presence.pageIndex).toBe(opened.tab);
+    expect(presence.pageCount).toBe(opened.tabCount);
+    expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Page /slow" });
+  } finally { await broker.close(); fixture.stop(true); }
+}, 45000);

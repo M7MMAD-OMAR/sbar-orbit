@@ -113,6 +113,8 @@ export class BrowserBackend {
         const opened = await this.context.newPage();
         await opened.setViewportSize(this.size).catch(() => {});
         if (action.url) await opened.goto(action.url);
+        // After the navigation, not before: a page adopted while goto was in flight would otherwise
+        // leave the returned tab number pointing at a tab the session no longer follows.
         this.active = opened;
         return { tab: this.context.pages().indexOf(opened) + 1, url: opened.url(), tabCount: this.context.pages().length };
       }
