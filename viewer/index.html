@@ -15,7 +15,7 @@
 <p id="page-location"></p><p id="activity" role="status">No actions yet</p>
 </section>
 <section class="stage" aria-label="Session preview"><div id="empty">Create an Orbit session from your agent or CLI.</div><canvas id="frame" role="img" aria-label="Live image of the selected Orbit session" hidden></canvas><div id="agent-pointer" hidden aria-hidden="true"><svg viewBox="0 0 24 28" width="24" height="28"><path d="M2 2 L3 23 L9 17 L14 26 L18 24 L13 15 L22 14 Z" fill="currentColor" stroke="white" stroke-width="2"/></svg><span id="pointer-label">SbarOrbit</span></div></section>
-<div class="caption"><span id="freshness">Waiting for a frame</span><span>Closing this viewer keeps the session running.</span></div>
+<div class="caption"><span id="freshness">Waiting for a frame</span><span id="cost"></span><span>Closing this viewer keeps the session running.</span></div>
 <section id="manual" aria-label="Manual input">
 <h2>Take control while paused</h2><p id="input-hint">Pause the agent, then click its page above to choose a field. Send text or a key below.</p>
 <div class="input-row"><label class="sr-only" for="text">Text to send</label><input id="text" placeholder="Text for the selected field" disabled><button id="send" disabled>Send text</button><label class="sr-only" for="key">Key to send</label><select id="key" disabled><option>Enter</option><option>Tab</option><option>Backspace</option><option>Escape</option><option>ArrowUp</option><option>ArrowDown</option></select><button id="press" disabled>Send key</button></div>

@@ -3,6 +3,7 @@ const token = location.hash.slice(1);
 const pointer = element('agent-pointer');
 let agentName = 'SbarOrbit', actor = 'agent';
 let previewMode = 'balanced', captureQueued = false, pollFailures = 0;
+let lastCost = 0, lastGap = 0, lastRpc = 0, lastDecode = 0, lastDraw = 0;
 element('preview-mode').addEventListener('change', () => { previewMode = element('preview-mode').value; captureQueued = false; });
 element('refresh-frame').onclick = () => { captureQueued = true; };
 const frame = element('frame'), sessions = element('sessions');
@@ -99,16 +100,22 @@ async function poll() {
     const id = selected;
     if (!document.hidden && id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
       captureQueued = false;
+      const requested = performance.now();
       const image = await rpc('session.observe', { sessionId: id });
+      lastRpc = performance.now() - requested;
       if (!document.hidden && selected === id && !['closed', 'closing'].includes(state)) {
+        const decodeStarted = performance.now();
         const bytes = Uint8Array.from(atob(image.image), character => character.charCodeAt(0));
         const bitmap = await createImageBitmap(new Blob([bytes], { type: image.mimeType }));
+        lastDecode = performance.now() - decodeStarted;
         try {
           if (!document.hidden && selected === id && !['closed', 'closing'].includes(state)) {
             if (frame.width !== image.width || frame.height !== image.height) {
               frame.width = image.width; frame.height = image.height;
             }
+            const drawStarted = performance.now();
             frame.getContext('2d').drawImage(bitmap, 0, 0);
+            lastDraw = performance.now() - drawStarted;
             capturedAt = image.capturedAt; imageWidth = image.width; imageHeight = image.height;
             frame.dataset.capturedAt = String(capturedAt);
             frame.hidden = false; element('empty').hidden = true;
@@ -131,12 +138,20 @@ async function poll() {
   pollFailures = 0;
   } catch (e) { pollFailures++; element('connection').textContent = 'Connection interrupted'; error(e.message); }
   const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
-  setTimeout(poll, Math.max(0, cadence - (performance.now() - started)));
+  // Idle at least as long as the iteration cost, so a viewer that cannot keep up
+  // drops its frame rate instead of polling back to back and taking a whole core.
+  lastCost = Math.max(0, performance.now() - started);
+  lastGap = Math.max(cadence - lastCost, lastCost, 50);
+  setTimeout(poll, lastGap);
 }
 setInterval(() => {
   if (document.hidden) return;
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
+  const share = lastCost + lastGap > 0 ? Math.round(lastCost / (lastCost + lastGap) * 100) : 0;
   element('freshness').textContent = capturedAt ? `Frame age: ${(age / 1000).toFixed(1)}s` : 'Waiting for a frame';
+  element('cost').textContent = lastCost
+    ? `Viewer cycle: ${Math.round(lastCost)} ms of every ${Math.round(lastCost + lastGap)} ms (${share}%) · request ${Math.round(lastRpc)} ms · decode ${Math.round(lastDecode)} ms · draw ${Math.round(lastDraw)} ms`
+    : '';
   const staleAfter = previewMode === 'smooth' ? 1000 : 2000;
   element('freshness').classList.toggle('stale', age > staleAfter);
   if (age > staleAfter) pointer.hidden = true;

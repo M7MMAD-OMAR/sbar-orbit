@@ -3,9 +3,10 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 
 /** Execute the real viewer against a deterministic DOM/RPC clock, without Chrome. */
-async function harness() {
+async function harness(costPerCall = 0) {
   const elements = new Map<string, any>(), timers: { run: () => unknown; delay: number }[] = [];
   const calls: string[] = [];
+  let clock = 0;
   let fail = false, decoded = 0, closed = 0, drawn = 0;
   let observeGate: Promise<void> | undefined, decodeGate: Promise<void> | undefined, listGate: Promise<void> | undefined;
   const intervals: (() => void)[] = [];
@@ -17,11 +18,12 @@ async function harness() {
   const element = (id: string): any => { if (!elements.has(id)) elements.set(id, makeElement()); return elements.get(id); };
   const document = { hidden: false, getElementById: element, createElement: makeElement };
   const source = await readFile("viewer/viewer.js", "utf8");
-  runInNewContext(source, { document, location: { hash: "#fixture-access" }, performance: { now: () => 0 },
+  runInNewContext(source, { document, location: { hash: "#fixture-access" }, performance: { now: () => clock },
     setTimeout: (run: () => unknown, delay: number) => { timers.push({ run, delay }); }, setInterval(run: () => void) { intervals.push(run); },
     AbortSignal, Blob, Uint8Array, atob, Date,
     fetch: async (_url: string, request: { body: string }) => {
       const { method } = JSON.parse(request.body); calls.push(method);
+      clock += costPerCall;
       if (fail) throw new Error("Fixture disconnected");
       if (method === "session.list") await listGate;
       if (method === "session.observe") await observeGate;
@@ -111,4 +113,30 @@ test("disconnected viewer backs off instead of polling five times per second", a
   }
   expect(app.counts()).toEqual({ decoded: 1, closed: 1 });
   expect(app.timers.length).toBe(1);
+});
+
+test("a viewer that cannot keep up idles instead of polling back to back", async () => {
+  // Each iteration costs 1500 ms across its two calls, more than the 1000 ms cadence.
+  const app = await harness(750);
+  for (let iteration = 0; iteration < 3; iteration++) {
+    expect(app.timers[0]?.delay).toBe(1500);
+    await app.tick();
+  }
+  expect(app.timers[0]?.delay).toBe(1500);
+});
+
+test("smooth mode degrades its rate rather than saturating a slow machine", async () => {
+  const app = await harness(250);
+  app.mode("smooth");
+  await app.tick();
+  // Half of one core at most: a 500 ms iteration waits 500 ms, not 200 ms minus cost.
+  expect(app.timers[0]?.delay).toBe(500);
+});
+
+test("a fast viewer keeps its requested cadence", async () => {
+  const app = await harness(10);
+  expect(app.timers[0]?.delay).toBe(980);
+  app.mode("smooth");
+  await app.tick();
+  expect(app.timers[0]?.delay).toBe(180);
 });

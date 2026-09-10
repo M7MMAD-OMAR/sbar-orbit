@@ -5,6 +5,7 @@ These are alpha measurements, not guarantees for arbitrary applications. Raw wor
 | Area | Observed outcome | Reproduce |
 |---|---|---|
 | Browser/viewer stability | 600 seconds, 2077 submissions, 3005 frames, 5.006 FPS; maximum sampled frame age 284 ms | `experiments/viewer-timing.ts 600` |
+| Frame format | Both backends capture JPEG quality 80; the recorded timing run above predates this change and its frame costs no longer apply | See measured capture cost below |
 | Resources | Per-run peak about 951 MiB; no new OOM or hard-limit events; zero added swap | Same bounded timing run |
 | Process containment | 117 sampled tree audits found no escapes; cleanup left no owned processes | Timing run and `tests/chrome-containment.test.ts` |
 | Default and native tests | 27 distinct tests passed across default and native-enabled executions before public packaging | `bun run verify`, then native tests with `ORBIT_TEST_NATIVE=1` |
@@ -32,5 +33,21 @@ Repeat the command three times for this check. This is repeatability evidence on
 The participant explicitly confirmed that workspace names and the labelled pointer were visible. They then reported stopping the trial because CPU consumption was unacceptable. The runner recorded pause and participant stop after approximately 123 seconds; the manual phrase/resume workflow was not completed. This is not a successful human-work or resource-acceptance result.
 
 A second trial had already started before the resource report arrived. It was terminated immediately after that report. Both runners reached terminal state and the Orbit slice had zero remaining tasks. A post-stop process sample cannot establish which process caused the earlier spike. No causal attribution is claimed from that sample.
+
+### Identified scheduling defect
+
+The viewer scheduled its next poll with `Math.max(0, cadence - elapsed)`. When one iteration outlasted its cadence, that delay became zero and stayed zero, so the viewer polled continuously with no idle gap. This applied to the default 1 FPS mode, not only to Smooth, and it is self-reinforcing: heavier load lengthens the iteration, which removes the gap, which raises the load. Headless timing runs did not expose it because their iterations stayed well inside the cadence.
+
+The viewer now idles at least as long as the measured iteration cost, capping its duty cycle at roughly half of one core and lowering the frame rate instead of saturating the machine. It also reports its own measured per-frame cost, busy share and request/decode/draw split beside the frame age, because the desktop viewer runs outside Orbit's cgroup and `scripts/measure-cpu.ts` therefore cannot observe it.
+
+### Measured capture cost
+
+Interleaved measurements on one Fedora host, 1280 by 800, under `scripts/limited.ts`. Browser capture: PNG 68 ms and 188 KiB per frame, JPEG quality 80 47 ms and 70 KiB. Native capture, end to end through `observe()`: PNG 72.2 ms at the median, JPEG quality 80 8.6 ms. Isolating the native stages showed a fresh `grim` process cost 0.7 ms, the sway `get_tree` query 0.6 ms and broker base64 0.0 ms, so PNG deflate accounted for essentially all of it. Both backends now capture JPEG quality 80.
+
+JPEG is larger than PNG on a mostly blank display, 28 KiB against 3 KiB per native frame, while still costing 7.3 ms against 27.4 ms. The choice favours processor time over bytes because the reported failure was processor cost on a local loopback link.
+
+These are single-host medians, not guarantees, and they do not by themselves establish participant-acceptable cost.
+
+This is a confirmed defect with a regression test, not yet a confirmed explanation of the participant's report. Participant-read viewer cost figures remain required before another resource-acceptance claim.
 
 The participant's desktop viewer runs outside Orbit's runtime cgroup. Prior headless-viewer measurements do not prove acceptable cost inside the actual desktop app. Further interactive trials are on hold pending investigation of capture/decode/compositing cost and a participant-controlled low-cost viewing mode. Preserve the failed result when judging release readiness.
