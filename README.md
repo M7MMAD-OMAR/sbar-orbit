@@ -41,5 +41,6 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Accounts](docs/accounts.md), [files](docs/files.md) | Explicit shared state |
 | [Packaging](docs/packaging.md) | Versioned source artifacts |
 | [Research](docs/research.md) | Primary technical sources |
+| [Desktop presence](docs/desktop-presence.md) | Proposal for a permanent on-screen indicator |
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
