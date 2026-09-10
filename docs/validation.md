@@ -46,7 +46,11 @@ Interleaved measurements on one Fedora host, 1280 by 800, under `scripts/limited
 
 JPEG is larger than PNG on a mostly blank display, 28 KiB against 3 KiB per native frame, while still costing 7.3 ms against 27.4 ms. The choice favours processor time over bytes because the reported failure was processor cost on a local loopback link.
 
+Following extra tabs does not add per-frame cost. Each followed tab gets its own CDP pointer observer, so observation was measured as tabs accumulated, with and without those observers: 34.0, 34.1 and 102.0 ms at three, five and eight tabs with them, against 34.0, 49.3 and 97.9 ms without. The growth at eight tabs is Chrome's renderer count, not the observers.
+
 These are single-host medians, not guarantees, and they do not by themselves establish participant-acceptable cost.
+
+The suites are sensitive to machine contention rather than flaky in themselves. Running a second `scripts/limited.ts` command alongside a suite splits one shared cgroup budget, and viewer tests that wait for a fresh frame then time out. Six consecutive gate runs failed only in the two runs that overlapped other measured work, including pre-existing browser scroll and CLI tests. Run one bounded command at a time.
 
 This is a confirmed defect with a regression test, not yet a confirmed explanation of the participant's report. Participant-read viewer cost figures remain required before another resource-acceptance claim.
 

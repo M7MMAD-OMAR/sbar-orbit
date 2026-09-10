@@ -81,6 +81,15 @@ test("viewer authenticates, renders live frames and controls only paused session
     expect(bitmaps.closed).toBeGreaterThan(1);
     expect(bitmaps.maximumLive).toBe(1);
     expect(bitmaps.created - bitmaps.closed).toBeLessThanOrEqual(1);
+    // The cost readout is the only instrument for viewer cost, because the desktop viewer
+    // runs outside Orbit's cgroup. An empty or malformed line would otherwise go unnoticed.
+    await page.waitForFunction(() => /^Viewer cycle: \d+ ms of every \d+ ms \(\d+%\)/.test(document.querySelector("#cost")?.textContent ?? ""));
+    const cost = await page.locator("#cost").textContent();
+    expect(cost).toMatch(/request \d+ ms · decode \d+ ms · draw \d+ ms$/);
+    expect(await page.evaluate(() => {
+      const caption = document.querySelector("#cost")?.parentElement as HTMLElement;
+      return caption.scrollWidth <= caption.clientWidth + 1;
+    })).toBe(true);
     await mkdir(join(import.meta.dir, "../output/playwright"), { recursive: true });
     await page.screenshot({ path: join(import.meta.dir, "../output/playwright/viewer-desktop.png"), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
