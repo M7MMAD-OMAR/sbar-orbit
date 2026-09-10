@@ -142,7 +142,7 @@ These are individual successful tasks with the same Wayland application, not rep
 
 ## Vertical scrolling (unreleased)
 
-Native agents can send `{"type":"scroll","x":200,"y":200,"deltaY":3}` through CLI, broker RPC or MCP. Coordinates are integers inside 1280 x 800. `deltaY` is a nonzero integer wheel-step count from -20 to 20: positive scrolls down, negative up. It is not a requested pixel distance; applications choose their scroll amount. The private pointer moves to the requested point without clicking, then sends vertical wheel events. Pause rejects agent scroll actions. The viewer does not yet expose native wheel control.
+Native agents can send `{"type":"scroll","x":200,"y":200,"deltaY":3}` through CLI, broker RPC or MCP. Coordinates are integers inside 1280 x 800. `deltaY` is a nonzero integer wheel-step count from -20 to 20: positive scrolls down, negative up. It is not a requested pixel distance; applications choose their scroll amount. The private pointer moves to the requested point without clicking, then sends vertical wheel events. Pause rejects agent scroll actions. The viewer exposes vertical wheel control over its scaled image while paused.
 
 The integration test observes actual GTK text-view vertical adjustments through MCP, verifies reverse direction returns to the original offset, unchanged horizontal position, invalid input rejection and resume restoring the same offset. It waits for scrolling to settle rather than comparing a transient animation frame. Both Wayland and default GTK 3 XInput2 through Xwayland now pass, without a core-input environment override.
 

@@ -1,6 +1,6 @@
 # Live workspace preview
 
-**Resource correction:** The earlier timing runs did not audit complete Chrome cgroup membership. Their resource figures are historical, not whole-browser measurements. See [containment correction](resources.md#chrome-containment-correction) for the failed sustained attempt and the corrected short rerun.
+**Measurements:** Current resource and sustained-run results are summarized in [validation](validation.md). Older timing numbers below describe their individual trials.
 Implemented for browser and Fedora native sessions: live images, session selection, pause/resume/stop, and manual input while paused. The viewer never opens automatically.
 
 ## Use
@@ -13,11 +13,11 @@ bun run src/cli.ts preview
 
 Open the complete returned URL. Its fragment contains a per-broker access token. The viewer runs on an automatically allocated loopback port. Closing the page leaves sessions running. Stopping the broker closes the preview server as well.
 
-To take control: select a session, choose **Pause agent**, wait for **Paused**, then click inside its image. Use **Send text** or **Send key** to operate the focused element. **Resume agent** enables agent actions again. For Fedora native sessions, **Paste text** uses the workspace clipboard and Ctrl+V, supporting Arabic and emoji in applications that accept that shortcut. Wait for the text to appear before taking the next action. Native general key controls remain disabled. All input targets the owned session; the human desktop receives no injected input.
+To take control: select a session, choose **Pause agent**, wait for **Paused**, then click inside its image. Use **Send text** or **Send key** to operate the focused element. **Resume agent** enables agent actions again. For Fedora native sessions, **Paste text** uses the workspace clipboard and Ctrl+V, supporting Arabic and emoji in applications that accept that shortcut. Wait for the text to appear before taking the next action. For native sessions, use the mouse wheel over the image to scroll vertically while paused. Image coordinates scale to the application viewport. Gestures received while a manual command is busy are discarded instead of replayed after resume. Horizontal wheel gestures, touch scrolling and browser-session wheel control are not implemented. Native general key controls remain disabled. All input targets the owned session; the human desktop receives no injected input.
 
 Frames refresh on a 200 ms target cadence that includes request, capture and decoding time. Slow work does not create overlapping polls. The page displays frame age and marks frames older than 1 second. Hidden tabs skip image capture. This is best-effort polling; a short browser measurement reached approximately 5 FPS, with broader conditions still unverified. Capture does not wait behind an agent's locator action; concurrent capture requests share one in-flight screenshot.
 
-The viewer draws into a reusable Canvas and closes each decoded ImageBitmap immediately after drawing, including discarded frames. This replaces the image-element path that retained hundreds of MiB of renderer shared memory. See the [memory investigation](viewer-memory.md) for measurements and the still-open sustained gate.
+The viewer draws into a reusable Canvas and closes each decoded ImageBitmap immediately after drawing, including discarded frames. This replaces the image-element path that retained hundreds of MiB of renderer shared memory. See the [memory investigation](viewer-memory.md) for measurements; the scripted sustained run passed, while simultaneous human-work confirmation remains open.
 
 ## Boundaries
 
@@ -65,3 +65,9 @@ A second measurement used one active browser session and a headless viewer, with
 This measures render readiness in a headless viewer and sampled metadata age, not physical pixels or native-viewer latency. It is one short comparison, not a five-run matched benchmark or the 10-minute simultaneous human-work gate. Closing the viewer left the session working. The full T3/T4 gates remain open.
 
 The [validation summary](validation.md) passed 5 tests and 35 assertions across browser and native viewing/control. It explicitly holds image decoding to verify that freshness is not announced early, and delays capture to verify its work contributes to age. TypeScript checking passed.
+
+## Native viewer wheel verification
+
+`ORBIT_TEST_NATIVE=1 bun run verify tests/native-viewer-scroll.test.ts` drives actual wheel events over the rendered, scaled Canvas in an owned headless browser. A GTK text view running through default Xwayland moves down and back up while paused. The test checks the emitted session coordinates, rejects direct manual scroll RPC while running, and verifies wheel events after resume produce no manual RPC or application scroll. Console errors are checked and a local screenshot is retained outside Git.
+
+The Browser plugin was not available; verification used the repository's Playwright/Chrome harness. This is an automated takeover-path test, not evidence of human participation. The resource wrapper cleans its process scope afterward.

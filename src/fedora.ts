@@ -216,8 +216,8 @@ export class FedoraBackend {
   }
   control(value: unknown) {
     const input = record(value);
-    if (input.type === "text" || input.type === "paste") return this.act(parseNativeAction(input));
-    if (input.type !== "click") throw new OrbitError("UNSUPPORTED", "Native manual control supports clicks, ASCII text and Unicode paste");
+    if (input.type === "text" || input.type === "paste" || input.type === "scroll") return this.act(parseNativeAction(input));
+    if (input.type !== "click") throw new OrbitError("UNSUPPORTED", "Native manual control supports clicks, vertical scrolling, ASCII text and Unicode paste");
     if (typeof input.x !== "number" || typeof input.y !== "number" || !Number.isFinite(input.x) || !Number.isFinite(input.y) || input.x < 0 || input.y < 0 || input.x >= 1280 || input.y >= 800)
       throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
     return this.act({ type: "pointer", x: Math.floor(input.x), y: Math.floor(input.y) });

@@ -21,7 +21,7 @@ function controls() {
   element('send').textContent = backend === 'fedora' ? 'Paste text' : 'Send text';
   element('text').maxLength = backend === 'fedora' ? 2048 : 16384;
   element('input-hint').textContent = backend === 'fedora'
-    ? 'Uses this workspace\'s private clipboard and Ctrl+V. Wait for the text to appear before your next action.'
+    ? 'Pause to click or scroll over the image. Paste uses this workspace\'s private clipboard. Wait for each action to finish.'
     : 'Pause the agent, then click its page above to choose a field. Send text or a key below.';
   element('account-controls').hidden = !accountName;
   element('account-label').textContent = accountName ? `Account snapshot: ${accountName}. Pause, then save to reuse its login later.` : '';
@@ -62,6 +62,21 @@ frame.onclick = event => {
   const rect = frame.getBoundingClientRect();
   command('session.control', { input: { type: 'click', x: Math.min(imageWidth - 1, Math.max(0, (event.clientX - rect.left) / rect.width * imageWidth)), y: Math.min(imageHeight - 1, Math.max(0, (event.clientY - rect.top) / rect.height * imageHeight)) } });
 };
+frame.addEventListener('wheel', event => {
+  if (backend !== 'fedora' || state !== 'paused' || frame.hidden || !capturedAt) return;
+  if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+  event.preventDefault();
+  // Keep manual input serial, without replaying queued gestures after resume.
+  if (busy) return;
+  const rect = frame.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 3 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? 0.2 : 100;
+  const steps = Math.sign(event.deltaY) * Math.min(20, Math.max(1, Math.round(Math.abs(event.deltaY) / unit)));
+  command('session.control', { input: { type: 'scroll',
+    x: Math.min(imageWidth - 1, Math.max(0, Math.round((event.clientX - rect.left) / rect.width * imageWidth))),
+    y: Math.min(imageHeight - 1, Math.max(0, Math.round((event.clientY - rect.top) / rect.height * imageHeight))),
+    deltaY: steps } });
+}, { passive: false });
 async function poll() {
   const started = performance.now();
   try {
