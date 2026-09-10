@@ -4,6 +4,10 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added `open-tab`, so an agent can open a tab itself instead of only following one a site opened. A trial with a local agent host found the gap: the host tried to open a second tab, could not, and reported that Orbit did not support it.
+
+- Rewrote the MCP tool descriptions to lead with what each tool is for and to name every action it can perform, rather than opening with constraints. A host that discovers tools by searching them ranked Orbit weakly for its own subject. The same trial is recorded in [connectors](docs/connectors.md).
+
 - Made the session surface a session property instead of a fixed 1280 by 800. A session can be created at a size and resized while it runs, on both backends: browser sessions resize every open tab so a tab switch does not change what a coordinate means, and native sessions resize the private display itself. Native sessions also gained `window` with fullscreen, restore, focus and close, which gives one application the whole display at no per-frame cost. Coordinate bounds, which were hardcoded in three places, now follow the session's actual surface. The cap is 1,920 by 1,200 total pixels, taken from `experiments/surface-cost.ts`: capture latency is nearly flat across that range, but continuous capture on a private display already reaches a whole core at the cap.
 
 - Gave the viewer a tab strip and a size control. The strip lists browser tabs, or the windows of a private display, numbered the way observation reports them, and selecting one follows that tab or focuses that window. Both, like typing, require pause first. Observation now reports a `tabs` list and the real surface size on both backends.

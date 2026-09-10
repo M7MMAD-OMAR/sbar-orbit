@@ -106,3 +106,32 @@ test("a session can be created at a chosen size and resized while running", asyn
       .rejects.toMatchObject({ code: "INVALID_REQUEST" });
   } finally { await broker.close(); fixture.stop(true); }
 }, 45000);
+
+/** An agent needs to open its own tab, not only follow one a site opened. */
+test("open-tab adds a followed tab, with or without a URL", async () => {
+  const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    return new Response(`<!doctype html><title>Page ${path}</title><h1 id="who">Page ${path}</h1>`, { headers: { "Content-Type": "text/html" } });
+  } });
+  const broker = await startBroker();
+  try {
+    const session = await call(broker.socket, "session.create", { backend: "browser" }) as { sessionId: string };
+    const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const observe = () => call(broker.socket, "session.observe", session) as Promise<{ presence: { pageCount: number; pageIndex: number; tabs: unknown[] } }>;
+
+    await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/first` });
+    expect(await act({ type: "open-tab", url: `http://127.0.0.1:${fixture.port}/second` }))
+      .toMatchObject({ tab: 2, url: `http://127.0.0.1:${fixture.port}/second`, tabCount: 2 });
+    expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Page /second" });
+    expect((await observe()).presence).toMatchObject({ pageCount: 2, pageIndex: 2 });
+
+    const blank = await act({ type: "open-tab" }) as { tab: number; url: string };
+    expect(blank).toMatchObject({ tab: 3, tabCount: 3 });
+    await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/third` });
+    expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Page /third" });
+
+    await act({ type: "select-tab", tab: 1 });
+    expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Page /first" });
+    await expect(act({ type: "open-tab", url: "file:///etc/passwd" })).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { await broker.close(); fixture.stop(true); }
+}, 45000);

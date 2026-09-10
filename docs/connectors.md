@@ -14,6 +14,24 @@ Register the generated server through your host's MCP settings. The command prin
 
 Tool approval and selection belong to the host. An API model requires a runtime that executes its tool calls. An app with no custom tool interface cannot automatically use Orbit. See the [MCP architecture](https://modelcontextprotocol.io/specification/2024-11-05/architecture) and [Claude MCP setup](https://code.claude.com/docs/en/mcp).
 
+## Trial with a real agent host
+
+Run against a local agent host that loads MCP servers from its own configuration, with the managed broker on its fixed socket. The host registered all seven tools on every start, in 774 ms on a cold stdio connection.
+
+What the host did with them depended on what was asked, and on what else it had:
+
+| Asked | Other browser tools offered | Outcome |
+|---|---|---|
+| Read a heading from a page | Orbit only | Chose Orbit at once, created a session, navigated, read the heading, stopped the session |
+| Read a heading from a page, in a real browser | Orbit and a general purpose browser server | Never reached Orbit. Tried its own built-in browser tool, then searched, then used the other server |
+| Read a heading in a session separate from mine | Orbit and a general purpose browser server | Tried its built-in tool first, searched, then chose Orbit and completed the task |
+
+The deciding factor was whether the request named the property Orbit exists for. A generic browser request is a generic browser tool's job, and a host preferring one is not a defect. What Orbit controls is being findable and legible when isolation is what the person wants, so the tool descriptions now lead with that rather than with caveats, and every action a tool can perform is named in its description. That measurably moved Orbit up the host's own tool search results, though a server whose description is literally the word browser still leads a search for the word browser.
+
+Two things this trial found and fixed. Tool descriptions listed constraints before purpose, so a search for what the tools do matched them weakly. And an agent could follow a tab a site opened, select one and close one, but could not open one, which a host discovered by trying and reporting that Orbit did not support it. `open-tab` closes that gap; a repeat of the trial then opened two tabs, read both and switched back.
+
+The trial used a copy of the host configuration in a throwaway home directory, so the live configuration was never modified and no credential was copied. Model-host trials consume the host's own model usage and stay outside `bun test`.
+
 ## Validation
 
 The protocol test covers negotiation, independent sessions, actions, image observations, pause/resume and disconnect survival. Opt-in model-host experiments additionally completed browser tasks and native editor saves with Claude Code and Codex. [Validation scope](validation.md).

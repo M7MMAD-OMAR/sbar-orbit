@@ -7,19 +7,21 @@ import { OrbitError, record, text } from "./errors";
 
 export type Action = { type: "navigate"; url: string } | { type: "fill"; selector: string; text: string }
   | { type: "click" | "read"; selector: string } | { type: "select-tab" | "close-tab"; tab: number }
-  | { type: "resize"; width: number; height: number } | ScrollInput;
+  | { type: "open-tab"; url?: string } | { type: "resize"; width: number; height: number } | ScrollInput;
+function address(value: unknown): string {
+  const url = text(value, "url");
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { throw new OrbitError("INVALID_REQUEST", "Invalid URL"); }
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new OrbitError("UNSUPPORTED", "Only HTTP and HTTPS navigation is supported");
+  return url;
+}
 export function parseAction(value: unknown, size: Viewport = defaultViewport): Action {
   const action = record(value);
   switch (action.type) {
     case "scroll": return parseScrollInput(action, size);
     case "resize": return { type: "resize", ...parseViewport(action) };
-    case "navigate": {
-      const url = text(action.url, "url");
-      let parsed: URL;
-      try { parsed = new URL(url); } catch { throw new OrbitError("INVALID_REQUEST", "Invalid URL"); }
-      if (!["http:", "https:"].includes(parsed.protocol)) throw new OrbitError("UNSUPPORTED", "Only HTTP and HTTPS navigation is supported");
-      return { type: "navigate", url };
-    }
+    case "navigate": return { type: "navigate", url: address(action.url) };
+    case "open-tab": return action.url === undefined ? { type: "open-tab" } : { type: "open-tab", url: address(action.url) };
     case "fill":
       if (typeof action.text !== "string" || action.text.length > 16384) throw new OrbitError("INVALID_REQUEST", "Invalid text");
       return { type: "fill", selector: text(action.selector, "selector"), text: action.text };
@@ -41,7 +43,7 @@ function label(page: Page, title: string): string {
   } catch { return "New tab"; }
 }
 export class BrowserBackend {
-  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
   private active: Page;
@@ -105,6 +107,15 @@ export class BrowserBackend {
       case "fill": await page.locator(action.selector).fill(action.text); return { applied: true };
       case "click": await page.locator(action.selector).click(); return { applied: true };
       case "read": return { text: await page.locator(action.selector).innerText() };
+      case "open-tab": {
+        // The same ceiling select-tab and close-tab address by number.
+        if (this.context.pages().length >= 64) throw new OrbitError("LIMIT_REACHED", "This session already has 64 tabs open");
+        const opened = await this.context.newPage();
+        await opened.setViewportSize(this.size).catch(() => {});
+        if (action.url) await opened.goto(action.url);
+        this.active = opened;
+        return { tab: this.context.pages().indexOf(opened) + 1, url: opened.url(), tabCount: this.context.pages().length };
+      }
       case "select-tab": {
         this.active = this.select(action.tab);
         await this.active.bringToFront();
@@ -149,7 +160,7 @@ export class BrowserBackend {
   async control(value: unknown) {
     const input = record(value);
     // Tab and surface changes are session state rather than page input, so they reuse the parsed action.
-    if (["select-tab", "close-tab", "resize"].includes(String(input.type))) return this.act(input);
+    if (["open-tab", "select-tab", "close-tab", "resize"].includes(String(input.type))) return this.act(input);
     const page = this.page;
     switch (input.type) {
       case "scroll": {

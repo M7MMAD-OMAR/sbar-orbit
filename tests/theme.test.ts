@@ -40,9 +40,10 @@ test("input that is not a palette produces no stylesheet", () => {
 
 test("candidates follow the environment rather than a fixed personal path", () => {
   expect(themeCandidates({ ORBIT_THEME: "/tmp/custom.json" })).toEqual(["/tmp/custom.json"]);
-  const candidates = themeCandidates({ HOME: "/home/example", XDG_CONFIG_HOME: undefined, XDG_STATE_HOME: undefined });
-  expect(candidates[0]).toBe("/home/example/.config/sbar-orbit/theme.json");
-  expect(candidates.every(path => path.startsWith("/home/example/"))).toBe(true);
+  const home = "/tmp/orbit-home-fixture";
+  const candidates = themeCandidates({ HOME: home, XDG_CONFIG_HOME: undefined, XDG_STATE_HOME: undefined });
+  expect(candidates[0]).toBe(`${home}/.config/sbar-orbit/theme.json`);
+  expect(candidates.every(path => path.startsWith(`${home}/`))).toBe(true);
 });
 
 test("a missing or unreadable theme leaves the shipped palette in place", async () => {
