@@ -4,8 +4,11 @@ import { join } from "node:path";
 // Prefer the managed broker's fixed socket, so generated configuration survives a restart.
 let socket = process.env.ORBIT_SOCKET, managed = false;
 if (!socket) {
-  const path = serviceSocketPath();
-  try { await call(path, "doctor"); socket = path; managed = true; } catch {}
+  try {
+    const path = serviceSocketPath();
+    await call(path, "doctor");
+    socket = path; managed = true;
+  } catch {}
 }
 if (!socket) { console.error("Start the managed service, or set ORBIT_SOCKET to a running broker socket"); process.exit(1); }
 await call(socket, "doctor");
