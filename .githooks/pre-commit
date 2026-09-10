@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+bun run scripts/public-audit.ts
+orbit_gitleaks=${GITLEAKS_BIN:-gitleaks}
+"$orbit_gitleaks" git --pre-commit --staged --redact --no-banner

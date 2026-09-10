@@ -1,0 +1,23 @@
+{
+  "name": "sbar-orbit",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "bun run scripts/limited.ts bun test",
+    "typecheck": "tsc",
+    "orbit": "bun run src/cli.ts",
+    "serve": "bun run scripts/limited.ts bun run src/cli.ts serve"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "playwright": "^1.63.0",
+    "zod": "^4.6.1"
+  },
+  "license": "Apache-2.0",
+  "description": "Local isolated application workspaces for tool-capable AI agents."
+}

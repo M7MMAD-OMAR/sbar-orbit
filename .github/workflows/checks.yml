@@ -1,0 +1,29 @@
+name: Source checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run scripts/public-audit.ts
+      - run: bun run typecheck
+      - name: Pure unit tests
+        run: bun test tests/process-scope.test.ts tests/workspace-storage.test.ts tests/public-audit.test.ts
+      - name: Secret scan
+        run: |
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o /tmp/gitleaks.tar.gz
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt -o /tmp/gitleaks-checksums.txt
+          expected=$(awk '$2 == "gitleaks_8.30.1_linux_x64.tar.gz" { print $1 }' /tmp/gitleaks-checksums.txt)
+          test -n "$expected"
+          echo "$expected  /tmp/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks git --redact --no-banner .

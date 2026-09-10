@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orbit browser experiment</title>
+<style>
+body{font:18px system-ui;background:#f4f6f8;color:#17243b;margin:0;padding:64px}
+main{max-width:640px;margin:auto}h1{font-size:42px;margin-bottom:12px}
+p{line-height:1.6;color:#46566e}label{display:block;margin:32px 0 10px}
+input,button{font:inherit;padding:14px;border:1px solid #9eaec0;border-radius:6px}
+button{background:#173d79;color:white;cursor:pointer;margin-left:8px}
+output{display:block;background:white;padding:24px;margin-top:32px;min-height:28px}
+small{display:block;margin-top:28px;color:#46566e}
+</style>
+<main>
+<p>SBAR ORBIT / FEASIBILITY LAB</p>
+<h1>A workspace of its own.</h1>
+<p>This real browser is running in the background. The test types and clicks inside this page without using the desktop mouse.</p>
+<form>
+<label for="message">Session message</label>
+<input id="message" autocomplete="off" required><button>Save</button>
+</form>
+<output aria-live="polite">Waiting for an agent action.</output>
+<small>Local test data only. No personal browser or account is connected.</small>
+</main>
+<script>
+const field=document.querySelector('input'),result=document.querySelector('output');
+field.value=localStorage.getItem('message')||'';
+document.querySelector('form').addEventListener('submit',event=>{
+event.preventDefault();localStorage.setItem('message',field.value);
+result.textContent='Saved: '+field.value;
+});
+</script>
+</html>

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+orbit_script=$(readlink -f -- "${BASH_SOURCE[0]}")
+orbit_root=$(dirname -- "$(dirname -- "$orbit_script")")
+
+case "${1:-help}" in
+  help|--help|-h)
+    cat <<'HELP'
+Sbar Orbit, local agent workspace prototype
+
+  sbar-orbit serve               Start the broker with shared resource limits
+  sbar-orbit doctor              Inspect the running broker and its resources
+  sbar-orbit preview             Print the optional viewer link
+  sbar-orbit session create      Create an owned browser session
+  sbar-orbit session create fedora
+  sbar-orbit session list
+  sbar-orbit session stop ID
+  sbar-orbit act ID JSON         Execute a session action
+  sbar-orbit connector-config    Print MCP configuration for this broker
+  sbar-orbit mcp                 Run the stdio MCP adapter
+
+Set ORBIT_SOCKET to the socket printed by serve for client commands.
+Requires Bun and installed project dependencies. Fedora/Linux prototype.
+HELP
+    ;;
+  serve)
+    shift
+    exec bun run "$orbit_root/scripts/limited.ts" bun run "$orbit_root/src/cli.ts" serve "$@"
+    ;;
+  connector-config|mcp)
+    orbit_entry=$1
+    shift
+    exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
+    ;;
+  *) exec bun run "$orbit_root/src/cli.ts" "$@" ;;
+esac

@@ -1,0 +1,17 @@
+# Local dependencies, application state and private experiment records
+node_modules/
+output/
+.runtime/
+.private/
+.secrets/
+docs/evidence/
+docs/superpowers/
+.env
+.env.*
+!.env.example
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store
+*.pem
+*.key
