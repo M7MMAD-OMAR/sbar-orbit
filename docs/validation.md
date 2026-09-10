@@ -59,9 +59,21 @@ Native sessions: every process runs with `XDG_RUNTIME_DIR` set to the session's 
 
 This is a point-in-time process sample, not proof that a later descendant cannot open a display connection, and display separation remains not a security sandbox.
 
+### Several applications at once
+
+Four real applications launched into one private display: GNOME Text Editor, Files, Calculator and System Monitor. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/multi-application.ts`.
+
+All four launched, taking 1.0 to 1.8 seconds each. The agent pasted text into the editor through the session's private clipboard, saved with Ctrl+S, and the phrase was read back from disk, so file editing works with several applications open. Launching all four cost 68% of one core over about 8 seconds.
+
+The binding constraint is the shared budget, not the number of applications. `CPUQuota=100%` is one core for everything Orbit owns. With System Monitor among them, which refreshes continuously by design, the session consumed 99.7% of one core while the agent was idle, and an owned browser for the viewer then failed to start at all with `BACKEND_FAILED`. An earlier run without System Monitor idled at 0.6% of one core. Treat a continuously redrawing application as a budget decision, and expect the viewer to compete with the applications it is showing.
+
+System Monitor inside the session reported the host's real memory and CPU. Private display separation does not hide the machine from an application, which is the documented position, not a defect.
+
 ### Launching real desktop applications does not guarantee fresh state
 
-A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Orbit removes the host display, session bus and compositor control channel, but it does not isolate an application's configuration or state directories, so an application that restores its own session will do so. Trials use the disposable GTK fixture for this reason. Treat "launch applications with fresh state" as a property of the application, not something Orbit currently enforces.
+A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Native sessions now set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside the session's own directory, so an application starts without the person's configuration and cannot restore their previous session. The repeat trial opened only the disposable file it was given.
+
+This stops session restore. It is not a security boundary: system `XDG_DATA_DIRS` still resolve, and an application keeps the OS user's filesystem permissions, so it can still read personal files if it is told to.
 
 ### Identified scheduling defect
 

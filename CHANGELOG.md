@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Gave native sessions private XDG base directories, so an application cannot restore the person's own previous session or recent documents into the agent's workspace. A trial had shown GNOME Text Editor doing exactly that. Added `experiments/multi-application.ts`, which opens four real applications at once, edits a real file through one of them and reads the result back from disk.
+
 - Added an optional managed broker: `sbar-orbit service install` writes a `systemd --user` service bound to a slice that carries the shared budget, and `serve --managed-socket` binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`. A second managed broker refuses rather than displacing the first; a socket nothing answers on is treated as stale. Generated MCP configuration now prefers that socket, so it survives a restart. Enabling, starting and stopping stay with `systemctl`. Sessions still do not survive a restart. Brokers started by tests and experiments keep their own private sockets and are unaffected.
 
 - Corrected the capability list `doctor` reports, which still omitted scroll and the tab actions.

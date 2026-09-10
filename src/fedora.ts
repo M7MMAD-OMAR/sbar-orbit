@@ -1,7 +1,7 @@
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { requireResourceBudget } from "./resource-budget";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { swayRequest } from "./sway-ipc";
@@ -85,7 +85,14 @@ export class FedoraBackend {
     const env = { ...process.env };
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY"])
       delete env[key];
-    Object.assign(env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
+    // Private base directories, so an application cannot restore the person's own previous session
+    // or recent documents into the agent's workspace. System XDG_DATA_DIRS still resolve normally.
+    const base: Record<string, string> = {};
+    for (const [key, name] of [["XDG_CONFIG_HOME", "config"], ["XDG_DATA_HOME", "data"], ["XDG_CACHE_HOME", "cache"], ["XDG_STATE_HOME", "state"]] as const) {
+      base[key] = join(directory, name);
+      await mkdir(base[key]!, { recursive: true, mode: 0o700 });
+    }
+    Object.assign(env, base, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
