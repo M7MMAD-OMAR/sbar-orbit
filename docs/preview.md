@@ -37,7 +37,13 @@ The token is for the local viewer, not a per-agent security boundary. Programs r
 
 Browser skill was not listed, so the existing Playwright workflow was used headlessly. Viewports: 1280 by 1120 and 390 by 844. Screenshots: `output/playwright/viewer-desktop.png` and `viewer-mobile.png`. Mobile verifies layout, not comfortable operation of every desktop-sized target.
 
-Known limits: one page per session, fixed 1280 by 800 browser viewport, no zoom, drag, wheel, uploads or tab picker. Live account login, a 10-minute simultaneous-work session, sustained/native frame-rate distributions remain unverified. Native fixture preview and paused manual clicks/text pass the optional Fedora integration suite. Native shortcut controls are disabled. The full T3/T4 release gates remain open.
+Known limits: fixed 1280 by 800 browser viewport, no zoom, drag or uploads, and no tab picker in the viewer. The viewer shows which tab is followed but cannot switch it; only the agent can, through select-tab. Live account login, a 10-minute simultaneous-work session, sustained/native frame-rate distributions remain unverified. Native fixture preview and paused manual clicks/text pass the optional Fedora integration suite. Native shortcut controls are disabled. The full T3/T4 release gates remain open.
+
+### Viewer cost and scheduling
+
+The viewer idles at least as long as its own last iteration cost, so a machine that cannot keep up lowers its frame rate instead of polling back to back. Before this rule a slow iteration scheduled the next poll with no delay at all, in the default 1 FPS mode as well as Smooth.
+
+Beside the frame age the viewer prints its own measurement: `Viewer cycle: N ms of every M ms (S%)`, then the `request`, `decode` and `draw` split. The cycle share includes time awaiting the broker, which is not processor time; the split is what separates them. This readout exists because the viewer runs outside Orbit's runtime cgroup, so `scripts/measure-cpu.ts` cannot observe it. It is the figure a participant should report.
 
 ### Native Unicode viewer check
 
@@ -78,7 +84,7 @@ Browser wheel coverage: `bun run verify tests/browser-scroll.test.ts` checks the
 
 Each session has `agentName` and `taskName`, supplied when it is created through RPC or MCP. The CLI reads `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. Defaults are SbarOrbit and Agent workspace. These are descriptive labels, not authenticated agent identities. The selector retains a short session identifier to distinguish duplicate names.
 
-The viewer shows the controlled page title, URL origin/path without query or fragment, controlled tab index and owned tab count. Native sessions show their focused private application title. This identifies Orbit's page or private application, not a tab in the user's personal browser. Browser popup switching is not implemented yet.
+The viewer shows the controlled page title, URL origin/path without query or fragment, controlled tab index and owned tab count. Native sessions show their focused private application title. This identifies Orbit's page or private application, not a tab in the user's personal browser. A tab the site opens by itself becomes the followed tab, and the agent returns to another with select-tab; the viewer has no tab picker of its own.
 
 Activity reports only action kind, actor, sequence and working/done/failed state. It does not store input text, selectors, command arguments or full URLs. Page titles and screenshots can still contain the application's private content and remain available only through the local access-controlled viewer.
 

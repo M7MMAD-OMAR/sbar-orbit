@@ -34,6 +34,35 @@ The participant explicitly confirmed that workspace names and the labelled point
 
 A second trial had already started before the resource report arrived. It was terminated immediately after that report. Both runners reached terminal state and the Orbit slice had zero remaining tasks. A post-stop process sample cannot establish which process caused the earlier spike. No causal attribution is claimed from that sample.
 
+### Live trial: measured session cost
+
+One Fedora host, 24 logical CPUs, browser backend, four 20 second phases in one run. Reproduce with `bun run scripts/limited.ts bun run experiments/live-trial.ts`.
+
+| Phase | Orbit share of one core | Orbit share of the machine |
+|---|---|---|
+| Session open, agent idle, no viewer | 10.4% | 0.43% |
+| Agent working, no viewer | 48.9% | 2.04% |
+| Session open, agent idle, viewer at the 1 FPS default | 12.2% | 0.51% |
+| Agent working, viewer at the 1 FPS default | 58.0% | 2.41% |
+
+The viewer reported `Viewer cycle: 53 ms of every 1000 ms (5%)`, split as request 45 ms, decode 6 ms, draw 0 ms. Most of that cycle is time awaiting the broker, not processor time.
+
+The working phases submit actions as fast as the broker accepts them, about 15 per second, which is far beyond a real agent's rate. Read them as an upper bound. The viewer here is owned headless Chrome inside Orbit's cgroup, so its cost is included in the figures above; the reported participant case had a desktop viewer outside that cgroup, and desktop compositing on this workstation's mixed 4K and 240 Hz fractional-scaling displays is still not measured. Host busy percentages varied with unrelated desktop activity and attribute nothing.
+
+### Pointer separation
+
+Sampling the host cursor cannot show separation while a person is using the machine, so the live processes are inspected instead. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/pointer-separation.ts`.
+
+Browser sessions, three consecutive runs: 12 processes inspected per run, zero holding a file descriptor to the host compositor socket, zero carrying `DISPLAY` or `WAYLAND_DISPLAY`. The owned browser is headless and its input is injected over CDP into its own page, so there is no operating system pointer for it to move.
+
+Native sessions: every process runs with `XDG_RUNTIME_DIR` set to the session's private directory, and the compositor's display socket resolves inside it rather than to the host's. The display name can be identical to the host's, `wayland-1` in both cases, so only the resolved socket path distinguishes them. `HYPRLAND_INSTANCE_SIGNATURE` is absent, so the host compositor's control channel is unreachable. The private display carries its own pointer: moving it to a requested coordinate is reported back at exactly that coordinate and drawn in the viewer with the agent's label.
+
+This is a point-in-time process sample, not proof that a later descendant cannot open a display connection, and display separation remains not a security sandbox.
+
+### Launching real desktop applications does not guarantee fresh state
+
+A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Orbit removes the host display, session bus and compositor control channel, but it does not isolate an application's configuration or state directories, so an application that restores its own session will do so. Trials use the disposable GTK fixture for this reason. Treat "launch applications with fresh state" as a property of the application, not something Orbit currently enforces.
+
 ### Identified scheduling defect
 
 The viewer scheduled its next poll with `Math.max(0, cadence - elapsed)`. When one iteration outlasted its cadence, that delay became zero and stayed zero, so the viewer polled continuously with no idle gap. This applied to the default 1 FPS mode, not only to Smooth, and it is self-reinforcing: heavier load lengthens the iteration, which removes the gap, which raises the load. Headless timing runs did not expose it because their iterations stayed well inside the cadence.

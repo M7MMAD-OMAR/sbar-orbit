@@ -59,7 +59,7 @@ The first measured default-suite run after the transport change passed 11 tests 
 
 ## Abrupt broker death with a browser
 
-`bun run verify tests/browser-crash.test.ts` passed 1 test and 6 assertions in 3.52 seconds under the shared resource cap. The test creates a real browser, snapshots descendants across every broker/child task thread, kills only that broker with SIGKILL and waits for the sampled processes to disappear from `/proc`, including zombie entries. A fresh broker rejects the stale session ID, creates a new browser, returns a PNG frame and stops it successfully.
+`bun run verify tests/browser-crash.test.ts` passed 1 test and 6 assertions in 3.52 seconds under the shared resource cap. The test creates a real browser, snapshots descendants across every broker/child task thread, kills only that broker with SIGKILL and waits for the sampled processes to disappear from `/proc`, including zombie entries. A fresh broker rejects the stale session ID, creates a new browser, returns a frame in the declared format and stops it successfully.
 
 This validates one abrupt broker-death path. The descendant snapshot cannot prove coverage of processes created after sampling, and it does not test independent supervisor death, machine reboot or memory exhaustion. The measured combined-suite record predates this added test; the new case was verified separately.
 

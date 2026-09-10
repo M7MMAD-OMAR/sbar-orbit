@@ -15,4 +15,4 @@ The broker belongs to the OS user. MCP configuration belongs to each host, so Or
 
 The alpha has browser/native integration tests and a successful scripted 10-minute browser/viewer run. See [validation](docs/validation.md). Display separation is not a security sandbox, and same-user applications retain filesystem permissions.
 
-Next milestones: participant-confirmed takeover, repeatable recovery, wider application/account coverage, local install/uninstall, then actual tests on other operating systems. See the [roadmap](docs/roadmap.md), [architecture](docs/architecture.md) and [acceptance cases](docs/acceptance.md).
+Next milestones: a participant-read viewer cost figure closing the resource gate, participant-confirmed takeover, repeatable recovery, wider application/account coverage, fresh-machine verification of the existing local install, then actual tests on other operating systems. See the [roadmap](docs/roadmap.md), [architecture](docs/architecture.md) and [acceptance cases](docs/acceptance.md).

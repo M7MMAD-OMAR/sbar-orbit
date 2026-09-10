@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added `experiments/live-trial.ts` and `experiments/pointer-separation.ts`, recording measured session cost and evidence that a session holds no connection to the host display. Corrected the MCP observe description, the preview limits and the project milestones, which still described one page per session, PNG capture and an unmoved resource gate.
+
 - Followed browser tabs that a site opens by itself, so a login, consent or payment window is now reachable instead of leaving the agent bound to the opening tab for the life of the session. Added `select-tab` and `close-tab` actions keyed to the 1-based number observation reports, sized adopted tabs to the session viewport so reported and captured dimensions agree, moved the pointer overlay to whichever tab is followed, and fell back to a surviving tab when the followed one closes. Each action and each frame now resolves the followed tab once, so a tab opened mid-action cannot redirect it.
 
 - Captured frames as JPEG quality 80 instead of PNG on both backends. Measured on one Fedora host: browser capture fell from 68 ms and 188 KiB per frame to 47 ms and 70 KiB, and native capture fell from 77.8 ms to 8.1 ms because PNG deflate, not the per-frame `grim` process or the sway tree query, was the whole cost. Frames now declare their format in `mimeType`, which the MCP adapter accepts for both formats.

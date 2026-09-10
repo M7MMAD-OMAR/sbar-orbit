@@ -51,7 +51,7 @@ export function createMcpServer(socket: string) {
     inputSchema: { sessionId: id, requestId: id, action },
   }, params => invoke("session.act", params));
   const descriptions = {
-    observe: "Return a PNG of the session surface. Does not open a viewer or capture the human desktop.",
+    observe: "Return a JPEG of the session surface, with its format named in mimeType. Does not open a viewer or capture the human desktop.",
     pause: "Reject new actions and wait for accepted work to drain before acknowledging pause.",
     resume: "Resume a paused session after its pause acknowledgement.",
     stop: "Close only this session's owned backend and invalidate pending work.",
