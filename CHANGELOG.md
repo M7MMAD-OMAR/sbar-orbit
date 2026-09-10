@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Added browser vertical wheel actions and paused viewer scrolling, with shared validation across both backends.
+
 - Added paused native-session wheel control in the viewer, with scaled coordinates and no gesture backlog.
 
 - Added native vertical wheel actions through broker, CLI and MCP.

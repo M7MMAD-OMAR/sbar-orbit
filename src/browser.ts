@@ -1,12 +1,14 @@
+import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
 import { launchChrome } from "./chrome";
 import { OrbitError, record, text } from "./errors";
 
 export type Action = { type: "navigate"; url: string } | { type: "fill"; selector: string; text: string }
-  | { type: "click" | "read"; selector: string };
+  | { type: "click" | "read"; selector: string } | ScrollInput;
 export function parseAction(value: unknown): Action {
   const action = record(value);
   switch (action.type) {
+    case "scroll": return parseScrollInput(action);
     case "navigate": {
       const url = text(action.url, "url");
       let parsed: URL;
@@ -22,7 +24,7 @@ export function parseAction(value: unknown): Action {
   }
 }
 export class BrowserBackend {
-  readonly capabilities = ["navigate", "fill", "click", "read", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "observe", "pause", "resume", "stop"];
   parseAction = parseAction;
   onClose(listener: () => void) { this.owned.onClose(listener); }
   private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, readonly page: Page) {}
@@ -35,6 +37,7 @@ export class BrowserBackend {
   async act(value: unknown): Promise<unknown> {
     const action = parseAction(value);
     switch (action.type) {
+      case "scroll": return this.control(action);
       case "navigate": await this.page.goto(action.url); return { url: this.page.url() };
       case "fill": await this.page.locator(action.selector).fill(action.text); return { applied: true };
       case "click": await this.page.locator(action.selector).click(); return { applied: true };
@@ -49,6 +52,12 @@ export class BrowserBackend {
   async control(value: unknown) {
     const input = record(value);
     switch (input.type) {
+      case "scroll": {
+        const scroll = parseScrollInput(input);
+        await this.page.mouse.move(scroll.x, scroll.y);
+        await this.page.mouse.wheel(0, scroll.deltaY * 100);
+        break;
+      }
       case "click":
         if (typeof input.x !== "number" || typeof input.y !== "number" || !Number.isFinite(input.x) || !Number.isFinite(input.y)
           || input.x < 0 || input.y < 0 || input.x >= 1280 || input.y >= 800) throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");

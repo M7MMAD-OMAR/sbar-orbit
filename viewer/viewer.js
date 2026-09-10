@@ -22,7 +22,7 @@ function controls() {
   element('text').maxLength = backend === 'fedora' ? 2048 : 16384;
   element('input-hint').textContent = backend === 'fedora'
     ? 'Pause to click or scroll over the image. Paste uses this workspace\'s private clipboard. Wait for each action to finish.'
-    : 'Pause the agent, then click its page above to choose a field. Send text or a key below.';
+    : 'Pause the agent, then click or scroll over its page above. Send text or a key below.';
   element('account-controls').hidden = !accountName;
   element('account-label').textContent = accountName ? `Account snapshot: ${accountName}. Pause, then save to reuse its login later.` : '';
   element('save-account').disabled = !accountName || !live || busy || state !== 'paused';
@@ -63,7 +63,7 @@ frame.onclick = event => {
   command('session.control', { input: { type: 'click', x: Math.min(imageWidth - 1, Math.max(0, (event.clientX - rect.left) / rect.width * imageWidth)), y: Math.min(imageHeight - 1, Math.max(0, (event.clientY - rect.top) / rect.height * imageHeight)) } });
 };
 frame.addEventListener('wheel', event => {
-  if (backend !== 'fedora' || state !== 'paused' || frame.hidden || !capturedAt) return;
+  if (!['fedora', 'browser'].includes(backend) || state !== 'paused' || frame.hidden || !capturedAt) return;
   if (!Number.isFinite(event.deltaY) || event.deltaY === 0) return;
   event.preventDefault();
   // Keep manual input serial, without replaying queued gestures after resume.

@@ -1,3 +1,4 @@
+import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { requireResourceBudget } from "./resource-budget";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { swayRequest } from "./sway-ipc";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
-  | { type: "key"; key: string } | { type: "scroll"; x: number; y: number; deltaY: number };
+  | { type: "key"; key: string } | ScrollInput;
 export function parseNativeAction(value: unknown): NativeAction {
   const a = record(value);
   if (a.type === "launch") {
@@ -23,12 +24,7 @@ export function parseNativeAction(value: unknown): NativeAction {
       throw new OrbitError("INVALID_REQUEST", "Coordinates outside session viewport");
     return { type: "pointer", x: Number(a.x), y: Number(a.y) };
   }
-  if (a.type === "scroll") {
-    if (!Number.isInteger(a.x) || !Number.isInteger(a.y) || Number(a.x) < 0 || Number(a.x) >= 1280 || Number(a.y) < 0 || Number(a.y) >= 800
-      || !Number.isInteger(a.deltaY) || Number(a.deltaY) === 0 || Math.abs(Number(a.deltaY)) > 20)
-      throw new OrbitError("INVALID_REQUEST", "Scroll requires viewport coordinates and nonzero integer wheel steps from -20 to 20");
-    return { type: "scroll", x: Number(a.x), y: Number(a.y), deltaY: Number(a.deltaY) };
-  }
+  if (a.type === "scroll") return parseScrollInput(a);
   if (a.type === "text") {
     if (typeof a.text !== "string" || a.text.length > 2048 || /[^\x20-\x7e]/.test(a.text))
       throw new OrbitError("UNSUPPORTED", "Native text currently supports up to 2048 printable ASCII characters");

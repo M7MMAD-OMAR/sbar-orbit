@@ -42,7 +42,7 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 | `session.act` | `{sessionId, requestId, action}` |
 | `session.observe`, `session.pause`, `session.resume`, `session.stop` | `{sessionId}` |
 
-Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`. The Fedora backend supports `launch`, `pointer`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
+Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, and `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20. The Fedora backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
 
 `profileKey` is currently a mutual-exclusion label, not a persistent account profile. Use `accountName` for [saved account state](accounts.md). Every browser receives a fresh temporary profile; no existing directory can be supplied. Profiles are retained after close and the broker's temporary root is identifiable from its socket path. No automatic profile deletion is implemented.
 
@@ -70,3 +70,9 @@ The launcher uses the existing shared resource wrapper for `serve`, including gr
 This is a checkout launcher, not a standalone release. It requires Bun and the installed project dependencies. Versioned packaging, installation and uninstall remain separate work. No global `orbit` command was created or replaced.
 
 Browser workspace files are created in fresh private directories under `$XDG_CACHE_HOME/sbar-orbit/workspaces`, defaulting to `~/.cache/sbar-orbit/workspaces`. This must be disk-backed storage, not tmpfs. Broker sockets stay in short private `/tmp` directories. Workspace profiles are retained after stop; no automatic deletion is implemented.
+
+## Wheel input
+
+Both adapters accept `{"type":"scroll","x":400,"y":300,"deltaY":3}`. Positive steps scroll down, negative steps up. Browser sessions move their owned pointer to the viewport point and send 100 CSS pixels per step through Playwright wheel input. Native sessions send wheel steps through the private Wayland pointer. Applications can consume or change the resulting movement, so acknowledgement does not prove a specific final offset. Nested scrollable elements are selected by the target point.
+
+The same input is available through `session.control` only while paused and through the viewer's wheel gesture. The browser integration test uses a local fixture's scroll-event readback to verify agent down/up, input validation, paused viewer down/up and no viewer control after resume.
