@@ -134,6 +134,7 @@ scope half.
 |---|---|---|---|---|
 | Orbit today, bus severed | unreachable | unreachable | 0 | signed out |
 | `xdg-dbus-proxy --filter --talk=org.freedesktop.secrets` | reachable | **blocked** | **25** | **signed in** |
+| A private bus serving one item, which is what Orbit now uses | reachable | **blocked** | **1** | **signed in** |
 
 So the cheap fix works and it is not free. `--talk=` constrains the bus name, not which items may be
 searched, and Secret Service item paths are dynamic. A client on that filtered bus enumerated all 25
@@ -255,7 +256,7 @@ The feature is shippable with these, and is a credential handover without them.
 | Human confirmation on irreversible actions, reusing the existing pause and takeover path | The person sees the action before it happens |
 | Short lived session leases, and a clone discarded when the session stops | A stale copy of the person's identity does not accumulate on disk |
 | Per session audit log of origins actually contacted | The person can see where their identity went |
-| A private secret service serving only the browser's own key, instead of the whole keyring | Removes the 25 item exposure. Not built, and it requires the broker to handle one real secret |
+| A private secret service serving only the browser's own key, instead of the whole keyring | Removes the 25 item exposure. **Built and measured**: 1 item enumerable against the proxy's 25, same decryption at a share of 1.0. The cost that remains is the one named here, a helper holding one real secret in memory for the session |
 
 Two further honest limits. A clone is a fork, not the person's live session: writes in the fork never
 return to their browser, so takeover happens in a divergent copy, and "completely" is not what a copy
@@ -288,7 +289,9 @@ established. The extension hybrid avoids both problems, which is the strongest a
    Only the headless case was reproduced, and it aborted rather than forwarding. The headed case is
    the dangerous one and was not tested, because testing it means opening a browser on the person's
    desktop.
-5. **Can a private secret service serve exactly one item?** This is what removes the 25 item keyring
-   exposure and it is the difference between a shippable clone and a credential handover.
+5. ~~Can a private secret service serve exactly one item?~~ **Answered, and it can.** Built as
+   `src/native/one_secret.py`: 1 item enumerable against the filtering proxy's 25, with the same
+   decryption, a share of 1.0 over 142 cookies. That was the difference between a shippable clone
+   and a credential handover.
 6. **Everything about Windows and macOS.** No host exists in this project's reach. Until one does,
    every non Linux row in the compatibility matrix is reasoning, and the matrix should say so.

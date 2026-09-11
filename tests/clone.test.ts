@@ -28,7 +28,7 @@ function capabilitiesFor(profile: string): PlatformCapabilities {
     platform: "linux", sessionType: "wayland", desktop: "Hyprland", nativeDisplaySupported: true,
     browserBackendSupported: true, secretService: "available", filteredBusProxy: "/usr/bin/xdg-dbus-proxy",
     systemdUserScopes: true, notes: [],
-    browsers: [{ id: "google-chrome", executable: "/opt/google/chrome/chrome", packaging: "system", profileDirectory: profile, keyringItem: "Chrome Safe Storage" }],
+    browsers: [{ id: "google-chrome", executable: "/opt/google/chrome/chrome", packaging: "system", profileDirectory: profile, keyringItem: "Chrome Safe Storage", keyringApplication: "chrome" }],
   };
 }
 

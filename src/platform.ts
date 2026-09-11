@@ -43,6 +43,12 @@ export type BrowserInstall = {
    * cross binary clone returns every cookie undecryptable.
    */
   keyringItem: string;
+  /**
+   * The value of the `application` attribute Chromium stores its key under, which is what a lookup
+   * matches on. Chrome writes "chrome" and Chromium writes "chromium", which is the same split that
+   * makes a cross binary clone decrypt nothing.
+   */
+  keyringApplication: string;
 };
 
 export type SecretServiceState = "available" | "absent" | "unknown";
@@ -74,8 +80,8 @@ const exists = async (path: string, executable = false) => {
  * only correct choice for a given profile is the install that owns it.
  */
 function browserCandidates(home: string): Omit<BrowserInstall, "executable">[] {
-  const chrome = { id: "google-chrome", keyringItem: "Chrome Safe Storage" };
-  const chromium = { id: "chromium", keyringItem: "Chromium Safe Storage" };
+  const chrome = { id: "google-chrome", keyringItem: "Chrome Safe Storage", keyringApplication: "chrome" };
+  const chromium = { id: "chromium", keyringItem: "Chromium Safe Storage", keyringApplication: "chromium" };
   return [
     { ...chrome, packaging: "system", profileDirectory: join(home, ".config", "google-chrome") },
     { ...chromium, packaging: "system", profileDirectory: join(home, ".config", "chromium") },

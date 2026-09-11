@@ -1,5 +1,5 @@
-import { chmod, cp, mkdtemp, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, cp, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { canCloneProfile, detectPlatform, stripSingletonMarkers, type PlatformCapabilities } from "./platform";
 import { requireBoundedOrigins, type SessionPolicy } from "./policy";
@@ -29,34 +29,38 @@ export type CloneResult = {
 };
 
 /**
- * A bus carrying exactly one name. The browser needs the login keyring to decrypt the profile it is
- * being given, and handing it the person's session bus would let Chrome move itself into an uncapped
- * systemd scope, which is the containment Orbit's whole resource budget rests on.
+ * A bus carrying exactly one secret.
  *
- * The honest limit, measured: this filter constrains the bus NAME, not which items may be searched,
- * so a client on it can enumerate every item in the login collection. That is a real cost and it is
- * recorded in docs/separate-workspace-review.md rather than hidden here.
+ * The browser needs the login keyring to decrypt the profile it is being given. Two narrower things
+ * than the person's session bus were measured, and they are not equivalent. A filtering proxy
+ * (`xdg-dbus-proxy --filter --talk=org.freedesktop.secrets`) constrains the bus NAME but not which
+ * items may be searched, and a client on one enumerated all 25 items in the login collection to
+ * reach a single key. A private bus serving one item reached the same decryption, a share of 1.0
+ * over 142 cookies, with exactly 1 item enumerable. Both blocked `org.freedesktop.systemd1`, the
+ * route Chrome uses to move itself out of Orbit's resource scope.
+ *
+ * So this takes the second. The broker reads one item from the real keyring, and the browser sees
+ * only that. The cost that remains, stated rather than hidden: a helper process holds one real
+ * secret in memory for the life of the session.
  */
-async function filteredSecretBus(proxy: string, runtimeRoot: string): Promise<{ address: string; close: () => Promise<void> }> {
-  // A unix socket path cannot exceed about 108 bytes, so this lives in the runtime directory rather
-  // than beside the profile, whose path is already long.
-  const directory = await mkdtemp(join(runtimeRoot, "orbit-bus-"));
-  const socket = join(directory, "bus");
-  const child = Bun.spawn([proxy, `unix:path=${runtimeRoot}/bus`, socket, "--filter", "--talk=org.freedesktop.secrets"],
-    { stdout: "ignore", stderr: "ignore" });
-  for (let attempt = 0; attempt < 120; attempt++) {
-    if ((await readdir(directory)).includes("bus")) break;
-    await Bun.sleep(50);
+async function oneItemSecretBus(application: string, label: string): Promise<{ address: string; close: () => Promise<void> }> {
+  const child = Bun.spawn(["/usr/bin/python3", resolve(import.meta.dir, "native/one_secret.py"),
+    JSON.stringify({ application }), label], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+  const announced = await Promise.race([
+    (async () => {
+      const reader = child.stdout.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      return new TextDecoder().decode(value ?? new Uint8Array()).trim();
+    })(),
+    Bun.sleep(15000).then(() => ""),
+  ]);
+  const close = async () => { child.stdin.end(); child.kill(); await child.exited.catch(() => {}); };
+  if (!announced.startsWith("{")) {
+    await close();
+    throw new OrbitError("BACKEND_FAILED", "The one-item secret bus did not start, so the clone would have started signed out");
   }
-  if (!(await readdir(directory)).includes("bus")) {
-    child.kill();
-    await rm(directory, { recursive: true, force: true });
-    throw new OrbitError("BACKEND_FAILED", "The filtered secret bus did not start, so the clone would have started signed out");
-  }
-  return {
-    address: `unix:path=${socket}`,
-    close: async () => { child.kill(); await rm(directory, { recursive: true, force: true }).catch(() => {}); },
-  };
+  return { address: (JSON.parse(announced) as { address: string }).address, close };
 }
 
 /**
@@ -88,10 +92,8 @@ export async function cloneProfile(
   await stripSingletonMarkers(sessionProfile);
 
   let bus: { address: string; close: () => Promise<void> } | undefined;
-  if (verdict.store !== "basic") {
-    if (!detected.filteredBusProxy) throw new OrbitError("UNSUPPORTED", "Reaching the keyring needs xdg-dbus-proxy, which is not installed");
-    bus = await filteredSecretBus(detected.filteredBusProxy, process.env.XDG_RUNTIME_DIR ?? "/run/user/1000");
-  }
+  if (verdict.store !== "basic")
+    bus = await oneItemSecretBus(verdict.install.keyringApplication, verdict.install.keyringItem);
   return {
     sourceProfile, reflinked: verdict.reflink,
     launch: {

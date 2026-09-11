@@ -63,7 +63,7 @@ test("cloning is refused with a reason for every measured failure mode", async (
   await fakeJar(owned, "v11");
   await fakeJar(sandboxed, "v11");
   const install = { id: "google-chrome", executable: "/opt/google/chrome/chrome", packaging: "system" as const,
-    profileDirectory: owned, keyringItem: "Chrome Safe Storage" };
+    profileDirectory: owned, keyringItem: "Chrome Safe Storage", keyringApplication: "chrome" };
   const flatpak = { ...install, packaging: "flatpak" as const, profileDirectory: sandboxed, executable: "/usr/bin/flatpak" };
   const base: PlatformCapabilities = {
     platform: "linux", sessionType: "wayland", desktop: "Hyprland", nativeDisplaySupported: true,
@@ -110,7 +110,7 @@ test("cloning is refused with a reason for every measured failure mode", async (
   // A basic-store profile needs neither the keyring nor the proxy, so it stays allowed without them.
   const plain = join(root, "chromium");
   await fakeJar(plain, "v10");
-  const plainInstall = { ...install, id: "chromium", profileDirectory: plain, keyringItem: "Chromium Safe Storage" };
+  const plainInstall = { ...install, id: "chromium", profileDirectory: plain, keyringItem: "Chromium Safe Storage", keyringApplication: "chromium" };
   const allowed = await canCloneProfile(plain, { ...base, secretService: "absent", filteredBusProxy: null, browsers: [plainInstall] }, root);
   expect(allowed.allowed).toBe(true);
   if (allowed.allowed) expect(allowed.store).toBe("basic");
@@ -149,4 +149,16 @@ test("reflink support is probed by asking for one, not by reading the filesystem
   expect(typeof await supportsReflink(root)).toBe("boolean");
   // The probe leaves nothing behind, because it runs before every clone.
   expect((await readdir(root)).filter(entry => entry.startsWith(".orbit-reflink-")).length).toBe(0);
+});
+
+test("the keyring lookup attribute follows the branding, not the package", async () => {
+  const home = await mkdtemp(join(tmpdir(), "orbit-keyring-"));
+  await mkdir(join(home, ".var", "app", "com.google.Chrome", "config", "google-chrome"), { recursive: true });
+  for (const install of await detectBrowsers(home)) {
+    // Chromium stores its key under application=chromium and Chrome under chrome, whatever the
+    // package. A one-item secret bus looks the key up by this value, so getting it wrong serves the
+    // wrong secret and the clone decrypts nothing.
+    expect(install.keyringApplication).toBe(install.id === "google-chrome" ? "chrome" : "chromium");
+    expect(install.keyringItem.toLowerCase()).toContain(install.keyringApplication);
+  }
 });

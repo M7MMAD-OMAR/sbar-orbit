@@ -794,7 +794,7 @@ journal that records refused origins separately from the agent's own denied acti
 
 ## 9. Gates
 
-Every row is unverified today. The tier column is what the capability matrix may print until the check
+Every row was unverified when this was written; G8 has since closed and is struck through. The tier column is what the capability matrix may print until the check
 closes. Nothing here may be described as solved.
 
 | # | Gate | Host or thing needed | The exact check that closes it |
@@ -806,7 +806,7 @@ closes. Nothing here may be described as solved.
 | G5 | Does an extracted Debian, Arch or openSUSE sway start from a private prefix at all | One host per family | Source B fetch, then `ldd -r`, then `l.compositor.smoke` |
 | G6 | Does a rootless container publish a Wayland socket the host can connect to, and can the X11 display identity be owned by Orbit | A toolbox or distrobox host | Socket visibility probe, then `l.x11.identity` with an explicitly allocated, host verified free display number |
 | G7 | Does `systemd-run --user --scope` from inside a toolbox register on the host user manager while keeping the container's namespaces, and is the resulting cgroup readable for `cpu.stat` | A toolbox host | Run it, then read the budget files through the namespace root |
-| G8 | Can a private secret service serve exactly one item, so the session never holds keyring wide TALK | This host | Build it, then confirm a client on that bus can enumerate one item and that the cloned profile still decrypts at a share of 1.0 |
+| ~~G8~~ | ~~Can a private secret service serve exactly one item~~ **Closed 11 September 2026.** Built as `src/native/one_secret.py` and wired into `src/clone.ts`. Measured side by side on this host: the one item bus enumerates **1** item and decrypts **142 of 142** cookies, a share of 1.0; the filtering proxy it replaces enumerates **25** for the same result. Both block `org.freedesktop.systemd1`. The helper reported the browser asking exactly once, so the service was used rather than merely present. Reproduce with `ORBIT_REAL_PROFILE=1 bun run scripts/limited.ts bun run experiments/one-secret.ts` | Closed | Closed |
 | G9 | Does an all `v10` Linux profile still exist in the wild, given that Chrome rewrites a row to `v11` on next write | A real profile from another person's machine, reported through form 02. A synthetic `v10` profile answers the launch half today and answers nothing about whether the case occurs | `l.profile.scheme` reports zero `v11` on a real profile, then launch with `--password-store=basic` and `l.decrypted.share`. Until one is reported, treat the no secret service refusal as correct |
 | G10 | Does a filtered session bus in front of the nested compositor make a GTK file chooser work | This host | Add a `--talk` set covering the portal and notifications, then open a file chooser in a native session fixture |
 | G11 | Does a headed browser forward a URL into the person's running browser from a cloned profile | This host, and it means opening a browser on the person's own desktop. Orbit never runs this check, at any tier, under any flag. Only the owner runs it, by hand, at a moment they pick | Launch a cloned profile headed with `Singleton*` intact and again stripped, and record whether the URL lands in their window |
