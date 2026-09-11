@@ -52,13 +52,51 @@ export class BrowserBackend {
   private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, page: Page, private size: Viewport) {
     this.active = page;
   }
-  static async create(profile: string, size: Viewport = defaultViewport, launch: ChromeLaunchOptions = {}): Promise<BrowserBackend> {
+  /**
+   * Hold the session to a set of origins, below the agent rather than in front of it.
+   *
+   * The policy check in the broker decides what the AGENT may ask for. It stops the agent and it
+   * stops nothing else: a page redirects itself, loads an iframe, fetches, or opens a popup, and none
+   * of that is an action the agent requested. For a session carrying the person's real logins that
+   * gap is the whole attack, so the lease is enforced on the requests the browser actually makes.
+   *
+   * "any" installs nothing, which is right for a session that starts from an empty profile.
+   */
+  private static async holdOriginLease(context: BrowserContext, lease: string[] | "any", onBlocked: (origin: string) => void) {
+    if (lease === "any") return;
+    const allowed = new Set(lease);
+    await context.route("**/*", async route => {
+      const url = route.request().url();
+      // A page's own chrome, blank tabs and data URLs are not network reach and carry no origin.
+      if (/^(about:|data:|blob:|chrome(-extension)?:)/.test(url)) return route.continue();
+      let origin: string;
+      try { origin = new URL(url).origin; } catch { onBlocked("(unparseable)"); return route.abort("blockedbyclient"); }
+      if (!allowed.has(origin)) { onBlocked(origin); return route.abort("blockedbyclient"); }
+      // A request TO an allowed origin can still be answered with a redirect to somewhere else, and
+      // the browser follows that itself without asking again. Measured: every other page initiated
+      // route was held and a server side 302 walked straight through. Documents are therefore
+      // fetched a hop at a time so each destination is checked before the browser sees it.
+      if (route.request().resourceType() !== "document") return route.continue();
+      let hop: Awaited<ReturnType<typeof route.fetch>>;
+      try { hop = await route.fetch({ maxRedirects: 0 }); }
+      catch { return route.continue(); }
+      const location = hop.headers()["location"];
+      if (hop.status() < 300 || hop.status() > 399 || !location) return route.fulfill({ response: hop });
+      let target: string;
+      try { target = new URL(location, url).origin; } catch { onBlocked("(unparseable)"); return route.abort("blockedbyclient"); }
+      if (!allowed.has(target)) { onBlocked(target); return route.abort("blockedbyclient"); }
+      await route.fulfill({ response: hop });
+    });
+  }
+
+  static async create(profile: string, size: Viewport = defaultViewport, launch: ChromeLaunchOptions = {}, lease: string[] | "any" = "any", onBlocked: (origin: string) => void = () => {}): Promise<BrowserBackend> {
     const owned = await launchChrome(profile, size, launch);
     // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
     // seconds with four other sessions working; that is contention, not a missing element. Ten
     // seconds made a missing element cost every caller ten seconds, so this sits in between.
     owned.context.setDefaultTimeout(5000);
     owned.context.setDefaultNavigationTimeout(15000);
+    await BrowserBackend.holdOriginLease(owned.context, lease, onBlocked);
     const backend = new BrowserBackend(owned, owned.context, owned.page, size);
     // A site that opens a login or consent tab must become reachable, so follow the newest page
     // the way a person would, and fall back to a survivor when the active page goes away.

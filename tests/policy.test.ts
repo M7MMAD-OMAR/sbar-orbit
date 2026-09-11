@@ -137,3 +137,14 @@ test("a fresh profile session is unbounded, a session with real logins cannot be
   expect(narrow(freshProfilePolicy, { origins: ["https://a.test"] }).origins).toEqual(["https://a.test"]);
   expect(narrow(parsePolicy({ origins: ["https://a.test"], allow: ["read", "navigate"] }), {}).origins).toEqual(["https://a.test"]);
 });
+
+test("the lease is a property of the session, and a page cannot be an exception to it", () => {
+  // Recorded here because the enforcement itself is measured in experiments/origin-lease.ts: the
+  // broker's check governs what the AGENT asks for, and it governs nothing a page does on its own.
+  // Both depths read the same allowlist, so narrowing one narrows the other.
+  const policy = parsePolicy({ mode: "autonomous", origins: ["https://a.test"], allow: ["read", "navigate", "write"] });
+  expect(policy.origins).toEqual(["https://a.test"]);
+  expect(decide(policy, "navigate", "https://b.test").outcome).toBe("deny");
+  // A session with no credentials installs no lease, which is what "any" means to the backend.
+  expect(freshProfilePolicy.origins).toBe("any");
+});

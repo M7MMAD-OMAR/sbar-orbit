@@ -23,6 +23,8 @@ interface Session {
   journal: JournalEntry[];
   /** Releases anything the clone needed, such as its filtered secret bus. */
   releaseClone?: () => Promise<void>;
+  /** Off-lease requests the page itself made, which no agent action would show. */
+  blockedOrigins: string[];
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -82,12 +84,15 @@ export class Sessions {
       if (input.cloneOf !== undefined && input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Cloning a profile requires the browser backend");
       if (input.cloneOf !== undefined && account) throw new OrbitError("INVALID_REQUEST", "A session takes either a saved account or a cloned profile, not both");
       const clone = input.cloneOf === undefined ? undefined : await cloneProfile(text(input.cloneOf, "cloneOf"), profile, policy);
+      // Requests the PAGE made and the lease refused. The agent never asked for these, so they are
+      // recorded separately from its own denied actions.
+      const blockedOrigins: string[] = [];
       const queued = Date.now();
       const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface, clone?.launch);
+        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin));
       });
       this.creationTail = start.catch(() => {});
       let backend: BrowserBackend | FedoraBackend;
@@ -98,7 +103,7 @@ export class Sessions {
         catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins };
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
@@ -197,7 +202,7 @@ export class Sessions {
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
-    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal };
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)] };
     if (request.method === "session.stop") return this.stop(session);
     this.ensureOpen(session);
     // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.
