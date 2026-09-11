@@ -44,11 +44,13 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     const blank = await run(b, "session.create", { backend: "browser", accountName: "other" }) as { sessionId: string };
     await act(b, blank, nav);
     expect(await act(b, blank, { type: "read", selector: "h1" })).toEqual({ text: "Signed out" });
+    // The first broker's session was stopped with it, and its profile went with the session: the
+    // account state had already been copied out, so nothing in the profile outlives it.
     const profileA = (await readdir(aRoot)).filter(v => v.startsWith("profile-"));
     const profileB = (await readdir(bRoot)).filter(v => v.startsWith("profile-"));
-    expect(profileA.length).toBe(1); expect(profileB.length).toBe(2);
-    expect(join(aRoot, profileA[0]!)).not.toBe(join(bRoot, profileB[0]!));
+    expect(profileA.length).toBe(0); expect(profileB.length).toBe(2);
     await run(b, "session.stop", second);
+    expect((await readdir(bRoot)).filter(v => v.startsWith("profile-")).length).toBe(1);
     await writeFile(join(accounts, "fixture", "state.json"), "invalid fixture state", { mode: 0o600 });
     await expect(run(b, "session.create", { backend: "browser", accountName: "fixture" })).rejects.toMatchObject({ code: "ACCOUNT_STATE_INVALID" });
     // A restore failure must release the lock for the next attempt.

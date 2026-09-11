@@ -11,7 +11,7 @@ import { defaultViewport, parseViewport } from "./viewport";
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
   agentName: string; taskName: string; activity?: { type: string; actor: string; state: string; sequence: number };
-  id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string;
+  id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string; profile: string;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
@@ -82,7 +82,7 @@ export class Sessions {
         catch (error) { await backend.close(); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, tail: Promise.resolve(), requests: new Map() };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map() };
       this.sessions.set(id, session);
       backend.onClose(() => { session.state = "closed"; this.leases.delete(lease); session.releasing ??= session.tail.then(() => account?.release()); });
       account?.onLost(() => { void this.stop(session); });
@@ -140,6 +140,9 @@ export class Sessions {
       await session.backend.close();
       await session.tail;
       await session.releasing;
+      // The profile was this session's alone: account state was copied out while it ran, so nothing
+      // in it outlives the session, and a retained one is disk that nothing reclaims.
+      await rm(session.profile, { recursive: true, force: true }).catch(() => {});
       session.state = "closed";
       return this.info(session);
     })();

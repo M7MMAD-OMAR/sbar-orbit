@@ -1,6 +1,6 @@
 # Desktop presence
 
-Status: the status source and the edge panel exist and are measured. The working indicator and a shell-native module remain proposals.
+Status: the status source, the edge panel and the working indicator exist and are measured. A shell-native module and a tray icon remain proposals.
 
 ## The request
 
@@ -43,9 +43,22 @@ Verified where it can be captured without touching the person's screen: inside a
 
 The link the panel opens carries a fresh access token. It is requested at the moment of the click and handed to `Gtk.UriLauncher`, never written to a file or printed. On a desktop where the browser is already running the URL travels over its remoting channel rather than a new process's command line.
 
-## What does not exist yet
+### The working indicator
 
-**The working indicator.** A second layer surface on the overlay layer, click through, drawn only while at least one session is running, a static border first. This machine keeps compositor effects off because two displays at 4K and 2560 by 1600 with fractional scaling make them expensive, and this whole line of work started with a processor complaint, so an animated pulse across 3840 by 2160 is not something to ship before it is measured. A static frame with a transparent centre is cheap and would be measured with the same sampling the viewer cost work used.
+```sh
+sbar-orbit panel --indicator
+sbar-orbit panel --indicator --indicator-color "#fcb975"
+```
+
+A second layer surface on the overlay layer, anchored to all four edges of the same monitor, with an empty input region so every click and hover passes through to whatever is underneath. It draws a 3 px frame around the screen while at least one session's current action is in flight and is hidden otherwise, so a glance at any edge says whether an agent is working right now. The centre is transparent whatever the person's theme says: their `gtk.css` may paint every window, so the transparency rule is loaded above user priority.
+
+It is a static frame on purpose. This machine keeps compositor effects off because two displays at 4K and 2560 by 1600 with fractional scaling make them expensive, and this whole line of work started with a processor complaint. The frame is drawn once per state change and costs nothing between changes: across a capture with the indicator shown and hidden, the panel process used 0 to 1 clock ticks of CPU. An animated pulse is possible later, measured first.
+
+Verified inside a private display by `experiments/panel-check.ts`: a launch that sleeps before it maps keeps the session working for a known time; the frame captured in the middle of it has green edge pixels with the text editor and calculator visible underneath, and the frame captured after it finished has none.
+
+The panel and its rows take the person's own colour names, `window_bg_color`, `window_fg_color` and `accent_bg_color`, when their theme defines them, and GTK's defaults otherwise, so the strip matches their applications rather than a fixed palette.
+
+## What does not exist yet
 
 **A shell-native module.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work.
 

@@ -30,7 +30,7 @@ try {
   const panelLog = join(directory, "panel.log");
   try {
     await act(display, { type: "launch", toolkit: "wayland", argv: ["/bin/sh", "-c",
-      `ORBIT_SOCKET=${JSON.stringify(broker.socket)} /usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} --edge right >${JSON.stringify(panelLog)} 2>&1 & exec /usr/bin/gnome-calculator`] });
+      `ORBIT_SOCKET=${JSON.stringify(broker.socket)} /usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} --edge right --indicator >${JSON.stringify(panelLog)} 2>&1 & exec /usr/bin/gnome-calculator`] });
   } catch (error) {
     // Keep going: the frame and the panel's own output are the evidence either way.
     report.panelLaunch = { failed: true, message: error instanceof Error ? error.message : String(error) };
@@ -47,6 +47,37 @@ try {
   const expanded = await call(broker.socket, "session.observe", display) as { image: string; presence: unknown };
   await writeFile(join(directory, "expanded.jpg"), Buffer.from(expanded.image, "base64"), { mode: 0o600 });
   report.expandedPresence = expanded.presence;
+
+  // The working indicator: a frame around the output while an action is in flight. A launch that
+  // sleeps before it maps keeps the session working for a known time, so the frame is captured
+  // in the middle of it, and once more after it finished, when the frame must be gone.
+  step = "indicator"; (globalThis as { step?: string }).step = step;
+  await act(display, { type: "pointer", x: 640, y: 400 });
+  await Bun.sleep(1500);
+  const panelPid = (await Bun.$`pgrep -f desktop/panel.py`.text().catch(() => "")).trim().split("\n")[0];
+  const cpuTicks = async () => panelPid ? Number((await Bun.file(`/proc/${panelPid}/stat`).text()).split(") ")[1]?.split(" ").slice(11, 13).reduce((a, b) => a + Number(b), 0)) : NaN;
+  const ticksBefore = await cpuTicks();
+  const slow = act(display, { type: "launch", toolkit: "wayland", argv: ["/bin/sh", "-c", "sleep 4; exec /usr/bin/gnome-system-monitor"] });
+  await Bun.sleep(2500);
+  const during = await call(broker.socket, "session.observe", display) as { image: string };
+  await writeFile(join(directory, "working.jpg"), Buffer.from(during.image, "base64"), { mode: 0o600 });
+  await slow.catch(error => { report.slowLaunch = error instanceof Error ? error.message : String(error); });
+  await Bun.sleep(1500);
+  const after = await call(broker.socket, "session.observe", display) as { image: string };
+  await writeFile(join(directory, "idle.jpg"), Buffer.from(after.image, "base64"), { mode: 0o600 });
+  report.indicatorPanelCpuTicks = (await cpuTicks()) - ticksBefore;
+  // Edge pixels: the indicator is a 3 px green frame, so the left edge mid-height is green while
+  // working and whatever the desktop shows otherwise.
+  const sample = await Bun.$`/usr/bin/python3 -c ${`import sys, json
+from PIL import Image
+out = {}
+for name in ("working", "idle"):
+    image = Image.open(sys.argv[1] + "/" + name + ".jpg").convert("RGB")
+    out[name] = {"left": image.getpixel((1, image.height // 2)), "top": image.getpixel((image.width // 2, 1)), "centre": image.getpixel((image.width // 2, image.height // 2))}
+print(json.dumps(out))`} ${directory}`.text().catch(() => "{}");
+  const pixels = JSON.parse(sample) as Record<string, Record<string, [number, number, number]>>;
+  const green = (rgb?: [number, number, number]) => !!rgb && rgb[1] > 120 && rgb[1] > rgb[0] + 40 && rgb[1] > rgb[2] + 40;
+  report.indicator = { pixels, shownWhileWorking: green(pixels.working?.left) && green(pixels.working?.top), hiddenAfter: !green(pixels.idle?.left) && !green(pixels.idle?.top) };
   report.panelOutput = (await Bun.file(panelLog).text().catch(() => "")).slice(-2000);
   report.status = "captured";
 } catch (error) {

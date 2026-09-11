@@ -46,6 +46,16 @@ Note that `~/.config` is a Git repository on this workstation, so the written un
 
 What this does and does not give you. The broker starts at login and restarts on failure; surviving a full logout additionally needs `loginctl enable-linger`, which requires elevation. Only one managed broker can run: a second refuses with `PROFILE_BUSY` rather than displacing the first, while a socket file nothing answers on is treated as stale and replaced. Sessions do not survive a broker restart: `Sessions.close` stops every session on shutdown, so a restarted broker comes back empty. The per-lifetime caps of 32 sessions and 10,000 action IDs were written assuming restarts, so a long-lived broker eventually refuses new work and must be restarted.
 
+## Disk that sessions leave behind
+
+Every session gets a fresh profile directory under `~/.cache/sbar-orbit/workspaces`, on disk rather than in RAM, since a browser profile is written constantly. The profile is removed when the session stops, and the broker removes its whole workspace when it closes, so a clean shutdown leaves nothing. A broker that was killed or crashed does leave its workspace behind, and older versions retained every profile: this workstation had accumulated 4.5 GB of them from test runs.
+
+```sh
+sbar-orbit clean
+```
+
+removes the workspaces no running broker owns. Each workspace records the pid and command line of the broker that made it; a directory whose broker is still running is kept, a directory from before that record is kept while it was modified within the last hour, and everything else is removed. It needs no socket and reads nothing inside a profile. Saved accounts live elsewhere, under `~/.local/state/sbar-orbit/accounts`, and are never touched.
+
 ## Contract
 
 The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:true,result}` or `{ok:false,error:{code,message}}`. The TypeScript client is `call(socket, method, params)` in `src/ipc.ts`.

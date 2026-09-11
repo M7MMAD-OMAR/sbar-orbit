@@ -49,27 +49,40 @@ os.environ.setdefault("GDK_DISABLE", "vulkan")
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gio, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
+import cairo  # noqa: E402
 
 # The preload was for this process only; nothing it launches should inherit it.
 os.environ.pop("LD_PRELOAD", None)
 os.environ.pop("ORBIT_PANEL_PRELOADED", None)
 
 POLL_SECONDS = 1.0
+INDICATOR_WIDTH = 3
+INDICATOR_COLOR = "#4caf50"
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 
+# The panel is drawn in the person's own colour names when their theme defines them, the way a
+# libadwaita application is, and in GTK's defaults otherwise. The person's gtk.css is loaded at user
+# priority, above this, so their definitions of these names win over the fallbacks below.
 CSS = b"""
-.orbit-panel { background: alpha(@theme_bg_color, 0.92); border-radius: 12px; padding: 6px; }
+@define-color window_bg_color @theme_bg_color;
+@define-color window_fg_color @theme_fg_color;
+@define-color accent_bg_color @theme_selected_bg_color;
+.orbit-panel { background: alpha(@window_bg_color, 0.92); color: @window_fg_color; border-radius: 12px; padding: 6px; }
 .orbit-strip { padding: 2px 6px; }
 .orbit-dot { min-width: 10px; min-height: 10px; border-radius: 5px; background: @insensitive_fg_color; }
 .orbit-dot.working { background: #4caf50; }
 .orbit-dot.paused { background: #ff9800; }
 .orbit-count { font-weight: bold; }
 .orbit-session { padding: 6px 8px; border-radius: 8px; }
-.orbit-session:hover { background: alpha(@theme_fg_color, 0.08); }
+.orbit-session:hover { background: alpha(@window_fg_color, 0.08); }
 .orbit-title { font-weight: bold; }
 .orbit-dim { opacity: 0.7; font-size: 90%; }
+"""
+INDICATOR_CSS = b"""
+window.orbit-indicator.background, window.orbit-indicator drawingarea { background: transparent; background-color: transparent; }
 """
 
 
@@ -123,16 +136,33 @@ def viewer_link_is_local(url):
 
 
 class Panel(Gtk.Application):
-    def __init__(self, edge, monitor):
+    def __init__(self, edge, monitor, indicator=False, indicator_color=INDICATOR_COLOR):
         super().__init__(application_id="io.sbar.orbit.panel", flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.edge = edge
         self.monitor = monitor
+        self.indicator = None
+        self.indicator_wanted = indicator
+        self.indicator_color = Gdk.RGBA()
+        if not self.indicator_color.parse(indicator_color):
+            self.indicator_color.parse(INDICATOR_COLOR)
         self.path = broker_socket()
         self.sessions = []
         self.reachable = False
         self.expanded = False
         self.last_shape = None
         self.polling = False
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        # Off the desktop, inside a private display for instance, there is no portal to say the
+        # colour scheme; follow the same variable the session's applications follow. It is set
+        # before any window exists, so the theme's colour scheme media queries see it.
+        if os.environ.get("ADW_DEBUG_COLOR_SCHEME") == "prefer-dark":
+            settings = Gtk.Settings.get_default()
+            settings.set_property("gtk-application-prefer-dark-theme", True)
+            # GTK 4.20 and later answer the theme's colour scheme media queries from this setting.
+            if settings.find_property("gtk-interface-color-scheme") is not None:
+                settings.set_property("gtk-interface-color-scheme", Gtk.InterfaceColorScheme.DARK)
 
     def do_activate(self):
         window = Gtk.Window(application=self)
@@ -151,13 +181,14 @@ class Panel(Gtk.Application):
             if self.monitor < monitors.get_n_items():
                 LayerShell.set_monitor(window, monitors.get_item(self.monitor))
 
-        # Off the desktop, inside a private display for instance, there is no portal to say the
-        # colour scheme; follow the same variable the session's applications follow.
-        if os.environ.get("ADW_DEBUG_COLOR_SCHEME") == "prefer-dark":
-            Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_display(window.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        # Above the person's own gtk.css, which may paint every window: the indicator frame must
+        # stay transparent whatever their theme says, or it would cover the screen it decorates.
+        overlay = Gtk.CssProvider()
+        overlay.load_from_data(INDICATOR_CSS)
+        Gtk.StyleContext.add_provider_for_display(window.get_display(), overlay, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
 
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.box.add_css_class("orbit-panel")
@@ -183,8 +214,48 @@ class Panel(Gtk.Application):
         window.set_child(self.box)
         window.present()
         self.window = window
+        if self.indicator_wanted:
+            self.indicator = self.build_indicator()
         self.refresh()
         GLib.timeout_add(int(POLL_SECONDS * 1000), self.refresh)
+
+    def build_indicator(self):
+        """A frame around the whole output while an agent works: static, click-through, drawn once
+        per state change, so it costs nothing while nothing changes. The centre is transparent and
+        outside the input region, so every pointer event reaches whatever is underneath."""
+        frame = Gtk.Window(application=self)
+        frame.set_title("Orbit working")
+        frame.add_css_class("orbit-indicator")
+        LayerShell.init_for_window(frame)
+        LayerShell.set_layer(frame, LayerShell.Layer.OVERLAY)
+        LayerShell.set_namespace(frame, "sbar-orbit-indicator")
+        for edge in EDGES.values():
+            LayerShell.set_anchor(frame, edge, True)
+        LayerShell.set_exclusive_zone(frame, -1)
+        LayerShell.set_keyboard_mode(frame, LayerShell.KeyboardMode.NONE)
+        if self.monitor is not None:
+            monitors = frame.get_display().get_monitors()
+            if self.monitor < monitors.get_n_items():
+                LayerShell.set_monitor(frame, monitors.get_item(self.monitor))
+        area = Gtk.DrawingArea()
+        area.set_draw_func(self.draw_indicator)
+        frame.set_child(area)
+
+        def passthrough(*_):
+            surface = frame.get_surface()
+            if surface is not None:
+                surface.set_input_region(cairo.Region())
+
+        frame.connect("realize", passthrough)
+        frame.connect("map", passthrough)
+        return frame
+
+    def draw_indicator(self, area, context, width, height):
+        color = self.indicator_color
+        context.set_source_rgba(color.red, color.green, color.blue, color.alpha)
+        context.set_line_width(INDICATOR_WIDTH * 2)
+        context.rectangle(0, 0, width, height)
+        context.stroke()
 
     def refresh(self):
         """Poll off the main thread, so a slow broker never freezes the surface; skip a tick while one is in flight."""
@@ -227,6 +298,8 @@ class Panel(Gtk.Application):
             self.dot.add_css_class("working")
         elif paused:
             self.dot.add_css_class("paused")
+        if self.indicator is not None:
+            self.indicator.set_visible(working > 0)
         tabs = sum(len((s.get("presence") or {}).get("tabs") or []) for s in self.sessions)
         if not self.reachable:
             self.count.set_text("off")
@@ -305,6 +378,8 @@ class Panel(Gtk.Application):
 def main():
     edge = "right"
     monitor = None
+    indicator = False
+    color = INDICATOR_COLOR
     args = sys.argv[1:]
     while args:
         flag = args.pop(0)
@@ -312,10 +387,14 @@ def main():
             edge = args.pop(0)
         elif flag == "--monitor" and args and args[0].isdigit():
             monitor = int(args.pop(0))
+        elif flag == "--indicator":
+            indicator = True
+        elif flag == "--indicator-color" and args:
+            color = args.pop(0)
         elif flag in ("-h", "--help"):
-            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N]")
+            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N] [--indicator] [--indicator-color CSS]")
             return 0
-    Panel(edge, monitor).run([])
+    Panel(edge, monitor, indicator, color).run([])
     return 0
 
 

@@ -21,3 +21,38 @@ test("workspace storage creates unique private directories and rejects unsafe or
   const ram = await mkdtemp("/dev/shm/orbit-storage-test-");
   await expect(createWorkspaceDirectory("test", ram)).rejects.toMatchObject({ code: "UNSUPPORTED" });
 });
+
+test("clean removes workspaces whose broker is gone and keeps live or recent ones", async () => {
+  const { cleanWorkspaces, markWorkspaceOwner } = await import("../src/workspace-storage");
+  const scratch = await mkdtemp(resolve("output/storage-clean-"));
+  const root = join(scratch, "workspaces");
+  const procRoot = join(scratch, "proc");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  // A live broker: its pid and command line are present under the fake proc root.
+  const live = await createWorkspaceDirectory("broker", root);
+  await markWorkspaceOwner(live, 4242);
+  await mkdir(join(procRoot, "4242"), { recursive: true });
+  await Bun.write(join(procRoot, "4242/cmdline"), [...process.argv.slice(0, 2), "serve"].join("\x00") + "\x00");
+  // A dead broker: its pid is gone.
+  const dead = await createWorkspaceDirectory("broker", root);
+  await markWorkspaceOwner(dead, 4243);
+  // A reused pid: alive, but running something else.
+  const reused = await createWorkspaceDirectory("broker", root);
+  await markWorkspaceOwner(reused, 4244);
+  await mkdir(join(procRoot, "4244"), { recursive: true });
+  await Bun.write(join(procRoot, "4244/cmdline"), "/usr/bin/sleep\x00100\x00");
+  // Directories from before the owner record: one recent, one old.
+  const recent = await createWorkspaceDirectory("preview-test", root);
+  const old = await createWorkspaceDirectory("session-test", root);
+  const { utimes } = await import("node:fs/promises");
+  const past = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await utimes(old, past, past);
+  const link = join(root, "link"); await symlink(scratch, link);
+  const result = await cleanWorkspaces(root, { procRoot });
+  const name = (path: string) => path.slice(root.length + 1);
+  expect(result.removed).toEqual([name(dead), name(reused), name(old)].sort());
+  expect(result.kept).toEqual([name(live), name(recent)].sort());
+  expect((await lstat(link)).isSymbolicLink()).toBe(true);
+  expect((await lstat(scratch)).isDirectory()).toBe(true);
+  expect(await cleanWorkspaces(join(scratch, "missing"))).toMatchObject({ removed: [], kept: [] });
+});

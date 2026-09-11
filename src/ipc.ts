@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Sessions } from "./session";
 import { OrbitError } from "./errors";
 import { startPreview } from "./preview";
-import { createWorkspaceDirectory } from "./workspace-storage";
+import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
 
 export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
@@ -22,7 +22,9 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     await chmod(privateRoot, 0o700);
     socket = join(privateRoot, "broker.sock");
   }
-  const sessions = new Sessions(await createWorkspaceDirectory("broker"), options.accountRoot);
+  const workspace = await createWorkspaceDirectory("broker");
+  await markWorkspaceOwner(workspace);
+  const sessions = new Sessions(workspace, options.accountRoot);
   let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
@@ -50,6 +52,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   await chmod(socket, 0o600);
   return { socket, sessions, async close() {
     preview?.close(); server.stop(true); await sessions.close();
+    await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});
   } };
 }

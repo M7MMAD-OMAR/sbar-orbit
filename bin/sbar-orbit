@@ -17,6 +17,8 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit status              Sessions, tabs and windows, for a glance or a bar
   sbar-orbit status --watch      Print a line whenever that changes
   sbar-orbit panel               Dock a live indicator to the desktop edge
+  sbar-orbit panel --indicator   Also frame the screen while an agent works
+  sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
   sbar-orbit preflight           Check prerequisites without starting applications
   sbar-orbit preview             Print the optional viewer link
