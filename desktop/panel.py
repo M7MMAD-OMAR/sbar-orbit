@@ -98,8 +98,9 @@ DEFAULT_SETTINGS = {
     "edge": "right",
     "monitor": None,
     "style": "bar",
-    "size": 12,
-    "margin": 8,
+    # What the person settled on after living with it: a slimmer capsule, flush against the glass.
+    "size": 8,
+    "margin": 0,
     "colors": {"idle": "#8a8a8a", "working": "#4caf50", "paused": "#ff9800", "offline": "#585858"},
     "notifications": True,
     "blink": True,
