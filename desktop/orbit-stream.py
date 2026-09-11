@@ -2,12 +2,15 @@
 """One compact JSON line on standard output whenever what a bar would show changes.
 
 This is the feed a shell module reads. It exists rather than reusing `sbar-orbit status --watch`,
-which prints a related but not identical shape, because that one starts a Bun runtime measured at
-117 MB resident where this process measures 17 MB, and a bar widget should not cost more than the
-desktop it decorates.
+which prints a related but not identical shape, because a bar widget should not cost more than the
+desktop it decorates. Measured side by side on this workstation, `sbar-orbit status --watch` holds
+117 MB resident and spends 1.3% of one core, this helper 18 MB and 0.04%. Resident memory overstates
+the gap when other Bun processes are sharing the runtime's pages, so the honest number is the
+processor one: about thirty times less.
 
 A line is printed at startup, then only when something changes, so a quiet desktop is a quiet pipe.
-Timestamps are excluded from that comparison, or every second would be a change.
+Timestamps are excluded from that comparison, or every second would be a change. The wait between
+reads stretches when nothing is happening, because a bar that is drawing nothing needs no news.
 
     orbit-stream.py                 stream until killed
     orbit-stream.py --open-viewer   ask the broker for a viewer link and open it, then exit
@@ -33,13 +36,14 @@ from datetime import datetime, timezone
 
 from orbit_client import BrokerClient, broker_socket, counts, read_status, rpc, summarize, viewer_link_is_local
 
-INTERVAL_SECONDS = 1.0
-# Presence is the expensive half: a compositor tree query for a private display, and two round trips
-# that wake the headless browser for a browser session. The capsule's colour comes from the session
-# list alone, and the title and the view count are read in a popup that is open for a moment, so
-# fetching it every second would wake every agent's browser all day for something nobody is looking
-# at. The panel makes the same trade at ten seconds while its cards are closed.
-PRESENCE_SECONDS = 5.0
+# Presence is the expensive half. For a private display it is a compositor tree query, 0.18 ms all
+# told; for a browser session it is two round trips that wake the headless renderer, measured at 5.3
+# to 7.0 ms of processor time per call, and browser is the default backend. Nothing on the collapsed
+# capsule depends on it: the colour comes from the session list, and the title and the view count are
+# read in a popup that is open for a moment. So it is read every ten seconds, the same trade the
+# panel makes while its cards are closed. The cost is that a blink for a newly opened window can be
+# up to ten seconds late, which is the latency the panel already ships with.
+PRESENCE_SECONDS = 10.0
 
 
 def snapshot(client, with_presence, carried):
@@ -61,6 +65,16 @@ def snapshot(client, with_presence, carried):
                           "title": (s.get("presence") or {}).get("title"),
                           "views": len((s.get("presence") or {}).get("tabs") or [])}
                          for s in sessions]}
+
+
+def interval(line):
+    """How long to wait before the next read. The helper wakes 86,400 times a day at a flat second,
+    and a bar whose capsule is hidden because nothing is running has no use for any of them."""
+    if not line["reachable"]:
+        return 5.0
+    if line["working"]:
+        return 1.0
+    return 2.0 if line["sessions"] else 3.0
 
 
 def unreachable(path):
@@ -105,7 +119,7 @@ def main():
             previous = shape
             line["sampledAt"] = datetime.now(timezone.utc).isoformat()
             print(json.dumps(line), flush=True)
-        time.sleep(INTERVAL_SECONDS)
+        time.sleep(interval(line))
 
 
 if __name__ == "__main__":
