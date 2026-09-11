@@ -296,10 +296,18 @@ undo cannot cover the last row.
    not the 7 ms cold best case, because a per action loop hits the commit. Zero exclusive bytes.
 4. Restore by swapping the profile path to the snapshot with the browser stopped. Never copy back,
    and never compute an inverse.
-5. Delete restore points with `rm -rf`. Measured twice here: `btrfs subvolume delete` returns EPERM
-   unprivileged for both read only and read write subvolumes, clearing the `ro` property first does
-   not help, and `user_subvol_rm_allowed` is not in the `/home` mount options. Adopting the usual
-   snapper guidance would require a root level `fstab` change that Orbit cannot arrange for itself.
+5. Delete restore points by clearing `ro` and then `rm -rf`. The earlier note said clearing `ro`
+   does not help, and that is true of `btrfs subvolume delete` and false of `rm -rf`. Measured again
+   while building this: `btrfs subvolume delete` on a read only snapshot prints a success line and
+   leaves the snapshot in place, `rm -rf` on one fails with "Read-only file system", and
+   `btrfs property set -ts PATH ro false` followed by `rm -rf` succeeds unprivileged. That recipe is
+   `removeRestorePoint`, and it matters more than it looks: a restore point is a copy of the person's
+   live cookies, so one that cannot be deleted is a credential that outlives its session.
+
+6. Do not remove the profile directory in order to make it a subvolume. Written that way first, and
+   on a filesystem without subvolumes it deleted the session profile and returned false, after which
+   every browser session failed to start into a directory that was no longer there. The subvolume is
+   made beside it and renamed over it, and a filesystem that says no leaves the directory untouched.
 
 Two properties of the restore point record, both borrowed:
 
@@ -371,7 +379,7 @@ Ordered. Each item is one change with one test.
 | 3 | ~~The immune table, and the containment rule~~ **Done.** Five ids matched on whole path segments, method and query. Measured end to end against the most permissive policy the parser produces, autonomous with every class allowed, nothing denied and an advisor answering allow to everything: the immune action was refused, the advisor never saw it, and `allow` went from `read, navigate, write, irreversible` to `read, navigate` for the rest of the session | Closed |
 | 4 | Expose `session.narrow` in the dispatch list, and set a taint flag the first time an observation returns page content | **Half done.** `session.narrow` is exposed and measured: narrowing to `read` held, asking for `read, navigate, write` back returned `read`, and an empty request is refused. The taint flag is not built |
 | 5 | ~~Journal envelope and durability~~ **Done**, except `afterOrigins`. Appended to a 0600 per session file under the workspace, outside the profile that is deleted at stop. Measured: first line is the agreement the rest was judged against, every action carries `at` and `requestId`, and a read of the file found no URL path, no query and no selector | Closed but for `afterOrigins` |
-| 6 | Restore points: profile root as a subvolume, `snapshot -r` per write, restore by path swap with the browser stopped, `rm -rf` to delete, and the refusal set | A snapshot costs under 100 ms warm at 0 exclusive bytes; restore after a form fill works; restore after a `remote-write` action refuses |
+| 6 | ~~Restore points~~ **Done**, as `src/restore.ts`, minus restore by path swap. The session profile is made a subvolume where the filesystem allows one, a point is taken before each action a snapshot could actually undo, and the refusal set is enforced by `canRestoreTo`. Snapshots measured at 0.00 B exclusive. Two corrections to the plan below | Closed but for the swap |
 | 7 | Request layer enforcement: `Fetch.enable` over every resource type with `Target.setAutoAttach`, judging origin, path prefix and method | An off lease image beacon on an allowed page fails and is journalled by origin |
 | 8 | Egress below the browser: `bubblewrap` probe in `src/platform.ts`, network namespace, per session filtering proxy with the lease fixed at creation, proxy log as the origins contacted record | A denied origin is unreachable from page script, not only from `session.act`. A host without `bubblewrap` drops a tier rather than running unconfined |
 

@@ -10,6 +10,7 @@ import { describeMachine } from "./platform";
 import { cloneProfile } from "./clone";
 import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { consultAdvisor } from "./advisor";
+import { canRestoreTo, clearRestorePoints, createSubvolume, takeRestorePoint, type RestorePoint } from "./restore";
 import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
@@ -33,6 +34,9 @@ interface Session {
    * deleted when the session stops.
    */
   journalPath: string;
+  /** Where this session's restore points live. Cleared when it ends: each one is a copy of live cookies. */
+  restoreStore: string;
+  restorePoints: RestorePoint[];
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -85,6 +89,10 @@ export class Sessions {
       }
       const restoredState = await account?.restore();
       const profile = await mkdtemp(join(this.root, "profile-"));
+      // A plain directory cannot be snapshotted, so the profile is made a subvolume where the
+      // filesystem allows it. Where it does not, restore points are simply absent rather than
+      // promised and missing.
+      const snapshotCapable = await createSubvolume(profile);
       const surface = input.viewport === undefined ? defaultViewport : parseViewport(input.viewport);
       // A session may start from the person's own browser profile instead of an empty one. The policy
       // is checked before anything is copied, because an unbounded session holding real logins is the
@@ -114,7 +122,8 @@ export class Sessions {
       const journals = join(this.root, "journals");
       await mkdir(journals, { recursive: true, mode: 0o700 });
       const journalPath = join(journals, `${id}.jsonl`);
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
+        restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [] };
       // The first line says what was agreed to, so a reader knows what the rest of the file was
       // judged against without having to ask the broker that is no longer running.
       void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
@@ -127,7 +136,11 @@ export class Sessions {
       // the release that every ending awaits.
       backend.onClose(() => {
         session.state = "closed"; this.leases.delete(lease);
-        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
+        // Restore points go before the profile does. Each is a copy of the person's live cookies, and
+        // a read only snapshot inside the profile would stop the profile itself being removed.
+        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.())
+          .then(async () => { if (session.restoreStore) await clearRestorePoints(session.restoreStore); })
+          .finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
       });
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);
@@ -212,7 +225,7 @@ export class Sessions {
       // A supervised session stops and waits for the person. An autonomous one never reaches here
       // with anything but an allow, which is what lets it finish a task without them.
       if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
-      return this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
+      return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
     }
     // Consulting takes as long as the advisor takes, so it happens before the action is queued and
     // the session's own ordering is untouched by it.
@@ -227,8 +240,21 @@ export class Sessions {
       });
       record(answer.decision, answer.decidedBy);
       if (answer.decision.outcome === "deny") return refuse(answer.decision);
-      return this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
+      return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
     })();
+  }
+  /**
+   * Take a restore point before the action, where one would mean anything. Nothing is taken before a
+   * click or a navigation: a snapshot cannot unsend a message, and recording one there would be a
+   * promise the filesystem cannot keep.
+   */
+  private async guarded(session: Session, action: { type: string }) {
+    if (session.restoreStore) {
+      const point = await takeRestorePoint(session.profile, session.restoreStore, session.journal.length, action.type)
+        .catch(() => null);
+      if (point) session.restorePoints.push(point);
+    }
+    return session.backend.act(action as Parameters<typeof session.backend.act>[0]);
   }
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };

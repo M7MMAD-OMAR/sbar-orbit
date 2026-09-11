@@ -172,3 +172,22 @@ test("the clone is writable, and the parts that decide what the browser is are n
   await result.close();
   await rm(root, { recursive: true, force: true });
 });
+
+test("a clone is copied into the session profile, so a subvolume survives it", async () => {
+  // Where the filesystem allows it the broker makes the profile a btrfs subvolume, which is what
+  // carries restore points. Removing and recreating the directory would turn it back into a plain
+  // one and take the session's undo with it, silently.
+  const root = await mkdtemp(join(tmpdir(), "orbit-clone-into-"));
+  const source = await fixtureProfile(root, "google-chrome");
+  const session = join(root, "session-profile");
+  await mkdir(session, { recursive: true });
+  const before = await stat(session);
+
+  const result = await cloneProfile(source, session, bounded, capabilitiesFor(source));
+  const after = await stat(session);
+  // The same directory, not a replacement: an inode that changed means it was removed and remade.
+  expect(after.ino).toBe(before.ino);
+  expect((await readdir(session)).sort()).toContain("Preferences");
+  await result.close();
+  await rm(root, { recursive: true, force: true });
+});

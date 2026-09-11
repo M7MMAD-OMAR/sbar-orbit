@@ -1,4 +1,4 @@
-import { chmod, cp, readdir, rm, stat } from "node:fs/promises";
+import { chmod, cp, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { canCloneProfile, detectPlatform, stripSingletonMarkers, type PlatformCapabilities } from "./platform";
@@ -98,9 +98,10 @@ export async function cloneProfile(
   const verdict = await canCloneProfile(sourceProfile, detected, sessionProfile);
   if (!verdict.allowed) throw new OrbitError("UNSUPPORTED", verdict.reason);
 
-  // The session profile already exists as an empty directory, so the copy replaces it rather than
-  // landing one level deeper than the launcher expects.
-  await rm(sessionProfile, { recursive: true, force: true });
+  // Copied INTO the session profile, never over it. The directory already exists, and where the
+  // filesystem allows it the broker made it a btrfs subvolume so the session can hold restore points;
+  // removing and recreating it would silently turn that back into a plain directory and take the
+  // restore points with it. Node's cp merges a tree into an existing directory, verified.
   await cp(sourceProfile, sessionProfile, { recursive: true, dereference: false, force: true });
   // A copy inherits the source's permissions, and a browser profile is commonly 0755. That is the
   // person's own choice for their own directory; it is not acceptable for a copy of their live
