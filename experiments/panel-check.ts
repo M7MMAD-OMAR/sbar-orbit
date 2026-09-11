@@ -28,9 +28,10 @@ try {
   // started beside a plain window instead; the supervisor is a subreaper, so both end with the session.
   step = "launch panel"; (globalThis as { step?: string }).step = step;
   const panelLog = join(directory, "panel.log");
+  const panelPidFile = join(directory, "panel.pid");
   try {
     await act(display, { type: "launch", toolkit: "wayland", argv: ["/bin/sh", "-c",
-      `ORBIT_SOCKET=${JSON.stringify(broker.socket)} /usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} --edge right --indicator >${JSON.stringify(panelLog)} 2>&1 & exec /usr/bin/gnome-calculator`] });
+      `ORBIT_SOCKET=${JSON.stringify(broker.socket)} /usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} --edge right --indicator >${JSON.stringify(panelLog)} 2>&1 & echo $! >${JSON.stringify(panelPidFile)}; exec /usr/bin/gnome-calculator`] });
   } catch (error) {
     // Keep going: the frame and the panel's own output are the evidence either way.
     report.panelLaunch = { failed: true, message: error instanceof Error ? error.message : String(error) };
@@ -54,8 +55,16 @@ try {
   step = "indicator"; (globalThis as { step?: string }).step = step;
   await act(display, { type: "pointer", x: 640, y: 400 });
   await Bun.sleep(1500);
-  const panelPid = (await Bun.$`pgrep -f desktop/panel.py`.text().catch(() => "")).trim().split("\n")[0];
-  const cpuTicks = async () => panelPid ? Number((await Bun.file(`/proc/${panelPid}/stat`).text()).split(") ")[1]?.split(" ").slice(11, 13).reduce((a, b) => a + Number(b), 0)) : NaN;
+  // The pid the launching shell wrote, not a search by name: the person's own panel runs the same
+  // script on the desktop, and a search would find it first.
+  const panelPid = Number((await Bun.file(panelPidFile).text()).trim());
+  const cpuTicks = async () => {
+    const stat = await Bun.file(`/proc/${panelPid}/stat`).text();
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const ticks = Number(fields[11]) + Number(fields[12]);
+    if (!Number.isInteger(panelPid) || !Number.isFinite(ticks)) throw new Error(`Panel process ${panelPid} could not be sampled`);
+    return ticks;
+  };
   const ticksBefore = await cpuTicks();
   const slow = act(display, { type: "launch", toolkit: "wayland", argv: ["/bin/sh", "-c", "sleep 4; exec /usr/bin/gnome-system-monitor"] });
   await Bun.sleep(2500);

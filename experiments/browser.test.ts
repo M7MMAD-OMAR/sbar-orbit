@@ -132,7 +132,7 @@ test("independent background browsers preserve their state and stop independentl
       limitations: ["Polling can miss transient windows or focus changes.",
         "RSS includes only processes whose command line contains an owned profile, not the full browser tree.",
         "No native desktop backend, live viewer, real account or agent-host connector tested.",
-        "Temporary test profiles retained; never reused as personal profiles."],
+        "Temporary test profiles are never reused as personal profiles; sbar-orbit clean removes them after an hour."],
     };
     await Bun.write(join(output, "latest.json"), JSON.stringify(final, null, 2) + "\n");
     console.log(JSON.stringify(final, null, 2));

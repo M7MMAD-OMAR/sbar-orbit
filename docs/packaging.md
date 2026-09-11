@@ -36,7 +36,7 @@ bun install --frozen-lockfile --ignore-scripts
 ./bin/sbar-orbit serve
 ```
 
-The smoke test extracts the exact archive, verifies its manifest, installs frozen dependencies, starts the broker outside its directory, captures a browser frame, opens the packaged Canvas viewer and stops its processes. Temporary installed dependencies are removed afterward. Browser profiles remain retained on disk.
+The smoke test extracts the exact archive, verifies its manifest, installs frozen dependencies, starts the broker outside its directory, captures a browser frame, opens the packaged Canvas viewer and stops its processes. Temporary installed dependencies are removed afterward, and the broker removes its workspace when it stops.
 
 ## Release discipline
 
@@ -46,7 +46,7 @@ The smoke test extracts the exact archive, verifies its manifest, installs froze
 - Never overwrite an already published artifact. Keep its digest with its release assets.
 - The Apache-2.0 license and NOTICE cover project source; dependencies retain their own licenses.
 
-No GitHub remote, hosted release, global service or system installer is created by these commands. Removing an extracted program directory does not remove account snapshots or retained browser workspaces.
+No GitHub remote, hosted release, global service or system installer is created by these commands. Removing an extracted program directory does not remove account snapshots, nor any workspace a killed broker left behind; `sbar-orbit clean` does the latter.
 
 ## Activate a local source installation
 
@@ -69,7 +69,7 @@ To remove the command, while the linked source directory still exists:
 bun run scripts/limited.ts bun run scripts/local-install.ts uninstall "$HOME/.local"
 ```
 
-Removal deletes only the recognized launcher link. Source versions, dependencies, accounts and retained browser workspaces stay in place. It refuses ordinary files, unrelated links and symlinked prefix/bin directories. A missing or invalid source makes a link unrecognizable; inspect it manually instead of forcing removal. A concurrent or interrupted install lock causes refusal; inspect `PREFIX/bin/.sbar-orbit-install-lock` before retrying. No lock is automatically declared stale.
+Removal deletes only the recognized launcher link. Source versions, dependencies, accounts and any workspace a killed broker left stay in place. It refuses ordinary files, unrelated links and symlinked prefix/bin directories. A missing or invalid source makes a link unrecognizable; inspect it manually instead of forcing removal. A concurrent or interrupted install lock causes refusal; inspect `PREFIX/bin/.sbar-orbit-install-lock` before retrying. No lock is automatically declared stale.
 
 Filesystem tests cover install, upgrade, rollback, removal, preserved data, refused collisions and failed replacement. The real checkout launcher also returned help through a temporary prefix outside the checkout. These checks launch no browser or agent. Fresh-machine dependency installation and a complete installed native runtime remain unverified.
 

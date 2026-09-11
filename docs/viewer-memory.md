@@ -12,4 +12,4 @@ flowchart LR
 
 The original image-element approach retained hundreds of MiB of decoded image storage in a renderer. Changing URLs alone did not resolve that observation. Canvas rendering, disk-backed profiles and earlier cache reclaim supported a successful 600-second scripted run at about 5 FPS. See [validation](validation.md) and [resource limits](resources.md).
 
-This does not prove all browser caches remain bounded under arbitrary workloads. Profiles are retained on disk and need an explicit retention policy. Human takeover and simultaneous-work confirmation remain separate from scripted performance results.
+This does not prove all browser caches remain bounded under arbitrary workloads. Profiles are removed with their session, and `sbar-orbit clean` reclaims the workspace of a broker that was killed. Human takeover and simultaneous-work confirmation remain separate from scripted performance results.

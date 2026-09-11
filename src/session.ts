@@ -79,12 +79,19 @@ export class Sessions {
       catch (error) { await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       if (account && backend instanceof BrowserBackend) {
         try { if (restoredState) await backend.context.setStorageState(restoredState); }
-        catch (error) { await backend.close(); throw error; }
+        catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
       const id = crypto.randomUUID();
       const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map() };
       this.sessions.set(id, session);
-      backend.onClose(() => { session.state = "closed"; this.leases.delete(lease); session.releasing ??= session.tail.then(() => account?.release()); });
+      // Whichever way the session ends, its profile goes with it: account state was copied out
+      // while it ran, so nothing in it outlives the session, and a retained one is disk that
+      // nothing reclaims. The backend's own exit is one of those ways, so the removal hangs off
+      // the release that every ending awaits.
+      backend.onClose(() => {
+        session.state = "closed"; this.leases.delete(lease);
+        session.releasing ??= session.tail.then(() => account?.release()).finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
+      });
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);
     } catch (error) {
@@ -140,8 +147,7 @@ export class Sessions {
       await session.backend.close();
       await session.tail;
       await session.releasing;
-      // The profile was this session's alone: account state was copied out while it ran, so nothing
-      // in it outlives the session, and a retained one is disk that nothing reclaims.
+      // Belt and braces for a backend whose close never reported itself.
       await rm(session.profile, { recursive: true, force: true }).catch(() => {});
       session.state = "closed";
       return this.info(session);

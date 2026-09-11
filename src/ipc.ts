@@ -23,7 +23,6 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     socket = join(privateRoot, "broker.sock");
   }
   const workspace = await createWorkspaceDirectory("broker");
-  await markWorkspaceOwner(workspace);
   const sessions = new Sessions(workspace, options.accountRoot);
   let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({
@@ -50,6 +49,8 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     },
   });
   await chmod(socket, 0o600);
+  // Recorded once the socket answers, since answering is what marks the workspace as owned.
+  await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {
     preview?.close(); server.stop(true); await sessions.close();
     await rm(workspace, { recursive: true, force: true }).catch(() => {});

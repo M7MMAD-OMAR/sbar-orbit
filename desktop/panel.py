@@ -63,13 +63,16 @@ INDICATOR_WIDTH = 3
 INDICATOR_COLOR = "#4caf50"
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 
-# The panel is drawn in the person's own colour names when their theme defines them, the way a
-# libadwaita application is, and in GTK's defaults otherwise. The person's gtk.css is loaded at user
-# priority, above this, so their definitions of these names win over the fallbacks below.
-CSS = b"""
+# The panel is drawn in the person's own colour names when their theme or their gtk.css defines
+# them, the way a libadwaita application is, and in GTK's defaults otherwise. The fallbacks are
+# loaded at the lowest priority there is, below every theme, so any definition of these names
+# from a theme, the settings or the person's gtk.css wins over them.
+FALLBACK_CSS = b"""
 @define-color window_bg_color @theme_bg_color;
 @define-color window_fg_color @theme_fg_color;
 @define-color accent_bg_color @theme_selected_bg_color;
+"""
+CSS = b"""
 .orbit-panel { background: alpha(@window_bg_color, 0.92); color: @window_fg_color; border-radius: 12px; padding: 6px; }
 .orbit-strip { padding: 2px 6px; }
 .orbit-dot { min-width: 10px; min-height: 10px; border-radius: 5px; background: @insensitive_fg_color; }
@@ -81,9 +84,9 @@ CSS = b"""
 .orbit-title { font-weight: bold; }
 .orbit-dim { opacity: 0.7; font-size: 90%; }
 """
-INDICATOR_CSS = b"""
-window.orbit-indicator.background, window.orbit-indicator drawingarea { background: transparent; background-color: transparent; }
-"""
+# The indicator strips are painted by this rule alone, above the person's gtk.css, which may paint
+# every window in their theme's colour.
+INDICATOR_CSS = "window.orbit-indicator.background, window.orbit-indicator box { background: %s; background-color: %s; }"
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -140,8 +143,9 @@ class Panel(Gtk.Application):
         super().__init__(application_id="io.sbar.orbit.panel", flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.edge = edge
         self.monitor = monitor
-        self.indicator = None
+        self.indicator = []
         self.indicator_wanted = indicator
+        self.indicator_shown = False
         self.indicator_color = Gdk.RGBA()
         if not self.indicator_color.parse(indicator_color):
             self.indicator_color.parse(INDICATOR_COLOR)
@@ -157,12 +161,14 @@ class Panel(Gtk.Application):
         # Off the desktop, inside a private display for instance, there is no portal to say the
         # colour scheme; follow the same variable the session's applications follow. It is set
         # before any window exists, so the theme's colour scheme media queries see it.
-        if os.environ.get("ADW_DEBUG_COLOR_SCHEME") == "prefer-dark":
+        scheme = os.environ.get("ADW_DEBUG_COLOR_SCHEME")
+        if scheme in ("prefer-dark", "prefer-light"):
             settings = Gtk.Settings.get_default()
-            settings.set_property("gtk-application-prefer-dark-theme", True)
+            dark = scheme == "prefer-dark"
+            settings.set_property("gtk-application-prefer-dark-theme", dark)
             # GTK 4.20 and later answer the theme's colour scheme media queries from this setting.
-            if settings.find_property("gtk-interface-color-scheme") is not None:
-                settings.set_property("gtk-interface-color-scheme", Gtk.InterfaceColorScheme.DARK)
+            if settings.find_property("gtk-interface-color-scheme") is not None and hasattr(Gtk, "InterfaceColorScheme"):
+                settings.set_property("gtk-interface-color-scheme", Gtk.InterfaceColorScheme.DARK if dark else Gtk.InterfaceColorScheme.LIGHT)
 
     def do_activate(self):
         window = Gtk.Window(application=self)
@@ -176,19 +182,13 @@ class Panel(Gtk.Application):
         LayerShell.set_namespace(window, "sbar-orbit-panel")
         LayerShell.set_anchor(window, EDGES[self.edge], True)
         LayerShell.set_margin(window, EDGES[self.edge], 8)
-        if self.monitor is not None:
-            monitors = window.get_display().get_monitors()
-            if self.monitor < monitors.get_n_items():
-                LayerShell.set_monitor(window, monitors.get_item(self.monitor))
+        self.place_on_monitor(window)
 
-        provider = Gtk.CssProvider()
-        provider.load_from_data(CSS)
-        Gtk.StyleContext.add_provider_for_display(window.get_display(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        # Above the person's own gtk.css, which may paint every window: the indicator frame must
-        # stay transparent whatever their theme says, or it would cover the screen it decorates.
-        overlay = Gtk.CssProvider()
-        overlay.load_from_data(INDICATOR_CSS)
-        Gtk.StyleContext.add_provider_for_display(window.get_display(), overlay, Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+        display = window.get_display()
+        self.install_css(display, FALLBACK_CSS, Gtk.STYLE_PROVIDER_PRIORITY_FALLBACK)
+        self.install_css(display, CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        color = self.indicator_color.to_string()
+        self.install_css(display, (INDICATOR_CSS % (color, color)).encode(), Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
 
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.box.add_css_class("orbit-panel")
@@ -215,47 +215,53 @@ class Panel(Gtk.Application):
         window.present()
         self.window = window
         if self.indicator_wanted:
-            self.indicator = self.build_indicator()
+            self.indicator = [self.build_indicator_strip(edge) for edge in EDGES.values()]
         self.refresh()
         GLib.timeout_add(int(POLL_SECONDS * 1000), self.refresh)
 
-    def build_indicator(self):
-        """A frame around the whole output while an agent works: static, click-through, drawn once
-        per state change, so it costs nothing while nothing changes. The centre is transparent and
-        outside the input region, so every pointer event reaches whatever is underneath."""
-        frame = Gtk.Window(application=self)
-        frame.set_title("Orbit working")
-        frame.add_css_class("orbit-indicator")
-        LayerShell.init_for_window(frame)
-        LayerShell.set_layer(frame, LayerShell.Layer.OVERLAY)
-        LayerShell.set_namespace(frame, "sbar-orbit-indicator")
-        for edge in EDGES.values():
-            LayerShell.set_anchor(frame, edge, True)
-        LayerShell.set_exclusive_zone(frame, -1)
-        LayerShell.set_keyboard_mode(frame, LayerShell.KeyboardMode.NONE)
-        if self.monitor is not None:
-            monitors = frame.get_display().get_monitors()
-            if self.monitor < monitors.get_n_items():
-                LayerShell.set_monitor(frame, monitors.get_item(self.monitor))
-        area = Gtk.DrawingArea()
-        area.set_draw_func(self.draw_indicator)
-        frame.set_child(area)
+    @staticmethod
+    def install_css(display, data, priority):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(data)
+        Gtk.StyleContext.add_provider_for_display(display, provider, priority)
+
+    def place_on_monitor(self, window):
+        if self.monitor is None:
+            return
+        monitors = window.get_display().get_monitors()
+        if self.monitor < monitors.get_n_items():
+            LayerShell.set_monitor(window, monitors.get_item(self.monitor))
+
+    def build_indicator_strip(self, edge):
+        """One edge of the frame shown around the output while an agent works. Four strips a few
+        pixels wide cost a few hundred kilobytes of buffer between them, where one surface covering
+        the output would cost tens of megabytes for a transparent centre. Each strip is click
+        through: its input region is empty, so pointer events reach what is underneath, and edge
+        gestures keep working."""
+        strip = Gtk.Window(application=self)
+        strip.set_title("Orbit working")
+        strip.add_css_class("orbit-indicator")
+        LayerShell.init_for_window(strip)
+        LayerShell.set_layer(strip, LayerShell.Layer.OVERLAY)
+        LayerShell.set_namespace(strip, "sbar-orbit-indicator")
+        LayerShell.set_exclusive_zone(strip, -1)
+        LayerShell.set_keyboard_mode(strip, LayerShell.KeyboardMode.NONE)
+        horizontal = edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM)
+        LayerShell.set_anchor(strip, edge, True)
+        for side in (LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT) if horizontal else (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM):
+            LayerShell.set_anchor(strip, side, True)
+        self.place_on_monitor(strip)
+        body = Gtk.Box()
+        body.set_size_request(INDICATOR_WIDTH, INDICATOR_WIDTH)
+        strip.set_child(body)
 
         def passthrough(*_):
-            surface = frame.get_surface()
+            surface = strip.get_surface()
             if surface is not None:
                 surface.set_input_region(cairo.Region())
 
-        frame.connect("realize", passthrough)
-        frame.connect("map", passthrough)
-        return frame
-
-    def draw_indicator(self, area, context, width, height):
-        color = self.indicator_color
-        context.set_source_rgba(color.red, color.green, color.blue, color.alpha)
-        context.set_line_width(INDICATOR_WIDTH * 2)
-        context.rectangle(0, 0, width, height)
-        context.stroke()
+        strip.connect("realize", passthrough)
+        return strip
 
     def refresh(self):
         """Poll off the main thread, so a slow broker never freezes the surface; skip a tick while one is in flight."""
@@ -298,8 +304,10 @@ class Panel(Gtk.Application):
             self.dot.add_css_class("working")
         elif paused:
             self.dot.add_css_class("paused")
-        if self.indicator is not None:
-            self.indicator.set_visible(working > 0)
+        if self.indicator and self.indicator_shown != (working > 0):
+            self.indicator_shown = working > 0
+            for strip in self.indicator:
+                strip.set_visible(self.indicator_shown)
         tabs = sum(len((s.get("presence") or {}).get("tabs") or []) for s in self.sessions)
         if not self.reachable:
             self.count.set_text("off")

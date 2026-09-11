@@ -20,29 +20,37 @@ export async function createWorkspaceDirectory(prefix: string, root = workspaceR
 
 /**
  * A workspace names the broker that owns it, so a later `clean` can tell a live broker's directory
- * from one a crashed or killed broker left behind. The process identity is the pid plus the command
- * line it was started with, since a pid alone is reused by unrelated processes.
+ * from one a crashed or killed broker left behind. The owner is identified by its socket, and alive
+ * means it answers on that socket: the same test a managed broker applies before displacing another.
+ * A pid would not do, since a pid is reused and a process's command line is not what its argv says.
  */
-export async function markWorkspaceOwner(directory: string, pid = process.pid) {
-  await writeFile(join(directory, "owner.json"), JSON.stringify({ pid, argv: process.argv.slice(0, 2) }), { mode: 0o600 });
+export async function markWorkspaceOwner(directory: string, socket: string, pid = process.pid) {
+  await writeFile(join(directory, "owner.json"), JSON.stringify({ pid, socket }), { mode: 0o600 });
 }
 
-async function ownerIsAlive(directory: string, procRoot = "/proc"): Promise<boolean | undefined> {
-  let owner: { pid?: unknown; argv?: unknown };
-  try { owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")); } catch { return undefined; }
-  if (!Number.isInteger(owner.pid) || (owner.pid as number) <= 0) return undefined;
+export async function brokerAnswers(socket: string, timeoutMs = 3000): Promise<boolean> {
   try {
-    const running = (await readFile(join(procRoot, String(owner.pid), "cmdline"))).toString().split("\0");
-    return Array.isArray(owner.argv) && owner.argv.every((word, index) => running[index] === word);
+    const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "doctor", params: {} }), signal: AbortSignal.timeout(timeoutMs) });
+    return response.ok && (await response.json() as { ok?: boolean }).ok === true;
   } catch { return false; }
 }
+
+async function ownerIsAlive(directory: string, probe: (socket: string) => Promise<boolean>): Promise<boolean | undefined> {
+  let owner: { socket?: unknown };
+  try { owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")); } catch { return undefined; }
+  if (typeof owner.socket !== "string" || !isAbsolute(owner.socket)) return undefined;
+  return probe(owner.socket);
+}
+
+const recordlessGraceMs = 60 * 60 * 1000;
 
 /**
  * Remove the workspaces no running broker owns. A directory with no owner record predates the
  * record; it is kept while it is recent, in case an older broker still holds it, and removed
  * otherwise. Nothing here reads a profile's contents.
  */
-export async function cleanWorkspaces(root = workspaceRoot(), options: { procRoot?: string; graceMs?: number; now?: number } = {}) {
+export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers) {
   const removed: string[] = [], kept: string[] = [];
   let entries: string[];
   try { entries = await readdir(root); } catch { return { root, removed, kept }; }
@@ -50,8 +58,8 @@ export async function cleanWorkspaces(root = workspaceRoot(), options: { procRoo
     const directory = join(root, name);
     const info = await lstat(directory).catch(() => undefined);
     if (!info?.isDirectory() || info.isSymbolicLink()) continue;
-    const alive = await ownerIsAlive(directory, options.procRoot);
-    const recent = (options.now ?? Date.now()) - info.mtimeMs < (options.graceMs ?? 60 * 60 * 1000);
+    const alive = await ownerIsAlive(directory, probe);
+    const recent = Date.now() - info.mtimeMs < recordlessGraceMs;
     if (alive || (alive === undefined && recent)) { kept.push(name); continue; }
     await rm(directory, { recursive: true, force: true });
     removed.push(name);

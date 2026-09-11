@@ -33,14 +33,15 @@ try {
   report.formResult = result.text;
   const frame = await sessions.dispatch({ method: "session.observe", params: session }) as { image: string };
   await Bun.write("output/bounded-browser.jpg", Buffer.from(frame.image, "base64"));
+  // The owner record goes with the profile when the session stops, so the pid is read first.
+  const profiles = await Array.fromAsync(new Bun.Glob("profile-*/owner.json").scan(root));
+  if (profiles.length !== 1) throw new Error(`Expected one owned Chrome, found ${profiles.length}`);
+  const owner = JSON.parse(await readFile(join(root, profiles[0]!), "utf8")) as { pid: number };
   const stopping = performance.now();
   await sessions.dispatch({ method: "session.stop", params: session });
   report.stopMs = Math.round(performance.now() - stopping);
-  const profiles = await Array.fromAsync(new Bun.Glob("profile-*/owner.json").scan(root));
-  for (const file of profiles) {
-    const { pid } = JSON.parse(await readFile(join(root, file), "utf8"));
-    if (await Bun.file(`/proc/${pid}/stat`).exists()) throw new Error("Owned Chrome process survived stop");
-  }
+  if (await Bun.file(`/proc/${owner.pid}/stat`).exists()) throw new Error("Owned Chrome process survived stop");
+  if ((await Array.fromAsync(new Bun.Glob("profile-*").scan({ cwd: root, onlyFiles: false }))).length) throw new Error("Profile survived stop");
   report.status = "passed";
 } catch (error) { report.status = "failed"; report.error = error instanceof Error ? error.message : String(error); throw error; }
 finally {

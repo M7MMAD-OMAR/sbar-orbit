@@ -54,7 +54,7 @@ Every session gets a fresh profile directory under `~/.cache/sbar-orbit/workspac
 sbar-orbit clean
 ```
 
-removes the workspaces no running broker owns. Each workspace records the pid and command line of the broker that made it; a directory whose broker is still running is kept, a directory from before that record is kept while it was modified within the last hour, and everything else is removed. It needs no socket and reads nothing inside a profile. Saved accounts live elsewhere, under `~/.local/state/sbar-orbit/accounts`, and are never touched.
+removes the workspaces no running broker owns. Each workspace records the socket of the broker that made it; a directory whose broker still answers on that socket is kept, a directory from before that record is kept while it was modified within the last hour, and everything else is removed. It needs no socket and reads nothing inside a profile. Saved accounts live elsewhere, under `~/.local/state/sbar-orbit/accounts`, and are never touched.
 
 ## Contract
 
@@ -70,7 +70,7 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 
 Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The Fedora backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
 
-`profileKey` is currently a mutual-exclusion label, not a persistent account profile. Use `accountName` for [saved account state](accounts.md). Every browser receives a fresh temporary profile; no existing directory can be supplied. Profiles are retained after close and the broker's temporary root is identifiable from its socket path. No automatic profile deletion is implemented.
+`profileKey` is currently a mutual-exclusion label, not a persistent account profile. Use `accountName` for [saved account state](accounts.md). Every browser receives a fresh temporary profile; no existing directory can be supplied. The profile is removed when the session stops; see the section on disk below.
 
 Pause blocks new actions immediately and acknowledges after accepted actions drain. Resume during draining is rejected. Stop closes the browser to cancel in-flight work and invalidates queued work. The service listens only on a Unix socket inside a mode-700 directory; socket mode is 600. Same-user programs can connect, which is intentional for local agents.
 
@@ -95,7 +95,7 @@ The launcher uses the existing shared resource wrapper for `serve`, including gr
 
 This is a checkout launcher, not a standalone release. It requires Bun and the installed project dependencies. Versioned packaging, installation and uninstall remain separate work. No global `orbit` command was created or replaced.
 
-Browser workspace files are created in fresh private directories under `$XDG_CACHE_HOME/sbar-orbit/workspaces`, defaulting to `~/.cache/sbar-orbit/workspaces`. This must be disk-backed storage, not tmpfs. Broker sockets stay in short private `/tmp` directories. Workspace profiles are retained after stop; no automatic deletion is implemented.
+Browser workspace files are created in fresh private directories under `$XDG_CACHE_HOME/sbar-orbit/workspaces`, defaulting to `~/.cache/sbar-orbit/workspaces`. This must be disk-backed storage, not tmpfs. Broker sockets stay in short private `/tmp` directories. Profiles are removed when their session stops, the workspace when its broker closes, and `sbar-orbit clean` reclaims what a killed broker left.
 
 ## Wheel input
 

@@ -11,7 +11,7 @@ bun run verify
 
 Requires Google Chrome (`channel: chrome`) and a running Hyprland session for telemetry. It serves a disposable fixture on an OS-assigned loopback port. Missing telemetry fails the test rather than producing a false pass. No real accounts, personal browser attachment, system package installation or system configuration change.
 
-Outputs: `output/playwright/latest.json`, `agent-a.png`, `agent-b.png`. Each run creates a fresh temporary profile root recorded in its report. Those fixture-only profiles are retained and never reused; delete a specific recorded root manually if no longer needed. Browser processes and the fixture server close at test exit.
+Outputs: `output/playwright/latest.json`, `agent-a.png`, `agent-b.png`. Each run creates a fresh temporary profile root recorded in its report. Those fixture-only profiles are never reused; `sbar-orbit clean` removes them once they are an hour old, or delete a specific recorded root manually. Browser processes and the fixture server close at test exit.
 
 ## Measured run
 
