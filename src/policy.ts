@@ -42,8 +42,15 @@ export const actionClasses: ActionClass[] = ["read", "navigate", "write", "irrev
 const classOfAction: Record<string, ActionClass> = {
   read: "read", observe: "read", scroll: "read", resize: "read", "select-tab": "read",
   navigate: "navigate", "open-tab": "navigate",
+  // Everything that changes state inside the session's own workspace. `launch` belongs here rather
+  // than in the irreversible class: it starts an application on the private display, which is
+  // disposable and whose descendants are reaped when the session stops, so it leaves nothing behind.
+  // That is a statement about the display, not about the program: the native launcher is not
+  // permission containment and does not make an arbitrary same-user command safe.
   fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
-  pointer: "write", window: "write", launch: "irreversible", download: "irreversible",
+  pointer: "write", window: "write", launch: "write",
+  // Leaves the workspace for the filesystem, so stopping the session does not take it back.
+  download: "irreversible",
 };
 
 export function classify(actionType: string): ActionClass {

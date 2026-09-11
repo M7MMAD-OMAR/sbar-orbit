@@ -75,18 +75,50 @@ try {
   const after = await call(broker.socket, "session.observe", display) as { image: string };
   await writeFile(join(directory, "idle.jpg"), Buffer.from(after.image, "base64"), { mode: 0o600 });
   report.indicatorPanelCpuTicks = (await cpuTicks()) - ticksBefore;
-  // Edge pixels: the indicator is a 3 px green frame, so the left edge mid-height is green while
-  // working and whatever the desktop shows otherwise.
+  // The glow, sampled as a profile rather than as one pixel. It is a wash that is densest against
+  // the edge and gone before it reaches anything being read, so the test is the falloff: tinted at
+  // the edge, dimmer part way in, and indistinguishable from the desktop at the centre. A single
+  // pixel could not tell a soft glow from the hard border this replaced.
+  const depths = [1, 8, 20, 40];
   const sample = await Bun.$`/usr/bin/python3 -c ${`import sys, json
 from PIL import Image
+depths = [1, 8, 20, 40]
 out = {}
 for name in ("working", "idle"):
     image = Image.open(sys.argv[1] + "/" + name + ".jpg").convert("RGB")
-    out[name] = {"left": image.getpixel((1, image.height // 2)), "top": image.getpixel((image.width // 2, 1)), "centre": image.getpixel((image.width // 2, image.height // 2))}
+    out[name] = {
+        "left": [image.getpixel((d, image.height // 2)) for d in depths],
+        "top": [image.getpixel((image.width // 2, d)) for d in depths],
+        "centre": image.getpixel((image.width // 2, image.height // 2)),
+    }
 print(json.dumps(out))`} ${directory}`.text().catch(() => "{}");
-  const pixels = JSON.parse(sample) as Record<string, Record<string, [number, number, number]>>;
-  const green = (rgb?: [number, number, number]) => !!rgb && rgb[1] > 120 && rgb[1] > rgb[0] + 40 && rgb[1] > rgb[2] + 40;
-  report.indicator = { pixels, shownWhileWorking: green(pixels.working?.left) && green(pixels.working?.top), hiddenAfter: !green(pixels.idle?.left) && !green(pixels.idle?.top) };
+  const pixels = JSON.parse(sample) as Record<string, { left: [number, number, number][]; top: [number, number, number][]; centre: [number, number, number] }>;
+  // How far a sample sits from the unlit centre of the same capture. The accent is a colour, not a
+  // brightness, so distance covers any accent the person's theme happens to generate.
+  const lift = (rgb: [number, number, number] | undefined, centre: [number, number, number] | undefined) =>
+    !rgb || !centre ? 0 : Math.hypot(rgb[0] - centre[0], rgb[1] - centre[1], rgb[2] - centre[2]);
+  const profile = (side: "left" | "top", name: "working" | "idle") =>
+    (pixels[name]?.[side] ?? []).map(rgb => Math.round(lift(rgb, pixels[name]?.centre)));
+  // Only the samples inside the glow's depth are evidence about the glow. The 40 px sample sits
+  // past it, on whatever the application put there, and is kept for reference rather than tested.
+  // The baseline is each capture's own centre, so what is being read is the SHAPE of the edge: a
+  // glow falls away inward, and an edge with no glow is flat whatever the desktop behind it shows.
+  const inside = (steps: number[]) => steps.slice(0, 3);
+  const fades = (steps: number[]) => {
+    const near = inside(steps);
+    return near.length === 3 && near[0]! > 40 && near[1]! < near[0]! && near[2]! < near[1]!;
+  };
+  const flat = (steps: number[]) => {
+    const near = inside(steps);
+    return near.length === 3 && Math.max(...near) - Math.min(...near) < 12;
+  };
+  report.indicator = {
+    depths, profileWorkingLeft: profile("left", "working"), profileWorkingTop: profile("top", "working"),
+    profileIdleLeft: profile("left", "idle"),
+    shownWhileWorking: fades(profile("left", "working")) && fades(profile("top", "working")),
+    // Nothing left behind once the action finishes.
+    hiddenAfter: flat(profile("left", "idle")),
+  };
   report.panelOutput = (await Bun.file(panelLog).text().catch(() => "")).slice(-2000);
   report.status = "captured";
 } catch (error) {

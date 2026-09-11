@@ -15,6 +15,10 @@ import qs.services
  * Showing and hiding it is the bar layout's job, the way it is for every other indicator: wrap this
  * in a Revealer whose `reveal` is `SbarOrbit.count > 0`, so a bar with no agents running looks
  * exactly as it did before this was installed.
+ *
+ * Put that Revealer beside the tray, not inside the status indicators. Orbit reports an application
+ * that is running, which is what a tray is for. In the indicators it crowded the notification badge
+ * and, because that group is itself a button, a click meant to open the viewer opened the sidebar.
  */
 MouseArea {
     id: root
@@ -34,10 +38,11 @@ MouseArea {
         // The mark keeps its own orientation on a vertical bar. A logo that turns on its side is a
         // different logo; only the capsule it replaced had a direction to follow.
         //
-        // 18 rather than the capsule's 14: the mark spends part of its width on the outlined square,
-        // so at 15 its filled square read lighter than the 16 pixel glyphs beside it. Measured
-        // against stand-in neighbours at 15, 18, 20 and 22; 18 is the one that matches.
-        readonly property real side: 18
+        // Two pixels over its neighbours, not a fixed number: the mark spends part of its width on
+        // the outlined square, so matched pixel for pixel its filled square reads lighter than a
+        // solid glyph beside it. Taking the size from the same token the neighbours use means it
+        // also follows the person's bar font scale instead of drifting out of step with it.
+        readonly property real side: Appearance.font.barPixelSize.larger + 2
         readonly property real unit: side / 20
         property color tint: root.stateColor
 

@@ -9,6 +9,11 @@ test("an unknown action is the most consequential class, never the least", () =>
   expect(classify("read")).toBe("read");
   expect(classify("navigate")).toBe("navigate");
   expect(classify("click")).toBe("write");
+  // Launching onto the private display changes the session's own workspace and nothing outside it,
+  // so classing it irreversible denied the native backend its entire purpose. Guarded here because
+  // the regression was silent: every native session failed at its first launch.
+  expect(classify("launch")).toBe("write");
+  expect(classify("download")).toBe("irreversible");
   // A vocabulary grows. The default for something Orbit has not seen must be a refusal.
   expect(classify("transfer-funds")).toBe("irreversible");
   expect(classify("")).toBe("irreversible");
@@ -17,10 +22,12 @@ test("an unknown action is the most consequential class, never the least", () =>
 test("an autonomous session never asks, it decides", () => {
   const policy = autonomous();
   expect(decide(policy, "read")).toEqual({ outcome: "allow" });
-  const denied = decide(policy, "launch");
+  const denied = decide(policy, "download");
   expect(denied.outcome).toBe("deny");
+  // A native session must be able to open applications under the default policy.
+  expect(decide(policy, "launch").outcome).toBe("allow");
   // The whole point: no outcome of an autonomous session is "wait for a person".
-  for (const action of ["read", "click", "navigate", "launch", "unknown-thing"])
+  for (const action of ["read", "click", "navigate", "download", "unknown-thing"])
     expect(decide(policy, action, "https://example.test/x").outcome).not.toBe("ask");
 });
 
@@ -32,7 +39,7 @@ test("a supervised session asks where an autonomous one refuses", () => {
 
 test("a deny is absolute and outranks an allow that names the same class", () => {
   const contradictory = autonomous({ allow: ["read", "irreversible"], deny: ["irreversible"] });
-  const decision = decide(contradictory, "launch");
+  const decision = decide(contradictory, "download");
   expect(decision.outcome).toBe("deny");
   if (decision.outcome === "deny") expect(decision.reason).toContain("not overridable");
 });
@@ -91,8 +98,8 @@ test("the default policy looks and does not touch", () => {
 
   // Reaching the irreversible class takes two deliberate statements, not one. Naming it in allow is
   // not enough, because an omitted deny still carries it.
-  expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"] }), "launch").outcome).toBe("deny");
-  expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"], deny: [] }), "launch").outcome).toBe("allow");
+  expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"] }), "download").outcome).toBe("deny");
+  expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"], deny: [] }), "download").outcome).toBe("allow");
 });
 
 test("the journal records what happened without recording what was in it", () => {
@@ -125,7 +132,8 @@ test("a fresh profile session is unbounded, a session with real logins cannot be
   // toward and bounding it would only break the agent.
   expect(freshProfilePolicy.origins).toBe("any");
   expect(decide(freshProfilePolicy, "navigate", "https://anywhere.test/x").outcome).toBe("allow");
-  expect(decide(freshProfilePolicy, "launch").outcome).toBe("deny");
+  expect(decide(freshProfilePolicy, "launch").outcome).toBe("allow");
+  expect(decide(freshProfilePolicy, "download").outcome).toBe("deny");
 
   // The moment a session carries the person's real logins, unbounded origins are refused.
   expect(() => requireBoundedOrigins(freshProfilePolicy)).toThrow();

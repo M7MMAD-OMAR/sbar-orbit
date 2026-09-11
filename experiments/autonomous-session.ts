@@ -72,7 +72,7 @@ try {
     .then(() => "navigated", error => ({ refused: (error as { code?: string }).code, reason: (error as Error).message }));
 
   // An action class the policy never allowed is refused outright, and nothing waits for a person.
-  report.deniedClass = await act(session, { type: "launch", argv: ["/usr/bin/true"], toolkit: "wayland" })
+  report.deniedClass = await act(session, { type: "download", url: "http://127.0.0.1:1/x" })
     .then(() => "ran", error => ({ refused: (error as { code?: string }).code }));
 
   // The session is still usable afterwards: a refusal is not a crash.

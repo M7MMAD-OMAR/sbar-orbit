@@ -75,7 +75,11 @@ import math  # noqa: E402
 os.environ.pop("LD_PRELOAD", None)
 os.environ.pop("ORBIT_PANEL_PRELOADED", None)
 
-FRAME_WIDTH = 3
+# How deep the working glow reaches in from the screen edge. A hairline had nothing to fade across;
+# this is the distance the wash has to die out over. Four strips at this depth cost about 0.9 MiB of
+# buffer between them on a 2560 by 1440 output, against tens of megabytes for one surface covering
+# the whole output with a transparent middle.
+FRAME_GLOW = 28
 OPEN_DELAY_MS = 220
 CLOSE_DELAY_MS = 320
 PRESENCE_WHILE_COLLAPSED_S = 10
@@ -109,7 +113,12 @@ DEFAULT_SETTINGS = {
     "notifications": True,
     "blink": True,
     "frame": True,
-    "frameColor": "#4caf50",
+    # "accent" follows the desktop's own accent, light and dark, rather than naming a colour
+    # that belongs to no palette. A hex here overrides it.
+    "frameColor": "accent",
+    # The breathing. Separable from the glow because motion is the part that costs, and this
+    # machine keeps compositor effects off for that reason.
+    "framePulse": True,
     "hideWhenIdle": False,
     # Where along its edge the mark sits, from 0 at the start of the edge to 1 at the end. Set by
     # dragging the mark, so a person who wants it under their top bar can put it there.
@@ -140,7 +149,28 @@ window.orbit-clear, window.orbit-clear.background { background: none; background
   background-image: none; box-shadow: none; }
 .orbit-shell, .orbit-plate, .orbit-frame, .orbit-frame.background, .orbit-frame box {
   background: none; background-color: transparent; background-image: none; box-shadow: none; }
-.orbit-frame box.on { background-color: @orbit-frame-color; }
+/* The working glow. Not a border: a wash that is densest against the screen edge and gone before it
+   reaches anything the person is reading, so the screen reads as in use without a line drawn round
+   it. The four strips overlap at the corners, and the overlap is wanted: two soft washes crossing is
+   what gives a corner its vignette instead of a mitred join. */
+.orbit-frame box.on.pulse {
+  animation: orbit-glow 2600ms ease-in-out infinite;
+}
+.orbit-frame box.on.top { background-image: linear-gradient(to bottom,
+  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
+  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+.orbit-frame box.on.bottom { background-image: linear-gradient(to top,
+  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
+  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+.orbit-frame box.on.left { background-image: linear-gradient(to right,
+  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
+  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+.orbit-frame box.on.right { background-image: linear-gradient(to left,
+  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
+  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+/* Breathing, not flashing. A working indicator is looked at out of the corner of an eye for minutes
+   at a time, so the swing is small and slow enough to read as alive rather than as an alarm. */
+@keyframes orbit-glow { 0%, 100% { opacity: 0.62; } 50% { opacity: 1; } }
 """
 # Structure and motion only. Colours and sizes come from the person's settings, in a second provider
 # reloaded when they change, so a colour edit takes effect without a restart.
@@ -191,7 +221,11 @@ def dynamic_css(settings):
 def surface_css(settings):
     """The rules that must outrank the theme. The frame colour rides along because the rule that uses
     it lives here too, and a colour name defined in a lower provider would be the theme's to shadow."""
-    return SURFACE_CSS + f"\n@define-color orbit-frame-color {settings['frameColor']};\n".encode()
+    chosen = settings["frameColor"]
+    # A name rather than a value, so the glow moves with the theme instead of being pinned to whatever
+    # the accent happened to be on the day it was chosen.
+    value = "@accent_bg_color" if chosen == "accent" else chosen
+    return SURFACE_CSS + f"\n@define-color orbit-frame-color {value};\n".encode()
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -1271,7 +1305,7 @@ class Panel(Gtk.Application):
         a few hundred kilobytes of buffer between them, where one surface covering the output would
         cost tens of megabytes for a transparent centre. Each strip is click through: its input region
         is empty, so pointer events reach what is underneath."""
-        for edge in EDGES.values():
+        for name, edge in EDGES.items():
             strip = Gtk.Window(application=self)
             strip.set_title("Orbit working")
             strip.add_css_class("orbit-frame")
@@ -1289,7 +1323,11 @@ class Panel(Gtk.Application):
                 LayerShell.set_monitor(strip, monitor)
             body = Gtk.Box()
             body.add_css_class("on")
-            body.set_size_request(FRAME_WIDTH, FRAME_WIDTH)
+            # Which way this strip's wash fades: inward, away from the edge it is anchored to.
+            body.add_css_class(name)
+            if self.settings["framePulse"]:
+                body.add_css_class("pulse")
+            body.set_size_request(FRAME_GLOW, FRAME_GLOW)
             strip.set_child(body)
 
             def passthrough(mapped):
@@ -1656,9 +1694,15 @@ class SettingsWindow(Gtk.Window):
             self.color_row("Idle colour", "idle"),
             self.color_row("Colour when Orbit is off", "offline"),
         ]))
-        outer.append(self.group("Working frame", [
-            self.switch_row("Frame the screen while working", panel.settings["frame"], lambda v: panel.change("frame", v)),
-            self.row("Frame colour", self.color_button(panel.settings["frameColor"], lambda hexv: panel.change("frameColor", hexv))),
+        outer.append(self.group("Working glow", [
+            self.switch_row("Glow the screen edges while working", panel.settings["frame"], lambda v: panel.change("frame", v)),
+            # Following the theme is the default, so the glow moves with the desktop instead of being
+            # pinned to whatever the accent happened to be on the day it was chosen. Turning it off
+            # keeps the colour currently on screen, rather than jumping to an unrelated one.
+            self.switch_row("Breathe while working", panel.settings["framePulse"], lambda v: panel.change("framePulse", v)),
+            self.switch_row("Follow the theme accent", panel.settings["frameColor"] == "accent",
+                            lambda v: panel.change("frameColor", "accent" if v else self.resolved_accent())),
+            self.row("Glow colour", self.color_button(panel.settings["frameColor"], lambda hexv: panel.change("frameColor", hexv))),
         ]))
         outer.append(self.group("Motion and blending", [
             self.switch_row("Liquid motion", panel.settings["motion"], lambda v: panel.change("motion", v)),
@@ -1770,9 +1814,16 @@ class SettingsWindow(Gtk.Window):
     def color_row(self, text, key):
         return self.row(text, self.color_button(self.panel.settings["colors"][key], lambda hexv: self.set_color(key, hexv)))
 
+    def resolved_accent(self):
+        """The accent this desktop is using right now, as a hex the settings can store. Used when the
+        person stops following the theme, so the glow keeps the colour it already had."""
+        found, rgba = self.get_style_context().lookup_color("accent_bg_color")
+        return rgba_to_hex(rgba) if found else "#808080"
+
     def color_button(self, current, on_change):
         rgba = Gdk.RGBA()
-        if not rgba.parse(current):
+        # "accent" is a name, not a value, so the button shows what that name currently resolves to.
+        if not rgba.parse(self.resolved_accent() if current == "accent" else current):
             rgba.parse("#808080")
         dialog = Gtk.ColorDialog()
         dialog.set_with_alpha(False)
@@ -1807,6 +1858,8 @@ def main():
             settings["frame"] = True
         elif flag in ("--no-frame", "--no-indicator"):
             settings["frame"] = False
+        elif flag == "--no-pulse":
+            settings["framePulse"] = False
         elif flag in ("--frame-color", "--indicator-color") and args:
             settings["frameColor"] = args.pop(0)
         elif flag == "--position" and args:
@@ -1822,7 +1875,7 @@ def main():
             open_settings = True
         elif flag in ("-h", "--help"):
             print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style mark|bar|dot|count]")
-            print("                        [--position 0..1] [--frame|--no-frame] [--frame-color CSS] [--no-motion]")
+            print("                        [--position 0..1] [--frame|--no-frame] [--no-pulse] [--frame-color CSS] [--no-motion]")
             print("                        [--no-notifications] [--settings]")
             print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens the settings window")
             return 0
