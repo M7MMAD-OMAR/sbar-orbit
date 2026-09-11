@@ -1,11 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Shapes
 import qs.modules.common
 import qs.modules.common.widgets
 import qs.services
 
 /**
- * A capsule in the bar that says what Orbit is doing, in the shell's own colours.
+ * The project mark in the bar, saying what Orbit is doing in the shell's own colours.
  *
  * No number on it: the colour is the whole message, the accent while an agent is working, the
  * tertiary accent while one is paused, quiet while sessions are open but idle. It blinks once when a
@@ -27,17 +28,49 @@ MouseArea {
     hoverEnabled: true
     onClicked: SbarOrbit.openViewer()
 
-    Rectangle {
+    Item {
         id: capsule
         anchors.centerIn: parent
-        // Lying along the bar's own direction, so it reads as a mark rather than a stray dot.
-        implicitWidth: Config.options.bar.vertical ? 14 : 4
-        implicitHeight: Config.options.bar.vertical ? 4 : 14
-        radius: Appearance.rounding.full
-        color: root.stateColor
+        // The mark keeps its own orientation on a vertical bar. A logo that turns on its side is a
+        // different logo; only the capsule it replaced had a direction to follow.
+        //
+        // 18 rather than the capsule's 14: the mark spends part of its width on the outlined square,
+        // so at 15 its filled square read lighter than the 16 pixel glyphs beside it. Measured
+        // against stand-in neighbours at 15, 18, 20 and 22; 18 is the one that matches.
+        readonly property real side: 18
+        readonly property real unit: side / 20
+        property color tint: root.stateColor
 
-        Behavior on color {
+        implicitWidth: side
+        implicitHeight: side * 18.21 / 20
+
+        Behavior on tint {
             animation: Appearance.animation.elementMoveFast.colorAnimation.createObject(this)
+        }
+
+        // The mark's box is exactly its ink: brand/orbit-mark-small.svg with the safe area taken
+        // off, so every coordinate is positive and a bar that clips its indicators cannot cut a
+        // corner off it. Scaled from the top left, so the stroke thins with the shape rather than
+        // staying at its authored weight.
+        Shape {
+            width: 20
+            height: 18.21
+            transformOrigin: Item.TopLeft
+            scale: capsule.unit
+            antialiasing: true
+
+            ShapePath {
+                fillColor: capsule.tint
+                strokeWidth: -1
+                PathSvg { path: "M2.6 6.05H9.56A2.6 2.6 0 0 1 12.16 8.65V15.61A2.6 2.6 0 0 1 9.56 18.21H2.6A2.6 2.6 0 0 1 0 15.61V8.65A2.6 2.6 0 0 1 2.6 6.05Z" }
+            }
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: capsule.tint
+                strokeWidth: 2.2
+                capStyle: ShapePath.RoundCap
+                PathSvg { path: "M7.15 3.35V2.68A1.58 1.58 0 0 1 8.73 1.1H17.32A1.58 1.58 0 0 1 18.9 2.68V11.27A1.58 1.58 0 0 1 17.32 12.85H14.86" }
+            }
         }
 
         SequentialAnimation {

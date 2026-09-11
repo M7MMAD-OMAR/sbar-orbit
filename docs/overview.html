@@ -1,33 +1,34 @@
 <!doctype html>
 <html lang="en">
 <head>
+<link rel="icon" href="../brand/favicon.svg" type="image/svg+xml">
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sbar Orbit: project map</title>
 <style>
-:root{--paper:#f5f5f5;--ink:#2d3142;--muted:#4f5d75;--accent:#eb6c36;--rule:#bfc0c0}
+:root{--paper:#f1f4f8;--ink:#192842;--muted:#55667d;--accent:#204c87;--rule:#aebdce}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Geist,system-ui,sans-serif}
 main{max-width:1200px;margin:auto;padding:48px}header{display:flex;justify-content:space-between;align-items:flex-start;gap:32px}
 .eyebrow{font-family:'Geist Mono',monospace;font-size:12px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
-h1{font-family:'Instrument Serif',Georgia,serif;font-size:48px;font-weight:400;margin:12px 0 16px}
+h1{font-size:44px;font-weight:600;letter-spacing:-.02em;margin:12px 0 16px}
 .lead{font-size:20px;line-height:1.5;max-width:740px;margin:0;color:var(--muted)}
 .stamp{font-size:12px;line-height:1.8;text-align:right;white-space:nowrap;color:var(--muted)}
-.diagram{margin-top:32px;overflow-x:auto}svg{display:block;width:100%;min-width:760px;height:auto}
+.diagram{margin-top:32px;overflow-x:auto}.diagram svg{display:block;width:100%;min-width:760px;height:auto}
 .grid{display:grid;grid-template-columns:1.15fr 1fr .9fr;gap:24px;margin:8px 0 32px}
-article{padding:24px;background:white;border:1px solid #d9dce0;border-radius:6px}article h2{font-size:20px;margin:8px 0 12px;font-weight:600}
+article{padding:24px;background:white;border:1px solid var(--rule);border-radius:6px}article h2{font-size:20px;margin:8px 0 12px;font-weight:600}
 article p{font-size:16px;line-height:1.55;margin:8px 0;color:var(--muted)}
 .metric{font-size:32px;color:var(--ink)}.note{font-size:14px!important}
-nav{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--rule);padding-top:24px;font-size:14px}a{color:#2e5aa8}
+nav{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--rule);padding-top:24px;font-size:14px}a{color:var(--accent)}
 @media(max-width:760px){main{padding:24px}h1{font-size:36px}header{display:block}.stamp{text-align:left;margin-top:16px}.grid{grid-template-columns:1fr}.lead{font-size:18px}}
 </style>
 </head>
 <body><main>
-<header><div><div class="eyebrow">Sbar Orbit / project map</div><h1>Your agent has its own workspace.</h1><p class="lead">Same computer. Independent application surfaces and input.<br>You keep working and choose when to watch.</p></div><div class="stamp">10 September 2026<br>Fedora first<br>Broker + MCP + live preview</div></header>
+<header><div><div class="eyebrow"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true" style="vertical-align:-3px;margin-inline-end:7px"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg>Sbar Orbit / project map</div><h1>Your agent has its own workspace.</h1><p class="lead">Same computer. Independent application surfaces and input.<br>You keep working and choose when to watch.</p></div><div class="stamp">11 September 2026<br>Fedora first<br>Broker + MCP + live preview</div></header>
 <div class="diagram">
 <svg viewBox="0 0 1104 464" role="img" aria-labelledby="orbit-map-title orbit-map-desc">
 <title id="orbit-map-title">Orbit architecture and separate human workspace</title>
 <desc id="orbit-map-desc">Agent tools and the CLI reach a local broker, which routes work to a browser or a Fedora native display backend, while the human desktop remains separate and an optional viewer receives application frames.</desc>
-<defs><marker id="orbit-map-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="#4f5d75"/></marker></defs>
-<g fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#orbit-map-arrow)">
+<defs><marker id="orbit-map-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="#55667d"/></marker></defs>
+<g fill="none" stroke="#55667d" stroke-width="1.2" marker-end="url(#orbit-map-arrow)">
 <path d="M232 104 H320"/>
 <path d="M232 264 H268 Q276 264 276 256 V144 Q276 136 284 136 H320"/>
 <path d="M560 104 H640"/>
@@ -36,23 +37,23 @@ nav{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--rule);paddin
 <path d="M740 288 V320" stroke-dasharray="4 4"/>
 </g>
 <g font-family="Geist,system-ui,sans-serif" text-anchor="middle">
-<rect x="32" y="64" width="200" height="80" rx="8" fill="#fff" stroke="#bfc0c0"/>
-<text x="132" y="96" font-size="16" font-weight="600">Agent tools</text><text x="132" y="120" font-size="12" fill="#4f5d75">MCP or API adapter</text>
-<rect x="32" y="224" width="200" height="80" rx="8" fill="#fff" stroke="#bfc0c0"/>
-<text x="132" y="256" font-size="16" font-weight="600">Orbit CLI</text><text x="132" y="280" font-size="12" fill="#4f5d75">Setup and diagnostics</text>
-<rect x="320" y="64" width="240" height="100" rx="8" fill="#f8e9e1" stroke="#eb6c36"/>
-<text x="440" y="100" font-size="20" font-weight="600">Local broker</text><text x="440" y="128" font-size="12" fill="#4f5d75">Sessions, routing and stop</text><text x="440" y="148" font-size="12" fill="#4f5d75">PROTOTYPE</text>
-<rect x="640" y="64" width="200" height="80" rx="8" fill="#fff" stroke="#bfc0c0"/>
-<text x="740" y="96" font-size="16" font-weight="600">Browser backend</text><text x="740" y="120" font-size="12" fill="#4f5d75">Initial experiment passed</text>
-<rect x="640" y="208" width="200" height="80" rx="8" fill="#fff" stroke="#bfc0c0" stroke-dasharray="4 4"/>
-<text x="740" y="240" font-size="16" font-weight="600">Native display</text><text x="740" y="264" font-size="12" fill="#4f5d75">Wayland + X11 proof passed</text>
-<rect x="640" y="320" width="192" height="80" rx="8" fill="#fff" stroke="#bfc0c0"/>
-<text x="736" y="352" font-size="16" font-weight="600">Optional viewer</text><text x="736" y="376" font-size="12" fill="#4f5d75">Live session view + control</text>
+<rect x="32" y="64" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
+<text x="132" y="96" font-size="16" font-weight="600">Agent tools</text><text x="132" y="120" font-size="12" fill="#55667d">MCP or API adapter</text>
+<rect x="32" y="224" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
+<text x="132" y="256" font-size="16" font-weight="600">Orbit CLI</text><text x="132" y="280" font-size="12" fill="#55667d">Setup and diagnostics</text>
+<rect x="320" y="64" width="240" height="100" rx="8" fill="#e4eefc" stroke="#204c87"/>
+<text x="440" y="100" font-size="20" font-weight="600">Local broker</text><text x="440" y="128" font-size="12" fill="#55667d">Sessions, routing and stop</text><text x="440" y="148" font-size="12" fill="#55667d">ALPHA</text>
+<rect x="640" y="64" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
+<text x="740" y="96" font-size="16" font-weight="600">Browser backend</text><text x="740" y="120" font-size="12" fill="#55667d">600 s run, 3005 frames</text>
+<rect x="640" y="208" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
+<text x="740" y="240" font-size="16" font-weight="600">Native display</text><text x="740" y="264" font-size="12" fill="#55667d">Fedora bootstrap required</text>
+<rect x="640" y="320" width="192" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
+<text x="736" y="352" font-size="16" font-weight="600">Optional viewer</text><text x="736" y="376" font-size="12" fill="#55667d">Live session view + control</text>
 <rect x="920" y="64" width="160" height="224" rx="8" fill="#ececec"/>
-<text x="1000" y="120" font-size="20" font-weight="600">Your desktop</text><text x="1000" y="156" font-size="12" fill="#4f5d75">Your mouse</text><text x="1000" y="180" font-size="12" fill="#4f5d75">Your keyboard</text><text x="1000" y="204" font-size="12" fill="#4f5d75">Your active window</text><text x="1000" y="256" font-size="12" fill="#4f5d75">NO INPUT ROUTE</text>
+<text x="1000" y="120" font-size="20" font-weight="600">Your desktop</text><text x="1000" y="156" font-size="12" fill="#55667d">Your mouse</text><text x="1000" y="180" font-size="12" fill="#55667d">Your keyboard</text><text x="1000" y="204" font-size="12" fill="#55667d">Your active window</text><text x="1000" y="256" font-size="12" fill="#55667d">NO INPUT ROUTE</text>
 </g>
-<line x1="32" y1="432" x2="1080" y2="432" stroke="#bfc0c0" stroke-width=".8"/>
-<text x="32" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#4f5d75">Solid: control path</text><text x="288" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#4f5d75">Dashed: candidate backend or observation</text><text x="744" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#4f5d75">Architecture is proposed</text>
+<line x1="32" y1="432" x2="1080" y2="432" stroke="#aebdce" stroke-width=".8"/>
+<text x="32" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Solid: control path</text><text x="288" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Dashed: observation path</text><text x="744" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Alpha, 27 tests passed</text>
 </svg></div>
 <section class="grid" aria-label="Evidence and next gates">
 <article><div class="eyebrow">01 / demonstrated</div><h2>Independent browsers</h2><p><span class="metric">2</span> sessions, <span class="metric">26</span> submissions</p><p>Separate form state survives reload. Stop one browser; the other keeps working.</p><p class="note">0 sampled focus or window hits. A short smoke test, not continuous isolation proof.</p></article>

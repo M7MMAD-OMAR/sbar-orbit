@@ -1,7 +1,8 @@
 """A tiny always-visible mark on a screen edge that says what Orbit is doing.
 
-By default it is a small capsule of glass with a coloured mark inside: grey when nothing runs, the
-working colour while an agent works, amber when a session is paused, dim when the broker is off. It
+A small capsule of glass with the project mark inside it, coloured by state: grey when nothing
+runs, the working colour while an agent works, amber when a session is paused, dim when the broker
+is off. The mark can be traded for a plain capsule, a dot or a dot with a count. It
 blinks once when a session or an application appears. Resting the pointer on it draws a card out of
 the capsule, one row per session, joined to it by a neck that thins as the two separate; clicking a
 card opens the viewer. A left click on the mark opens the viewer, a right click opens a settings
@@ -94,13 +95,13 @@ GRIP_SLACK = 9.0
 DROP_TARGET = 78.0
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 EDGE_LABELS = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
-STYLES = ("bar", "dot", "count")
-SHAPE_LABELS = ["capsule", "dot", "dot with count"]
+STYLES = ("mark", "bar", "dot", "count")
+SHAPE_LABELS = ["logo", "capsule", "dot", "dot with count"]
 STATE_KEYS = ("idle", "working", "paused", "offline")
 DEFAULT_SETTINGS = {
     "edge": "right",
     "monitor": None,
-    "style": "bar",
+    "style": "mark",
     # What the person settled on after living with it: a slimmer capsule, flush against the glass.
     "size": 8,
     "margin": 0,
@@ -147,7 +148,7 @@ BASE_CSS = b"""
 @keyframes orbit-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
 .orbit-plate { padding: 10px 12px; color: @window_fg_color; }
 .orbit-bar, .orbit-dot { border-radius: 999px; }
-.orbit-bar.blink, .orbit-dot.blink, .orbit-count.blink { animation: orbit-blink 380ms ease-in-out 2; }
+.orbit-glyph.blink, .orbit-bar.blink, .orbit-dot.blink, .orbit-count.blink { animation: orbit-blink 380ms ease-in-out 2; }
 .orbit-count { border-radius: 999px; font-weight: 700; padding: 0 7px; color: white; }
 .orbit-card { padding: 8px 10px; border-radius: 14px; }
 .orbit-card:hover { background: alpha(@window_fg_color, 0.09); }
@@ -396,6 +397,37 @@ def rounded(cr, x, y, width, height, radius):
     cr.arc(x + radius, y + height - radius, radius, math.pi / 2, math.pi)
     cr.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
     cr.close_path()
+
+
+# The project mark, from brand/orbit-mark-small.svg, on its own 24 unit grid. The small variant is
+# the one a panel needs: the canonical stroke and its two notches close up below 20 pixels. Its drawn
+# box is 20 wide by 18.21 tall inside that grid, which is the ratio a caller has to keep.
+MARK_ASPECT = 18.21 / 20.0
+
+
+def orbit_mark(cr, width):
+    """Paint the mark at `width` pixels wide, in the colour already set on the context.
+
+    A drawing rather than an icon file, because the panel tints it by session state and a symbolic
+    icon would be recoloured by whichever icon theme the desktop is running instead.
+    """
+    scale = width / 20.0
+    cr.save()
+    cr.translate(-2.0 * scale, -2.89 * scale)
+    cr.scale(scale, scale)
+    rounded(cr, 2.0, 8.94, 12.16, 12.16, 2.6)
+    cr.fill()
+    # One open stroke with round caps: it stops short of the filled square at both crossings, which
+    # is the notch that keeps the two surfaces from touching.
+    cr.move_to(9.15, 6.24)
+    cr.arc(10.73, 5.57, 1.58, math.pi, 1.5 * math.pi)
+    cr.arc(19.32, 5.57, 1.58, 1.5 * math.pi, 2 * math.pi)
+    cr.arc(19.32, 14.16, 1.58, 0.0, 0.5 * math.pi)
+    cr.line_to(16.86, 15.74)
+    cr.set_line_width(2.2)
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
+    cr.stroke()
+    cr.restore()
 
 
 def body_path(cr, head, tail, neck, head_radius, tail_radius):
@@ -709,6 +741,31 @@ class Liquid(Gtk.Box):
         snapshot.pop()
 
 
+class Glyph(Gtk.DrawingArea):
+    """The project mark as the panel's own indicator, tinted by session state.
+
+    The other three shapes are styled boxes, so their colour comes from the generated CSS. A shape
+    cannot be a box, so this one reads the same colour directly and paints it.
+    """
+
+    def __init__(self, panel):
+        super().__init__()
+        self.panel = panel
+        self.add_css_class("orbit-glyph")
+        self.set_draw_func(self.draw)
+
+    def resize(self, width):
+        self.set_content_width(width)
+        self.set_content_height(max(1, round(width * MARK_ASPECT)))
+
+    def draw(self, _area, cr, width, _height):
+        colour = Gdk.RGBA()
+        if not colour.parse(self.panel.settings["colors"][self.panel.state_of()]):
+            colour.parse("#8a8a8a")
+        cr.set_source_rgba(colour.red, colour.green, colour.blue, 1.0)
+        orbit_mark(cr, width)
+
+
 class Panel(Gtk.Application):
     def __init__(self, settings):
         super().__init__(application_id="io.sbar.orbit.panel", flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -794,13 +851,14 @@ class Panel(Gtk.Application):
         self.mark.set_halign(Gtk.Align.CENTER)
         self.mark.set_valign(Gtk.Align.CENTER)
         self.mark.update_property([Gtk.AccessibleProperty.LABEL], ["Sbar Orbit sessions"])
+        self.glyph = Glyph(self)
         self.bar = Gtk.Box()
         self.bar.add_css_class("orbit-bar")
         self.dot = Gtk.Box()
         self.dot.add_css_class("orbit-dot")
         self.count = Gtk.Label(label="0")
         self.count.add_css_class("orbit-count")
-        for widget in (self.bar, self.dot, self.count):
+        for widget in self.shapes():
             self.mark.append(widget)
 
         # The cards live on their own rounded plate, so the mark keeps no background of its own and
@@ -1328,8 +1386,11 @@ class Panel(Gtk.Application):
 
     # --- Rendering -------------------------------------------------------------------------------
 
+    def shapes(self):
+        return (self.glyph, self.bar, self.dot, self.count)
+
     def mark_widget(self):
-        return {"bar": self.bar, "dot": self.dot}.get(self.settings["style"], self.count)
+        return dict(zip(STYLES, self.shapes()))[self.settings["style"]]
 
     def state_of(self):
         if not self.reachable:
@@ -1347,16 +1408,20 @@ class Panel(Gtk.Application):
         if self.surface_provider is not None:
             self.surface_provider.load_from_data(surface_css(self.settings))
         self.shell.palette = None
-        for style, widget in (("bar", self.bar), ("dot", self.dot), ("count", self.count)):
+        # A logo needs pixels in a way a capsule does not, so it takes its own floor rather than the
+        # thickness the capsule was tuned to.
+        self.glyph.resize(max(16, round(max(6, int(self.settings["size"])) * 2.0)))
+        for style, widget in zip(STYLES, self.shapes()):
             widget.set_visible(self.settings["style"] == style)
         self.render()
 
     def render(self):
         state = self.state_of()
-        for widget in (self.bar, self.dot, self.count):
+        for widget in self.shapes():
             for key in STATE_KEYS:
                 widget.remove_css_class(key)
             widget.add_css_class(state)
+        self.glyph.queue_draw()
         self.count.set_text("0" if state == "offline" else str(len(self.sessions)))
         if self.drag is None:
             # Not while the mark is being carried. Showing or hiding it changes how big the shell is,
@@ -1756,7 +1821,7 @@ def main():
         elif flag == "--settings":
             open_settings = True
         elif flag in ("-h", "--help"):
-            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style bar|dot|count]")
+            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style mark|bar|dot|count]")
             print("                        [--position 0..1] [--frame|--no-frame] [--frame-color CSS] [--no-motion]")
             print("                        [--no-notifications] [--settings]")
             print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens the settings window")

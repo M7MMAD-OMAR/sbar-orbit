@@ -18,6 +18,9 @@ export function startPreview(sessions: Sessions) {
       };
       const file = files[url.pathname];
       if (request.method === "GET" && url.pathname === "/favicon.ico") return new Response(null, { status: 204, headers });
+      // Served from brand/ rather than copied into viewer/, so the mark has one source in the repo.
+      if (request.method === "GET" && url.pathname === "/favicon.svg")
+        return new Response(Bun.file(join(import.meta.dir, "../brand/favicon.svg")), { headers: { ...headers, "Content-Type": "image/svg+xml" } });
       // Read per request so a desktop that regenerates its palette is picked up by the next viewer load.
       if (request.method === "GET" && url.pathname === "/theme.css")
         return new Response(await loadTheme(), { headers: { ...headers, "Content-Type": "text/css; charset=utf-8" } });
