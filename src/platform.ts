@@ -79,8 +79,9 @@ function browserCandidates(home: string): Omit<BrowserInstall, "executable">[] {
   return [
     { ...chrome, packaging: "system", profileDirectory: join(home, ".config", "google-chrome") },
     { ...chromium, packaging: "system", profileDirectory: join(home, ".config", "chromium") },
-    // A Flatpak browser keeps its profile inside its own application directory, and it asked the
-    // Secret portal rather than the session bus, so reaching its key from outside is a separate gate.
+    // A Flatpak browser keeps its profile inside its own application directory. It asked the Secret
+    // portal rather than the session bus, but the portal proxies to the same login keyring item, so
+    // a directly launchable browser of the same branding still decrypts it.
     { ...chrome, packaging: "flatpak", profileDirectory: join(home, ".var", "app", "com.google.Chrome", "config", "google-chrome") },
     { ...chromium, packaging: "flatpak", profileDirectory: join(home, ".var", "app", "org.chromium.Chromium", "config", "chromium") },
     { ...chromium, packaging: "snap", profileDirectory: join(home, "snap", "chromium", "current", ".config", "chromium") },
@@ -255,15 +256,22 @@ export type CloneRefusal = { allowed: false; reason: string } | { allowed: true;
 export async function canCloneProfile(profileDirectory: string, capabilities: PlatformCapabilities, workspace: string): Promise<CloneRefusal> {
   const install = capabilities.browsers.find(candidate => candidate.profileDirectory === profileDirectory);
   if (!install) return { allowed: false, reason: "No detected browser install owns that profile directory, so the binary that can decrypt it is unknown." };
-  if (install.packaging !== "system" && install.packaging !== "home")
-    return { allowed: false, reason: `A ${install.packaging} browser keeps its key behind its own sandbox portal, which Orbit cannot reach from outside. This is an open gate, not a bug.` };
+  // Packaging decides where a profile lives, not whether its key can be read. A Flatpak browser asks
+  // the Secret portal, which proxies to the same login keyring under the same application attribute,
+  // so a directly launchable browser of the same branding opens it. Measured on this workstation: a
+  // Flatpak Chrome profile decrypted 115 of 115 cookies under the system Chrome binary. What Orbit
+  // cannot do is exec a sandboxed browser itself, so it needs a launchable install to hand it to.
+  const launcher = capabilities.browsers.find(candidate =>
+    candidate.id === install.id && (candidate.packaging === "system" || candidate.packaging === "home"));
+  if (!launcher)
+    return { allowed: false, reason: `That profile was written by ${install.id}, and no directly launchable ${install.id} is installed. A browser of another branding looks up a differently named keyring item and would decrypt nothing.` };
   const scheme = await profileCookieScheme(profileDirectory);
   if (!scheme) return { allowed: false, reason: "That profile has no readable cookie store, so there is no session to inherit." };
   if (scheme.scheme === "keyring" && capabilities.secretService !== "available")
     return { allowed: false, reason: "That profile's cookies need the login keyring and no secret service answered, so the clone would start signed out." };
   if (scheme.scheme === "keyring" && !capabilities.filteredBusProxy)
     return { allowed: false, reason: "Reaching the keyring safely needs xdg-dbus-proxy, which is not installed. Orbit will not hand a browser the whole session bus instead." };
-  return { allowed: true, install, store: passwordStoreFor(scheme.scheme, capabilities.secretService, capabilities.desktop), reflink: await supportsReflink(workspace) };
+  return { allowed: true, install: launcher, store: passwordStoreFor(scheme.scheme, capabilities.secretService, capabilities.desktop), reflink: await supportsReflink(workspace) };
 }
 
 /** The three markers a copied profile inherits from a running browser. Chrome refuses to start while

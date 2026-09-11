@@ -85,10 +85,17 @@ test("cloning is refused with a reason for every measured failure mode", async (
   expect(orphan.allowed).toBe(false);
   if (!orphan.allowed) expect(orphan.reason).toContain("No detected browser install");
 
-  // A sandboxed browser asked a portal for its key, so Orbit cannot reach it from outside.
+  // A Flatpak profile is allowed when a launchable browser of the SAME branding exists, because the
+  // portal proxies to the same login keyring item. Measured: 115 of 115 cookies decrypted this way.
   const sandbox = await canCloneProfile(sandboxed, base, root);
-  expect(sandbox.allowed).toBe(false);
-  if (!sandbox.allowed) expect(sandbox.reason).toContain("sandbox");
+  expect(sandbox.allowed).toBe(true);
+  if (sandbox.allowed) expect(sandbox.install.executable).toBe("/opt/google/chrome/chrome");
+
+  // With no launchable browser of that branding there is nothing that can open it: a browser of
+  // another branding looks up a differently named keyring item and decrypts nothing.
+  const noLauncher = await canCloneProfile(sandboxed, { ...base, browsers: [flatpak] }, root);
+  expect(noLauncher.allowed).toBe(false);
+  if (!noLauncher.allowed) expect(noLauncher.reason).toContain("no directly launchable");
 
   // A keyring profile with no secret service would start signed out, which is worse than refusing.
   const noSecrets = await canCloneProfile(owned, { ...base, secretService: "absent" }, root);

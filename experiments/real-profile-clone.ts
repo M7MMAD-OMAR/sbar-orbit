@@ -21,13 +21,15 @@ if (process.env.ORBIT_REAL_PROFILE !== "1")
 await requireResourceBudget();
 
 const CHROME = "/opt/google/chrome/chrome";
-const source = join(homedir(), ".config", "google-chrome");
+// Which profile to clone. Defaults to the system Chrome profile; pass a path to test another, for
+// example a Flatpak browser's profile under ~/.var/app, whose key is held through the Secret portal.
+const source = process.argv[2] ?? join(homedir(), ".config", "google-chrome");
 const runtimeRoot = process.env.XDG_RUNTIME_DIR ?? "/run/user/1000";
 // The clone must share a filesystem with the source for the extents to be shared instead of copied.
 const base = await mkdtemp(join(homedir(), ".cache", "orbit-real-clone-"));
 const busRoot = await mkdtemp(join(runtimeRoot, "orbit-bus-"));   // unix socket paths cap near 108 bytes
 const socket = join(busRoot, "bus");
-const report: Record<string, unknown> = { date: new Date().toISOString().slice(0, 10) };
+const report: Record<string, unknown> = { date: new Date().toISOString().slice(0, 10), source: source.replace(homedir(), "~") };
 
 /** Counts rows and encryption versions. Never selects a name, host, path or value. */
 function jarShape(directory: string) {
@@ -114,7 +116,8 @@ try {
 }
 
 await mkdir("output", { recursive: true, mode: 0o700 });
-const path = join("output", `real-profile-clone-${report.date}.json`);
+const label = source.includes("/.var/app/") ? "flatpak" : "system";
+const path = join("output", `real-profile-clone-${label}-${report.date}.json`);
 await writeFile(path, JSON.stringify(report, null, 2), { mode: 0o600 });
 console.log(JSON.stringify(report, null, 2));
 console.log(`\nclone deleted; report written to ${path}`);
