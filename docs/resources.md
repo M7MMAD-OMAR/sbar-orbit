@@ -48,11 +48,21 @@ The panel resident set is about 116 MB, the ordinary cost of a Python and GTK pr
 
 ## What actually spikes the processor
 
-When the machine stalls, the cause has been one of three, none of them the panel:
+When the machine stalls, the cause has been one of four, none of them the panel:
+
+- **An agent waiting with `read -t N < /dev/zero`.** This is the one that produced the complaint that started this section, and it is invisible in `ps` because the process is called `bash`. `/dev/zero` never yields a newline, so the shell reads it a byte at a time as fast as the kernel allows: the wait is a spin that holds a whole core for its entire duration. Measured on this workstation on 11 Sept 2026: `read -t 3 < /dev/zero` costs 99% of one core, `python3 -c 'import time; time.sleep(3)'` and a read on a FIFO nothing writes to both cost 0%, and one live agent waiting 115 seconds had burned 102 seconds of CPU when it was caught. With several agents doing it at once the load passed 18 on 24 logical CPUs and the desktop stalled. Agents reach for it because their harness refuses a foreground `sleep`. Find it with `ps -eo pid,pcpu,args --sort=-pcpu | grep /dev/zero`.
 
 - **A leftover session running a heavy application.** A private display that launched an Electron application, a browser with many tabs, or a build, and was never stopped, keeps every one of those processes alive inside `sbarorbit.slice`. Measured on this workstation: one forgotten display running the Hermes desktop application held the slice at 1.5 GB against its 1792 MB high mark, and the slice throttles rather than kills above that mark, so everything in it stalls at once. Stopping the session dropped the slice to 717 MB and the stall cleared. Check with `sbar-orbit status`; stop what you do not recognise, and `sbar-orbit clean` reclaims the disk a killed broker left.
 - **The slice starving under host load.** `sbarorbit.slice` has `CPUWeight=10`, so when the rest of the machine is saturated the agents' work is throttled by design and its own startups then time out, which reads as a spike inside the slice while the true load is elsewhere. Read `/proc/loadavg` and `systemd-cgtop` before blaming Orbit.
-- **A runaway process from another agent.** Several coding agents share this machine. A stuck shell or a spinning build from one of them can pin a core at 100% with nothing to do with Orbit. `ps -eo pid,pcpu,args --sort=-pcpu | head` names it in one line.
+- **A runaway process from another agent.** Several coding agents share this machine. A stuck shell or a spinning build from one of them can pin a core at 100% with nothing to do with Orbit. `ps -eo pid,pcpu,args --sort=-pcpu | head` names it in one line. Measured once: six Claude Code sessions in one scope, one of them running a test pool sized to the core count, took that scope to 16.8 of 24 cores and 11.5 GB.
+
+## What actually freezes the desktop
+
+A stall is not a freeze. This workstation records every stall it notices, and of 868 captures only 18 show a desktop that stopped answering for two seconds or more, the worst of them for 51 seconds. All 18 are dated 2 to 7 Sept 2026, and all 18 carry the same signature: swap 100% full, under 1.5 GB of memory available, and two or three agent processes holding almost all of it, 14.2 GB in one and 6.5 GB in another. No Orbit process appears in any of them. The desktop froze because the machine ran out of memory and swap, not because anything was busy.
+
+The stalls that are not freezes are disk, not processor: 698 of the 868 captures have tasks blocked in btrfs page and tree locks, and the names blocked there are the agents' own runtimes and browsers. A contributor worth naming is the 41 containers that restart themselves at boot: their health checks fork about 179 processes a second, and every one of those is namespace and cgroup work against btrfs metadata.
+
+So the order of suspicion for a freeze is memory first, disk second, and processor last. Orbit is capped at one core and 1792 MB and cannot cause any of the three; its own throttling is contained to itself, which `wchan` confirms, since every task ever caught waiting on the memory-high mark belonged to Orbit and none to the desktop.
 
 The order to diagnose in: `/proc/loadavg` first, then `sbar-orbit status` for a heavy leftover, then the slice's `memory.current` against its high mark, then the top CPU consumer machine-wide. See [[orbit-slice-starvation-causes]] in the project memory for the measured history.
 
