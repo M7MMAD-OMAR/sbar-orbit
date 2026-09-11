@@ -16,8 +16,8 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit service uninstall   Remove only the units Orbit wrote
   sbar-orbit status              Sessions, tabs and windows, for a glance or a bar
   sbar-orbit status --watch      Print a line whenever that changes
-  sbar-orbit panel               Dock the session pill to the desktop edge
-                                 (right click it for notifications, frame, viewer)
+  sbar-orbit panel               Dock the session mark to the desktop edge
+                                 (right click it for the settings window)
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
   sbar-orbit preflight           Check prerequisites without starting applications

@@ -1,16 +1,17 @@
-"""A small always-visible pill on a screen edge that says what Orbit is doing.
+"""A tiny always-visible mark on a screen edge that says what Orbit is doing.
 
-Collapsed it is one rounded pill: the number of sessions, tinted while an agent works, dimmed when
-nothing runs. It pulses once when a session or an application appears. Hovering expands it into
-one card per session: who is working, on what, which application or page, and how many tabs or
-windows. Clicking a card opens the viewer. A right click opens the settings: notifications on or
-off, the working frame on or off, the viewer, quit. Settings persist in the person's config.
+By default it is a small dot: grey when nothing runs, the working colour while an agent works, amber
+when a session is paused, dim when the broker is off. It blinks once when a session or an application
+appears. Hovering it opens a card per session; clicking a card opens the viewer. A right click opens
+a settings window: the edge and monitor, the shape (a dot or a dot with a count), the size, a colour
+for each state, the working frame and its colour, desktop notifications and the blink. Everything is
+adjustable and persists in the person's config.
 
 It is a wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks that
-protocol, and it stays out of the person's windows. It talks to the broker over the same Unix
-socket the CLI uses and asks only for lists and presence, never a frame, so watching costs the
-broker about a millisecond a second. The panel itself is the person's own desktop process and runs
-outside Orbit's shared budget on purpose.
+protocol, and it stays out of the person's windows. It talks to the broker over the same Unix socket
+the CLI uses and asks only for lists and presence, never a frame, so watching costs the broker about
+a millisecond a second. The panel is the person's own desktop process and runs outside Orbit's shared
+budget on purpose.
 
 Run with /usr/bin/python3: the system interpreter has the GTK bindings, a virtualenv usually does not.
 """
@@ -45,8 +46,8 @@ if not os.environ.get("WAYLAND_DISPLAY"):
     if sockets:
         os.environ["WAYLAND_DISPLAY"] = sockets[-1]
 
-# A strip of text needs no GPU. The Cairo renderer is the cheapest GTK 4 has, and it is the one that
-# works on a software-rendered display too, where the GPU renderers retry failing surfaces in a loop.
+# A dot needs no GPU. The Cairo renderer is the cheapest GTK 4 has, and it is the one that works on a
+# software-rendered display too, where the GPU renderers retry failing surfaces in a loop.
 os.environ.setdefault("GSK_RENDERER", "cairo")
 os.environ.setdefault("GDK_DISABLE", "vulkan")
 
@@ -63,48 +64,68 @@ os.environ.pop("LD_PRELOAD", None)
 os.environ.pop("ORBIT_PANEL_PRELOADED", None)
 
 POLL_SECONDS = 1.0
-INDICATOR_WIDTH = 3
+FRAME_WIDTH = 3
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
-DEFAULT_SETTINGS = {"edge": "right", "monitor": None, "indicator": True, "indicatorColor": "#4caf50", "notifications": True}
+STYLES = ("dot", "count")
+STATE_KEYS = ("idle", "working", "paused", "offline")
+DEFAULT_SETTINGS = {
+    "edge": "right",
+    "monitor": None,
+    "style": "dot",
+    "size": 12,
+    "colors": {"idle": "#8a8a8a", "working": "#4caf50", "paused": "#ff9800", "offline": "#585858"},
+    "notifications": True,
+    "blink": True,
+    "frame": True,
+    "frameColor": "#4caf50",
+}
 SETTINGS_PATH = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "sbar-orbit", "panel.json")
 
-# The panel is drawn in the person's own colour names when their theme or their gtk.css defines
-# them, the way a libadwaita application is, and in GTK's defaults otherwise. The fallbacks are
-# loaded at the lowest priority there is, below every theme, so any definition of these names
-# from a theme, the settings or the person's gtk.css wins over them.
+# The panel is drawn in the person's own colour names when their theme or their gtk.css defines them,
+# the way a libadwaita application is, and in GTK's defaults otherwise. The fallbacks are loaded at the
+# lowest priority there is, below every theme, so any definition of these names, from a theme, the
+# settings or the person's gtk.css, wins over them.
 FALLBACK_CSS = b"""
 @define-color window_bg_color @theme_bg_color;
 @define-color window_fg_color @theme_fg_color;
 @define-color accent_bg_color @theme_selected_bg_color;
 @define-color accent_fg_color @theme_selected_fg_color;
-@define-color warning_bg_color #ff9800;
 """
-CSS = b"""
-@keyframes orbit-pulse {
-  0% { box-shadow: 0 0 0 0 alpha(@accent_bg_color, 0.7); }
-  100% { box-shadow: 0 0 0 14px alpha(@accent_bg_color, 0); }
-}
-.orbit-panel { background: alpha(@window_bg_color, 0.94); color: @window_fg_color; border-radius: 16px; padding: 4px;
-  box-shadow: 0 2px 12px alpha(black, 0.25); }
-.orbit-pill { min-width: 22px; min-height: 22px; padding: 2px 8px; border-radius: 14px; font-weight: 600;
-  background: alpha(@window_fg_color, 0.08); color: alpha(@window_fg_color, 0.55);
-  transition: background 250ms ease, color 250ms ease; }
-.orbit-pill.idle { color: @window_fg_color; }
-.orbit-pill.working { background: @accent_bg_color; color: @accent_fg_color; }
-.orbit-pill.paused { background: alpha(@warning_bg_color, 0.85); color: @window_fg_color; }
-.orbit-pill.pulse { animation: orbit-pulse 700ms ease-out 1; }
+# Structure and motion only. Colours and sizes come from the person's settings, in a second provider
+# reloaded when they change, so a colour edit takes effect without a restart.
+BASE_CSS = b"""
+@keyframes orbit-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+.orbit-shell { padding: 3px; border-radius: 999px; background: transparent; }
+.orbit-shell.expanded { padding: 6px; border-radius: 14px; background: alpha(@window_bg_color, 0.96);
+  color: @window_fg_color; box-shadow: 0 2px 14px alpha(black, 0.28); }
+.orbit-dot { border-radius: 999px; }
+.orbit-dot.blink { animation: orbit-blink 380ms ease-in-out 2; }
+.orbit-count { border-radius: 999px; font-weight: 700; padding: 0 7px; color: white; }
+.orbit-count.blink { animation: orbit-blink 380ms ease-in-out 2; }
 .orbit-card { padding: 8px 10px; border-radius: 12px; }
-.orbit-card:hover { background: alpha(@window_fg_color, 0.08); }
+.orbit-card:hover { background: alpha(@window_fg_color, 0.09); }
 .orbit-title { font-weight: 600; }
 .orbit-dim { opacity: 0.65; font-size: 90%; }
-.orbit-chip { font-size: 80%; font-weight: 600; padding: 1px 7px; border-radius: 8px; background: alpha(@window_fg_color, 0.1); }
-.orbit-chip.working { background: @accent_bg_color; color: @accent_fg_color; }
-.orbit-chip.paused { background: alpha(@warning_bg_color, 0.85); }
+.orbit-chip { font-size: 80%; font-weight: 600; padding: 1px 7px; border-radius: 8px; }
+.orbit-frame.background, .orbit-frame box { background: transparent; background-color: transparent; }
+.orbit-frame box.on { background: @orbit-frame-color; }
+window.orbit-clear.background { background: transparent; background-color: transparent; }
 """
-# The indicator strips are painted by this rule alone, above the person's gtk.css, which may paint
-# every window in their theme's colour.
-INDICATOR_CSS = """window.orbit-indicator.background, window.orbit-indicator box { background: %s; background-color: %s; }
-window.orbit-window.background { background: transparent; background-color: transparent; }"""
+
+
+def dynamic_css(settings):
+    colors = settings["colors"]
+    size = max(6, int(settings["size"]))
+    lines = [
+        f".orbit-dot {{ min-width: {size}px; min-height: {size}px; }}",
+        f".orbit-count {{ min-width: {size + 8}px; min-height: {size + 6}px; font-size: {max(9, size - 2)}px; }}",
+        f"@define-color orbit-frame-color {settings['frameColor']};",
+    ]
+    for key in STATE_KEYS:
+        lines.append(f".orbit-dot.{key} {{ background: {colors[key]}; }}")
+        lines.append(f".orbit-count.{key} {{ background: {colors[key]}; }}")
+        lines.append(f".orbit-chip.{key} {{ background: {colors[key]}; color: white; }}")
+    return "\n".join(lines).encode()
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -158,26 +179,36 @@ def viewer_link_is_local(url):
 
 def load_settings():
     """The person's choices, under their config directory; command line flags override them for one run."""
-    settings = dict(DEFAULT_SETTINGS)
+    settings = json.loads(json.dumps(DEFAULT_SETTINGS))
     try:
         with open(SETTINGS_PATH, encoding="utf-8") as handle:
             stored = json.load(handle)
-        if isinstance(stored, dict):
-            for key in DEFAULT_SETTINGS:
-                if key in stored:
-                    settings[key] = stored[key]
     except (OSError, ValueError):
-        pass
+        stored = {}
+    if isinstance(stored, dict):
+        # Names used before this version, kept readable so an old config is not lost.
+        if "indicator" in stored and "frame" not in stored:
+            stored["frame"] = stored["indicator"]
+        if "indicatorColor" in stored and "frameColor" not in stored:
+            stored["frameColor"] = stored["indicatorColor"]
+        for key, default in DEFAULT_SETTINGS.items():
+            value = stored.get(key, default)
+            if key == "colors" and isinstance(value, dict):
+                value = {c: value.get(c, default[c]) for c in STATE_KEYS}
+            settings[key] = value
     if settings["edge"] not in EDGES:
         settings["edge"] = DEFAULT_SETTINGS["edge"]
+    if settings["style"] not in STYLES:
+        settings["style"] = DEFAULT_SETTINGS["style"]
     return settings
 
 
 def save_settings(settings):
     try:
         os.makedirs(os.path.dirname(SETTINGS_PATH), mode=0o700, exist_ok=True)
+        payload = {k: settings[k] for k in DEFAULT_SETTINGS}
         with open(SETTINGS_PATH, "w", encoding="utf-8") as handle:
-            json.dump({k: settings[k] for k in DEFAULT_SETTINGS}, handle, indent=2)
+            json.dump(payload, handle, indent=2)
     except OSError as error:
         print(f"panel: could not save settings: {error}", file=sys.stderr)
 
@@ -192,7 +223,7 @@ def notify(title, body):
 
 
 def session_shape(sessions):
-    """What the pill reacts to: which sessions exist and how many tabs or windows each has."""
+    """What the mark reacts to: which sessions exist and how many tabs or windows each has."""
     return {s["sessionId"]: (s.get("agentName", "Agent"), s.get("taskName", ""), len((s.get("presence") or {}).get("tabs") or []))
             for s in sessions if isinstance(s.get("sessionId"), str)}
 
@@ -201,11 +232,8 @@ class Panel(Gtk.Application):
     def __init__(self, settings):
         super().__init__(application_id="io.sbar.orbit.panel", flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.settings = settings
-        self.indicator = []
-        self.indicator_shown = False
-        self.indicator_color = Gdk.RGBA()
-        if not self.indicator_color.parse(str(settings["indicatorColor"])):
-            self.indicator_color.parse(DEFAULT_SETTINGS["indicatorColor"])
+        self.frame = []
+        self.frame_shown = False
         self.path = broker_socket()
         self.sessions = []
         self.reachable = False
@@ -213,28 +241,28 @@ class Panel(Gtk.Application):
         self.last_shape = None
         self.known = None
         self.polling = False
-        self.pulse_source = None
+        self.blink_source = None
+        self.settings_window = None
+        self.dynamic_provider = None
+        self.frame_provider = None
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
-        # Off the desktop, inside a private display for instance, there is no portal to say the
-        # colour scheme; follow the same variable the session's applications follow. It is set
-        # before any window exists, so the theme's colour scheme media queries see it.
+        # Off the desktop, inside a private display for instance, there is no portal to say the colour
+        # scheme; follow the same variable the session's applications follow. It is set before any
+        # window exists, so the theme's colour scheme media queries see it.
         scheme = os.environ.get("ADW_DEBUG_COLOR_SCHEME")
         if scheme in ("prefer-dark", "prefer-light"):
             gtk_settings = Gtk.Settings.get_default()
             dark = scheme == "prefer-dark"
             gtk_settings.set_property("gtk-application-prefer-dark-theme", dark)
-            # GTK 4.20 and later answer the theme's colour scheme media queries from this setting.
             if gtk_settings.find_property("gtk-interface-color-scheme") is not None and hasattr(Gtk, "InterfaceColorScheme"):
                 gtk_settings.set_property("gtk-interface-color-scheme", Gtk.InterfaceColorScheme.DARK if dark else Gtk.InterfaceColorScheme.LIGHT)
 
     def do_activate(self):
         window = Gtk.Window(application=self)
         window.set_title("Orbit")
-        # The window itself stays transparent, above the person's gtk.css, so the pill's rounded
-        # corners are real corners and not a square window behind them.
-        window.add_css_class("orbit-window")
+        window.add_css_class("orbit-clear")
         if not LayerShell.is_supported():
             print("wlr-layer-shell is not available: either this compositor does not offer it, or libgtk4-layer-shell is not installed", file=sys.stderr)
             self.quit()
@@ -246,36 +274,41 @@ class Panel(Gtk.Application):
         LayerShell.set_margin(window, EDGES[self.settings["edge"]], 8)
         self.place_on_monitor(window)
 
-        display = window.get_display()
-        self.install_css(display, FALLBACK_CSS, Gtk.STYLE_PROVIDER_PRIORITY_FALLBACK)
-        self.install_css(display, CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        color = self.indicator_color.to_string()
-        self.install_css(display, (INDICATOR_CSS % (color, color)).encode(), Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+        self.display = window.get_display()
+        self.install_css(self.display, FALLBACK_CSS, Gtk.STYLE_PROVIDER_PRIORITY_FALLBACK)
+        self.install_css(self.display, BASE_CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.dynamic_provider = self.install_css(self.display, dynamic_css(self.settings), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
 
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        self.box.add_css_class("orbit-panel")
-        self.pill = Gtk.Label(label="")
-        self.pill.add_css_class("orbit-pill")
-        self.pill.set_halign(Gtk.Align.CENTER)
-        self.box.append(self.pill)
+        self.shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.shell.add_css_class("orbit-shell")
+        self.shell.set_halign(Gtk.Align.CENTER)
+        self.mark = Gtk.Box()
+        self.mark.set_halign(Gtk.Align.CENTER)
+        self.mark.set_valign(Gtk.Align.CENTER)
+        self.dot = Gtk.Box()
+        self.dot.add_css_class("orbit-dot")
+        self.count = Gtk.Label(label="0")
+        self.count.add_css_class("orbit-count")
+        self.mark.append(self.dot)
+        self.mark.append(self.count)
+        self.shell.append(self.mark)
         self.details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         self.details.set_visible(False)
-        self.box.append(self.details)
+        self.shell.append(self.details)
 
         hover = Gtk.EventControllerMotion()
         hover.connect("enter", lambda *_: self.set_expanded(True))
         hover.connect("leave", lambda *_: self.set_expanded(False))
-        self.box.add_controller(hover)
+        self.shell.add_controller(hover)
         menu = Gtk.GestureClick(button=3)
-        menu.connect("pressed", self.open_menu)
-        self.box.add_controller(menu)
-        self.menu = self.build_menu()
-        self.menu.set_parent(self.pill)
+        menu.connect("pressed", lambda *_: self.open_settings())
+        self.shell.add_controller(menu)
 
-        window.set_child(self.box)
+        window.set_child(self.shell)
         window.present()
         self.window = window
-        self.indicator = [self.build_indicator_strip(edge) for edge in EDGES.values()]
+        self.frame = [self.build_frame_strip(edge) for edge in EDGES.values()]
+        self.apply_style()
         self.refresh()
         GLib.timeout_add(int(POLL_SECONDS * 1000), self.refresh)
 
@@ -284,6 +317,14 @@ class Panel(Gtk.Application):
         provider = Gtk.CssProvider()
         provider.load_from_data(data)
         Gtk.StyleContext.add_provider_for_display(display, provider, priority)
+        return provider
+
+    def apply_style(self):
+        """Reload the colours and sizes, and show the dot or the count as the person chose."""
+        if self.dynamic_provider is not None:
+            self.dynamic_provider.load_from_data(dynamic_css(self.settings))
+        self.dot.set_visible(self.settings["style"] == "dot")
+        self.count.set_visible(self.settings["style"] == "count")
 
     def place_on_monitor(self, window):
         """The chosen monitor by index or connector name, else the largest one: the person's main
@@ -306,18 +347,17 @@ class Panel(Gtk.Application):
         if chosen is not None:
             LayerShell.set_monitor(window, chosen)
 
-    def build_indicator_strip(self, edge):
+    def build_frame_strip(self, edge):
         """One edge of the frame shown around the output while an agent works. Four strips a few
         pixels wide cost a few hundred kilobytes of buffer between them, where one surface covering
         the output would cost tens of megabytes for a transparent centre. Each strip is click
-        through: its input region is empty, so pointer events reach what is underneath, and edge
-        gestures keep working."""
+        through: its input region is empty, so pointer events reach what is underneath."""
         strip = Gtk.Window(application=self)
         strip.set_title("Orbit working")
-        strip.add_css_class("orbit-indicator")
+        strip.add_css_class("orbit-frame")
         LayerShell.init_for_window(strip)
         LayerShell.set_layer(strip, LayerShell.Layer.OVERLAY)
-        LayerShell.set_namespace(strip, "sbar-orbit-indicator")
+        LayerShell.set_namespace(strip, "sbar-orbit-frame")
         LayerShell.set_exclusive_zone(strip, -1)
         LayerShell.set_keyboard_mode(strip, LayerShell.KeyboardMode.NONE)
         horizontal = edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM)
@@ -326,7 +366,8 @@ class Panel(Gtk.Application):
             LayerShell.set_anchor(strip, side, True)
         self.place_on_monitor(strip)
         body = Gtk.Box()
-        body.set_size_request(INDICATOR_WIDTH, INDICATOR_WIDTH)
+        body.add_css_class("on")
+        body.set_size_request(FRAME_WIDTH, FRAME_WIDTH)
         strip.set_child(body)
 
         def passthrough(*_):
@@ -336,38 +377,6 @@ class Panel(Gtk.Application):
 
         strip.connect("realize", passthrough)
         return strip
-
-    def build_menu(self):
-        model = Gio.Menu()
-        model.append("Notifications", "panel.notifications")
-        model.append("Working frame", "panel.indicator")
-        model.append("Open viewer", "panel.viewer")
-        model.append("Quit panel", "panel.quit")
-        group = Gio.SimpleActionGroup()
-        for key in ("notifications", "indicator"):
-            action = Gio.SimpleAction.new_stateful(key, None, GLib.Variant.new_boolean(bool(self.settings[key])))
-            action.connect("change-state", self.toggle_setting, key)
-            group.add_action(action)
-        viewer = Gio.SimpleAction.new("viewer", None)
-        viewer.connect("activate", lambda *_: self.open_viewer())
-        group.add_action(viewer)
-        quit_action = Gio.SimpleAction.new("quit", None)
-        quit_action.connect("activate", lambda *_: self.quit())
-        group.add_action(quit_action)
-        self.box.insert_action_group("panel", group)
-        popover = Gtk.PopoverMenu.new_from_model(model)
-        popover.set_has_arrow(False)
-        return popover
-
-    def open_menu(self, gesture, n_press, x, y):
-        self.menu.popup()
-
-    def toggle_setting(self, action, value, key):
-        action.set_state(value)
-        self.settings[key] = value.get_boolean()
-        save_settings(self.settings)
-        if key == "indicator":
-            self.sync_indicator(force=True)
 
     def refresh(self):
         """Poll off the main thread, so a slow broker never freezes the surface; skip a tick while one is in flight."""
@@ -383,9 +392,9 @@ class Panel(Gtk.Application):
             reachable = True
         except Exception:
             sessions, reachable = [], False
-        GLib.idle_add(self.apply, sessions, reachable)
+        GLib.idle_add(self.apply_status, sessions, reachable)
 
-    def apply(self, sessions, reachable):
+    def apply_status(self, sessions, reachable):
         self.polling = False
         self.sessions, self.reachable = sessions, reachable
         shape = json.dumps(sessions, sort_keys=True)
@@ -399,7 +408,7 @@ class Panel(Gtk.Application):
         return False
 
     def announce(self):
-        """A pulse, and a notification when allowed, for each session or application that appeared."""
+        """A blink, and a notification when allowed, for each session or application that appeared."""
         current = session_shape(self.sessions)
         if self.known is None:
             self.known = current
@@ -417,62 +426,62 @@ class Panel(Gtk.Application):
         self.known = current
         if not events:
             return
-        self.pulse()
+        if self.settings["blink"]:
+            self.blink()
         if self.settings["notifications"]:
             for title, body in events[:3]:
                 notify(title, body)
 
-    def pulse(self):
-        self.pill.remove_css_class("pulse")
-        if self.pulse_source is not None:
-            GLib.source_remove(self.pulse_source)
-        # Re-added on the next frame, so a second event restarts the animation.
-        GLib.idle_add(self.start_pulse)
-        self.pulse_source = GLib.timeout_add(800, self.end_pulse)
+    def blink(self):
+        target = self.dot if self.settings["style"] == "dot" else self.count
+        target.remove_css_class("blink")
+        if self.blink_source is not None:
+            GLib.source_remove(self.blink_source)
+        GLib.idle_add(lambda t=target: (t.add_css_class("blink"), False)[1])
+        self.blink_source = GLib.timeout_add(820, lambda t=target: self.end_blink(t))
 
-    def start_pulse(self):
-        self.pill.add_css_class("pulse")
-        return False
-
-    def end_pulse(self):
-        self.pill.remove_css_class("pulse")
-        self.pulse_source = None
+    def end_blink(self, target):
+        target.remove_css_class("blink")
+        self.blink_source = None
         return False
 
     def set_expanded(self, expanded):
         self.expanded = expanded
-        self.details.set_visible(expanded and bool(self.sessions))
+        show = expanded and bool(self.sessions)
+        self.details.set_visible(show)
+        if show:
+            self.shell.add_css_class("expanded")
+        else:
+            self.shell.remove_css_class("expanded")
 
-    def sync_indicator(self, force=False):
+    def sync_frame(self, force=False):
         working = any((s.get("activity") or {}).get("state") == "working" for s in self.sessions)
-        wanted = working and bool(self.settings["indicator"])
-        if self.indicator and (force or self.indicator_shown != wanted):
-            self.indicator_shown = wanted
-            for strip in self.indicator:
+        wanted = working and bool(self.settings["frame"])
+        if self.frame and (force or self.frame_shown != wanted):
+            self.frame_shown = wanted
+            for strip in self.frame:
                 strip.set_visible(wanted)
 
-    def render(self):
-        working = sum(1 for s in self.sessions if (s.get("activity") or {}).get("state") == "working")
-        paused = sum(1 for s in self.sessions if s.get("state") == "paused")
-        for name in ("working", "paused", "idle"):
-            self.pill.remove_css_class(name)
-        if working:
-            self.pill.add_css_class("working")
-        elif paused:
-            self.pill.add_css_class("paused")
-        elif self.sessions:
-            self.pill.add_css_class("idle")
-        self.sync_indicator()
-        tabs = sum(len((s.get("presence") or {}).get("tabs") or []) for s in self.sessions)
+    def state_of(self):
         if not self.reachable:
-            self.pill.set_text("·")
-            self.pill.set_tooltip_text("Orbit is not running")
-        elif not self.sessions:
-            self.pill.set_text("0")
-            self.pill.set_tooltip_text("No agent is working")
-        else:
-            self.pill.set_text(str(len(self.sessions)))
-            self.pill.set_tooltip_text(f"{len(self.sessions)} sessions, {tabs} tabs or windows, {working} working")
+            return "offline"
+        if any((s.get("activity") or {}).get("state") == "working" for s in self.sessions):
+            return "working"
+        if any(s.get("state") == "paused" for s in self.sessions):
+            return "paused"
+        return "idle"
+
+    def render(self):
+        state = self.state_of()
+        for widget in (self.dot, self.count):
+            for key in STATE_KEYS:
+                widget.remove_css_class(key)
+            widget.add_css_class(state)
+        self.count.set_text("·" if state == "offline" else str(len(self.sessions)))
+        self.sync_frame()
+        tabs = sum(len((s.get("presence") or {}).get("tabs") or []) for s in self.sessions)
+        tip = {"offline": "Orbit is not running", "idle": "No agent is working"}.get(state)
+        self.mark.set_tooltip_text(tip or f"{len(self.sessions)} sessions, {tabs} tabs or windows")
 
         child = self.details.get_first_child()
         while child is not None:
@@ -481,7 +490,7 @@ class Panel(Gtk.Application):
             child = following
         for session in self.sessions:
             self.details.append(self.card(session))
-        self.details.set_visible(self.expanded and bool(self.sessions))
+        self.set_expanded(self.expanded)
 
     def card(self, session):
         presence = session.get("presence") or {}
@@ -499,10 +508,7 @@ class Panel(Gtk.Application):
         working = activity.get("state") == "working"
         chip = Gtk.Label(label="working" if working else state)
         chip.add_css_class("orbit-chip")
-        if working:
-            chip.add_css_class("working")
-        elif state == "paused":
-            chip.add_css_class("paused")
+        chip.add_css_class("working" if working else "paused" if state == "paused" else "idle")
         head.append(chip)
         column.append(head)
         task = Gtk.Label(label=session.get("taskName", ""), xalign=0)
@@ -546,6 +552,146 @@ class Panel(Gtk.Application):
 
         Gtk.UriLauncher.new(url).launch(self.window, None, done)
 
+    # --- Settings window -------------------------------------------------------------------------
+
+    def change(self, key, value, restyle=True):
+        self.settings[key] = value
+        save_settings(self.settings)
+        if restyle:
+            self.apply_style()
+        self.sync_frame(force=True)
+
+    def open_settings(self):
+        if self.settings_window is not None:
+            self.settings_window.present()
+            return
+        self.settings_window = SettingsWindow(self)
+        self.settings_window.connect("close-request", self.on_settings_closed)
+        self.settings_window.present()
+
+    def on_settings_closed(self, *_):
+        self.settings_window = None
+        return False
+
+
+class SettingsWindow(Gtk.Window):
+    """A plain top-level window, not a layer surface, so the compositor gives it focus and a title bar.
+    Every control writes straight into the panel's settings, saves and applies, so there is no OK to
+    press and nothing to lose."""
+
+    def __init__(self, panel):
+        super().__init__(title="Sbar Orbit")
+        self.panel = panel
+        self.set_default_size(360, -1)
+        self.set_resizable(False)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
+
+        outer.append(self.group("Placement", [
+            self.dropdown_row("Screen edge", list(EDGES), self.panel.settings["edge"], lambda v: self.panel.change("edge", v)),
+            self.monitor_row(),
+        ]))
+        outer.append(self.group("The mark", [
+            self.dropdown_row("Shape", ["dot", "dot with count"], "dot" if self.panel.settings["style"] == "dot" else "dot with count",
+                              lambda v: self.panel.change("style", "dot" if v == "dot" else "count")),
+            self.scale_row("Size", 8, 22, self.panel.settings["size"], lambda v: self.panel.change("size", v)),
+            self.color_row("Working colour", "working"),
+            self.color_row("Paused colour", "paused"),
+            self.color_row("Idle colour", "idle"),
+        ]))
+        outer.append(self.group("Working frame", [
+            self.switch_row("Frame the screen while working", self.panel.settings["frame"], lambda v: self.panel.change("frame", v)),
+            self.frame_color_row(),
+        ]))
+        outer.append(self.group("Notifications", [
+            self.switch_row("Desktop notifications", self.panel.settings["notifications"], lambda v: self.panel.change("notifications", v, restyle=False)),
+            self.switch_row("Blink when something happens", self.panel.settings["blink"], lambda v: self.panel.change("blink", v, restyle=False)),
+        ]))
+        viewer = Gtk.Button(label="Open the viewer")
+        viewer.add_css_class("pill")
+        viewer.connect("clicked", lambda *_: self.panel.open_viewer())
+        outer.append(viewer)
+        self.set_child(outer)
+
+    def group(self, title, rows):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        heading = Gtk.Label(label=title, xalign=0)
+        heading.add_css_class("heading")
+        box.append(heading)
+        listbox = Gtk.ListBox()
+        listbox.add_css_class("boxed-list")
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        for row in rows:
+            listbox.append(row)
+        box.append(listbox)
+        return box
+
+    def row(self, label, control):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_top=8, margin_bottom=8, margin_start=12, margin_end=12)
+        text = Gtk.Label(label=label, xalign=0)
+        text.set_hexpand(True)
+        row.append(text)
+        control.set_valign(Gtk.Align.CENTER)
+        row.append(control)
+        return row
+
+    def switch_row(self, label, value, on_change):
+        switch = Gtk.Switch(active=bool(value))
+        switch.connect("state-set", lambda _s, state: (on_change(state), False)[1])
+        return self.row(label, switch)
+
+    def dropdown_row(self, label, options, current, on_change):
+        model = Gtk.StringList()
+        for option in options:
+            model.append(option)
+        drop = Gtk.DropDown(model=model)
+        if current in options:
+            drop.set_selected(options.index(current))
+        drop.connect("notify::selected", lambda d, _p: on_change(options[d.get_selected()]))
+        return self.row(label, drop)
+
+    def monitor_row(self):
+        connectors = ["Largest screen"]
+        monitors = self.get_display().get_monitors()
+        for index in range(monitors.get_n_items()):
+            connectors.append(monitors.get_item(index).get_connector() or f"monitor {index}")
+        wanted = self.panel.settings["monitor"]
+        current = next((c for c in connectors if str(wanted) == c), "Largest screen")
+        return self.dropdown_row("Monitor", connectors, current,
+                                 lambda v: self.panel.change("monitor", None if v == "Largest screen" else v, restyle=False))
+
+    def scale_row(self, label, low, high, value, on_change):
+        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, low, high, 1)
+        scale.set_value(value)
+        scale.set_size_request(140, -1)
+        scale.set_draw_value(False)
+        scale.connect("value-changed", lambda s: on_change(int(s.get_value())))
+        return self.row(label, scale)
+
+    def color_button(self, hex_value, on_set):
+        rgba = Gdk.RGBA()
+        rgba.parse(hex_value)
+        button = Gtk.ColorDialogButton.new(Gtk.ColorDialog())
+        button.set_rgba(rgba)
+        button.connect("notify::rgba", lambda b, _p: on_set(rgba_to_hex(b.get_rgba())))
+        return button
+
+    def color_row(self, label, key):
+        return self.row(label, self.color_button(self.panel.settings["colors"][key],
+                                                  lambda hexv: self.set_color(key, hexv)))
+
+    def set_color(self, key, hex_value):
+        colors = dict(self.panel.settings["colors"])
+        colors[key] = hex_value
+        self.panel.change("colors", colors)
+
+    def frame_color_row(self):
+        return self.row("Frame colour", self.color_button(self.panel.settings["frameColor"],
+                                                          lambda hexv: self.panel.change("frameColor", hexv)))
+
+
+def rgba_to_hex(rgba):
+    return "#%02x%02x%02x" % (round(rgba.red * 255), round(rgba.green * 255), round(rgba.blue * 255))
+
 
 def main():
     settings = load_settings()
@@ -556,18 +702,20 @@ def main():
             settings["edge"] = args.pop(0)
         elif flag == "--monitor" and args:
             settings["monitor"] = args.pop(0)
-        elif flag == "--indicator":
-            settings["indicator"] = True
-        elif flag == "--no-indicator":
-            settings["indicator"] = False
-        elif flag == "--indicator-color" and args:
-            settings["indicatorColor"] = args.pop(0)
+        elif flag == "--style" and args and args[0] in STYLES:
+            settings["style"] = args.pop(0)
+        elif flag in ("--frame", "--indicator"):
+            settings["frame"] = True
+        elif flag in ("--no-frame", "--no-indicator"):
+            settings["frame"] = False
+        elif flag in ("--frame-color", "--indicator-color") and args:
+            settings["frameColor"] = args.pop(0)
         elif flag == "--no-notifications":
             settings["notifications"] = False
         elif flag in ("-h", "--help"):
-            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--indicator|--no-indicator] "
-                  "[--indicator-color CSS] [--no-notifications]")
-            print(f"settings persist in {SETTINGS_PATH}; a right click on the pill changes them")
+            print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style dot|count]")
+            print("                        [--frame|--no-frame] [--frame-color CSS] [--no-notifications]")
+            print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens the settings window")
             return 0
     Panel(settings).run([])
     return 0

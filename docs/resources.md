@@ -35,6 +35,27 @@ Two things had to change for that to hold. Backends now start one at a time, bec
 
 That is where the day's unexplained slowness came from. Above `MemoryHigh` the kernel does not kill, it throttles: every allocation in the slice stalls while pages are reclaimed. `memory.events` showed 3.2 million `high` events. The symptoms were a compositor that stopped answering its socket within five seconds, an input helper that missed its acknowledgement, a screenshot that took longer than three seconds, all at 45 percent of one core, which is what waiting looks like. Sessions and brokers now remove their directories when they close. `sbar-orbit doctor` reports `memory.current` and the `high` counter; a slice that is heavy while idle is this problem again.
 
+## The desktop panel is not the cost
+
+The panel and its mark were suspected of the processor load, so they were measured. `experiments/panel-cost.ts` launches the panel into a private display, samples its own CPU from the pid its launcher wrote over a fixed window, and samples the broker over the same window.
+
+| Watching one session for 20 s | Share of one core |
+|---|---|
+| Panel process | 0.1% |
+| Broker answering the panel's polls | 0.5% |
+
+The panel resident set is about 116 MB, the ordinary cost of a Python and GTK process, and it is the person's own process outside Orbit's budget. The dot's blink and its colour transitions are CSS on the Cairo renderer, repainting a widget a few pixels across. Polling once a second is one session-list call and one presence read per open session, each a compositor tree query or a page-title read measured well under a millisecond of broker time. None of this moves a 24-core machine.
+
+## What actually spikes the processor
+
+When the machine stalls, the cause has been one of three, none of them the panel:
+
+- **A leftover session running a heavy application.** A private display that launched an Electron application, a browser with many tabs, or a build, and was never stopped, keeps every one of those processes alive inside `sbarorbit.slice`. Measured on this workstation: one forgotten display running the Hermes desktop application held the slice at 1.5 GB against its 1792 MB high mark, and the slice throttles rather than kills above that mark, so everything in it stalls at once. Stopping the session dropped the slice to 717 MB and the stall cleared. Check with `sbar-orbit status`; stop what you do not recognise, and `sbar-orbit clean` reclaims the disk a killed broker left.
+- **The slice starving under host load.** `sbarorbit.slice` has `CPUWeight=10`, so when the rest of the machine is saturated the agents' work is throttled by design and its own startups then time out, which reads as a spike inside the slice while the true load is elsewhere. Read `/proc/loadavg` and `systemd-cgtop` before blaming Orbit.
+- **A runaway process from another agent.** Several coding agents share this machine. A stuck shell or a spinning build from one of them can pin a core at 100% with nothing to do with Orbit. `ps -eo pid,pcpu,args --sort=-pcpu | head` names it in one line.
+
+The order to diagnose in: `/proc/loadavg` first, then `sbar-orbit status` for a heavy leftover, then the slice's `memory.current` against its high mark, then the top CPU consumer machine-wide. See [[orbit-slice-starvation-causes]] in the project memory for the measured history.
+
 ## When the host is busy
 
 The slice carries `CPUWeight=10`, a tenth of the default. That is deliberate: the person's own work always wins. The consequence is that Orbit is not merely capped at one core, it is the first thing starved when the rest of the machine is busy. Measured on this workstation during another agent's test run, host load 20 to 32 on 24 logical CPUs, private displays failed to start and applications failed to map within their deadlines, while the same commands on a quiet host succeed in seconds. A report from a busy host measures the host, not Orbit; every experiment records `hostBusyPercent` so the two are not confused.
