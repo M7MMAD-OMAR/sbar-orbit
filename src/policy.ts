@@ -1,4 +1,5 @@
 import { OrbitError, record } from "./errors";
+import type { AdvisorConfig } from "./advisor";
 
 /**
  * What an autonomous session is allowed to do, decided before it starts.
@@ -60,6 +61,81 @@ export function classify(actionType: string): ActionClass {
   return known ?? "irreversible";
 }
 
+/**
+ * A rule matches the RESOLVED action structurally, in order, with alternatives. It never matches a
+ * URL as a string: a rule that matched text would be a rule the model can route around by spelling
+ * the same destination differently.
+ *
+ * A rule can only lower a decision. It can turn an allowed class into a consult or a deny for one
+ * origin and path; it can never turn a class level deny, or an immune id, into an allow.
+ */
+export type Rule = {
+  /** Stable, and written verbatim into the journal so a denial can be traced to the line that caused it. */
+  id: string;
+  backend?: "browser" | "fedora";
+  /** The action type, alternatives allowed. */
+  verb: string | string[];
+  origin?: string | string[];
+  /** Matched on whole path segments, never as a substring, so /accounts cannot match /accounts-help. */
+  pathPrefix?: string;
+  method?: string;
+  decision: "allow" | "deny" | "consult";
+  reason: string;
+};
+
+/**
+ * The actions no autonomy level clears.
+ *
+ * `ActionClass` cannot express these: `irreversible` is one bucket holding a download and a launch,
+ * while money movement, a credential change and an account deletion are a different kind of thing
+ * that a person would never fold into a class they also use for saving a file.
+ *
+ * The set is a module constant, not a policy field, because a per session immune list is a per
+ * session way to omit one.
+ *
+ * The limit belongs here rather than in a footnote: these match a REQUEST, never a button. A click
+ * on a send button is indistinguishable from any other click, so the table catches the request the
+ * click causes, which is later and narrower. It cannot catch an unknown site's endpoint.
+ */
+export type ImmuneEntry = { id: string; reason: string; verb?: string[]; pathSegments: string[]; method?: string[]; query?: string[] };
+
+export const immuneSet: ImmuneEntry[] = [
+  { id: "money-movement", reason: "Moving money is not an action an unattended agent takes.",
+    pathSegments: ["transfer", "transfers", "payment", "payments", "payout", "withdraw", "wire"], method: ["POST", "PUT"] },
+  { id: "credential-change", reason: "Changing a password, an email or a recovery contact takes the account away from its owner.",
+    pathSegments: ["password", "passwords", "recovery", "2fa", "mfa", "security-key", "changeemail"], method: ["POST", "PUT", "PATCH"] },
+  { id: "message-send", reason: "A message sent on the person's behalf cannot be recalled.",
+    pathSegments: ["sendmessage", "sendmail"], method: ["POST"] },
+  { id: "account-deletion", reason: "Deleting or closing an account is the one action with no way back.",
+    pathSegments: ["deleteaccount", "closeaccount", "terminate"], method: ["POST", "DELETE"] },
+  { id: "oauth-grant", reason: "Granting an application access to the person's account hands it out to a third party.",
+    pathSegments: ["oauth", "authorize", "consent"], query: ["response_type", "client_id"] },
+];
+
+/** Whole path segments, lowercased, so a substring cannot be mistaken for a match. */
+function segmentsOf(pathname: string): string[] {
+  return pathname.toLowerCase().split("/").filter(Boolean);
+}
+
+/**
+ * The immune entry a resolved action trips, if any. Matched on the request's own shape rather than
+ * on anything the page said about it.
+ */
+export function immuneMatch(actionType: string, url?: string, method?: string): ImmuneEntry | null {
+  if (url === undefined) return null;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return null; }
+  const segments = new Set(segmentsOf(parsed.pathname));
+  for (const entry of immuneSet) {
+    if (entry.verb && !entry.verb.includes(actionType)) continue;
+    if (entry.method && method !== undefined && !entry.method.includes(method.toUpperCase())) continue;
+    if (!entry.pathSegments.some(segment => segments.has(segment))) continue;
+    if (entry.query && !entry.query.every(key => parsed.searchParams.has(key))) continue;
+    return entry;
+  }
+  return null;
+}
+
 export type SessionPolicy = {
   /**
    * supervised pauses on anything not allowed and waits for a person. autonomous never waits: it
@@ -80,6 +156,10 @@ export type SessionPolicy = {
   allow: ActionClass[];
   /** Classes refused unconditionally, even if also listed in allow. Evaluated last and never lifted. */
   deny: ActionClass[];
+  /** Narrowing rules, evaluated after the immune table and before the class check. */
+  rules?: Rule[];
+  /** Spawned only when a rule says consult, so it never runs on a read. */
+  advisor?: AdvisorConfig;
 };
 
 /** Look, do not touch, go nowhere that was not named in advance. The right policy for a session that carries real logins. */
@@ -119,6 +199,23 @@ function normaliseOrigin(value: unknown): string {
   return url.origin;
 }
 
+/** Action classes on their own, with no cross field rule attached. Narrowing needs exactly this. */
+export function parseActionClasses(value: unknown, field = "allow"): ActionClass[] {
+  if (!Array.isArray(value)) throw new OrbitError("INVALID_REQUEST", `Policy ${field} must be an array of action classes`);
+  return value.map(entry => {
+    if (!actionClasses.includes(entry as ActionClass))
+      throw new OrbitError("INVALID_REQUEST", `Unknown action class in ${field}: ${String(entry).slice(0, 40)}`);
+    return entry as ActionClass;
+  });
+}
+
+/** Origins on their own, normalised and deduplicated. Narrowing needs exactly this. */
+export function parseOrigins(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new OrbitError("INVALID_REQUEST", "Origins must be an array");
+  if (value.length > 64) throw new OrbitError("INVALID_REQUEST", "Name at most 64 origins");
+  return [...new Set(value.map(normaliseOrigin))];
+}
+
 export function parsePolicy(value: unknown): SessionPolicy {
   const input = record(value);
   const mode = input.mode === undefined ? "supervised" : String(input.mode);
@@ -146,24 +243,94 @@ export function parsePolicy(value: unknown): SessionPolicy {
   // than a permission. Saying so at creation is better than refusing every navigation later.
   if (allow.includes("navigate") && origins !== "any" && !origins.length)
     throw new OrbitError("INVALID_REQUEST", "Allowing navigate requires naming at least one origin the session may reach, or \"any\" for a session with no real logins");
-  return { mode, origins, allow, deny };
+  const rules = input.rules === undefined ? undefined : (() => {
+    if (!Array.isArray(input.rules)) throw new OrbitError("INVALID_REQUEST", "Policy rules must be an array");
+    if (input.rules.length > 256) throw new OrbitError("INVALID_REQUEST", "At most 256 rules for one session");
+    return input.rules.map(entry => {
+      const rule = record(entry);
+      if (typeof rule.id !== "string" || !rule.id.trim()) throw new OrbitError("INVALID_REQUEST", "Every rule needs a stable id");
+      if (!["allow", "deny", "consult"].includes(String(rule.decision)))
+        throw new OrbitError("INVALID_REQUEST", `Rule ${rule.id} needs a decision of allow, deny or consult`);
+      const verb = rule.verb;
+      if (typeof verb !== "string" && !(Array.isArray(verb) && verb.every(v => typeof v === "string")))
+        throw new OrbitError("INVALID_REQUEST", `Rule ${rule.id} needs a verb, or a list of them`);
+      if (rule.origin !== undefined) {
+        const origins = Array.isArray(rule.origin) ? rule.origin : [rule.origin];
+        origins.forEach(normaliseOrigin);
+      }
+      return {
+        id: rule.id, verb: verb as string | string[], decision: rule.decision as Rule["decision"],
+        reason: typeof rule.reason === "string" && rule.reason.trim() ? rule.reason : `Rule ${rule.id}.`,
+        ...(rule.backend === undefined ? {} : { backend: rule.backend as Rule["backend"] }),
+        ...(rule.origin === undefined ? {} : { origin: rule.origin as string | string[] }),
+        ...(rule.pathPrefix === undefined ? {} : { pathPrefix: String(rule.pathPrefix) }),
+        ...(rule.method === undefined ? {} : { method: String(rule.method) }),
+      } satisfies Rule;
+    });
+  })();
+  const advisor = input.advisor === undefined ? undefined : (() => {
+    const given = record(input.advisor);
+    if (!Array.isArray(given.command) || !given.command.length || given.command.some(part => typeof part !== "string"))
+      throw new OrbitError("INVALID_REQUEST", "An advisor needs a command, as an array of strings");
+    const first = given.command[0];
+    if (typeof first !== "string" || !first.startsWith("/"))
+      throw new OrbitError("INVALID_REQUEST", "An advisor command must name an absolute executable");
+    const timeoutMs = given.timeoutMs === undefined ? 5000 : Number(given.timeoutMs);
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000)
+      throw new OrbitError("INVALID_REQUEST", "An advisor timeout must be between 100 and 30000 ms");
+    return { command: given.command as string[], timeoutMs };
+  })();
+  return { mode, origins, allow, deny, ...(rules ? { rules } : {}), ...(advisor ? { advisor } : {}) };
 }
 
 export type PolicyDecision =
   | { outcome: "allow" }
   /** Refused outright. In autonomous mode this is the end of it: nothing waits for a person. */
-  | { outcome: "deny"; reason: string }
+  | { outcome: "deny"; reason: string; ruleId?: string; immuneId?: string }
   /** Supervised mode only: a person is asked. An autonomous session never produces this. */
-  | { outcome: "ask"; reason: string };
+  | { outcome: "ask"; reason: string }
+  /**
+   * Autonomous only: the advisor subprocess decides. A separate outcome from `ask` on purpose,
+   * because `ask` means a person is waiting and overloading it would make the supervised path
+   * ambiguous.
+   */
+  | { outcome: "consult"; reason: string; ruleId: string };
 
 /**
  * Decide one resolved action. `url` is the destination for a navigating action, already resolved by
  * the broker rather than taken from the model's intent, because those are not always the same thing.
  */
-export function decide(policy: SessionPolicy, actionType: string, url?: string): PolicyDecision {
+function ruleMatches(rule: Rule, actionType: string, url?: string, method?: string): boolean {
+  const verbs = Array.isArray(rule.verb) ? rule.verb : [rule.verb];
+  if (!verbs.includes(actionType)) return false;
+  if (rule.method && (method === undefined || rule.method.toUpperCase() !== method.toUpperCase())) return false;
+  if (rule.origin === undefined && rule.pathPrefix === undefined) return true;
+  if (url === undefined) return false;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  if (rule.origin !== undefined) {
+    const origins = Array.isArray(rule.origin) ? rule.origin : [rule.origin];
+    if (!origins.includes(parsed.origin)) return false;
+  }
+  if (rule.pathPrefix !== undefined) {
+    // Whole segments, so /accounts does not match /accounts-help.
+    const wanted = segmentsOf(rule.pathPrefix), actual = segmentsOf(parsed.pathname);
+    if (wanted.length > actual.length || wanted.some((segment, index) => actual[index] !== segment)) return false;
+  }
+  return true;
+}
+
+/** deny is stricter than consult, which is stricter than allow. The strictest matching rule wins. */
+const severity = { allow: 0, consult: 1, deny: 2 } as const;
+
+export function decide(policy: SessionPolicy, actionType: string, url?: string, method?: string): PolicyDecision {
   const actionClass = classify(actionType);
   if (policy.deny.includes(actionClass))
     return { outcome: "deny", reason: `The ${actionClass} class is denied for this session and a deny is not overridable.` };
+  // Evaluated before every allow, and never routed to the advisor: a model judging a model is the
+  // wrong instrument for the actions nobody should take unattended.
+  const immune = immuneMatch(actionType, url, method);
+  if (immune) return { outcome: "deny", reason: immune.reason, immuneId: immune.id };
   if (actionClass === "navigate") {
     // A navigating action with no destination stays inside the session, so the allowlist has nothing
     // to check; open-tab with no url is the blank tab case.
@@ -175,9 +342,23 @@ export function decide(policy: SessionPolicy, actionType: string, url?: string):
         return { outcome: "deny", reason: `${origin} is not in this session's origin allowlist, which was fixed when the session was created.` };
     }
   }
-  if (policy.allow.includes(actionClass)) return { outcome: "allow" };
-  const reason = `The ${actionClass} class is not allowed for this session.`;
-  return policy.mode === "autonomous" ? { outcome: "deny", reason } : { outcome: "ask", reason };
+  // Rules can lower a decision and never raise one, so they are read only after the class is known
+  // to be permitted and only to make it stricter.
+  const matched = (policy.rules ?? []).filter(rule => ruleMatches(rule, actionType, url, method));
+  const strictest = matched.reduce<Rule | null>((worst, rule) =>
+    !worst || severity[rule.decision] > severity[worst.decision] ? rule : worst, null);
+  if (strictest?.decision === "deny") return { outcome: "deny", reason: strictest.reason, ruleId: strictest.id };
+  if (!policy.allow.includes(actionClass)) {
+    const reason = `The ${actionClass} class is not allowed for this session.`;
+    return policy.mode === "autonomous" ? { outcome: "deny", reason } : { outcome: "ask", reason };
+  }
+  if (strictest?.decision === "consult") {
+    // With nobody there a consult must resolve to a decision, so a session with no advisor configured
+    // refuses rather than quietly allowing what a rule singled out for a second opinion.
+    if (!policy.advisor) return { outcome: "deny", reason: `${strictest.reason} No advisor is configured to decide it.`, ruleId: strictest.id };
+    return { outcome: "consult", reason: strictest.reason, ruleId: strictest.id };
+  }
+  return { outcome: "allow" };
 }
 
 /**
@@ -210,15 +391,21 @@ export type JournalEntry = {
   actionClass: ActionClass;
   /** Origin only. A full URL carries identifiers, search terms and tokens in its path and query. */
   origin?: string;
-  outcome: "allow" | "deny" | "ask";
+  outcome: "allow" | "deny" | "ask" | "consult";
   reason?: string;
+  /** The rule that caused it, verbatim, so a denial can be traced to the line responsible. */
+  ruleId?: string;
+  /** The immune entry it tripped, if any. Present only on a denial nothing can lift. */
+  immuneId?: string;
+  /** Who decided a consult: the advisor, or the failure that closed it. */
+  decidedBy?: string;
   /** Characters typed, never the characters themselves. */
   inputLength?: number;
 };
 
 export function journalEntry(input: {
   sequence: number; sessionId: string; actor: "agent" | "person"; actionType: string;
-  decision: PolicyDecision; url?: string; inputLength?: number;
+  decision: PolicyDecision; url?: string; inputLength?: number; decidedBy?: string;
 }): JournalEntry {
   let origin: string | undefined;
   if (input.url !== undefined) { try { origin = new URL(input.url).origin; } catch { origin = undefined; } }
@@ -228,6 +415,9 @@ export function journalEntry(input: {
     ...(origin ? { origin } : {}),
     outcome: input.decision.outcome,
     ...(input.decision.outcome === "allow" ? {} : { reason: input.decision.reason }),
+    ...("ruleId" in input.decision && input.decision.ruleId ? { ruleId: input.decision.ruleId } : {}),
+    ...("immuneId" in input.decision && input.decision.immuneId ? { immuneId: input.decision.immuneId } : {}),
+    ...(input.decidedBy === undefined ? {} : { decidedBy: input.decidedBy }),
     ...(input.inputLength === undefined ? {} : { inputLength: input.inputLength }),
   };
 }

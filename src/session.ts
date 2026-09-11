@@ -8,7 +8,8 @@ import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
 import { describeMachine } from "./platform";
 import { cloneProfile } from "./clone";
-import { decide, freshProfilePolicy, journalEntry, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
+import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
+import { consultAdvisor } from "./advisor";
 import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
@@ -153,20 +154,56 @@ export class Sessions {
     // The policy is evaluated here, on the action the broker resolved, not on the action the agent
     // described. Those are the same thing only when nothing has tried to make them differ.
     const destination = "url" in action ? (action as { url?: string }).url : undefined;
-    const decision = decide(session.policy, action.type, destination);
-    session.journal.push(journalEntry({
-      sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
-      actionType: action.type, decision, url: destination,
-      ...("text" in action ? { inputLength: String((action as { text?: string }).text ?? "").length } : {}),
-    }));
-    if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
-    if (decision.outcome === "deny") throw new OrbitError("POLICY_DENIED", decision.reason);
-    // A supervised session stops and waits for the person. An autonomous one never reaches here with
-    // anything but an allow, which is what lets it finish a task without them.
-    if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
-    const result = this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
+    const inputLength = "text" in action ? String((action as { text?: string }).text ?? "").length : undefined;
+    const result = this.decided(session, action, destination, inputLength);
     session.requests.set(requestId, { fingerprint, result });
     return result;
+  }
+  /**
+   * Decide one action, then run it if it survives. A consult is resolved by the advisor rather than
+   * by a person, because an autonomous session has nobody to wait for.
+   */
+  private decided(session: Session, action: { type: string }, destination: string | undefined, inputLength: number | undefined): Promise<unknown> {
+    const record = (decision: ReturnType<typeof decide>, decidedBy?: string) => {
+      session.journal.push(journalEntry({
+        sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
+        actionType: action.type, decision, url: destination,
+        ...(decidedBy === undefined ? {} : { decidedBy }),
+        ...(inputLength === undefined ? {} : { inputLength }),
+      }));
+      if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
+    };
+    const refuse = (decision: Extract<ReturnType<typeof decide>, { outcome: "deny" }>) => {
+      // An immune deny contains the session as well as refusing the action. An autonomous agent that
+      // has just attempted a credential change is either compromised or wrong, and in both cases the
+      // next action should not run either. Narrowing is one way, so this cannot be undone.
+      if (decision.immuneId) session.policy = narrow(session.policy, { allow: ["read", "navigate"] });
+      throw new OrbitError("POLICY_DENIED", decision.reason);
+    };
+    const decision = decide(session.policy, action.type, destination);
+    if (decision.outcome !== "consult") {
+      record(decision);
+      if (decision.outcome === "deny") refuse(decision);
+      // A supervised session stops and waits for the person. An autonomous one never reaches here
+      // with anything but an allow, which is what lets it finish a task without them.
+      if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
+      return this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
+    }
+    // Consulting takes as long as the advisor takes, so it happens before the action is queued and
+    // the session's own ordering is untouched by it.
+    return (async () => {
+      const pending = journalEntry({
+        sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
+        actionType: action.type, decision, url: destination,
+        ...(inputLength === undefined ? {} : { inputLength }),
+      });
+      const answer = await consultAdvisor(session.policy.advisor!, {
+        pending, tail: session.journal.slice(-20), reason: decision.reason, ruleId: decision.ruleId,
+      });
+      record(answer.decision, answer.decidedBy);
+      if (answer.decision.outcome === "deny") return refuse(answer.decision);
+      return this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
+    })();
   }
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
@@ -199,10 +236,25 @@ export class Sessions {
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
-    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
     if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)] };
+    // Narrowing only. There is deliberately no method that widens a running session, because the
+    // value of the allowlist is that a page the agent reads cannot cause it to grow.
+    if (request.method === "session.narrow") {
+      if (params.origins === undefined && params.allow === undefined)
+        throw new OrbitError("INVALID_REQUEST", "Narrowing needs origins, allow, or both");
+      // Validated field by field. Going through parsePolicy would apply its cross field rule, which
+      // requires an origin whenever navigate is allowed, and that rule is about creating a session
+      // rather than about tightening one.
+      const limits = {
+        ...(params.origins === undefined ? {} : { origins: parseOrigins(params.origins) }),
+        ...(params.allow === undefined ? {} : { allow: parseActionClasses(params.allow) }),
+      };
+      session.policy = narrow(session.policy, limits);
+      return { sessionId: session.id, policy: session.policy };
+    }
     if (request.method === "session.stop") return this.stop(session);
     this.ensureOpen(session);
     // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.

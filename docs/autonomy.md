@@ -366,18 +366,22 @@ Ordered. Each item is one change with one test.
 
 | | Item | Test |
 |---|---|---|
-| 1 | Stop forcing `--password-store=basic` in `src/chrome.ts` line 21, and launch the binary that owns the profile rather than the first one found in `src/runtime-paths.ts` line 3 | A clone decrypts a non zero share of its cookies. Everything below fails silently until this lands |
-| 2 | Add `consult` as a fourth `PolicyDecision` outcome and the advisor subprocess: JSON in, `{decision, reason}` out, matcher in rule syntax, fail closed | A crashing advisor denies; an advisor that answers `allow` on an immune id is ignored |
-| 3 | The immune table in `src/policy.ts`, keyed by stable id, evaluated after `deny` and before `allow`, never routed to the advisor, plus the containment rule | An immune id denies under `mode: "autonomous"` with every class in `allow`, and `write` is gone from the policy afterwards |
-| 4 | Expose `session.narrow` in the dispatch list, and set a taint flag the first time an observation returns page content | Narrowing succeeds before and after taint; there is no code path that widens |
+| 1 | ~~Stop forcing `--password-store=basic`, and launch the binary that owns the profile~~ **Done.** Measured against the real profile: 142 of 142 cookies decrypt, a share of 1.0 | Closed |
+| 2 | ~~`consult` as a fourth outcome, and the advisor subprocess~~ **Done.** `src/advisor.ts`, with the rule grain in `src/policy.ts`. Every failure path denies and names itself: a crash reported `exited with code 137`, a hang decided at 2001 ms against a 2000 ms budget, and a non zero exit, unparsable output, a non object, an answer that is neither allow nor deny, an answer of `ask`, a missing command and an empty command all deny | Closed |
+| 3 | ~~The immune table, and the containment rule~~ **Done.** Five ids matched on whole path segments, method and query. Measured end to end against the most permissive policy the parser produces, autonomous with every class allowed, nothing denied and an advisor answering allow to everything: the immune action was refused, the advisor never saw it, and `allow` went from `read, navigate, write, irreversible` to `read, navigate` for the rest of the session | Closed |
+| 4 | Expose `session.narrow` in the dispatch list, and set a taint flag the first time an observation returns page content | **Half done.** `session.narrow` is exposed and measured: narrowing to `read` held, asking for `read, navigate, write` back returned `read`, and an empty request is refused. The taint flag is not built |
 | 5 | Journal envelope and durability: `at`, `requestId`, `ruleId`, `decidedBy`, `afterOrigins`, appended to a 0600 per session file, plus the session creation entry | The journal survives a broker restart, and a grep of the file finds no cookie name, no URL query and no typed text |
 | 6 | Restore points: profile root as a subvolume, `snapshot -r` per write, restore by path swap with the browser stopped, `rm -rf` to delete, and the refusal set | A snapshot costs under 100 ms warm at 0 exclusive bytes; restore after a form fill works; restore after a `remote-write` action refuses |
 | 7 | Request layer enforcement: `Fetch.enable` over every resource type with `Target.setAutoAttach`, judging origin, path prefix and method | An off lease image beacon on an allowed page fails and is journalled by origin |
 | 8 | Egress below the browser: `bubblewrap` probe in `src/platform.ts`, network namespace, per session filtering proxy with the lease fixed at creation, proxy log as the origins contacted record | A denied origin is unreachable from page script, not only from `session.act`. A host without `bubblewrap` drops a tier rather than running unconfined |
 
-Items 2 through 6 are broker TypeScript over machinery that exists. Items 7 and 8 are the expensive
-ones and they are the ones that make the lease real rather than advisory, so they should not be
-deferred quietly.
+Items 1, 2 and 3 are done, and item 4 is half done. Items 5 and 6 remain broker TypeScript over
+machinery that exists. Item 7 is built in a different form than proposed, through request
+interception rather than raw `Fetch.enable`, and measured at eleven of eleven page initiated routes
+blocked. Item 8 remains, and it is the one that makes the lease hold against a browser that does not
+route a request through the interception layer at all, so it should not be deferred quietly.
+
+Reproduce items 2 and 3 with `bun run scripts/limited.ts bun run experiments/advisor-session.ts`.
 
 ## 8. What nobody has solved
 
