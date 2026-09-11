@@ -87,7 +87,10 @@ NECK_RADIUS = 15.0
 # Transparent room left around the capsule so the pointer has something to hit near the screen edge.
 MARK_PADDING = 7
 # A press that travels further than this is a drag to another edge, not a click on the mark.
-DRAG_THRESHOLD = 9.0
+DRAG_THRESHOLD = 6.0
+# How far outside the capsule a press still counts as a press on it. The capsule is deliberately
+# small, and a handle that has to be hit exactly is a handle nobody uses.
+GRIP_SLACK = 9.0
 DROP_TARGET = 78.0
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 EDGE_LABELS = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
@@ -173,7 +176,6 @@ def dynamic_css(settings):
     # a target it can actually hit without aiming at the very edge of the screen.
     lines = [
         f".orbit-shell {{ padding: {shell_padding(settings)}px; }}",
-        ".orbit-shell.carrying { padding: 0; }",
         f".orbit-bar {{ min-width: {thickness}px; min-height: {length}px; }}",
         f".orbit-dot {{ min-width: {size}px; min-height: {size}px; }}",
         f".orbit-count {{ min-width: {size + 8}px; min-height: {size + 6}px; font-size: {max(9, size - 2)}px; }}",
@@ -668,13 +670,17 @@ class Liquid(Gtk.Box):
         width, height = self.get_width(), self.get_height()
         if width <= 0 or height <= 0:
             return
+        if self.panel.drag is not None:
+            # While the mark is being carried it is drawn on the carry surface, which covers the
+            # whole monitor. Nothing is drawn here, but a node is still handed over: a snapshot with
+            # no nodes at all leaves the compositor holding the previous buffer, and the mark stays
+            # painted at the edge it has just left.
+            snapshot.append_cairo(Graphene.Rect().init(0, 0, width, height))
+            return
         # A widget draws from its content box, and the body deliberately spills into the padding
         # around it. A node the size of the content box would cut the capsule and its shadow off.
         room = shell_padding(self.panel.settings) + 8
         area = Graphene.Rect().init(-room, -room, width + room * 2, height + room * 2)
-        if self.panel.drag is not None:
-            self.draw_drag(snapshot.append_cairo(area), width, height)
-            return
         head, tail, head_radius, neck, tail_radius = self.shape()
         if head is None:
             # The mark is hidden, so there is no body to draw the card into. Drawing the children
@@ -701,69 +707,6 @@ class Liquid(Gtk.Box):
         self.snapshot_child(self.panel.plate, snapshot)
         snapshot.pop()
         snapshot.pop()
-
-    def draw_drag(self, cr, width, height):
-        """While the mark is being carried: a landing strip on each edge, and the mark itself under
-        the hand, poured toward whichever strip it would land on."""
-        drag = self.panel.drag
-        fill, rim = self.colours()
-        pointer = (drag["x"], drag["y"])
-        chosen_spot = None
-        for name, spot, extent in self.panel.drop_targets(width, height):
-            chosen = name == drag["edge"]
-            if chosen:
-                chosen_spot = (spot, extent)
-                continue
-            box = (spot[0] - extent[0] / 2.0, spot[1] - extent[1] / 2.0, extent[0], extent[1])
-            glass(cr, lambda ctx, b=box: rounded(ctx, b[0], b[1], b[2], b[3], min(b[2], b[3]) / 2.0),
-                  (fill[0], fill[1], fill[2], fill[3] * 0.4), (rim[0], rim[1], rim[2], 0.08), shadow=0.0)
-        colour = Gdk.RGBA()
-        if not colour.parse(self.panel.settings["colors"][self.panel.state_of()]):
-            colour.parse("#8a8a8a")
-        carried = max(10.0, MARK_PADDING + max(6, int(self.panel.settings["size"])) / 2.0)
-        if chosen_spot is None:
-            glass(cr, lambda ctx: ctx.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi),
-                  (colour.red, colour.green, colour.blue, 0.92), rim)
-            return
-        spot, extent = chosen_spot
-        grown = (spot[0] - extent[0] / 2.0 - 5, spot[1] - extent[1] / 2.0 - 5, extent[0] + 10, extent[1] + 10)
-        # The strip is a long capsule, so the drop reaches for the point on it nearest the hand rather
-        # than for its middle, and the thread follows the hand along the edge.
-        near = (min(max(pointer[0], grown[0] + grown[3] / 2.0), grown[0] + grown[2] - grown[3] / 2.0)
-                if grown[2] > grown[3] else spot[0],
-                min(max(pointer[1], grown[1] + grown[2] / 2.0), grown[1] + grown[3] - grown[2] / 2.0)
-                if grown[3] > grown[2] else spot[1])
-        waist = min(grown[2], grown[3]) / 2.0
-
-        def body(ctx):
-            rounded(ctx, grown[0], grown[1], grown[2], grown[3], waist)
-            metaball(ctx, (pointer[0], pointer[1], carried), (near[0], near[1], waist))
-            ctx.new_sub_path()
-            ctx.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi)
-            ctx.close_path()
-
-        # The strip, the thread and the drop overlap, and they do not all wind the same way, so a
-        # single fill would cancel itself where they cross. Each is painted opaque into a group and
-        # the group is laid down once at the final alpha, which is one body with no seam in it.
-        cr.save()
-        cr.translate(0, 2)
-        body(cr)
-        for line_width, alpha in ((12.0, 0.05), (7.0, 0.06), (3.0, 0.07)):
-            cr.set_line_width(line_width)
-            cr.set_source_rgba(0, 0, 0, alpha)
-            cr.stroke_preserve()
-        cr.new_path()
-        cr.restore()
-        cr.push_group()
-        cr.set_source_rgba(colour.red, colour.green, colour.blue, 1.0)
-        rounded(cr, grown[0], grown[1], grown[2], grown[3], waist)
-        cr.fill()
-        if metaball(cr, (pointer[0], pointer[1], carried), (near[0], near[1], waist)):
-            cr.fill()
-        cr.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi)
-        cr.fill()
-        cr.pop_group_to_source()
-        cr.paint_with_alpha(0.92)
 
 
 class Panel(Gtk.Application):
@@ -792,7 +735,10 @@ class Panel(Gtk.Application):
         self.drag = None
         self.drag_start = (0.0, 0.0)
         self.carrying = False
-        self.origin = (0, 0)
+        self.carry_window = None
+        self.carry_area = None
+        self.awaiting_leave = False
+        self.along = 0
         self.extent = -1
         self.stopping = False
         self.wake = threading.Event()
@@ -967,21 +913,133 @@ class Panel(Gtk.Application):
             geometry = monitor.get_geometry()
             span = geometry.height if vertical else geometry.width
             extent = window.get_height() if vertical else window.get_width()
-            along = max(0, round((span - max(1, extent)) * clamp(float(self.settings["position"]))))
+            # The setting names where the middle of the mark sits along the edge, and the margin is
+            # measured to the start of the surface, so half the surface has to come off it. Without
+            # that the mark lands short of the hand by half a card, further out the nearer the end.
+            extent = max(1, extent)
+            along = round(clamp(float(self.settings["position"])) * span - extent / 2.0)
+            along = max(0, min(span - extent, along))
             LayerShell.set_margin(window, EDGES[pin], along)
-            # Where the surface sits on the monitor, which is what turns a pointer offset during a
-            # drag into a place on the screen. The compositor never tells a layer surface its
-            # position, so it is the same arithmetic the compositor is about to do.
-            width, height = window.get_width(), window.get_height()
-            left = gap if edge == "left" else (geometry.width - width - gap if edge == "right" else along)
-            top = gap if edge == "top" else (geometry.height - height - gap if edge == "bottom" else along)
-            self.origin = (left, top)
+            self.along = along
 
     # --- Carrying the mark to another edge --------------------------------------------------------
 
+    def paint_carry(self, cr, width, height):
+        """While the mark is being carried: a landing strip on each edge, and the mark itself under
+        the hand, poured toward whichever strip it would land on."""
+        drag = self.drag
+        fill, rim = self.shell.colours()
+        pointer = (drag["x"], drag["y"])
+        chosen_spot = None
+        for name, spot, extent in self.drop_targets(width, height):
+            chosen = name == drag["edge"]
+            if chosen:
+                chosen_spot = (spot, extent)
+                continue
+            box = (spot[0] - extent[0] / 2.0, spot[1] - extent[1] / 2.0, extent[0], extent[1])
+            glass(cr, lambda ctx, b=box: rounded(ctx, b[0], b[1], b[2], b[3], min(b[2], b[3]) / 2.0),
+                  (fill[0], fill[1], fill[2], fill[3] * 0.4), (rim[0], rim[1], rim[2], 0.08), shadow=0.0)
+        colour = Gdk.RGBA()
+        if not colour.parse(self.settings["colors"][self.state_of()]):
+            colour.parse("#8a8a8a")
+        carried = max(10.0, MARK_PADDING + max(6, int(self.settings["size"])) / 2.0)
+        if chosen_spot is None:
+            glass(cr, lambda ctx: ctx.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi),
+                  (colour.red, colour.green, colour.blue, 0.92), rim)
+            return
+        spot, extent = chosen_spot
+        grown = (spot[0] - extent[0] / 2.0 - 5, spot[1] - extent[1] / 2.0 - 5, extent[0] + 10, extent[1] + 10)
+        # The strip is a long capsule, so the drop reaches for the point on it nearest the hand rather
+        # than for its middle, and the thread follows the hand along the edge.
+        near = (min(max(pointer[0], grown[0] + grown[3] / 2.0), grown[0] + grown[2] - grown[3] / 2.0)
+                if grown[2] > grown[3] else spot[0],
+                min(max(pointer[1], grown[1] + grown[2] / 2.0), grown[1] + grown[3] - grown[2] / 2.0)
+                if grown[3] > grown[2] else spot[1])
+        waist = min(grown[2], grown[3]) / 2.0
+
+        def body(ctx):
+            rounded(ctx, grown[0], grown[1], grown[2], grown[3], waist)
+            metaball(ctx, (pointer[0], pointer[1], carried), (near[0], near[1], waist))
+            ctx.new_sub_path()
+            ctx.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi)
+            ctx.close_path()
+
+        # The strip, the thread and the drop overlap, and they do not all wind the same way, so a
+        # single fill would cancel itself where they cross. Each is painted opaque into a group and
+        # the group is laid down once at the final alpha, which is one body with no seam in it.
+        cr.save()
+        cr.translate(0, 2)
+        body(cr)
+        for line_width, alpha in ((12.0, 0.05), (7.0, 0.06), (3.0, 0.07)):
+            cr.set_line_width(line_width)
+            cr.set_source_rgba(0, 0, 0, alpha)
+            cr.stroke_preserve()
+        cr.new_path()
+        cr.restore()
+        cr.push_group()
+        cr.set_source_rgba(colour.red, colour.green, colour.blue, 1.0)
+        rounded(cr, grown[0], grown[1], grown[2], grown[3], waist)
+        cr.fill()
+        if metaball(cr, (pointer[0], pointer[1], carried), (near[0], near[1], waist)):
+            cr.fill()
+        cr.arc(pointer[0], pointer[1], carried, 0, 2 * math.pi)
+        cr.fill()
+        cr.pop_group_to_source()
+        cr.paint_with_alpha(0.92)
+
+    def build_carry(self):
+        """The surface the carry is drawn on: its own layer, over the whole monitor, click through.
+
+        The first version stretched the panel's own surface to the monitor for the length of the
+        drag. Measured, the compositor took two or three motion events to answer that with a new
+        size, so the first quarter of every drag drew the landing strips into a surface a few hundred
+        pixels wide at the old edge, where nothing of them could be seen; and resizing and moving a
+        surface out from under the pointer grab that is delivering the drag is a good way to lose the
+        drag. This surface is separate, it is mapped only while the mark is in the air, and its input
+        region is empty, so the press that started the drag stays with the panel throughout.
+        """
+        window = Gtk.Window(application=self)
+        window.set_title("Orbit carrying")
+        window.add_css_class("orbit-clear")
+        LayerShell.init_for_window(window)
+        LayerShell.set_layer(window, LayerShell.Layer.OVERLAY)
+        LayerShell.set_namespace(window, "sbar-orbit-carry")
+        LayerShell.set_exclusive_zone(window, -1)
+        LayerShell.set_keyboard_mode(window, LayerShell.KeyboardMode.NONE)
+        for value in EDGES.values():
+            LayerShell.set_anchor(window, value, True)
+            LayerShell.set_margin(window, value, 0)
+        area = Gtk.DrawingArea()
+        area.set_draw_func(lambda _area, cr, width, height: self.paint_carry(cr, width, height))
+        window.set_child(area)
+
+        def passthrough(mapped):
+            surface = mapped.get_surface()
+            if surface is not None:
+                surface.set_input_region(cairo.Region())
+
+        window.connect("realize", passthrough)
+        window.connect("map", passthrough)
+        self.carry_area = area
+        self.carry_window = window
+
+    def surface_origin(self):
+        """Where the panel's surface sits on the monitor. The compositor never tells a layer surface
+        its position, so this is the same arithmetic the compositor is about to do from the anchors
+        and margins the panel just gave it."""
+        monitor = self.monitor_for(self.window) if self.window is not None else None
+        if monitor is None or self.window is None:
+            return (0, 0)
+        geometry = monitor.get_geometry()
+        width, height = self.window.get_width(), self.window.get_height()
+        gap = max(0, int(self.settings["margin"]))
+        edge = self.settings["edge"]
+        if edge in ("left", "right"):
+            return (gap if edge == "left" else geometry.width - width - gap, self.along)
+        return (self.along, gap if edge == "top" else geometry.height - height - gap)
+
     def drop_targets(self, width, height):
-        """Where a dropped mark would land, one landing strip per edge, drawn inside the surface that
-        covers the whole monitor while the mark is being carried."""
+        """Where a dropped mark would land, one landing strip per edge, drawn on the carry surface."""
         thick, long_side = 16.0, DROP_TARGET
         return [
             ("left", (26.0, height / 2.0), (thick, long_side)),
@@ -1005,12 +1063,17 @@ class Panel(Gtk.Application):
         left, top, width, height = self.shell.unprimed(head)
         pad = shell_padding(self.settings)
         x, y = x - pad, y - pad
-        return left - 3 <= x <= left + width + 3 and top - 3 <= y <= top + height + 3
+        return (left - GRIP_SLACK <= x <= left + width + GRIP_SLACK
+                and top - GRIP_SLACK <= y <= top + height + GRIP_SLACK)
 
     def drag_begin(self, gesture, start_x, start_y):
         self.drag = None
         self.carrying = self.on_mark(start_x, start_y)
-        self.drag_start = (self.origin[0] + start_x, self.origin[1] + start_y)
+        # The gesture reports points inside the shell's content box, which starts one padding in from
+        # the surface, which in turn starts at the origin. Both are needed to name a place on screen.
+        pad = shell_padding(self.settings)
+        origin = self.surface_origin()
+        self.drag_start = (origin[0] + pad + start_x, origin[1] + pad + start_y)
 
     def drag_update(self, gesture, offset_x, offset_y):
         if not self.carrying:
@@ -1045,36 +1108,38 @@ class Panel(Gtk.Application):
         edge = min(distances, key=distances.get)
         along = y / height if edge in ("left", "right") else x / width
         self.drag.update({"x": x, "y": y, "edge": edge, "position": round(clamp(along), 3)})
-        self.shell.queue_draw()
+        if self.carry_area is not None:
+            self.carry_area.queue_draw()
 
     def enter_carry(self):
-        """The surface grows to cover the monitor for as long as the mark is in the air. A layer
-        surface cannot draw outside its own bounds, so without this there is nowhere to carry it to."""
+        """The mark leaves its edge: it stops being drawn in the panel's surface and appears on the
+        carry surface under the hand instead. The panel's own surface is not touched, so the pointer
+        grab that is delivering this drag stays exactly where it started."""
         self.drag = {"x": 0.0, "y": 0.0, "edge": self.settings["edge"], "position": self.settings["position"]}
         self.set_expanded(False)
         self.shell.progress = 0.0
-        self.shell.add_css_class("carrying")
-        self.shell.set_halign(Gtk.Align.FILL)
-        self.shell.set_valign(Gtk.Align.FILL)
-        self.mark.set_visible(False)
-        window = self.window
-        if window is None:
-            return
-        for value in EDGES.values():
-            LayerShell.set_anchor(window, value, True)
-            LayerShell.set_margin(window, value, 0)
-        surface = window.get_surface()
-        if surface is not None:
-            geometry = self.monitor_size()
-            surface.set_input_region(cairo.Region(cairo.RectangleInt(0, 0, geometry[0], geometry[1])))
+        # Transparent rather than hidden. A hidden widget stops receiving events, and this one is
+        # carrying the gesture; and an empty snapshot alone left the compositor holding the last
+        # buffer, so the mark stayed painted at its old edge while its copy followed the hand.
+        self.shell.queue_draw()
+        if self.carry_window is None:
+            self.build_carry()
+        monitor = self.monitor_for(self.window) if self.window is not None else None
+        if monitor is not None:
+            LayerShell.set_monitor(self.carry_window, monitor)
+        self.carry_window.set_visible(True)
+        self.shell.queue_draw()
 
     def leave_carry(self):
         self.drag = None
         self.extent = -1
-        self.shell.remove_css_class("carrying")
-        self.shell.set_halign(Gtk.Align.CENTER)
-        self.shell.set_valign(Gtk.Align.CENTER)
-        self.mark.set_visible(not (self.settings["hideWhenIdle"] and self.state_of() in ("idle", "offline")))
+        if self.carry_window is not None:
+            self.carry_window.set_visible(False)
+        self.shell.queue_draw()
+        # The hand is now sitting wherever it let go, often right on top of the mark's new place, and
+        # the surface moving under it counts as the pointer entering. The cards stay shut until the
+        # hand has actually left once, which is a fact rather than a guess at how long that takes.
+        self.awaiting_leave = True
 
     def layout_shell(self):
         """The card grows inward from the edge the mark is docked to: sideways on a side edge, down
@@ -1293,7 +1358,11 @@ class Panel(Gtk.Application):
                 widget.remove_css_class(key)
             widget.add_css_class(state)
         self.count.set_text("0" if state == "offline" else str(len(self.sessions)))
-        self.mark.set_visible(self.drag is None and not (self.settings["hideWhenIdle"] and state in ("idle", "offline")))
+        if self.drag is None:
+            # Not while the mark is being carried. Showing or hiding it changes how big the shell is,
+            # which moves the surface, which moves the frame the drag measures its offsets in, and the
+            # drop would step sideways because an agent happened to start work mid gesture.
+            self.mark.set_visible(not (self.settings["hideWhenIdle"] and state in ("idle", "offline")))
         self.shell.queue_draw()
         self.sync_frame()
         self.cards_stale = True
@@ -1371,6 +1440,12 @@ class Panel(Gtk.Application):
     # --- Hover -----------------------------------------------------------------------------------
 
     def hover_changed(self, inside):
+        if self.drag is not None:
+            return
+        if self.awaiting_leave:
+            if inside:
+                return
+            self.awaiting_leave = False
         """A delay each way. Without it, a pointer crossing the edge of the screen on its way
         somewhere else opens and closes the whole card list in a flicker."""
         for attribute in ("open_source", "close_source"):
@@ -1398,7 +1473,10 @@ class Panel(Gtk.Application):
         return False
 
     def set_expanded(self, expanded):
-        if self.drag is not None:
+        # Only opening is refused while the mark is in the air. Refusing to close as well left the
+        # cards standing open through the whole drag and open at the new edge afterwards, on top of
+        # the mark, so the next press landed on a card and the mark could not be picked up again.
+        if expanded and self.drag is not None:
             return
         if expanded == self.expanded and not (expanded and self.cards_stale):
             return
