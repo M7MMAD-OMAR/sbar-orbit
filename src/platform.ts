@@ -14,8 +14,18 @@ import { join } from "node:path";
  * Nothing here starts an application, decrypts anything, or reads a cookie name, host or value.
  */
 
-/** Which key Chromium used to encrypt the cookies already in a profile. */
+/** The concrete backend a browser is launched with. */
 export type PasswordStore = "basic" | "gnome-libsecret" | "kwallet";
+
+/**
+ * What the bytes on disk tell us, which is less than the backend name.
+ *
+ * Chromium writes a v10 prefix for the hardcoded key and a v11 prefix for a key held by a secret
+ * service, but both gnome-libsecret and kwallet write v11, so the file cannot say which one. The
+ * scheme comes from the profile and the backend comes from the desktop, and conflating the two would
+ * hand a KDE profile to gnome-libsecret and decrypt nothing.
+ */
+export type CookieScheme = "basic" | "keyring";
 
 /** How a browser is packaged, because it decides where the profile lives and who can reach it. */
 export type BrowserPackaging = "system" | "flatpak" | "snap" | "home";
@@ -109,7 +119,7 @@ export async function detectBrowsers(home = homedir()): Promise<BrowserInstall[]
  * v10 is the hardcoded key that any program running as this user can reproduce. v11 means the key is
  * in the login keyring, so the browser needs a secret service to decrypt at all.
  */
-export async function profileCookieScheme(profileDirectory: string): Promise<{ store: PasswordStore; rows: number } | null> {
+export async function profileCookieScheme(profileDirectory: string): Promise<{ scheme: CookieScheme; rows: number } | null> {
   const jar = join(profileDirectory, "Default", "Cookies");
   if (!await exists(jar)) return null;
   try {
@@ -121,17 +131,22 @@ export async function profileCookieScheme(profileDirectory: string): Promise<{ s
       total += row.n;
       if (Buffer.from(row.prefix, "hex").toString() === "v11") keyring += row.n;
     }
-    // kwallet and gnome-libsecret both write v11; which one is a property of the desktop, not the file.
-    return { store: keyring > 0 ? "gnome-libsecret" : "basic", rows: total };
+    return { scheme: keyring > 0 ? "keyring" : "basic", rows: total };
   } catch { return null; }
 }
 
-/** The store a browser must be launched with to read the profile it is being given. */
-export function passwordStoreFor(scheme: PasswordStore, secretService: SecretServiceState): PasswordStore {
-  // Asking for the keyring on a host with no secret service leaves the browser unable to decrypt and
-  // unable to explain why, so the basic store is the honest answer there.
-  if (scheme !== "basic" && secretService !== "available") return "basic";
-  return scheme;
+/**
+ * The store a browser must be launched with to read the profile it is being given.
+ *
+ * A keyring profile needs the backend this desktop actually runs. KDE keeps its key in kwallet and
+ * everything else that answers org.freedesktop.secrets is reached through libsecret, so the desktop
+ * decides. With no secret service the basic store is the honest answer, because asking for a keyring
+ * that is not there leaves the browser unable to decrypt and unable to say why.
+ */
+export function passwordStoreFor(scheme: CookieScheme, secretService: SecretServiceState, desktop = ""): PasswordStore {
+  if (scheme === "basic") return "basic";
+  if (secretService !== "available") return "basic";
+  return /\bKDE\b|plasma/i.test(desktop) ? "kwallet" : "gnome-libsecret";
 }
 
 async function secretServiceState(): Promise<SecretServiceState> {
@@ -213,7 +228,7 @@ export async function describeMachine(home = homedir()): Promise<Record<string, 
       profileDirectory: redact(install.profileDirectory),
       // The store and the row count are the two facts that decide whether a clone can work. Neither
       // identifies a site the person visited.
-      cookieStore: scheme?.store ?? "none", cookieRows: scheme?.rows ?? 0,
+      cookieScheme: scheme?.scheme ?? "none", cookieRows: scheme?.rows ?? 0,
     };
   }));
   return {
@@ -244,11 +259,11 @@ export async function canCloneProfile(profileDirectory: string, capabilities: Pl
     return { allowed: false, reason: `A ${install.packaging} browser keeps its key behind its own sandbox portal, which Orbit cannot reach from outside. This is an open gate, not a bug.` };
   const scheme = await profileCookieScheme(profileDirectory);
   if (!scheme) return { allowed: false, reason: "That profile has no readable cookie store, so there is no session to inherit." };
-  if (scheme.store !== "basic" && capabilities.secretService !== "available")
+  if (scheme.scheme === "keyring" && capabilities.secretService !== "available")
     return { allowed: false, reason: "That profile's cookies need the login keyring and no secret service answered, so the clone would start signed out." };
-  if (scheme.store !== "basic" && !capabilities.filteredBusProxy)
+  if (scheme.scheme === "keyring" && !capabilities.filteredBusProxy)
     return { allowed: false, reason: "Reaching the keyring safely needs xdg-dbus-proxy, which is not installed. Orbit will not hand a browser the whole session bus instead." };
-  return { allowed: true, install, store: passwordStoreFor(scheme.store, capabilities.secretService), reflink: await supportsReflink(workspace) };
+  return { allowed: true, install, store: passwordStoreFor(scheme.scheme, capabilities.secretService, capabilities.desktop), reflink: await supportsReflink(workspace) };
 }
 
 /** The three markers a copied profile inherits from a running browser. Chrome refuses to start while

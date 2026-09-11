@@ -23,18 +23,22 @@ test("a profile's cookie scheme is read from the version prefix, without reading
   const keyring = join(root, "keyring-profile"), basic = join(root, "basic-profile");
   await fakeJar(keyring, "v11", 5);
   await fakeJar(basic, "v10", 2);
-  expect(await profileCookieScheme(keyring)).toEqual({ store: "gnome-libsecret", rows: 5 });
-  expect(await profileCookieScheme(basic)).toEqual({ store: "basic", rows: 2 });
+  expect(await profileCookieScheme(keyring)).toEqual({ scheme: "keyring", rows: 5 });
+  expect(await profileCookieScheme(basic)).toEqual({ scheme: "basic", rows: 2 });
   // A directory that is not a profile is not an error, it is simply nothing to inherit.
   expect(await profileCookieScheme(join(root, "absent"))).toBeNull();
 });
 
-test("the launch store follows the profile, and falls back when no secret service answers", () => {
-  expect(passwordStoreFor("gnome-libsecret", "available")).toBe("gnome-libsecret");
+test("the launch store comes from the desktop, not from the profile's bytes", () => {
+  // Both backends write a v11 prefix, so the file cannot say which one; the desktop decides.
+  expect(passwordStoreFor("keyring", "available", "GNOME")).toBe("gnome-libsecret");
+  expect(passwordStoreFor("keyring", "available", "Hyprland")).toBe("gnome-libsecret");
+  expect(passwordStoreFor("keyring", "available", "KDE")).toBe("kwallet");
+  expect(passwordStoreFor("keyring", "available", "plasmawayland")).toBe("kwallet");
   // Asking for a keyring that is not there leaves the browser unable to decrypt and unable to say why.
-  expect(passwordStoreFor("gnome-libsecret", "absent")).toBe("basic");
-  expect(passwordStoreFor("gnome-libsecret", "unknown")).toBe("basic");
-  expect(passwordStoreFor("basic", "available")).toBe("basic");
+  expect(passwordStoreFor("keyring", "absent", "KDE")).toBe("basic");
+  expect(passwordStoreFor("keyring", "unknown", "GNOME")).toBe("basic");
+  expect(passwordStoreFor("basic", "available", "GNOME")).toBe("basic");
 });
 
 test("the singleton markers are stripped from a copy and the source is never touched", async () => {
@@ -70,6 +74,11 @@ test("cloning is refused with a reason for every measured failure mode", async (
   const ok = await canCloneProfile(owned, base, root);
   expect(ok.allowed).toBe(true);
   if (ok.allowed) { expect(ok.store).toBe("gnome-libsecret"); expect(ok.install.executable).toBe("/opt/google/chrome/chrome"); }
+
+  // The same keyring profile on KDE must be opened with kwallet, or it decrypts nothing.
+  const onKde = await canCloneProfile(owned, { ...base, desktop: "KDE" }, root);
+  expect(onKde.allowed).toBe(true);
+  if (onKde.allowed) expect(onKde.store).toBe("kwallet");
 
   // No install owns it, so the binary that could decrypt it is unknown.
   const orphan = await canCloneProfile(join(root, "nobody"), base, root);
