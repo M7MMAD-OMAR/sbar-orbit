@@ -37,6 +37,16 @@ interface Session {
   /** Where this session's restore points live. Cleared when it ends: each one is a copy of live cookies. */
   restoreStore: string;
   restorePoints: RestorePoint[];
+  /**
+   * Set the first time an observation returns page content, and never cleared.
+   *
+   * Before it, the session has only seen what the person asked for. After it, everything the agent
+   * decides has been influenced by something a page said, so a widening request from that point on
+   * is a request the page may have written. There is no widening path to guard, by design, and this
+   * is what makes that a property rather than an accident: it is recorded, so the journal shows
+   * which side of the line every decision fell on.
+   */
+  tainted: boolean;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -123,7 +133,7 @@ export class Sessions {
       await mkdir(journals, { recursive: true, mode: 0o700 });
       const journalPath = join(journals, `${id}.jsonl`);
       const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
-        restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [] };
+        restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [], tainted: false };
       // The first line says what was agreed to, so a reader knows what the rest of the file was
       // judged against without having to ask the broker that is no longer running.
       void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
@@ -248,13 +258,19 @@ export class Sessions {
    * click or a navigation: a snapshot cannot unsend a message, and recording one there would be a
    * promise the filesystem cannot keep.
    */
+  /** Page content entering the session is what taints it, whichever action carried it in. */
+  private taintedBy(session: Session, actionType: string) {
+    if (!session.tainted && ["read", "observe"].includes(actionType)) session.tainted = true;
+  }
   private async guarded(session: Session, action: { type: string }) {
     if (session.restoreStore) {
       const point = await takeRestorePoint(session.profile, session.restoreStore, session.journal.length, action.type)
         .catch(() => null);
       if (point) session.restorePoints.push(point);
     }
-    return session.backend.act(action as Parameters<typeof session.backend.act>[0]);
+    const result = await session.backend.act(action as Parameters<typeof session.backend.act>[0]);
+    this.taintedBy(session, action.type);
+    return result;
   }
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
@@ -290,7 +306,7 @@ export class Sessions {
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
-    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath };
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints };
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {
@@ -304,7 +320,14 @@ export class Sessions {
         ...(params.allow === undefined ? {} : { allow: parseActionClasses(params.allow) }),
       };
       session.policy = narrow(session.policy, limits);
-      return { sessionId: session.id, policy: session.policy };
+      // Recorded so a reader can see that a narrowing happened, and whether it happened before or
+      // after a page had spoken to the session.
+      void this.record(session, journalEntry({
+        at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
+        actor: "person", actionType: "session.narrow",
+        decision: { outcome: "allow" },
+      }));
+      return { sessionId: session.id, policy: session.policy, tainted: session.tainted };
     }
     if (request.method === "session.stop") return this.stop(session);
     this.ensureOpen(session);
@@ -337,8 +360,12 @@ export class Sessions {
       session.state = "running"; session.paused = undefined;
       return this.info(session);
     }
-    // Capture is read-only and must not wait behind a locator action.
-    session.observing ??= session.backend.observe().catch(error => {
+    // Capture is read-only and must not wait behind a locator action. It is still page content
+    // arriving in the session, so it taints on its own path as a read does on the action path.
+    session.observing ??= session.backend.observe().then(frame => {
+      this.taintedBy(session, "observe");
+      return frame;
+    }).catch(error => {
       this.ensureOpen(session);
       throw error;
     }).finally(() => { session.observing = undefined; });

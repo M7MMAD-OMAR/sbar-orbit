@@ -121,6 +121,32 @@ try {
     noSelector: !raw.includes("h1"),
   };
 
+  // The taint line: before a page has spoken to the session, everything it decided came from the
+  // person. After, it did not. There is no widening path by design, and recording the line is what
+  // makes that a property a reader can check rather than an accident.
+  const fresh = await run("session.create", {
+    backend: "browser", taskName: "Taint probe",
+    policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
+  }) as { sessionId: string };
+  const tainting = { sessionId: fresh.sessionId };
+  report.taintedBeforeAnyPage = ((await run("session.journal", tainting)) as { tainted: boolean }).tainted;
+  await act(tainting, { type: "navigate", url: origin });
+  report.taintedAfterNavigate = ((await run("session.journal", tainting)) as { tainted: boolean }).tainted;
+  await act(tainting, { type: "read", selector: "h1" });
+  report.taintedAfterReadingThePage = ((await run("session.journal", tainting)) as { tainted: boolean }).tainted;
+  await run("session.stop", tainting);
+
+  const observed = await run("session.create", {
+    backend: "browser", taskName: "Taint by observation",
+    policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
+  }) as { sessionId: string };
+  const watching = { sessionId: observed.sessionId };
+  await act(watching, { type: "navigate", url: origin });
+  await run("session.observe", watching);
+  // A frame is page content too, and it arrives on its own path rather than through an action.
+  report.taintedByObservationAlone = ((await run("session.journal", watching)) as { tainted: boolean }).tainted;
+  await run("session.stop", watching);
+
   // Narrowing is available and one way.
   const narrowed = await run("session.narrow", { ...immune, allow: ["read"] }) as { policy: { allow: string[] } };
   report.afterNarrow = narrowed.policy.allow;
