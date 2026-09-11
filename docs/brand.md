@@ -20,7 +20,7 @@ The outlined square is one open stroke with round caps that stops short at both 
 
 | File | Form | Use |
 |---|---|---|
-| [`brand/orbit-mark.svg`](../brand/orbit-mark.svg) | 24 grid, stroke 1.4, `currentColor` | Everything at 20px and above |
+| [`brand/orbit-mark.svg`](../brand/orbit-mark.svg) | 24 grid, stroke 1.4, `currentColor` | The canonical drawing, for anything at 20px and above. Nothing in the product is that large, so every surface here uses the small variant instead |
 | [`brand/orbit-mark-small.svg`](../brand/orbit-mark-small.svg) | Same outer bounds, stroke 2.2, wider notches | 16px and 22px, panel and tray |
 | [`brand/favicon.svg`](../brand/favicon.svg) | Small geometry, `#204c87`, swaps to `#6893ce` in a dark scheme | Browser tab |
 | [`brand/logo/`](../brand/logo) | Approved raster artwork, 2172 by 724 for the lockups | The source of truth the SVGs were traced from |
