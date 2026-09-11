@@ -1,6 +1,6 @@
 # Desktop presence
 
-Status: the status source, the edge panel and the working indicator exist and are measured. A shell-native module and a tray icon remain proposals.
+Status: the status source, the edge panel, the working indicator and a quickshell bar module exist and are measured. A tray icon remains a proposal.
 
 ## The request
 
@@ -70,7 +70,23 @@ The panel and its rows take the person's own colour names, `window_bg_color`, `w
 
 ## What does not exist yet
 
-**A shell-native module.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work. On this workstation the pill is started by the compositor at login instead, from the person's Hyprland autostart, beside the broker service.
+### The bar module
+
+```sh
+ln -s "$PWD/desktop/orbit-stream.py" ~/.local/bin/orbit-stream
+cp desktop/quickshell/SbarOrbit.qml ~/.config/quickshell/ii/services/
+cp desktop/quickshell/OrbitIndicator.qml ~/.config/quickshell/ii/modules/ii/bar/
+```
+
+For a shell that has its own bar, the same presence as a widget in it rather than a surface of Orbit's own. This workstation runs quickshell with the `ii` configuration, so the module is QML: a singleton service, `SbarOrbit`, and a widget, `OrbitIndicator`, dropped into the configuration and named once in its bar layout beside the other indicators.
+
+The widget is a capsule in the shell's own colours, drawn with `Appearance.colors`, so it follows the person's generated theme with nothing to configure. It shows the state by colour with no number on it, blinks once when a session or a window appears, lists the sessions on hover in the shell's own popup, and opens the viewer on click. When no session is open it takes no width at all, so a bar with no agents running looks exactly as it did before.
+
+It reads `desktop/orbit-stream.py`, a helper that prints one JSON line whenever what a bar would show changes. `sbar-orbit status --watch` prints the same shape and works in its place, but it starts a Bun runtime that measured 117 MB resident, where the helper measured 17 MB, and a bar widget should not cost more than the desktop it decorates. The helper is restarted if it exits, so the bar recovers on its own. Both it and the panel share `desktop/orbit_client.py`, which is the broker client with no toolkit attached.
+
+Verified inside a private display, the same way the panel is: a second quickshell instance rendering the widget and the content of its popup, reading the live broker. The capsule drew in the theme's idle colour and the popup read `2 sessions · 5 windows` over one row per session with the agent, the task, the window count and the state.
+
+**A shell-native module for another shell.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work. On this workstation the pill is started by the compositor at login instead, from the person's Hyprland autostart, beside the broker service.
 
 **A tray icon.** Needs a StatusNotifierItem host; quickshell provides one. Not started, because the edge panel covers the same need without depending on the shell.
 
