@@ -871,8 +871,8 @@ class SettingsWindow(Gtk.Window):
         buttons.append(viewer)
         buttons.append(reset)
         outer.append(buttons)
-        outer.append(start(label(f"Saved in {SETTINGS_PATH}", "orbit-dim")))
-        outer.append(start(label("A right click on the mark opens this window. A left click opens the viewer.", "orbit-dim")))
+        outer.append(self.note(f"Saved in {SETTINGS_PATH}"))
+        outer.append(self.note("A right click on the mark opens this window, a left click opens the viewer, and resting the pointer on it lists the sessions."))
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -884,6 +884,17 @@ class SettingsWindow(Gtk.Window):
         escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
                                              Gtk.CallbackAction.new(lambda *_: (self.close(), True)[1])))
         self.add_controller(escape)
+
+    @staticmethod
+    def note(text):
+        """A line of explanation, which wraps rather than being cut short the way a row label is."""
+        wrapped = Gtk.Label(label=text)
+        wrapped.set_halign(Gtk.Align.START)
+        wrapped.set_xalign(0)
+        wrapped.set_wrap(True)
+        wrapped.set_max_width_chars(44)
+        wrapped.add_css_class("orbit-dim")
+        return wrapped
 
     def group(self, title, rows):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
