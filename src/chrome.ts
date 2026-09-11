@@ -83,7 +83,11 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     };
     connected.onmessage = event => transport.onmessage?.(JSON.parse(String(event.data)));
     connected.onclose = () => transport.onclose?.();
-    browser = await chromium.connectOverCDP(transport, { timeout: 10000 });
+    // The same allowance as the socket above, and for the same reason. The handshake that follows
+    // runs against a Chrome that is still starting on the shared budget, so a shorter deadline here
+    // only moves the starvation failure one line down. Measured: a run with the host busy enough for
+    // hyprctl to miss 37 of 84 samples and the sample loop to stall 3.7 s lost this handshake at 10 s.
+    browser = await chromium.connectOverCDP(transport, { timeout: 20000 });
     const context = browser.contexts()[0];
     if (!context) throw new OrbitError("BACKEND_FAILED", "Owned Chrome has no default context");
     const page = context.pages()[0] ?? await context.newPage();
