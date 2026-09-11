@@ -21,16 +21,32 @@ const report: Record<string, unknown> = { date: new Date().toISOString().slice(0
 
 /** Everywhere else. Every hit here is the lease failing to hold. */
 let reached: string[] = [];
-const offLimits = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
-  reached.push(new URL(request.url).pathname);
-  return new Response("<h1>off lease</h1>", { headers: { "Content-Type": "text/html", "Access-Control-Allow-Origin": "*" } });
-} });
+const offLimits = Bun.serve({ hostname: "127.0.0.1", port: 0,
+  // A socket that upgrades is a route out that no request interception sees as a document.
+  websocket: { message() {}, open(ws) { reached.push("/via-websocket"); ws.close(); } },
+  fetch(request, server) {
+    const path = new URL(request.url).pathname;
+    if (path === "/via-websocket") { if (server.upgrade(request)) return undefined; }
+    reached.push(path);
+    return new Response("<h1>off lease</h1>", { headers: { "Content-Type": "text/html", "Access-Control-Allow-Origin": "*" } });
+  } });
 const away = `http://127.0.0.1:${offLimits.port}`;
 
 const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
   const url = new URL(request.url);
   // A page that redirects itself the moment it is opened.
   if (url.pathname === "/redirect") return Response.redirect(`${away}/via-redirect`, 302);
+  // A service worker outlives the page and fetches on its own schedule, which is why it is worth
+  // asking separately whether the lease reaches it.
+  if (url.pathname === "/sw.js") return new Response(
+    `self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(Promise.all([
+       fetch("${away}/via-serviceworker").catch(()=>{}),
+       fetch("/worker-ran").catch(()=>{})
+     ])); });`,
+    { headers: { "Content-Type": "text/javascript" } });
+  // Hit by the worker itself. If this never arrives, a blocked off-lease fetch proves nothing,
+  // because the worker never ran to make one.
+  if (url.pathname === "/worker-ran") { workerRan = true; return new Response("ok"); }
   const body = {
     "/": `<h1>allowed</h1>`,
     "/iframe": `<h1>allowed</h1><iframe src="${away}/via-iframe"></iframe>`,
@@ -41,10 +57,20 @@ const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     "/jsnav": `<h1>allowed</h1><script>location.href='${away}/via-jsnav'</script>`,
     "/popup": `<h1>allowed</h1><script>window.open('${away}/via-popup')</script>`,
     "/beacon": `<h1>allowed</h1><script>navigator.sendBeacon('${away}/via-beacon','x')</script>`,
+    "/serviceworker": `<h1>allowed</h1><output id=o>registering</output><script>
+      navigator.serviceWorker.register('/sw.js').then(()=>{o.textContent='registered'},e=>{o.textContent='register failed: '+e})</script>`,
+    // The socket records its own fate, so a blocked one is distinguishable from one never opened.
+    "/websocket": `<h1>allowed</h1><output id=o>opening</output><script>
+      try { const w = new WebSocket('ws://127.0.0.1:${offLimits.port}/via-websocket');
+        w.onopen = () => o.textContent = 'OPENED';
+        w.onerror = () => o.textContent = 'refused';
+        w.onclose = () => { if (o.textContent === 'opening') o.textContent = 'refused'; };
+      } catch (e) { o.textContent = 'threw: ' + e }</script>`,
   }[url.pathname];
   return new Response(body ?? "<h1>allowed</h1>", { headers: { "Content-Type": "text/html" } });
 } });
 const allowed = `http://127.0.0.1:${site.port}`;
+let workerRan = false;
 
 const sessions = new Sessions(root);
 try {
@@ -61,14 +87,21 @@ try {
     "top-level redirect": "/redirect", "iframe": "/iframe", "image": "/image", "fetch": "/fetch",
     "script tag": "/script", "meta refresh": "/meta", "javascript navigation": "/jsnav",
     "window.open popup": "/popup", "sendBeacon": "/beacon",
+    "service worker fetch": "/serviceworker", "websocket": "/websocket",
   })) {
     reached = [];
     try { await act(session, { type: "navigate", url: `${allowed}${path}` }); } catch { /* a blocked top level navigation is a failure to navigate */ }
     // Give the page a moment to make its own requests before judging.
-    await Bun.sleep(1200);
+    await Bun.sleep(1600);
     routes[name] = reached.length ? `REACHED ${reached.join(",")}` : "blocked";
+    // The page's own account of what happened, so a "blocked" row is backed by a mechanism that ran.
+    if (path === "/serviceworker" || path === "/websocket")
+      routes[`${name} (the page's own report)`] = await act(session, { type: "read", selector: "#o" })
+        .then(result => (result as { text: string }).text, () => "unreadable");
   }
   report.pageInitiated = routes;
+  // The control: did the worker run at all? Without this a blocked off-lease fetch proves nothing.
+  report.serviceWorkerActuallyRan = workerRan;
 
   // The agent asking directly, which is the case the broker already decided.
   reached = [];
