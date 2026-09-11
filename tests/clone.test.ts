@@ -137,3 +137,38 @@ test("the clone is private even when the person's own profile is not", async () 
   await result.close();
   await rm(root, { recursive: true, force: true });
 });
+
+test("the clone is writable, and the parts that decide what the browser is are not", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-clone-frozen-"));
+  const source = await fixtureProfile(root, "google-chrome");
+  await writeFile(join(source, "Local State"), "{}");
+  await mkdir(join(source, "Default", "Extensions", "xyz"), { recursive: true });
+  await writeFile(join(source, "Default", "Extensions", "xyz", "manifest.json"), "{}");
+  await writeFile(join(source, "Default", "Preferences"), "{}");
+  const session = join(root, "session-profile");
+  await mkdir(session, { recursive: true });
+
+  const result = await cloneProfile(source, session, bounded, capabilitiesFor(source));
+  // A session that can rewrite its own settings, content permissions or extension set can widen
+  // itself by editing the thing meant to bound it.
+  expect(result.readOnly).toContain("Preferences");
+  expect(result.readOnly).toContain("Extensions");
+  expect((await stat(join(session, "Default", "Preferences"))).mode & 0o777).toBe(0o400);
+  expect((await stat(join(session, "Default", "Extensions", "xyz", "manifest.json"))).mode & 0o777).toBe(0o400);
+  // The files inside are frozen; the directory stays owner writable, because a directory whose
+  // entries cannot be unlinked is a copy of the person's live cookies that cannot be deleted. Privacy
+  // is the top level 0700, which is what stops anything outside traversing in at all.
+  expect((await stat(join(session, "Default", "Extensions"))).mode & 0o200).toBe(0o200);
+  expect((await stat(join(session, "Local State"))).mode & 0o777).toBe(0o400);
+  // Nothing here loosens the directory, which already holds the person's live sessions.
+  expect((await stat(session)).mode & 0o777).toBe(0o700);
+  // The source keeps its own modes: Orbit freezes its copy, not the person's browser.
+  expect((await stat(join(source, "Default", "Preferences"))).mode & 0o777).not.toBe(0o400);
+
+  // The rest of the clone stays writable, because the session is meant to use it.
+  await writeFile(join(session, "Default", "Cookies-journal"), "ok");
+  // And the whole thing can still be removed, which is how the clone stops outliving its session.
+  await rm(session, { recursive: true, force: true });
+  await result.close();
+  await rm(root, { recursive: true, force: true });
+});

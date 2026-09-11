@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { AccountLease } from "./profiles";
 import { join } from "node:path";
@@ -26,6 +26,13 @@ interface Session {
   releaseClone?: () => Promise<void>;
   /** Off-lease requests the page itself made, which no agent action would show. */
   blockedOrigins: string[];
+  /**
+   * Where the durable copy of the journal is appended. The in-memory list answers the API, and this
+   * is what is left afterwards: an autonomous run is reviewed after it finishes, and a record that
+   * dies with the broker cannot be reviewed at all. It lives outside the session profile, which is
+   * deleted when the session stops.
+   */
+  journalPath: string;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -104,7 +111,15 @@ export class Sessions {
         catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins };
+      const journals = join(this.root, "journals");
+      await mkdir(journals, { recursive: true, mode: 0o700 });
+      const journalPath = join(journals, `${id}.jsonl`);
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath };
+      // The first line says what was agreed to, so a reader knows what the rest of the file was
+      // judged against without having to ask the broker that is no longer running.
+      void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
+        actionType: "session.create", actionClass: "read", outcome: "allow",
+        reason: `${String(input.backend)} session, ${policy.mode}, origins ${policy.origins === "any" ? "any" : policy.origins.join(" ") || "none"}, allow ${policy.allow.join(" ")}, deny ${policy.deny.join(" ") || "none"}${input.cloneOf === undefined ? "" : ", from a cloned profile"}` });
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
@@ -124,6 +139,16 @@ export class Sessions {
         throw new OrbitError("RESOURCE_UNAVAILABLE", "The system could not start an Orbit process; release resources before retrying");
       throw error;
     }
+  }
+  /**
+   * Remember one decision and append it to the durable copy. The append is not awaited by the caller:
+   * a slow disk must not delay a decision that has already been made, and a lost line is a lost line
+   * rather than a stalled session. Failures are swallowed for the same reason.
+   */
+  private record(session: Session, entry: JournalEntry) {
+    session.journal.push(entry);
+    if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
+    return appendFile(session.journalPath, `${JSON.stringify(entry)}\n`, { mode: 0o600 }).catch(() => {});
   }
   private enqueue(session: Session, work: () => Promise<unknown>) {
     const result = session.tail.then(async () => {
@@ -155,7 +180,7 @@ export class Sessions {
     // described. Those are the same thing only when nothing has tried to make them differ.
     const destination = "url" in action ? (action as { url?: string }).url : undefined;
     const inputLength = "text" in action ? String((action as { text?: string }).text ?? "").length : undefined;
-    const result = this.decided(session, action, destination, inputLength);
+    const result = this.decided(session, action, destination, inputLength, requestId);
     session.requests.set(requestId, { fingerprint, result });
     return result;
   }
@@ -163,15 +188,15 @@ export class Sessions {
    * Decide one action, then run it if it survives. A consult is resolved by the advisor rather than
    * by a person, because an autonomous session has nobody to wait for.
    */
-  private decided(session: Session, action: { type: string }, destination: string | undefined, inputLength: number | undefined): Promise<unknown> {
+  private decided(session: Session, action: { type: string }, destination: string | undefined, inputLength: number | undefined, requestId: string): Promise<unknown> {
     const record = (decision: ReturnType<typeof decide>, decidedBy?: string) => {
-      session.journal.push(journalEntry({
+      void this.record(session, journalEntry({
+        at: new Date().toISOString(), requestId,
         sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
         actionType: action.type, decision, url: destination,
         ...(decidedBy === undefined ? {} : { decidedBy }),
         ...(inputLength === undefined ? {} : { inputLength }),
       }));
-      if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
     };
     const refuse = (decision: Extract<ReturnType<typeof decide>, { outcome: "deny" }>) => {
       // An immune deny contains the session as well as refusing the action. An autonomous agent that
@@ -239,7 +264,7 @@ export class Sessions {
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
-    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)] };
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath };
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {

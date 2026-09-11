@@ -1,4 +1,4 @@
-import { chmod, cp, rm } from "node:fs/promises";
+import { chmod, cp, readdir, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { canCloneProfile, detectPlatform, stripSingletonMarkers, type PlatformCapabilities } from "./platform";
@@ -19,6 +19,25 @@ import type { ChromeLaunchOptions } from "./chrome";
  * bytes, and 142 of 142 cookies decrypt in the clone.
  */
 
+/**
+ * Paths inside the clone the session may read and not rewrite, borrowed from Codex's read only
+ * subpaths inside a writable root. The clone is the session's to change, but these four decide what
+ * the browser itself is: its settings, its content permissions, the key wrapper and the extension
+ * set. A session that can rewrite them can widen itself by editing the thing that was supposed to
+ * bound it.
+ *
+ * Two limits, both stated plainly, because a guard that is oversold is worse than none.
+ *
+ * This is a file mode on files the same user owns. It stops the browser writing them in the ordinary
+ * course. It is not containment against a program that decides to change them back.
+ *
+ * Only files are frozen, never the directories holding them. A read only directory cannot have its
+ * entries unlinked, and the session profile is deleted when the session stops, so freezing a
+ * directory would trade "an extension could be added" for "a copy of the person's live cookies
+ * cannot be removed". That is the worse of the two, and the tests that found it are in place.
+ */
+export const readOnlyProfilePaths = ["Preferences", "Secure Preferences", "Local State", "Extensions"];
+
 export type CloneResult = {
   /** Launch options the caller must hand to the browser, or the clone starts signed out. */
   launch: ChromeLaunchOptions;
@@ -26,6 +45,8 @@ export type CloneResult = {
   close: () => Promise<void>;
   sourceProfile: string;
   reflinked: boolean;
+  /** Which of the read only paths were present and were frozen. */
+  readOnly: string[];
 };
 
 /**
@@ -90,12 +111,26 @@ export async function cloneProfile(
   // A copy taken from a running browser carries its locks. Chrome then refuses to start, and has been
   // observed asking a desktop dialog to resolve it, which would put a window on the person's screen.
   await stripSingletonMarkers(sessionProfile);
+  const frozen: string[] = [];
+  const freeze = async (path: string, relative: string) => {
+    let entry: Awaited<ReturnType<typeof stat>>;
+    try { entry = await stat(path); } catch { return }   // never had it, so nothing is unprotected
+    if (entry.isFile()) { await chmod(path, 0o400); frozen.push(relative); return }
+    if (!entry.isDirectory()) return;
+    // Into the directory, not the directory itself: see the note above on why.
+    for (const child of await readdir(path, { withFileTypes: true }))
+      await freeze(join(path, child.name), relative);
+    if (!frozen.includes(relative)) frozen.push(relative);
+  };
+  for (const relative of readOnlyProfilePaths)
+    for (const path of [join(sessionProfile, relative), join(sessionProfile, "Default", relative)])
+      await freeze(path, relative);
 
   let bus: { address: string; close: () => Promise<void> } | undefined;
   if (verdict.store !== "basic")
     bus = await oneItemSecretBus(verdict.install.keyringApplication, verdict.install.keyringItem);
   return {
-    sourceProfile, reflinked: verdict.reflink,
+    sourceProfile, reflinked: verdict.reflink, readOnly: frozen,
     launch: {
       // The install that owns the profile, because the keyring item is named after its branding and
       // another browser looks up a different one and decrypts nothing.

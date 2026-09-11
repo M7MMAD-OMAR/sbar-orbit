@@ -384,6 +384,10 @@ export function narrow(policy: SessionPolicy, limits: { origins?: string[]; allo
  * size of what it carried.
  */
 export type JournalEntry = {
+  /** When, so a run can be read back in order after the broker that wrote it is gone. */
+  at?: string;
+  /** The caller's own id for the action, which is how a retry is told from a second attempt. */
+  requestId?: string;
   sequence: number;
   sessionId: string;
   actor: "agent" | "person";
@@ -406,10 +410,13 @@ export type JournalEntry = {
 export function journalEntry(input: {
   sequence: number; sessionId: string; actor: "agent" | "person"; actionType: string;
   decision: PolicyDecision; url?: string; inputLength?: number; decidedBy?: string;
+  at?: string; requestId?: string;
 }): JournalEntry {
   let origin: string | undefined;
   if (input.url !== undefined) { try { origin = new URL(input.url).origin; } catch { origin = undefined; } }
   return {
+    ...(input.at === undefined ? {} : { at: input.at }),
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     sequence: input.sequence, sessionId: input.sessionId, actor: input.actor,
     actionType: input.actionType, actionClass: classify(input.actionType),
     ...(origin ? { origin } : {}),

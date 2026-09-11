@@ -99,6 +99,28 @@ try {
   report.readAfterContainment = await outcome(act(immune, { type: "read", selector: "h1" }));
   report.journalTail = contained.entries.slice(-4);
 
+  // The durable copy: what is left after the broker is gone, which is how an autonomous run is
+  // reviewed at all. Read from the file rather than from the API, and checked for what it must not
+  // carry, because a journal in a project that clones browser profiles is a leak if it is careless.
+  const durable = await run("session.journal", immune) as { path: string };
+  const lines = (await Bun.file(durable.path).text()).trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
+  report.durableJournal = {
+    path: durable.path.replace(process.env.HOME ?? "", "~"),
+    mode: ((await Bun.file(durable.path).stat()).mode & 0o777).toString(8),
+    lines: lines.length,
+    firstLineIsTheAgreement: lines[0]?.actionType === "session.create",
+    agreement: lines[0]?.reason,
+    everyLineTimestamped: lines.slice(1).every(line => typeof line.at === "string"),
+    everyActionCarriesItsRequestId: lines.slice(1).every(line => typeof line.requestId === "string"),
+    outcomes: lines.map(line => line.outcome),
+  };
+  const raw = lines.map(line => JSON.stringify(line)).join("\n");
+  report.journalCarriesNothingItShouldNot = {
+    noUrlPath: !raw.includes("/account/password"),
+    noQuery: !raw.includes("?"),
+    noSelector: !raw.includes("h1"),
+  };
+
   // Narrowing is available and one way.
   const narrowed = await run("session.narrow", { ...immune, allow: ["read"] }) as { policy: { allow: string[] } };
   report.afterNarrow = narrowed.policy.allow;
