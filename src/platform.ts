@@ -256,11 +256,16 @@ export type CloneRefusal = { allowed: false; reason: string } | { allowed: true;
 export async function canCloneProfile(profileDirectory: string, capabilities: PlatformCapabilities, workspace: string): Promise<CloneRefusal> {
   const install = capabilities.browsers.find(candidate => candidate.profileDirectory === profileDirectory);
   if (!install) return { allowed: false, reason: "No detected browser install owns that profile directory, so the binary that can decrypt it is unknown." };
-  // Packaging decides where a profile lives, not whether its key can be read. A Flatpak browser asks
-  // the Secret portal, which proxies to the same login keyring under the same application attribute,
-  // so a directly launchable browser of the same branding opens it. Measured on this workstation: a
-  // Flatpak Chrome profile decrypted 115 of 115 cookies under the system Chrome binary. What Orbit
-  // cannot do is exec a sandboxed browser itself, so it needs a launchable install to hand it to.
+  // Packaging decides where a profile lives, not whether its key can be read: the keyring item is
+  // keyed by the application attribute, not by the sandbox, so a directly launchable browser of the
+  // same branding opens a profile a sandboxed one wrote. Measured here on a Flatpak Chrome profile,
+  // 115 of 115 cookies decrypted under the system Chrome binary. That tree was a LEFTOVER from an
+  // uninstalled application, so it is evidence that the keyring item is shared, not proof that a live
+  // Flatpak browser behaves the same way. docs/porting.md carries the difference as an open gate.
+  //
+  // Orbit must never launch the sandboxed browser itself. flatpak run places it in its own transient
+  // scope under app.slice, outside the cgroup that carries Orbit's budget, which trips
+  // RESOURCE_BOUNDARY_LOST. A launchable install is handed the profile instead.
   const launcher = capabilities.browsers.find(candidate =>
     candidate.id === install.id && (candidate.packaging === "system" || candidate.packaging === "home"));
   if (!launcher)
