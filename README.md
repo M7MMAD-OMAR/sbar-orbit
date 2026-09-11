@@ -1,6 +1,11 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/logo/lockup-latin-white.png">
+  <img src="brand/logo/lockup-latin-blue.png" alt="Sbar Orbit" width="240">
+</picture>
+
 # Sbar Orbit
 
-Local application workspaces for tool-capable AI agents.
+Local application workspaces for tool-capable AI agents. The mark is two surfaces offset on the diagonal: the screen you keep, and the one Orbit opens beside it. They never touch. [Brand](docs/brand.md).
 
 **Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or private Fedora display. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile.
 
@@ -44,5 +49,6 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Research](docs/research.md) | Primary technical sources |
 | [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |
 | [Appearance](docs/appearance.md) | Applications in a private display look like the desktop |
+| [Brand](docs/brand.md) | The mark, the name, the palette and where each asset is used |
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)

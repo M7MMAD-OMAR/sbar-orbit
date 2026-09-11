@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" role="img" aria-label="Sbar Orbit">
+  <!-- Below 20px the canonical stroke and its two notches close up. Same silhouette and same outer
+       bounds, with a heavier stroke and wider notches so both survive a 16px raster. -->
+  <path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46"
+        stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  <rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/>
+</svg>

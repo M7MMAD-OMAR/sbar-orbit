@@ -17,6 +17,8 @@ Native tests additionally require the Fedora runtime and `ORBIT_TEST_NATIVE=1`. 
 
 Never commit account snapshots, browser profiles, access links, personal configuration, local logs or raw workstation evidence. Before committing, stage explicit paths and run `bun run scripts/public-audit.ts`; also scan staged content with Gitleaks as described in SECURITY.md.
 
+Binary files are refused by the publication audit unless they have been reviewed. The review is recorded in `scripts/public-audit.ts` as a path and the SHA-256 of its content, so replacing an approved file with different bytes fails again rather than inheriting the approval. Adding a binary means looking at it, saying in the commit what it is, and adding its hash; there is no flag that skips this. Today the list holds the brand artwork under `brand/logo/` and nothing else.
+
 The two scanners answer different questions and neither replaces the other. The publication audit looks for personal paths, private addresses and generated artifacts in tracked content. Gitleaks looks for key material. A staged file carrying a live-looking API key passes the audit and is refused by Gitleaks; a personal home path passes Gitleaks and is refused by the audit.
 
 To check the whole repository rather than one commit:

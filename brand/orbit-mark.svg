@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" role="img" aria-label="Sbar Orbit">
+  <!-- Traced from brand/logo/mark-blue.png onto a 24 grid. Two surfaces offset on the diagonal: the
+       filled one is the workspace Orbit owns, the outlined one is the screen it sits beside. The
+       outline stops short at both crossings, so the two never touch. One colour, always. -->
+  <path d="M8.75 7.46V5.57a1.98 1.98 0 0 1 1.98-1.98h8.59a1.98 1.98 0 0 1 1.98 1.98v8.59a1.98 1.98 0 0 1-1.98 1.98h-3.44"
+        stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+  <rect x="2" y="8.94" width="12.16" height="12.16" rx="2.39" fill="currentColor"/>
+</svg>
