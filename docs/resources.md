@@ -43,8 +43,9 @@ The panel and its mark were suspected of the processor load, so they were measur
 |---|---|
 | Panel process | 0.1% |
 | Broker answering the panel's polls | 0.5% |
+| Panel process, opening and closing the cards without pause for 20 s | 3.4% |
 
-The panel resident set is about 116 MB, the ordinary cost of a Python and GTK process, and it is the person's own process outside Orbit's budget. The dot's blink and its colour transitions are CSS on the Cairo renderer, repainting a widget a few pixels across. Polling once a second is one session-list call and one presence read per open session, each a compositor tree query or a page-title read measured well under a millisecond of broker time. None of this moves a 24-core machine.
+The panel resident set is about 116 MB, the ordinary cost of a Python and GTK process, and it is the person's own process outside Orbit's budget. The dot's blink and its colour transitions are CSS on the Cairo renderer, repainting a widget a few pixels across. The morph that draws the card out of the capsule is a Cairo path a few hundred pixels across, redrawn on the frame clock; the tick callback is added when the shape starts moving and removed when it settles, so the 3.4% row above is the worst case of a hand that never stops hovering, and a real hover pays it for a third of a second. Polling once a second is one session-list call and one presence read per open session, each a compositor tree query or a page-title read measured well under a millisecond of broker time. None of this moves a 24-core machine.
 
 ## What actually spikes the processor
 
