@@ -10,6 +10,8 @@ Start the broker, set `ORBIT_SOCKET` to its printed path, then run:
 ./bin/sbar-orbit connector-config
 ```
 
+On this workstation the server is registered for Claude Code at user scope (`claude mcp add --scope user orbit ...` with the managed socket), and for Hermes in its `mcp_servers`, so every conversation on the machine has the tools. The machine-wide agent instructions in `~/AGENTS.md` and the `sbar-orbit` skill in `~/.claude/skills` say when to use them: any task that needs a screen, a browser or a desktop application goes through an Orbit session and never through the person's own screen. The rule exists because an agent that merely has the tool available still reaches for a host screenshot unless it is told not to; that happened in a Claude conversation before the rule was written.
+
 Register the generated server through your host's MCP settings. The command prints configuration without editing personal settings. Preserve existing servers. A broker started by hand uses a fresh socket each time, so regenerate configuration after restarting it. The managed service binds one fixed socket instead, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so its configuration stays valid across restarts.
 
 Tool approval and selection belong to the host. An API model requires a runtime that executes its tool calls. An app with no custom tool interface cannot automatically use Orbit. See the [MCP architecture](https://modelcontextprotocol.io/specification/2024-11-05/architecture) and [Claude MCP setup](https://code.claude.com/docs/en/mcp).

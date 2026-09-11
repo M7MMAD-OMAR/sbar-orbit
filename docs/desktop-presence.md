@@ -35,19 +35,22 @@ sbar-orbit panel                  # right edge, current monitor
 sbar-orbit panel --edge left --monitor 1
 ```
 
-A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks the protocol, and it never becomes one of the person's windows. Collapsed it is a dot and `sessions/tabs`: grey when idle, green while an agent is working, amber when a session is paused. Hovering expands it into one row per session: agent and task, what is on screen, the state and current action, which tab or window of how many, and the pointer position. Clicking a row opens the viewer.
+A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks the protocol, and it never becomes one of the person's windows. Collapsed it is one rounded pill holding the number of sessions: dimmed when nothing runs, in the theme's accent while an agent is working, amber when a session is paused, and a single dot when the broker is not running. It pulses once when a session starts or an application or tab appears in one. Hovering expands it into one card per session: agent, a state chip, task, what is on screen, which tab or window of how many, and the current action. Clicking a card opens the viewer.
+
+A right click opens the settings: notifications on or off, the working frame on or off, open the viewer, quit. Notifications go through the person's own daemon by way of `notify-send`, one when an agent starts a session, one when it opens an application or tab, one when it finishes. Settings persist in `~/.config/sbar-orbit/panel.json`; `--edge`, `--monitor` (an index or a connector name such as `HDMI-A-5`), `--no-indicator`, `--indicator-color` and `--no-notifications` override them for one run. With no monitor chosen the pill goes to the largest one, the person's main screen.
 
 It is written against GTK 4 with the Cairo renderer, because a strip of text needs no GPU and the GPU renderers retry failing surfaces in a loop on a software display. It runs as the person's own desktop process, outside Orbit's shared budget on purpose: it is part of their shell, not of the agents' work.
 
-Verified where it can be captured without touching the person's screen: inside a private display, which is a layer-shell compositor like the desktop it is meant for, with a text editor and a calculator open. `experiments/panel-check.ts` saves the collapsed and the expanded frame. The strip read `1/2` for one session with two windows; the expanded row read `Hermes · Editing a document · Calculator · running · pointer · done · window 2 of 2 · pointer 1265,400`.
+Verified where it can be captured without touching the person's screen: inside a private display, which is a layer-shell compositor like the desktop it is meant for, with a text editor and a calculator open. `experiments/panel-check.ts` saves the collapsed and the expanded frame. The pill read `1` for one session; the expanded card read `Hermes`, `running`, `Editing a document`, `Calculator · 2 of 2 windows · pointer`.
 
 The link the panel opens carries a fresh access token. It is requested at the moment of the click and handed to `Gtk.UriLauncher`, never written to a file or printed. On a desktop where the browser is already running the URL travels over its remoting channel rather than a new process's command line.
 
 ### The working indicator
 
 ```sh
-sbar-orbit panel --indicator
-sbar-orbit panel --indicator --indicator-color "#fcb975"
+sbar-orbit panel                                 # the frame is on by default
+sbar-orbit panel --indicator-color "#fcb975"
+sbar-orbit panel --no-indicator
 ```
 
 Four layer surfaces on the overlay layer, one strip along each edge of the same monitor, each with an empty input region so every click, hover and edge gesture passes through to whatever is underneath. Together they draw a 3 px frame around the screen while at least one session's current action is in flight and are hidden otherwise, so a glance at any edge says whether an agent is working right now. Four strips cost a few hundred kilobytes of buffer between them; one surface covering the output with a transparent centre would cost 29 MB per buffer on a 2560 by 1600 display at its scale and 75 MB on the 4K one, uploaded again at every map. The strips are painted by a rule loaded above user priority, since the person's `gtk.css` may paint every window in their theme's colour.
@@ -60,7 +63,7 @@ The panel and its rows take the person's own colour names, `window_bg_color`, `w
 
 ## What does not exist yet
 
-**A shell-native module.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work.
+**A shell-native module.** This workstation runs quickshell with the `ii` configuration, so a module for its bar would be QML. It belongs in the person's own configuration repository, which their autosave timer sweeps, not here. With `sbar-orbit status --watch` as the contract, it is a small piece of work. On this workstation the pill is started by the compositor at login instead, from the person's Hyprland autostart, beside the broker service.
 
 **A tray icon.** Needs a StatusNotifierItem host; quickshell provides one. Not started, because the edge panel covers the same need without depending on the shell.
 
