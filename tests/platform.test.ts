@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  canCloneProfile, detectBrowsers, detectPlatform, passwordStoreFor, profileCookieScheme,
+  canCloneProfile, describeMachine, detectBrowsers, detectPlatform, passwordStoreFor, profileCookieScheme,
   singletonMarkers, stripSingletonMarkers, supportsReflink, type PlatformCapabilities,
 } from "../src/platform";
 
@@ -68,7 +68,7 @@ test("cloning is refused with a reason for every measured failure mode", async (
   const base: PlatformCapabilities = {
     platform: "linux", sessionType: "wayland", desktop: "Hyprland", nativeDisplaySupported: true,
     browserBackendSupported: true, secretService: "available", filteredBusProxy: "/usr/bin/xdg-dbus-proxy",
-    systemdUserScopes: true, browsers: [install, flatpak], notes: [],
+    systemdUserScopes: true, confinedEgress: true, browsers: [install, flatpak], notes: [],
   };
 
   const ok = await canCloneProfile(owned, base, root);
@@ -161,4 +161,17 @@ test("the keyring lookup attribute follows the branding, not the package", async
     expect(install.keyringApplication).toBe(install.id === "google-chrome" ? "chrome" : "chromium");
     expect(install.keyringItem.toLowerCase()).toContain(install.keyringApplication);
   }
+});
+
+test("confined egress is probed by asking for a namespace, not by finding a binary", async () => {
+  const capabilities = await detectPlatform();
+  expect(typeof capabilities.confinedEgress).toBe("boolean");
+  // Unprivileged user namespaces can be present, absent, or present and administratively disabled,
+  // and only trying tells the three apart. A host that cannot confine says so rather than running
+  // unconfined and quietly.
+  if (!capabilities.confinedEgress && capabilities.platform === "linux")
+    expect(capabilities.notes.join(" ")).toContain("enforced inside the browser rather than below it");
+  // The report a person pastes into an issue carries the answer, because it decides a tier.
+  const machine = await describeMachine();
+  expect(machine.confinedEgress).toBe(capabilities.confinedEgress);
 });

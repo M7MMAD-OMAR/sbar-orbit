@@ -67,6 +67,16 @@ export type PlatformCapabilities = {
   filteredBusProxy: string | null;
   /** systemd user scopes carry Orbit's resource budget. Without them there is no budget to enforce. */
   systemdUserScopes: boolean;
+  /**
+   * Can a browser be given no network of its own, so its origin lease is held below it rather than
+   * by the browser agreeing to honour a proxy setting? Needs bubblewrap, unprivileged user
+   * namespaces, and a relay to carry the proxy in over a unix socket.
+   *
+   * A host that cannot do this does not run unconfined and quietly: it drops a tier, and the lease
+   * there is the request interception inside the browser, which holds a page that misbehaves and not
+   * a browser that does.
+   */
+  confinedEgress: boolean;
   browsers: BrowserInstall[];
   notes: string[];
 };
@@ -164,6 +174,18 @@ async function secretServiceState(): Promise<SecretServiceState> {
   return (await new Response(probe.stdout).text()).includes("org.freedesktop.secrets") ? "available" : "absent";
 }
 
+/**
+ * Probed by asking for one, not by looking for the binary. Unprivileged user namespaces can be
+ * present, absent, or present and administratively disabled, and only trying tells the three apart.
+ */
+async function confinedEgressAvailable(): Promise<boolean> {
+  if (process.platform !== "linux") return false;
+  for (const tool of ["/usr/bin/bwrap", "/usr/bin/socat"]) if (!await exists(tool, true)) return false;
+  const probe = Bun.spawn(["/usr/bin/bwrap", "--unshare-net", "--dev-bind", "/", "/", "--die-with-parent", "/bin/true"],
+    { stdout: "ignore", stderr: "ignore" });
+  return await probe.exited === 0;
+}
+
 async function systemdUserScopes(): Promise<boolean> {
   if (process.platform !== "linux") return false;
   for (const tool of ["/usr/bin/systemctl", "/usr/bin/systemd-run"]) if (!await exists(tool, true)) return false;
@@ -203,6 +225,8 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
   if (!linux) notes.push("Only the browser backend is designed for this platform, and it is unverified. See docs/porting.md.");
   if (linux && sessionType === "none") notes.push("No desktop session was found. The browser backend needs none; the private display does.");
   if (secretService === "absent") notes.push("No secret service answered, so a profile whose cookies need the keyring cannot be decrypted here.");
+  if (linux && !await confinedEgressAvailable())
+    notes.push("A browser cannot be confined to a network of its own here, so an origin lease is enforced inside the browser rather than below it.");
   return {
     platform, sessionType, desktop: process.env.XDG_CURRENT_DESKTOP ?? "",
     // The private display nests its own compositor, so it depends on Linux and on the bundled
@@ -212,6 +236,7 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
     secretService,
     filteredBusProxy: linux && await exists("/usr/bin/xdg-dbus-proxy", true) ? "/usr/bin/xdg-dbus-proxy" : null,
     systemdUserScopes: await systemdUserScopes(),
+    confinedEgress: await confinedEgressAvailable(),
     browsers: linux ? await detectBrowsers(home) : [],
     notes,
   };
@@ -246,6 +271,7 @@ export async function describeMachine(home = homedir()): Promise<Record<string, 
     secretService: capabilities.secretService,
     filteredBusProxy: Boolean(capabilities.filteredBusProxy),
     systemdUserScopes: capabilities.systemdUserScopes,
+    confinedEgress: capabilities.confinedEgress,
     browsers, notes: capabilities.notes,
     redacted: ["home directory collapsed to ~", "no cookie names, hosts or values", "no account names", "no viewer tokens"],
   };

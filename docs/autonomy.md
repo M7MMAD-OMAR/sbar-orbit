@@ -381,15 +381,38 @@ Ordered. Each item is one change with one test.
 | 5 | ~~Journal envelope and durability~~ **Done**, except `afterOrigins`. Appended to a 0600 per session file under the workspace, outside the profile that is deleted at stop. Measured: first line is the agreement the rest was judged against, every action carries `at` and `requestId`, and a read of the file found no URL path, no query and no selector | Closed but for `afterOrigins` |
 | 6 | ~~Restore points~~ **Done**, as `src/restore.ts`, minus restore by path swap. The session profile is made a subvolume where the filesystem allows one, a point is taken before each action a snapshot could actually undo, and the refusal set is enforced by `canRestoreTo`. Snapshots measured at 0.00 B exclusive. Two corrections to the plan below | Closed but for the swap |
 | 7 | Request layer enforcement: `Fetch.enable` over every resource type with `Target.setAutoAttach`, judging origin, path prefix and method | An off lease image beacon on an allowed page fails and is journalled by origin |
-| 8 | Egress below the browser: `bubblewrap` probe in `src/platform.ts`, network namespace, per session filtering proxy with the lease fixed at creation, proxy log as the origins contacted record | A denied origin is unreachable from page script, not only from `session.act`. A host without `bubblewrap` drops a tier rather than running unconfined |
+| 8 | ~~Egress below the browser~~ **Measured, not yet wired into the session lifecycle.** The probe ships in `src/platform.ts` as `confinedEgress`, and a host without it drops a tier with a note rather than running unconfined. The mechanism is measured in `experiments/egress-lease.ts` | Mechanism closed, integration open |
 
-Items 1, 2 and 3 are done, and item 4 is half done. Items 5 and 6 remain broker TypeScript over
-machinery that exists. Item 7 is built in a different form than proposed, through request
-interception rather than raw `Fetch.enable`, and measured at eleven of eleven page initiated routes
-blocked. Item 8 remains, and it is the one that makes the lease hold against a browser that does not
-route a request through the interception layer at all, so it should not be deferred quietly.
+Items 1 through 6 are done, item 4 but for the taint flag which is now also built, and item 7 in a
+different form than proposed: request interception rather than raw `Fetch.enable`, measured at eleven
+of eleven page initiated routes blocked. Item 8's mechanism is measured and its probe ships; wiring
+it into the session lifecycle is what remains.
 
-Reproduce items 2 and 3 with `bun run scripts/limited.ts bun run experiments/advisor-session.ts`.
+### What item 8 measured
+
+Four configurations against two local origins, one leased and one not, with the page's own script
+doing the reaching rather than `session.act`. What the page thinks it got is not evidence, because a
+`no-cors` fetch returns an opaque response for a 403 exactly as it does for a 200, so the reading is
+whether the origin server was touched at all.
+
+| Configuration | Leased origin reached | Unleased origin reached |
+|---|---|---|
+| No namespace, no proxy, the control | yes | **yes** |
+| Proxy only | yes | no |
+| Empty network namespace plus proxy | yes | no |
+| Empty network namespace, proxy setting removed | **no** | **no** |
+
+The last row is the one worth having. Without the namespace, the lease is a browser setting that the
+browser has agreed to honour, and removing it restores the whole internet. With the namespace,
+removing it reaches nothing at all, because there was never another route.
+
+One finding the experiment produced by failing first: **Chrome bypasses its proxy for loopback by
+default**, so a lease that leans on a proxy needs `--proxy-bypass-list=<-loopback>` to cover it. Both
+fixtures here are on `127.0.0.1`, so without that flag the browser talked straight to the origin and
+the proxy saw nothing.
+
+Reproduce items 2 through 6 with `bun run scripts/limited.ts bun run experiments/advisor-session.ts`,
+and item 8 with `bun run scripts/limited.ts bun run experiments/egress-lease.ts`.
 
 ## 8. What nobody has solved
 
