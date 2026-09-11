@@ -482,7 +482,7 @@ def metaball(cr, first, second, spread=0.62, handle=2.3, reach=4.2):
     return True
 
 
-def glass(cr, build, fill, edge, shadow=1.0):
+def glass(cr, build, fill, edge, shadow=1.0, lift=(0.0, 2.0)):
     """Fill an outline, over a soft shadow and under a hairline edge.
 
     Cairo has no blur, and a blur on this renderer would cost more than the whole panel does. Four
@@ -491,7 +491,7 @@ def glass(cr, build, fill, edge, shadow=1.0):
     """
     if shadow > 0:
         cr.save()
-        cr.translate(0, 2)
+        cr.translate(*lift)
         build(cr)
         for width, alpha in ((14.0, 0.045), (9.0, 0.055), (5.0, 0.065), (2.0, 0.075)):
             cr.set_line_width(width)
@@ -615,6 +615,10 @@ class Liquid(Gtk.Box):
             return (span_x - y - height, x, height, width)
         return (y, span_y - x - width, height, width)
 
+    # Where a shadow falling down the screen points once the context has been turned. Left in the
+    # rotated frame it would lean sideways, or upward, depending on which edge the panel is docked to.
+    LIFT = {"top": (0.0, 2.0), "bottom": (0.0, -2.0), "right": (2.0, 0.0), "left": (-2.0, 0.0)}
+
     def orient(self, cr):
         edge = self.panel.settings["edge"]
         span_x, span_y = self.get_width(), self.get_height()
@@ -672,13 +676,15 @@ class Liquid(Gtk.Box):
             return
         head, tail, head_radius, neck, tail_radius = self.shape()
         if head is None:
-            Gtk.Box.do_snapshot(self, snapshot)
+            # The mark is hidden, so there is no body to draw the card into. Drawing the children
+            # anyway would leave the rows standing on the wallpaper with nothing behind them.
             return
         fill, rim = self.colours()
         cr = snapshot.append_cairo(area)
         cr.save()
         self.orient(cr)
-        glass(cr, lambda ctx: body_path(ctx, head, tail, neck, head_radius, tail_radius), fill, rim)
+        glass(cr, lambda ctx: body_path(ctx, head, tail, neck, head_radius, tail_radius), fill, rim,
+              lift=self.LIFT[self.panel.settings["edge"]])
         cr.restore()
         self.snapshot_child(self.panel.mark, snapshot)
         if tail is None:
@@ -1101,17 +1107,21 @@ class Panel(Gtk.Application):
             self.extent = extent
             self.anchor(window)
         surface = window.get_surface()
-        if surface is None:
-            return False
         width, height = window.get_width(), window.get_height()
-        if width <= 0 or height <= 0:
+        if surface is None or width <= 0 or height <= 0:
+            # Called before the surface has a size. Nothing would be set, and nothing else would
+            # come back to set it, so ask again on the next turn of the loop.
+            GLib.timeout_add(120, self.settle)
+            return False
+        head = self.shell.shape()[0]
+        if head is None:
+            # Nothing is drawn, so nothing should be clickable: an empty region lets every event
+            # through to the person's windows instead of into a surface they cannot see.
+            surface.set_input_region(cairo.Region())
             return False
         if self.expanded or self.shell.progress > 0.01:
             region = cairo.Region(cairo.RectangleInt(0, 0, width, height))
         else:
-            head = self.shell.shape()[0]
-            if head is None:
-                return False
             x, y, w, h = self.shell.unprimed(head)
             # Back out to surface coordinates: the shape is measured from the shell's content box,
             # and the surface starts one padding earlier in both directions.
@@ -1308,6 +1318,10 @@ class Panel(Gtk.Application):
         # up to the ceiling where scrolling takes over.
         wanted = self.details.measure(Gtk.Orientation.VERTICAL, -1)[1]
         self.scroller.set_min_content_height(min(420, wanted))
+        # A row appearing or leaving changes how long the surface is, and the margin that places the
+        # mark along its edge is measured from that length. Without this the mark drifts when a
+        # session starts while the cards are open, and jumps back when they close.
+        GLib.idle_add(self.settle)
 
     def card(self, session):
         presence = session.get("presence") or {}
