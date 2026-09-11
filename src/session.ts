@@ -7,6 +7,7 @@ import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
 import { describeMachine } from "./platform";
+import { decide, freshProfilePolicy, journalEntry, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
@@ -16,6 +17,9 @@ interface Session {
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
+  /** Fixed when the session is created. Never widened, so a page cannot enlarge it. */
+  policy: SessionPolicy;
+  journal: JournalEntry[];
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -37,7 +41,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -55,6 +59,8 @@ export class Sessions {
       return value.trim();
     };
     const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Agent workspace");
+    // Parsed before anything is started, so an unusable policy fails the request rather than a later action.
+    const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
     const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
     if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Profile key is leased to another session");
     this.leases.add(lease);
@@ -83,7 +89,7 @@ export class Sessions {
         catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map() };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [] };
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
@@ -130,6 +136,20 @@ export class Sessions {
     }
     if (session.state !== "running") throw new OrbitError("PAUSED", "Session is paused or pausing");
     if (session.requests.size >= 10000) throw new OrbitError("LIMIT_REACHED", "Session action limit reached");
+    // The policy is evaluated here, on the action the broker resolved, not on the action the agent
+    // described. Those are the same thing only when nothing has tried to make them differ.
+    const destination = "url" in action ? (action as { url?: string }).url : undefined;
+    const decision = decide(session.policy, action.type, destination);
+    session.journal.push(journalEntry({
+      sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
+      actionType: action.type, decision, url: destination,
+      ...("text" in action ? { inputLength: String((action as { text?: string }).text ?? "").length } : {}),
+    }));
+    if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
+    if (decision.outcome === "deny") throw new OrbitError("POLICY_DENIED", decision.reason);
+    // A supervised session stops and waits for the person. An autonomous one never reaches here with
+    // anything but an allow, which is what lets it finish a task without them.
+    if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
     const result = this.enqueue(session, () => this.track(session, "agent", action.type, () => session.backend.act(action)));
     session.requests.set(requestId, { fingerprint, result });
     return result;
@@ -165,8 +185,10 @@ export class Sessions {
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
-    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
+    // What the session did, for a person reading afterwards rather than approving in advance.
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal };
     if (request.method === "session.stop") return this.stop(session);
     this.ensureOpen(session);
     // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.
