@@ -7,6 +7,7 @@ import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
 import { describeMachine } from "./platform";
+import { cloneProfile } from "./clone";
 import { decide, freshProfilePolicy, journalEntry, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { defaultViewport, parseViewport } from "./viewport";
 
@@ -20,6 +21,8 @@ interface Session {
   /** Fixed when the session is created. Never widened, so a page cannot enlarge it. */
   policy: SessionPolicy;
   journal: JournalEntry[];
+  /** Releases anything the clone needed, such as its filtered secret bus. */
+  releaseClone?: () => Promise<void>;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -73,23 +76,29 @@ export class Sessions {
       const restoredState = await account?.restore();
       const profile = await mkdtemp(join(this.root, "profile-"));
       const surface = input.viewport === undefined ? defaultViewport : parseViewport(input.viewport);
+      // A session may start from the person's own browser profile instead of an empty one. The policy
+      // is checked before anything is copied, because an unbounded session holding real logins is the
+      // case the policy exists to prevent.
+      if (input.cloneOf !== undefined && input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Cloning a profile requires the browser backend");
+      if (input.cloneOf !== undefined && account) throw new OrbitError("INVALID_REQUEST", "A session takes either a saved account or a cloned profile, not both");
+      const clone = input.cloneOf === undefined ? undefined : await cloneProfile(text(input.cloneOf, "cloneOf"), profile, policy);
       const queued = Date.now();
       const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface);
+        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface, clone?.launch);
       });
       this.creationTail = start.catch(() => {});
       let backend: BrowserBackend | FedoraBackend;
       try { backend = await start; }
-      catch (error) { await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
+      catch (error) { await clone?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       if (account && backend instanceof BrowserBackend) {
         try { if (restoredState) await backend.context.setStorageState(restoredState); }
         catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
       const id = crypto.randomUUID();
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [] };
+      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close };
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
@@ -97,7 +106,7 @@ export class Sessions {
       // the release that every ending awaits.
       backend.onClose(() => {
         session.state = "closed"; this.leases.delete(lease);
-        session.releasing ??= session.tail.then(() => account?.release()).finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
+        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
       });
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);

@@ -1,7 +1,7 @@
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
-import { launchChrome } from "./chrome";
+import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
 
@@ -52,8 +52,8 @@ export class BrowserBackend {
   private constructor(private owned: Awaited<ReturnType<typeof launchChrome>>, readonly context: BrowserContext, page: Page, private size: Viewport) {
     this.active = page;
   }
-  static async create(profile: string, size: Viewport = defaultViewport): Promise<BrowserBackend> {
-    const owned = await launchChrome(profile, size);
+  static async create(profile: string, size: Viewport = defaultViewport, launch: ChromeLaunchOptions = {}): Promise<BrowserBackend> {
+    const owned = await launchChrome(profile, size, launch);
     // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
     // seconds with four other sessions working; that is contention, not a missing element. Ten
     // seconds made a missing element cost every caller ten seconds, so this sits in between.
