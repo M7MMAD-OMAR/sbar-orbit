@@ -6,19 +6,43 @@ import { OrbitError } from "./errors";
 import { chromeExecutables } from "./runtime-paths";
 import { defaultViewport } from "./viewport";
 
+export type ChromeLaunchOptions = {
+  /**
+   * The binary to run. A profile can only be decrypted by the install that owns it, because the
+   * keyring item Chromium looks up is named after the binary's branding, so a caller handing over an
+   * existing profile must name its owner rather than accept whichever browser is found first.
+   */
+  executable?: string;
+  /**
+   * Which key to decrypt existing cookies with. The default is the hardcoded key, which is correct
+   * for the fresh profiles Orbit creates and wrong for any profile written against a login keyring.
+   */
+  passwordStore?: "basic" | "gnome-libsecret" | "kwallet";
+  /**
+   * A bus address for the browser. Leave unset for the default, which is no bus at all. A caller that
+   * needs the keyring must pass a FILTERED bus, never the person's session bus, because Chrome uses
+   * the bus to move itself into an uncapped systemd scope and would escape its resource budget.
+   */
+  sessionBus?: string;
+  /** Load the extensions present in the profile. Off by default, as for a fresh profile there are none. */
+  extensions?: boolean;
+};
+
 /** Own Chrome separately from its CDP connection, including failed startup. */
-export async function launchChrome(profile: string, size = defaultViewport) {
+export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
   await requireResourceBudget();
-  const executable = chromeExecutables.find(path => Bun.file(path).size > 0);
+  const executable = options.executable ?? chromeExecutables.find(path => Bun.file(path).size > 0);
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");
+  if (options.executable && !(Bun.file(options.executable).size > 0)) throw new OrbitError("UNSUPPORTED", "The requested browser executable is not present");
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined &&
     !["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY"].includes(key))) as Record<string, string>;
   // Chrome can use the desktop bus to move itself into an uncapped systemd scope.
   // This owned headless browser must not connect to the human session bus.
-  env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${profile}/no-session-bus`;
+  env.DBUS_SESSION_BUS_ADDRESS = options.sessionBus ?? `unix:path=${profile}/no-session-bus`;
   const owner = Bun.spawn(["/usr/bin/python3", resolve(import.meta.dir, "native/supervise.py"), join(profile, "owner.json"), executable,
     `--user-data-dir=${profile}`, "--headless", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
-    "--disable-background-networking", "--disable-dev-shm-usage", "--no-sandbox", "--password-store=basic", "about:blank"],
+    "--disable-background-networking", "--disable-dev-shm-usage", "--no-sandbox", `--password-store=${options.passwordStore ?? "basic"}`,
+    ...(options.extensions ? [] : ["--disable-extensions"]), "about:blank"],
     { env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   let browser: Browser | undefined;
   let closing: Promise<void> | undefined;

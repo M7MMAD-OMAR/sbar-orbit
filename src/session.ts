@@ -6,6 +6,7 @@ import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
+import { describeMachine } from "./platform";
 import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
@@ -157,7 +158,10 @@ export class Sessions {
   async dispatch(value: unknown): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
-    if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"], capabilities, sessions: this.sessions.size, resources: await resourceStatus() };
+    // Doctor is what a person on an unverified platform runs first, and what a community bug report
+    // is built from, so it carries the probed capabilities rather than an assumption about Linux.
+    if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"],
+      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine() };
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
