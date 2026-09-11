@@ -250,7 +250,7 @@ The feature is shippable with these, and is a credential handover without them.
 
 | Mitigation | What it prevents |
 |---|---|
-| Per origin allowlist supplied at session creation, enforced in the navigation path | A page reached by the agent cannot pivot to the person's bank |
+| Per origin allowlist supplied at session creation, enforced on the requests the browser makes, not only where the agent navigates | A page reached by the agent cannot pivot to the person's bank, and cannot pivot itself by redirect, iframe, fetch or popup. Measured in `experiments/origin-lease.ts`: nine of nine page initiated routes blocked |
 | Read only by default, writes refused until the person allows them for that session | An injected instruction cannot send, buy or delete |
 | Human confirmation on irreversible actions, reusing the existing pause and takeover path | The person sees the action before it happens |
 | Short lived session leases, and a clone discarded when the session stops | A stale copy of the person's identity does not accumulate on disk |

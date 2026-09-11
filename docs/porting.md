@@ -784,10 +784,13 @@ README so nobody has to infer it from absence.
 | Display separation is not a security sandbox | An application in a private display keeps the OS user's filesystem permissions, and `docs/validation.md` already records that System Monitor reported the host's real memory and CPU |
 | Whether a service invalidates a session that appears from a second concurrent client, or whether a token rotation in the fork logs the person out of their own browser, is not established on any platform | It is the strongest argument for the extension mint over any clone |
 
-None of the real session mechanisms ship before the review's mitigations: a per origin allowlist
-enforced in the navigation path, read only leases by default, human confirmation on irreversible
-actions through the existing pause and takeover path, short lived leases with the clone discarded at
-session stop, and a per session audit log of origins contacted.
+None of the real session mechanisms ship before the review's mitigations. Their built form, corrected
+after [the autonomy survey](autonomy.md) showed the first wording was not enough: a per origin
+allowlist enforced on the requests the browser actually makes rather than only where the agent
+navigates, because a page redirects, frames and fetches without the agent asking; the irreversible
+class refused outright for an autonomous session, since with nobody watching a confirmation is an
+unattended allow; short lived leases with the clone discarded at session stop; and a per session
+journal that records refused origins separately from the agent's own denied actions.
 
 ## 9. Gates
 

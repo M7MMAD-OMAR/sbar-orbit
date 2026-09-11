@@ -49,6 +49,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Research](docs/research.md) | Primary technical sources |
 | [Separate workspace review](docs/separate-workspace-review.md) | Whether this is the best approach, what was refuted, and what a real session costs |
 | [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
+| [Autonomy](docs/autonomy.md) | Running without a human checkpoint: the policy, the prior art it borrows from, and what bounds it |
 | [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |
 | [Appearance](docs/appearance.md) | Applications in a private display look like the desktop |
 | [Brand](docs/brand.md) | The mark, the name, the palette and where each asset is used |
