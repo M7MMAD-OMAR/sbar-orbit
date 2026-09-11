@@ -1,11 +1,13 @@
-"""The broker client the desktop pieces share.
+"""The broker client the desktop pieces talk through.
 
-The panel and the bar stream both want the same two things from the broker: the session list, and
-presence for the sessions whose detail is about to be read. Both talk HTTP over the broker's Unix
-socket, which is the only interface it has, and both hold one connection open rather than paying for
-two socket lifetimes a second.
+The bar helper wants two things from the broker: the session list, and presence for the sessions
+whose detail is about to be read. Both go over HTTP on the broker's Unix socket, which is the only
+interface it has, and a loop should hold one connection open rather than paying for two socket
+lifetimes a second.
 
-Nothing here imports a toolkit, so a bar module can run it without pulling in GTK.
+Nothing here imports a toolkit, so a bar module can use it without pulling in GTK. `desktop/panel.py`
+still carries its own copy of this client and should import this one instead; that change is waiting
+on the panel, not on this file.
 """
 import http.client
 import json
@@ -16,8 +18,8 @@ import socket
 class UnixConnection(http.client.HTTPConnection):
     """HTTP over the broker's Unix socket, which is how every Orbit client reaches it."""
 
-    def __init__(self, path, timeout=3):
-        super().__init__("localhost", timeout=timeout)
+    def __init__(self, path):
+        super().__init__("localhost", timeout=3)
         self.path = path
 
     def connect(self):
@@ -54,20 +56,20 @@ class BrokerClient:
         self.connection = None
 
     def call(self, method, params=None):
-        for attempt in (0, 1):
-            try:
-                if self.connection is None:
-                    self.connection = UnixConnection(self.path)
-                    self.connection.connect()
-                return request_once(self.connection, method, params)
-            except RuntimeError:
-                raise
-            except Exception:
-                # A broker restart or an idle timeout closes the socket under us; reconnect once.
-                self.close()
-                if attempt:
-                    raise
-        return None
+        try:
+            return self._attempt(method, params)
+        except RuntimeError:
+            raise
+        except Exception:
+            # A broker restart or an idle timeout closes the socket under us; reconnect once.
+            self.close()
+            return self._attempt(method, params)
+
+    def _attempt(self, method, params):
+        if self.connection is None:
+            self.connection = UnixConnection(self.path)
+            self.connection.connect()
+        return request_once(self.connection, method, params)
 
     def close(self):
         if self.connection is not None:
@@ -78,12 +80,17 @@ class BrokerClient:
             self.connection = None
 
 
-def broker_socket(env=None):
-    env = os.environ if env is None else env
-    if env.get("ORBIT_SOCKET"):
-        return env["ORBIT_SOCKET"]
-    runtime = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+def broker_socket():
+    if os.environ.get("ORBIT_SOCKET"):
+        return os.environ["ORBIT_SOCKET"]
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     return os.path.join(runtime, "sbar-orbit", "broker.sock")
+
+
+def viewer_link_is_local(url):
+    """The only link a desktop piece will open: the broker's own loopback viewer with its token
+    fragment. This decides which URLs may be launched, so it lives in one place on purpose."""
+    return isinstance(url, str) and url.startswith("http://127.0.0.1:") and "#" in url and len(url.split("#", 1)[1]) >= 32
 
 
 def read_status(client, with_presence=True):
@@ -101,17 +108,10 @@ def read_status(client, with_presence=True):
     return sessions
 
 
-def session_shape(sessions):
-    """What a mark and its cards actually read. Comparing this instead of the whole payload keeps a
-    live pointer position or an activity counter from redrawing under the person's hand."""
-    return {s["sessionId"]: (s.get("agentName", "Agent"), s.get("taskName", ""), s.get("state", ""),
-                             (s.get("activity") or {}).get("state", ""), (s.get("activity") or {}).get("type", ""),
-                             (s.get("presence") or {}).get("title", ""), len((s.get("presence") or {}).get("tabs") or []))
-            for s in sessions if isinstance(s.get("sessionId"), str)}
-
-
 def counts(sessions):
-    """The numbers a bar puts on screen, from one pass over the list."""
+    """The numbers a bar puts on screen, from one pass over the list. The split between tabs and
+    windows follows `summarize` in src/status.ts: browser sessions have tabs, private displays have
+    windows, and a backend that is neither counts as neither."""
     tally = {"running": 0, "paused": 0, "working": 0, "tabs": 0, "windows": 0}
     for session in sessions:
         if session.get("state") == "running":
@@ -121,12 +121,14 @@ def counts(sessions):
         if (session.get("activity") or {}).get("state") == "working":
             tally["working"] += 1
         open_views = len((session.get("presence") or {}).get("tabs") or [])
-        tally["windows" if session.get("backend") == "fedora" else "tabs"] += open_views
+        key = {"browser": "tabs", "fedora": "windows"}.get(session.get("backend"))
+        if key:
+            tally[key] += open_views
     return tally
 
 
 def summarize(sessions, tally):
-    """A short line for a bar, the same wording `sbar-orbit status` prints."""
+    """A short line for a bar, word for word what `sbar-orbit status` prints."""
     total = len(sessions)
     if not total:
         return "Orbit idle"

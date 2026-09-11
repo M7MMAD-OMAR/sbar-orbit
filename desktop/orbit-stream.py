@@ -1,28 +1,29 @@
 #!/usr/bin/python3
 """One compact JSON line on standard output whenever what a bar would show changes.
 
-This is the feed a shell module reads. `sbar-orbit status --watch` prints the same shape and can be
-used instead; this exists because that one starts a Bun runtime, which measured 117 MB resident, and
-a bar widget should not cost more than the desktop it decorates. This process measured 13 MB.
+This is the feed a shell module reads. It exists rather than reusing `sbar-orbit status --watch`,
+which prints a related but not identical shape, because that one starts a Bun runtime measured at
+117 MB resident where this process measures 17 MB, and a bar widget should not cost more than the
+desktop it decorates.
 
 A line is printed at startup, then only when something changes, so a quiet desktop is a quiet pipe.
 Timestamps are excluded from that comparison, or every second would be a change.
 
-    orbit-stream.py [--interval SECONDS] [--no-presence]
-    orbit-stream.py --open-viewer
+    orbit-stream.py                 stream until killed
+    orbit-stream.py --open-viewer   ask the broker for a viewer link and open it, then exit
 
-`--open-viewer` is the other half a bar needs: it asks the broker for a viewer link and hands it to
-the desktop's browser. The link carries a fresh access token, so it is requested at the moment of
-the click and never written down, and only a loopback link is ever opened.
+The link carries a fresh access token, so it is requested at the moment of the click and never
+written down, and only a loopback link is ever opened.
 
-The shape, matching `sbar-orbit status`:
+The shape:
 
     {"socket": "...", "sampledAt": "...", "reachable": true, "running": 1, "paused": 0,
-     "working": 0, "tabs": 0, "windows": 2, "summary": "1 session · 2 windows", "sessions": [...]}
+     "working": 0, "tabs": 0, "windows": 2, "summary": "1 session · 2 windows",
+     "sessions": [{"sessionId": "...", "agentName": "...", "taskName": "...", "state": "running",
+                   "backend": "fedora", "activityState": "done", "title": "...", "views": 2}]}
 
-and when the broker is not there:
-
-    {"socket": "...", "reachable": false, "summary": "Orbit not running", "sessions": []}
+and when the broker is not there, the same keys with `reachable` false, zero counts, no sessions and
+the summary "Orbit not running".
 """
 import json
 import subprocess
@@ -30,26 +31,41 @@ import sys
 import time
 from datetime import datetime, timezone
 
-sys.path.insert(0, __file__.rsplit("/", 1)[0])
-from orbit_client import BrokerClient, broker_socket, counts, read_status, rpc, summarize  # noqa: E402
+from orbit_client import BrokerClient, broker_socket, counts, read_status, rpc, summarize, viewer_link_is_local
+
+INTERVAL_SECONDS = 1.0
+# Presence is the expensive half: a compositor tree query for a private display, and two round trips
+# that wake the headless browser for a browser session. The capsule's colour comes from the session
+# list alone, and the title and the view count are read in a popup that is open for a moment, so
+# fetching it every second would wake every agent's browser all day for something nobody is looking
+# at. The panel makes the same trade at ten seconds while its cards are closed.
+PRESENCE_SECONDS = 5.0
 
 
-def snapshot(client, with_presence):
+def snapshot(client, with_presence, carried):
+    """One line's worth of state. `carried` holds the presence from the last read that asked for it,
+    and is updated in place, so the counts and titles do not blink to empty between those reads."""
     sessions = read_status(client, with_presence)
+    if with_presence:
+        carried.clear()
+        carried.update({s["sessionId"]: s["presence"] for s in sessions})
+    else:
+        for session in sessions:
+            session["presence"] = carried.get(session.get("sessionId"))
     tally = counts(sessions)
     return {"socket": client.path, "reachable": True, **tally,
             "summary": summarize(sessions, tally),
             "sessions": [{"sessionId": s.get("sessionId"), "agentName": s.get("agentName"), "taskName": s.get("taskName"),
                           "state": s.get("state"), "backend": s.get("backend"),
-                          "activity": s.get("activity"),
+                          "activityState": (s.get("activity") or {}).get("state"),
                           "title": (s.get("presence") or {}).get("title"),
                           "views": len((s.get("presence") or {}).get("tabs") or [])}
                          for s in sessions]}
 
 
-def viewer_link_is_local(url):
-    """The only link this will open: the broker's own loopback viewer with its token fragment."""
-    return isinstance(url, str) and url.startswith("http://127.0.0.1:") and "#" in url and len(url.split("#", 1)[1]) >= 32
+def unreachable(path):
+    return {"socket": path, "reachable": False, "running": 0, "paused": 0, "working": 0,
+            "tabs": 0, "windows": 0, "summary": "Orbit not running", "sessions": []}
 
 
 def open_viewer(path):
@@ -66,35 +82,30 @@ def open_viewer(path):
 
 
 def main():
-    interval, with_presence = 1.0, True
-    args = sys.argv[1:]
-    while args:
-        flag = args.pop(0)
-        if flag == "--interval" and args:
-            interval = max(0.2, float(args.pop(0)))
-        elif flag == "--no-presence":
-            with_presence = False
-        elif flag == "--open-viewer":
-            return open_viewer(broker_socket())
-        elif flag in ("-h", "--help"):
-            print(__doc__.strip())
-            return 0
     path = broker_socket()
+    if "--open-viewer" in sys.argv:
+        return open_viewer(path)
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print(__doc__.strip())
+        return 0
     client = BrokerClient(path)
-    previous = None
+    previous, presence_due, carried = None, 0.0, {}
     while True:
+        with_presence = time.monotonic() >= presence_due
         try:
-            line = snapshot(client, with_presence)
+            line = snapshot(client, with_presence, carried)
+            if with_presence:
+                presence_due = time.monotonic() + PRESENCE_SECONDS
         except Exception:
             client.close()
-            line = {"socket": path, "reachable": False, "running": 0, "paused": 0, "working": 0,
-                    "tabs": 0, "windows": 0, "summary": "Orbit not running", "sessions": []}
+            line = unreachable(path)
+            carried.clear()
         shape = json.dumps(line, sort_keys=True)
         if shape != previous:
             previous = shape
             line["sampledAt"] = datetime.now(timezone.utc).isoformat()
             print(json.dumps(line), flush=True)
-        time.sleep(interval)
+        time.sleep(INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

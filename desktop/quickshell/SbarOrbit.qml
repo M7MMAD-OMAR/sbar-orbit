@@ -10,9 +10,9 @@ import QtQuick
  *
  * It reads one long running helper that prints a JSON line whenever something changes, so there is
  * no polling in QML and a quiet desktop costs nothing. The helper is `desktop/orbit-stream.py` from
- * the Sbar Orbit checkout, expected on PATH as `orbit-stream`, or named by ORBIT_STREAM.
- * `sbar-orbit status --watch` prints the same shape and can be used instead, at the cost of a Bun
- * runtime that measured 117 MB resident against the helper's 17 MB.
+ * the Sbar Orbit checkout, expected at ~/.local/bin/orbit-stream or named by ORBIT_STREAM.
+ * `sbar-orbit status --watch` prints a related shape but not the same one, so it is not a drop in
+ * replacement: it carries no `reachable` field and no per session view count.
  *
  * The helper is restarted if it exits, so the bar recovers on its own when the broker or the
  * checkout comes back.
@@ -28,11 +28,9 @@ Singleton {
     property var sessions: []
     property int working: 0
     property int paused: 0
-    property int tabs: 0
-    property int windows: 0
+    property int views: 0
     property string summary: "Orbit not running"
     readonly property int count: root.sessions.length
-    readonly property int views: root.tabs + root.windows
     readonly property string state: !root.reachable ? "offline"
         : root.working > 0 ? "working"
         : root.paused > 0 ? "paused" : "idle"
@@ -40,8 +38,14 @@ Singleton {
     /** Raised when a session or one of its windows appears, which is what a bar blinks for. */
     signal appeared
 
-    property int lastCount: 0
-    property int lastViews: 0
+    function forget() {
+        root.reachable = false;
+        root.sessions = [];
+        root.working = 0;
+        root.paused = 0;
+        root.views = 0;
+        root.summary = "Orbit not running";
+    }
 
     function ingest(line) {
         let status;
@@ -51,17 +55,15 @@ Singleton {
             console.warn("[SbarOrbit] could not read a line from", root.program, error);
             return;
         }
+        const wasCount = root.count, wasViews = root.views;
         root.reachable = status.reachable ?? false;
         root.sessions = status.sessions ?? [];
         root.working = status.working ?? 0;
         root.paused = status.paused ?? 0;
-        root.tabs = status.tabs ?? 0;
-        root.windows = status.windows ?? 0;
+        root.views = (status.tabs ?? 0) + (status.windows ?? 0);
         root.summary = status.summary ?? "Orbit not running";
-        if (root.count > root.lastCount || root.views > root.lastViews)
+        if (root.count > wasCount || root.views > wasViews)
             root.appeared();
-        root.lastCount = root.count;
-        root.lastViews = root.views;
     }
 
     function openViewer() {
@@ -76,9 +78,7 @@ Singleton {
             onRead: line => root.ingest(line)
         }
         onExited: (code, status) => {
-            root.reachable = false;
-            root.sessions = [];
-            root.summary = "Orbit not running";
+            root.forget();
             retry.start();
         }
     }
@@ -90,6 +90,7 @@ Singleton {
 
     Timer {
         id: retry
+        // Not restarted straight from onExited: a missing helper would then respawn at full speed.
         interval: 5000
         onTriggered: stream.running = true
     }

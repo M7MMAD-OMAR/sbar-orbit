@@ -7,30 +7,25 @@ import qs.services
 /**
  * A capsule in the bar that says what Orbit is doing, in the shell's own colours.
  *
- * No number on it: the colour is the whole message, green while an agent is working, the tertiary
- * accent while one is paused, dim while sessions are open but idle. It blinks once when a session or
- * a window appears. Hovering lists the sessions, clicking opens the viewer.
+ * No number on it: the colour is the whole message, the accent while an agent is working, the
+ * tertiary accent while one is paused, quiet while sessions are open but idle. It blinks once when a
+ * session or a window appears. Hovering lists the sessions, clicking opens the viewer.
  *
- * It shows nothing at all when no session is open, so a bar with no agents running looks exactly as
- * it did before this was installed.
+ * Showing and hiding it is the bar layout's job, the way it is for every other indicator: wrap this
+ * in a Revealer whose `reveal` is `SbarOrbit.count > 0`, so a bar with no agents running looks
+ * exactly as it did before this was installed.
  */
 MouseArea {
     id: root
 
-    readonly property bool shown: SbarOrbit.count > 0
     readonly property color stateColor: SbarOrbit.state === "working" ? Appearance.colors.colPrimary
         : SbarOrbit.state === "paused" ? Appearance.colors.colTertiary
         : Appearance.colors.colOnSurfaceVariant
 
-    implicitWidth: shown ? capsule.implicitWidth + 8 : 0
+    implicitWidth: capsule.implicitWidth + 8
     implicitHeight: Appearance.sizes.barHeight
     hoverEnabled: true
-    visible: shown
     onClicked: SbarOrbit.openViewer()
-
-    Behavior on implicitWidth {
-        animation: Appearance.animation.elementMoveFast.numberAnimation.createObject(this)
-    }
 
     Rectangle {
         id: capsule
@@ -47,9 +42,19 @@ MouseArea {
 
         SequentialAnimation {
             id: blink
-            NumberAnimation { target: capsule; property: "opacity"; to: 0.2; duration: 190 }
-            NumberAnimation { target: capsule; property: "opacity"; to: 1.0; duration: 190 }
             loops: 2
+            NumberAnimation {
+                target: capsule
+                property: "opacity"
+                to: 0.2
+                duration: Appearance.animation.elementMoveFast.duration
+            }
+            NumberAnimation {
+                target: capsule
+                property: "opacity"
+                to: 1.0
+                duration: Appearance.animation.elementMoveFast.duration
+            }
         }
     }
 
@@ -76,38 +81,40 @@ MouseArea {
                 model: SbarOrbit.sessions
 
                 ColumnLayout {
+                    id: session
                     required property var modelData
+                    readonly property string viewsLabel: session.modelData.views > 0
+                        ? `${session.modelData.views} ${session.modelData.backend === "fedora" ? "window" : "tab"}${session.modelData.views === 1 ? "" : "s"}`
+                        : ""
+                    readonly property string stateLabel: session.modelData.activityState === "working"
+                        ? "working" : (session.modelData.state ?? "")
                     spacing: 0
 
                     StyledText {
-                        text: modelData.agentName ?? "Agent"
+                        text: session.modelData.agentName ?? "Agent"
                         font.weight: Font.DemiBold
                         color: Appearance.colors.colOnSurfaceVariant
                     }
                     StyledText {
-                        text: modelData.taskName ?? ""
+                        text: session.modelData.taskName ?? ""
                         visible: text !== ""
                         elide: Text.ElideRight
                         Layout.maximumWidth: 320
                         color: Appearance.colors.colOnSurfaceVariant
                     }
                     StyledText {
-                        text: [modelData.title ?? "", modelData.views > 0
-                                ? `${modelData.views} ${modelData.backend === "fedora" ? "window" : "tab"}${modelData.views === 1 ? "" : "s"}`
-                                : "", modelData.activity?.state === "working" ? "working" : modelData.state ?? ""]
+                        text: [session.modelData.title ?? "", session.viewsLabel, session.stateLabel]
                             .filter(part => part !== "").join("  ·  ")
                         elide: Text.ElideRight
                         Layout.maximumWidth: 320
-                        opacity: 0.7
-                        color: Appearance.colors.colOnSurfaceVariant
+                        color: Appearance.colors.colSubtext
                     }
                 }
             }
 
             StyledText {
                 text: "Click to open the viewer"
-                opacity: 0.7
-                color: Appearance.colors.colOnSurfaceVariant
+                color: Appearance.colors.colSubtext
             }
         }
     }
