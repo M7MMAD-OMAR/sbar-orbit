@@ -33,7 +33,16 @@ test("the documented plan command returns the documented report", async () => {
       expect(typeof remedy.id).toBe("string");
       expect(typeof remedy.message).toBe("string");
       expect(typeof remedy.needsElevation).toBe("boolean");
+      expect(typeof remedy.agentMayRun).toBe("boolean");
+      // A command needing a package manager is never one an agent may run.
+      if (remedy.needsElevation) expect(remedy.agentMayRun).toBe(false);
     }
+    // A dry run names where the command would go, not where the source happens to be.
+    expect(report.launcher).toBe(`${prefix}/bin/sbar-orbit`);
+    // The one step that does not follow the prefix says what it would do to what is already there.
+    const connector = report.steps.find((step: { id: string }) => step.id === "connector");
+    expect(["creates", "unchanged", "replaces an earlier configuration"]).toContain(connector.data.replaces);
+    expect(connector.data.configuration.mcpServers.orbit.env.ORBIT_SOCKET).toContain("broker.sock");
   } finally { await rm(prefix, { recursive: true, force: true }); }
 }, 60000);
 
@@ -53,6 +62,7 @@ test("every step the installer reports is documented, and so is the elevation bo
   for (const id of ["prefix-not-on-path", "no-lingering", "broker-did-not-start", "broker-silent"])
     expect(contract).toContain(`\`${id}\``);
   expect(contract).toContain("needsElevation");
+  expect(contract).toContain("agentMayRun");
   // The sentence the contract tells an agent to repeat rather than drop.
   expect(contract).toContain("not a measurement");
 });

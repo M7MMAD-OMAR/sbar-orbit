@@ -83,10 +83,11 @@ What it cannot do, and says so rather than failing later: it does not install Bu
 on Bun; it does not install Chrome, Xwayland, grim or wl-clipboard, since those need a package manager
 and elevation. Each missing item is printed with the remedy `inspectPrerequisites` already carries for
 it, gathered at the end under a heading that says these are left for the person. A remedy is a record
-rather than a sentence: an id, a message, sometimes a command, and `needsElevation`, which is the
-boundary. True means a package manager and a person, so the command is printed and handed over. False
-with a command means it can be run where the source is. That one field is what lets any agent, of any
-brand, act on the report without reading English prose.
+rather than a sentence: an id, a message, sometimes a command, and two separate flags.
+`needsElevation` describes the command, a package manager and a person. `agentMayRun` is the
+permission, and it is the one to branch on: putting a directory on PATH needs no elevation and is
+still not an agent's to do, because it is the person's shell configuration. Those fields are what let
+any agent, of any brand, act on the report without reading English prose.
 
 The final report is installation state, not a measurement. It ends with the sentence saying so, because
 a run that has linked a command and started a service has not shown that a browser session works on this

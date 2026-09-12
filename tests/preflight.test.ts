@@ -16,7 +16,7 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   expect(noBrowser.nativePrerequisitesFound).toBe(true);
   const browser = noBrowser.checks.find(check => check.id === "chrome-or-chromium")?.remedy;
   // A remedy an agent can branch on: the elevation flag is the boundary, not a sentence about one.
-  expect(browser).toMatchObject({ id: "no-browser", needsElevation: true });
+  expect(browser).toMatchObject({ id: "no-browser", needsElevation: true, agentMayRun: false });
   expect(browser?.command).toContain("chromium");
   expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
   const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes(".runtime") });
@@ -37,6 +37,8 @@ test("a systemd tool with no user manager behind it is not availability", async 
   expect(check?.available).toBe(false);
   expect(check?.remedy?.id).toBe("no-systemd-user-session");
   expect(check?.remedy?.needsElevation).toBe(false);
+  // No package would fix it, and no agent may fix it either. The two flags are separate.
+  expect(check?.remedy?.agentMayRun).toBe(false);
 });
 
 test("unsupported OS and absent executable checks cannot claim availability", async () => {

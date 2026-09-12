@@ -64,8 +64,9 @@ Install Sbar Orbit in the source directory I have given you.
    never on the prose.
 3. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
    which step stopped it.
-4. Act only on remedies whose needsElevation is false. Every remedy with needsElevation true is mine
-   to run: print its command and stop, never run it yourself, and never use sudo for anything.
+4. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or
+   its message when it carries no command, and stop. Never run it yourself, never add sudo to a
+   command that does not have it, and never use sudo for anything.
 5. Report back: every step with its state, the capabilities object, and the remedies you did not run.
    Say plainly what is installed and what is not. Do not describe an installation as verified: the
    run reports installation state, not a measurement.
@@ -74,8 +75,8 @@ Install Sbar Orbit in the source directory I have given you.
 
 The prompt is short on purpose: it points at [the contract](docs/agent-install.md) rather than
 restating it, so it cannot drift away from the installer. The contract carries the commands, the JSON
-shape, the exit codes, every refusal an agent should expect, and the `needsElevation` flag that marks
-the line between what an agent may run and what it hands back. No model, host or vendor is assumed:
+shape, the exit codes, every refusal an agent should expect, and the `agentMayRun` flag that marks the
+line between what an agent may run and what it hands back. No model, host or vendor is assumed:
 it needs a shell and the ability to read JSON.
 
 The individual steps remain available, which is what to reach for when only one of them is wanted:

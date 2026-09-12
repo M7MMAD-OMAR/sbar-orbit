@@ -20,8 +20,9 @@ Install Sbar Orbit in the source directory I have given you.
    never on the prose.
 3. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
    which step stopped it.
-4. Act only on remedies whose needsElevation is false. Every remedy with needsElevation true is mine
-   to run: print its command and stop, never run it yourself, and never use sudo for anything.
+4. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or
+   its message when it carries no command, and stop. Never run it yourself, never add sudo to a
+   command that does not have it, and never use sudo for anything.
 5. Report back: every step with its state, the capabilities object, and the remedies you did not run.
    Say plainly what is installed and what is not. Do not describe an installation as verified: the
    run reports installation state, not a measurement.
@@ -33,7 +34,7 @@ Install Sbar Orbit in the source directory I have given you.
 | Command | Purpose | Output | Exit |
 |---|---|---|---|
 | `./bin/sbar-orbit preflight` | What this machine has, reads only, starts nothing | Prerequisite report | 0 when browser prerequisites are found, else 1 |
-| `./install.sh --dry-run --json` | The plan. Changes nothing | Install report | 0 when every step would run, else 1 |
+| `./install.sh --dry-run --json` | The plan. Changes nothing | Install report | 0 when nothing would fail, else 1 |
 | `./install.sh --json` | The installation itself | Install report | 0 installed, 1 not installed |
 | `./bin/sbar-orbit doctor --report` | Host class and capabilities, needs no broker | Capability report | 0 |
 | `./bin/sbar-orbit status --json` | Sessions, tabs and windows of a running broker | Status | 0 |
@@ -55,7 +56,8 @@ it, `--reinstall-deps` to force a dependency install.
   "dryRun": false,
   "steps": [{ "id": "prerequisites", "title": "...", "state": "done", "detail": "...", "elapsedMs": 12 }],
   "capabilities": { "browserSessions": true, "nativeSessions": true },
-  "remedies": [{ "id": "no-browser", "message": "...", "command": "sudo dnf install -y chromium", "needsElevation": true }],
+  "remedies": [{ "id": "no-browser", "message": "...", "command": "sudo dnf install -y chromium",
+                 "needsElevation": true, "agentMayRun": false }],
   "verified": "Installation steps only. ..."
 }
 ```
@@ -64,32 +66,74 @@ it, `--reinstall-deps` to force a dependency install.
   `verify`, always in that order, and a run that fails early simply carries fewer of them.
 - `steps[].state` is `done`, `skipped` or `failed`. `skipped` is never a failure: a dry run skips
   everything that writes, and `--no-service` skips the two steps that need a broker.
+- A skipped step is not a failure, so a run whose steps are mostly `skipped` still exits 0. `installed`
+  is the field that answers the question, and the exit code follows it.
 - `capabilities` says what this machine can run, not what was proven to work.
+- `launcher` is where the command is, or in a dry run where it would be. It follows `--prefix`.
 - `verified` is the sentence that says what the run did not check. Repeat it rather than dropping it.
+
+The `connector` step is the one part that does not follow `--prefix`. One machine has one registered
+connector, whichever source was installed last, so the step reports `creates`, `unchanged` or
+`replaces an earlier configuration`, and a dry run carries the exact content it would write in
+`steps[].data.configuration`. Read that before installing a second source on a machine that already
+has one.
 
 ## Remedies, and the line an agent does not cross
 
-A remedy is the shape to branch on. `needsElevation: true` means a package manager and a person: print
-the command, hand it over, and do not run it. `needsElevation: false` with a `command` can be run in
-the source directory. `message` is for the person reading your report.
+A remedy is the shape to branch on, and it carries two separate facts because one boolean cannot hold
+both. `needsElevation` describes the command: true means a package manager and a person.
+`agentMayRun` is the permission: whether an agent may run it without asking.
+
+**Branch on `agentMayRun`.** They are not the same field. Putting a directory on PATH needs no
+elevation at all and is still not an agent's to do, because it lives in the person's shell
+configuration and Orbit does not edit that. `message` is for the person reading your report.
 
 Package commands name Fedora's packages, because Fedora 44 is the only host class this project
 measures. On another distribution the names are the person's to translate.
 
-| `id` | Cause | Elevation |
-|---|---|---|
-| `unsupported-platform` | Not Linux. The macOS and Windows adapters are unverified | No, and nothing can fix it here |
-| `system-tool-systemctl`, `system-tool-systemd-run`, `system-tool-nice`, `system-tool-python3` | A base system tool is missing | Yes |
-| `no-systemd-user-session` | No user manager is running for this account, so there is no slice to install into | No, and it is a login or a host problem, not a package |
-| `incomplete-source` | This source tree is missing files a release carries | No |
-| `dependencies-missing` | Project dependencies are not installed | No, the installer does it |
-| `no-browser` | No Chrome or Chromium at a supported launcher location | Yes |
-| `no-native-runtime` | The private compositor and pointer helper are not in a source release | Yes, and read the bootstrap's pinned versions first |
-| `no-capture-tools` | grim or wl-clipboard missing, native sessions only | Yes |
-| `no-xwayland` | Xwayland missing, X11 applications on the private display only | Yes |
-| `prefix-not-on-path` | The command is linked where the shell will not find it by name | No, and it is the person's shell configuration, which Orbit never edits |
-| `no-lingering` | Orbit starts with the desktop but will not survive a full logout | Yes |
-| `broker-did-not-start`, `broker-silent` | The service was installed and did not come up, or nothing answered its socket | No, read the status or journal command it carries |
+| `id` | Cause | `needsElevation` | `agentMayRun` |
+|---|---|---|---|
+| `unsupported-platform` | Not Linux. The macOS and Windows adapters are unverified | No | No, and nothing can fix it here |
+| `system-tool-systemctl`, `system-tool-systemd-run`, `system-tool-nice`, `system-tool-python3` | A base system tool is missing | Yes | No |
+| `no-systemd-user-session` | No user manager is running for this account, so there is no slice to install into | No | No, it is a login or a host problem, not a package |
+| `incomplete-source` | This source tree is missing files a release carries | No | No, report it |
+| `dependencies-missing` | Project dependencies are not installed | No | Yes |
+| `no-browser` | No Chrome or Chromium at a supported launcher location | Yes | No |
+| `no-native-runtime` | The private compositor and pointer helper are not in a source release | Yes | No, and the person reads the bootstrap's pinned versions first |
+| `no-capture-tools` | grim or wl-clipboard missing, native sessions only | Yes | No |
+| `no-xwayland` | Xwayland missing, X11 applications on the private display only | Yes | No |
+| `prefix-not-on-path` | The command is linked where the shell will not find it by name | No | No, it is the person's shell configuration |
+| `no-lingering` | Orbit starts with the desktop but will not survive a full logout | Yes | No |
+| `broker-did-not-start`, `broker-silent` | The service was installed and did not come up, or nothing answered its socket | No | Yes, the command only reads a status or a journal |
+
+### Reporting a remedy you did not run
+
+`command` is optional. A remedy without one has nothing to hand over, so print its `message`: the
+cause is the useful part, and `no-systemd-user-session` and `unsupported-platform` have no command
+because no command fixes them. Where there is a command, print it exactly as given. Do not add `sudo`
+to a command that does not carry it, and do not remove it from one that does.
+
+## Two trials, and what they changed
+
+The contract was tried twice on this workstation on 12 September 2026, by an agent given the prompt
+above, this file, and nothing else. Both installed into a throwaway prefix with `--no-service`.
+
+The first trial installed correctly and found three real defects. One boolean was carrying two
+different facts, so `prefix-not-on-path` said `needsElevation: false` while the document said an agent
+must never edit shell configuration, and the agent had to resolve the contradiction itself:
+`agentMayRun` exists because of that. A dry run left the top level `launcher` naming the source rather
+than the prospective link. And the `connector` step does not follow `--prefix`, which the document did
+not say, so an agent had to read the source to find out whether installing a second source would
+overwrite a live registration; the step now reports `creates`, `unchanged` or
+`replaces an earlier configuration`, and a dry run carries the content it would write.
+
+The second trial, after those changes, reported that it was never unsure which remedies it was allowed
+to run and that the dry run told it everything it needed before acting. It found the smaller gap this
+section's predecessor now covers: `command` is optional, and the instruction to print one read as a
+promise that one always exists.
+
+Two runs by one model on one host is not a claim that every agent can follow this. It is the evidence
+there is, and it is why the fields exist in the shape they do.
 
 ## Refusals an agent should expect, and not work around
 
@@ -113,7 +157,7 @@ covers the tools themselves.
 
 ## What an installing agent must never do
 
-- Run anything with `sudo`, or any command a remedy marked `needsElevation: true`.
+- Run anything with `sudo`, or any command a remedy marked `agentMayRun: false`.
 - Open, automate, read or copy the person's own browser profile, for any reason. Orbit exists so that
   an agent does not have to.
 - Report an installation as verified, tested or measured. It is installation state. The gates that

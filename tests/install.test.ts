@@ -55,6 +55,8 @@ test("an install without a service links the command and writes connector config
     // A prefix outside PATH is a real limit on the person's next command, so it is carried out.
     const path = report.remedies.find(remedy => remedy.id === "prefix-not-on-path");
     expect(path?.needsElevation).toBe(false);
+    // Not every hands-off remedy needs elevation: this one is the person's shell configuration.
+    expect(path?.agentMayRun).toBe(false);
     expect(path?.message).toContain(link);
   } finally { await box.restore(); }
 }, 20000);

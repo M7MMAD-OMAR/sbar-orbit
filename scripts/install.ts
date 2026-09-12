@@ -81,7 +81,7 @@ if (json) {
     // on its own line so it can be copied without editing.
     const lines: string[] = [];
     for (const remedy of [...report.remedies].sort((a, b) => Number(b.needsElevation) - Number(a.needsElevation))) {
-      lines.push(`  ${remedy.needsElevation ? "yours to run" : "optional"}: ${remedy.message}`);
+      lines.push(`  ${remedy.needsElevation ? "needs a package manager" : "yours to decide"}: ${remedy.message}`);
       if (remedy.command) lines.push(`      ${remedy.command}`);
     }
     display.summary("Left for you, because it needs a package manager or a decision:", lines, "warn");

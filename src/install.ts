@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
 import { activateLocal } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
@@ -126,19 +126,26 @@ export async function runInstall(options: InstallOptions = {}) {
     if (dryRun) return { state: "skipped", detail: "would run bun install --frozen-lockfile --ignore-scripts" };
     const result = await install(source);
     if (!result.ok) return { state: "failed", detail: result.output || "bun install failed",
-      remedies: [{ id: "dependencies-missing", needsElevation: false, command: "bun install --frozen-lockfile --ignore-scripts",
+      remedies: [{ id: "dependencies-missing", needsElevation: false, agentMayRun: true, command: "bun install --frozen-lockfile --ignore-scripts",
         message: `The dependency install failed in ${source}. Run it there and read its own output.` }] };
     return { state: "done", detail: "frozen lockfile, no lifecycle scripts" };
   });
 
   const linked = await step("launcher", async () => {
-    if (dryRun) return { state: "skipped", detail: `would link ${join(prefix, "bin/sbar-orbit")}` };
+    if (dryRun) {
+      // The top level launcher is what a caller reads to find the command afterwards. During a dry
+      // run it has to name where the link would go, not where the source happens to be.
+      launcher = join(prefix, "bin/sbar-orbit");
+      return { state: "skipped", detail: `would link ${launcher}` };
+    }
     const link = await activateLocal(source, prefix);
     launcher = link;
     const reachable = onPath(join(prefix, "bin"));
     return {
       state: "done", detail: link,
-      remedies: reachable ? [] : [{ id: "prefix-not-on-path", needsElevation: false,
+      // Elevation is not the only reason to stand back: PATH lives in the person's shell
+      // configuration, which Orbit does not edit, so this one is reported and never acted on.
+      remedies: reachable ? [] : [{ id: "prefix-not-on-path", needsElevation: false, agentMayRun: false,
         message: `The command is linked at ${link} and ${join(prefix, "bin")} is not on PATH, so it cannot be typed by name yet.` }],
       data: { link, onPath: reachable },
     };
@@ -155,9 +162,9 @@ export async function runInstall(options: InstallOptions = {}) {
       state: status.brokerActive ? "done" : "failed",
       detail: status.brokerActive ? (status.startsWithTheDesktop ? "running, and starts with your desktop" : "running") : "the broker service did not come up",
       remedies: status.brokerActive
-        ? (status.lingering ? [] : [{ id: "no-lingering", needsElevation: true, command: `loginctl enable-linger ${process.env.USER ?? ""}`.trim(),
+        ? (status.lingering ? [] : [{ id: "no-lingering", needsElevation: true, agentMayRun: false, command: `loginctl enable-linger ${process.env.USER ?? ""}`.trim(),
             message: "Orbit starts with your desktop. Surviving a full logout as well needs lingering, which needs elevation." }])
-        : [{ id: "broker-did-not-start", needsElevation: false, command: "systemctl --user status sbar-orbit.service",
+        : [{ id: "broker-did-not-start", needsElevation: false, agentMayRun: true, command: "systemctl --user status sbar-orbit.service",
             message: "The broker service was installed and did not come up. Its own status output says why." }],
       data: { units: units.written, autostart: autostart.wrote, status },
     };
@@ -168,12 +175,18 @@ export async function runInstall(options: InstallOptions = {}) {
     const configuration = { mcpServers: { orbit: { command: process.execPath, args: [join(source, "src/mcp.ts")], env: { ORBIT_SOCKET: socket } } } };
     const directory = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "sbar-orbit");
     const path = join(directory, "mcp.json");
-    if (dryRun) return { state: "skipped", detail: `would write ${path}` };
+    // This path does not follow --prefix: one machine has one registered connector, whichever source
+    // was installed last. So say what is already there before replacing it, and in a dry run print
+    // exactly what would be written, rather than making a caller read the source to find out.
+    const existing = await readFile(path, "utf8").catch(() => null);
+    const same = existing !== null && existing.trim() === JSON.stringify(configuration, null, 2).trim();
+    const replaces = existing === null ? "creates" : same ? "unchanged" : "replaces an earlier configuration";
+    if (dryRun) return { state: "skipped", detail: `would write ${path}, ${replaces}`, data: { path, replaces, configuration } };
     await mkdir(directory, { recursive: true, mode: 0o700 });
     // Orbit's own directory, never the host's configuration. Registering it with a particular agent
     // host stays the person's decision, and the exact command for it is printed at the end.
     await writeFile(path, `${JSON.stringify(configuration, null, 2)}\n`, { mode: 0o600 });
-    return { state: "done", detail: path, data: { path, configuration } };
+    return { state: "done", detail: `${path}, ${replaces}`, data: { path, replaces, configuration } };
   });
 
   await step("verify", async () => {
@@ -187,7 +200,7 @@ export async function runInstall(options: InstallOptions = {}) {
       } catch { await Bun.sleep(250); }
     }
     return { state: "failed", detail: "no answer from the managed broker",
-      remedies: [{ id: "broker-silent", needsElevation: false, command: "journalctl --user -u sbar-orbit.service --since -5min",
+      remedies: [{ id: "broker-silent", needsElevation: false, agentMayRun: true, command: "journalctl --user -u sbar-orbit.service --since -5min",
         message: "The broker service is installed but nothing answered on its socket. Its journal says why." }] };
   });
 
