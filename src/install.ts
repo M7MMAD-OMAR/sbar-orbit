@@ -17,7 +17,7 @@ import { OrbitError } from "./errors";
  * new here is the order, the fact that a failure carries its own remedy, and that the report
  * distinguishes "this did not run" from "this passed".
  *
- * It installs nothing that needs root. Bun, Chrome, Xwayland and the Fedora capture tools are the
+ * It installs nothing that needs root. Bun, a browser, Xwayland and the capture tools are the
  * person's package manager's job, and a step that pretended otherwise would be lying about a failure
  * a person would meet minutes later.
  */

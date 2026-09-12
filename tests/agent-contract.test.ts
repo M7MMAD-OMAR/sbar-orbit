@@ -36,6 +36,8 @@ test("the documented plan command returns the documented report", async () => {
       expect(typeof remedy.agentMayRun).toBe("boolean");
       // A command needing a package manager is never one an agent may run.
       if (remedy.needsElevation) expect(remedy.agentMayRun).toBe(false);
+      // Software is named portably. The command, when there is one, is this machine's package manager.
+      if (remedy.packages) expect(Array.isArray(remedy.packages)).toBe(true);
     }
     // A dry run names where the command would go, not where the source happens to be.
     expect(report.launcher).toBe(`${prefix}/bin/sbar-orbit`);
@@ -63,6 +65,9 @@ test("every step the installer reports is documented, and so is the elevation bo
     expect(contract).toContain(`\`${id}\``);
   expect(contract).toContain("needsElevation");
   expect(contract).toContain("agentMayRun");
+  // The portable field, and every package manager a command can be built for.
+  expect(contract).toContain("`packages`");
+  for (const manager of ["dnf", "apt", "pacman", "zypper", "apk"]) expect(contract).toContain(manager);
   // The sentence the contract tells an agent to repeat rather than drop.
   expect(contract).toContain("not a measurement");
 });

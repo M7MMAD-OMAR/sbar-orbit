@@ -7,15 +7,28 @@
 
 Local application workspaces for tool-capable AI agents. The mark is two surfaces offset on the diagonal: the screen you keep, and the one Orbit opens beside it. They never touch. [Brand](docs/brand.md).
 
-**Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or private Fedora display. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile.
+**Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or a private display of its own. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile.
 
 ```mermaid
 flowchart LR
-    Host[Agent host] -->|MCP or local API| Broker[Orbit broker]
-    CLI[CLI] --> Broker
-    Broker --> Browser[Owned browser]
-    Broker --> Native[Private Fedora display]
-    Broker --> Viewer[Optional viewer]
+    Agent["Any agent host"] -->|MCP| Broker
+    CLI["sbar-orbit CLI"] -->|"local socket"| Broker
+
+    subgraph orbit["Orbit, inside one shared CPU and memory budget"]
+        Broker["Broker"]
+        Browser["Private browser, one per session"]
+        Display["Private display, one per session"]
+    end
+
+    Broker --> Browser
+    Broker --> Display
+
+    subgraph yours["Your desktop, which none of this touches"]
+        Screen["Your windows, pointer and keyboard"]
+        Viewer["Viewer, open it when you want it"]
+    end
+
+    Viewer -.->|"watch, pause, take over, resume"| Broker
 ```
 
 ## What is actually supported
@@ -39,6 +52,8 @@ leaves the machine is a report you generated, read and pasted yourself.
 Requires Linux user cgroup delegation, Bun and Chrome/Chromium. The native backend needs the separate [Fedora bootstrap](docs/fedora-results.md).
 
 ```sh
+git clone https://github.com/M7MMAD-OMAR/sbar-orbit
+cd sbar-orbit
 ./install.sh
 ```
 
@@ -47,7 +62,7 @@ dependencies from the frozen lockfile, links the `sbar-orbit` command into `~/.l
 starts the broker service and the desktop mark, writes the agent connector configuration, then verifies
 that the installed broker answers. `./install.sh --dry-run` reports the same steps and changes nothing.
 
-It installs nothing that needs root. Bun, Chrome and the Fedora capture tools stay your package
+It installs nothing that needs root. Bun, a browser and the capture tools stay your package
 manager's job, and the run prints the exact command for each one it finds missing rather than reporting
 a success you would discover was false minutes later. It is not a measurement either: it says what was
 installed, not what was proven to work.
@@ -57,20 +72,22 @@ installed, not what was proven to work.
 Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:
 
 ```text
-Install Sbar Orbit in the source directory I have given you.
+Install Sbar Orbit on this machine.
 
-1. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
-2. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
+1. Clone https://github.com/M7MMAD-OMAR/sbar-orbit into a directory that will stay where it is, and
+   work there. If I have already given you the source, use that instead and clone nothing.
+2. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
+3. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
    never on the prose.
-3. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
+4. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
    which step stopped it.
-4. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or
-   its message when it carries no command, and stop. Never run it yourself, never add sudo to a
-   command that does not have it, and never use sudo for anything.
-5. Report back: every step with its state, the capabilities object, and the remedies you did not run.
+5. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or its
+   message and packages when it carries no command, and stop. Never run it yourself, never add sudo
+   to a command that does not have it, and never use sudo for anything.
+6. Report back: every step with its state, the capabilities object, and the remedies you did not run.
    Say plainly what is installed and what is not. Do not describe an installation as verified: the
    run reports installation state, not a measurement.
-6. Do not open, automate, read or copy my own browser profile at any point, for any reason.
+7. Do not open, automate, read or copy my own browser profile at any point, for any reason.
 ```
 
 The prompt is short on purpose: it points at [the contract](docs/agent-install.md) rather than
@@ -109,6 +126,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Connectors](docs/connectors.md) | MCP host setup |
 | [Resource limits](docs/resources.md) | Aggregate CPU/RAM limits |
 | [Preview](docs/preview.md) | Viewing, takeover, tabs and surface size |
+| [Viewer design](docs/viewer-design.md) | The viewer's palette, elevation and working signals |
 | [Theming](docs/theming.md) | Matching the desktop colour scheme |
 | [Accounts](docs/accounts.md), [files](docs/files.md) | Explicit shared state |
 | [Packaging](docs/packaging.md) | Versioned source artifacts |

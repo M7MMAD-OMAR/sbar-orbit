@@ -46,7 +46,9 @@ The smoke test extracts the exact archive, verifies its manifest, installs froze
 - Never overwrite an already published artifact. Keep its digest with its release assets.
 - The Apache-2.0 license and NOTICE cover project source; dependencies retain their own licenses.
 
-No GitHub remote, hosted release, global service or system installer is created by these commands. Removing an extracted program directory does not remove account snapshots, nor any workspace a killed broker left behind; `sbar-orbit clean` does the latter.
+These commands create no hosted release, no global service and no system installer. The repository
+itself is published at <https://github.com/M7MMAD-OMAR/sbar-orbit>; publishing a release there is a
+separate and deliberate step, and nothing in this file does it for you. Removing an extracted program directory does not remove account snapshots, nor any workspace a killed broker left behind; `sbar-orbit clean` does the latter.
 
 ## The whole installation in one command
 
@@ -80,8 +82,9 @@ A dry run reports every step and writes nothing, which is the safe way to read w
 machine you have not installed on before.
 
 What it cannot do, and says so rather than failing later: it does not install Bun, since it is running
-on Bun; it does not install Chrome, Xwayland, grim or wl-clipboard, since those need a package manager
-and elevation. Each missing item is printed with the remedy `inspectPrerequisites` already carries for
+on Bun; it does not install a browser, Xwayland, grim or wl-clipboard, since those need a package
+manager and elevation. Each of those remedies names the software in `packages` and builds its command
+for whichever package manager the machine has, so the report is not written for one system. Each missing item is printed with the remedy `inspectPrerequisites` already carries for
 it, gathered at the end under a heading that says these are left for the person. A remedy is a record
 rather than a sentence: an id, a message, sometimes a command, and two separate flags.
 `needsElevation` describes the command, a package manager and a person. `agentMayRun` is the

@@ -5,7 +5,7 @@
 #
 # It links the sbar-orbit command, prepares dependencies, installs and starts the broker service,
 # writes the agent connector configuration and verifies that the broker answers. It installs nothing
-# that needs root: Bun, Chrome and the Fedora capture tools stay the package manager's job, and the
+# that needs root: Bun, a browser and the capture tools stay the package manager's job, and the
 # run prints the exact command for each one it finds missing.
 set -euo pipefail
 cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"

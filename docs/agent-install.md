@@ -8,25 +8,32 @@ here does not.
 Nothing in it is specific to one model or one agent host. It needs a shell, this source directory and
 the ability to read JSON.
 
+It is not written for one operating system either. Every command it names is either Orbit's own or is
+built for whichever package manager the machine actually has. What is measured on one system stays
+said so: see [support tiers](support-tiers.md), which is about evidence rather than instructions. The
+one exception is named in its own row below, the private compositor's bootstrap.
+
 ## The prompt
 
 Give an agent this, with the Orbit source directory it should work in:
 
 ```text
-Install Sbar Orbit in the source directory I have given you.
+Install Sbar Orbit on this machine.
 
-1. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
-2. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
+1. Clone https://github.com/M7MMAD-OMAR/sbar-orbit into a directory that will stay where it is, and
+   work there. If I have already given you the source, use that instead and clone nothing.
+2. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
+3. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
    never on the prose.
-3. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
+4. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
    which step stopped it.
-4. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or
-   its message when it carries no command, and stop. Never run it yourself, never add sudo to a
-   command that does not have it, and never use sudo for anything.
-5. Report back: every step with its state, the capabilities object, and the remedies you did not run.
+5. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or its
+   message and packages when it carries no command, and stop. Never run it yourself, never add sudo
+   to a command that does not have it, and never use sudo for anything.
+6. Report back: every step with its state, the capabilities object, and the remedies you did not run.
    Say plainly what is installed and what is not. Do not describe an installation as verified: the
    run reports installation state, not a measurement.
-6. Do not open, automate, read or copy my own browser profile at any point, for any reason.
+7. Do not open, automate, read or copy my own browser profile at any point, for any reason.
 ```
 
 ## Entry points
@@ -56,8 +63,8 @@ it, `--reinstall-deps` to force a dependency install.
   "dryRun": false,
   "steps": [{ "id": "prerequisites", "title": "...", "state": "done", "detail": "...", "elapsedMs": 12 }],
   "capabilities": { "browserSessions": true, "nativeSessions": true },
-  "remedies": [{ "id": "no-browser", "message": "...", "command": "sudo dnf install -y chromium",
-                 "needsElevation": true, "agentMayRun": false }],
+  "remedies": [{ "id": "no-browser", "message": "...", "packages": ["chromium"],
+                 "command": "sudo dnf install -y chromium", "needsElevation": true, "agentMayRun": false }],
   "verified": "Installation steps only. ..."
 }
 ```
@@ -88,6 +95,12 @@ both. `needsElevation` describes the command: true means a package manager and a
 elevation at all and is still not an agent's to do, because it lives in the person's shell
 configuration and Orbit does not edit that. `message` is for the person reading your report.
 
+A remedy for missing software carries `packages`, the software itself, and usually `command`, built
+for whichever package manager is actually on this machine: dnf, apt, pacman, zypper or apk. On a system
+with none of those the names are still there and the command is not, because a wrong command is worse
+than none. `packages` is the portable field. Package names are not identical everywhere, so the command
+already carries the name this system uses.
+
 Package commands name Fedora's packages, because Fedora 44 is the only host class this project
 measures. On another distribution the names are the person's to translate.
 
@@ -99,7 +112,7 @@ measures. On another distribution the names are the person's to translate.
 | `incomplete-source` | This source tree is missing files a release carries | No | No, report it |
 | `dependencies-missing` | Project dependencies are not installed | No | Yes |
 | `no-browser` | No Chrome or Chromium at a supported launcher location | Yes | No |
-| `no-native-runtime` | The private compositor and pointer helper are not in a source release | Yes | No, and the person reads the bootstrap's pinned versions first |
+| `no-native-runtime` | The private compositor and pointer helper are not in a source release. This one is genuinely tied to a system: the bootstrap pins Fedora packages and has been run nowhere else | Yes | No, and the person reads the bootstrap before running it |
 | `no-capture-tools` | grim or wl-clipboard missing, native sessions only | Yes | No |
 | `no-xwayland` | Xwayland missing, X11 applications on the private display only | Yes | No |
 | `prefix-not-on-path` | The command is linked where the shell will not find it by name | No | No, it is the person's shell configuration |
@@ -108,10 +121,12 @@ measures. On another distribution the names are the person's to translate.
 
 ### Reporting a remedy you did not run
 
-`command` is optional. A remedy without one has nothing to hand over, so print its `message`: the
-cause is the useful part, and `no-systemd-user-session` and `unsupported-platform` have no command
-because no command fixes them. Where there is a command, print it exactly as given. Do not add `sudo`
-to a command that does not carry it, and do not remove it from one that does.
+`command` is optional. A remedy without one has nothing to hand over, so print its `message`, and its
+`packages` when it has them: the cause is the useful part. `no-systemd-user-session` and
+`unsupported-platform` carry no command because no command fixes them, and a system whose package
+manager Orbit does not know carries the package names instead. Where there is a command, print it
+exactly as given. Do not add `sudo` to a command that does not carry it, and do not remove it from one
+that does.
 
 ## Two trials, and what they changed
 

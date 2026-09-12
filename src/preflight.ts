@@ -41,10 +41,33 @@ const systemProbe: Probe = {
  * An agent runs a remedy when `agentMayRun` is true, prints it and stops otherwise. The `message`
  * stays for people.
  *
- * Package commands name Fedora's packages, because Fedora 44 is the only host class this project
- * measures. On another distribution the package names are the person's to translate.
+ * `packages` is the portable field: the software that is missing, named the way this system names it.
+ * `command` is a convenience built for whichever package manager is actually on this machine, and it
+ * is absent when none of the ones Orbit knows about is there. Branch on `packages`, print `command`.
  */
-export type Remedy = { id: string; message: string; command?: string; needsElevation: boolean; agentMayRun: boolean };
+export type Remedy = { id: string; message: string; command?: string; packages?: string[]; needsElevation: boolean; agentMayRun: boolean };
+
+/**
+ * Enough package managers to cover the systems a person is likely to be on, and no attempt to cover
+ * every one. An unrecognised system gets the package names and no command, which is the honest answer:
+ * a wrong command is worse than none.
+ */
+const packageManagers = [
+  { id: "dnf", path: "/usr/bin/dnf", install: (names: string[]) => `sudo dnf install -y ${names.join(" ")}` },
+  { id: "apt", path: "/usr/bin/apt-get", install: (names: string[]) => `sudo apt-get install -y ${names.join(" ")}` },
+  { id: "pacman", path: "/usr/bin/pacman", install: (names: string[]) => `sudo pacman -S --needed ${names.join(" ")}` },
+  { id: "zypper", path: "/usr/bin/zypper", install: (names: string[]) => `sudo zypper install -y ${names.join(" ")}` },
+  { id: "apk", path: "/usr/bin/apk", install: (names: string[]) => `sudo apk add ${names.join(" ")}` },
+];
+
+/** A remedy for software the system's package manager owns. Never something Orbit installs itself. */
+async function systemPackages(probe: Probe, id: string, message: string, names: { any: string[] } & Record<string, string[] | undefined>): Promise<Remedy> {
+  for (const manager of packageManagers) {
+    if (!await probe.file(manager.path, true)) continue;
+    return { id, message, packages: names.any, command: manager.install(names[manager.id] ?? names.any), needsElevation: true, agentMayRun: false };
+  }
+  return { id, message, packages: names.any, needsElevation: true, agentMayRun: false };
+}
 export type PrerequisiteCheck = { id: string; group: "common" | "browser" | "native"; available: boolean; remedy: Remedy | null };
 
 /** Checks availability only. Never spawns tools or starts applications. */
@@ -56,10 +79,11 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   add("linux", "common", probe.platform === "linux",
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
       message: "This alpha requires Linux. The macOS and Windows adapters are unverified, so nothing here can install them." });
-  for (const name of ["systemctl", "systemd-run", "nice", "python3"])
+  for (const name of ["systemctl", "systemd-run", "nice", "python3"]) {
+    const owner = name === "nice" ? { any: ["coreutils"] } : name === "python3" ? { any: ["python3"], apt: ["python3"], pacman: ["python"] } : { any: ["systemd"] };
     add(name, "common", await probe.file(`/usr/bin/${name}`, true),
-      { id: `system-tool-${name}`, needsElevation: true, agentMayRun: false, command: `sudo dnf install -y ${name === "nice" ? "coreutils" : name === "systemd-run" ? "systemd" : name}`,
-        message: `Orbit needs ${name} from the base system. Installing it is a package manager's job, so it is yours to run.` });
+      await systemPackages(probe, `system-tool-${name}`, `Orbit needs ${name} from the base system. Installing it belongs to the package manager, so it is yours to run.`, owner));
+  }
   add("systemd-user-session", "common", await probe.userManager(),
     { id: "no-systemd-user-session", needsElevation: false, agentMayRun: false,
       message: "Orbit runs every process it owns inside a systemd user slice, and no user manager is running for this account. A desktop login provides one. A container and a bare ssh session without lingering do not." });
@@ -72,21 +96,25 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
         message: "Project dependencies are not installed. Run this in the source directory; the one command install does it for you." });
   const browsers = await Promise.all(chromeExecutables.map(path => probe.file(path, true)));
   add("chrome-or-chromium", "browser", browsers.some(Boolean),
-    { id: "no-browser", needsElevation: true, agentMayRun: false, command: "sudo dnf install -y chromium",
-      message: "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at." });
+    await systemPackages(probe, "no-browser",
+      "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at.",
+      { any: ["chromium"] }));
   const native = nativeRuntimePaths(project);
   for (const [id, path] of [["private-sway", join(native.executables, "sway")], ["private-pointer", native.pointer]] as const)
     add(id, "native", await probe.file(path, true),
+      // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
+      // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
       { id: "no-native-runtime", needsElevation: true, agentMayRun: false, command: "bash experiments/fedora-display/bootstrap.sh",
-        message: "The private compositor and pointer helper are not in a source release, so a fresh machine builds them from the Fedora bootstrap. Read its pinned package versions before running it; native sessions are unavailable until then, browser sessions are not affected." });
+        message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
   for (const name of ["grim", "wl-copy", "wl-paste"])
     add(name, "native", await probe.file(`/usr/bin/${name}`, true),
-      { id: "no-capture-tools", needsElevation: true, agentMayRun: false, command: "sudo dnf install -y grim wl-clipboard",
-        message: "Native sessions capture with grim and paste through wl-clipboard. Browser sessions do not need either." });
+      await systemPackages(probe, "no-capture-tools",
+        "Native sessions capture with grim and paste through wl-clipboard. Browser sessions do not need either.",
+        { any: ["grim", "wl-clipboard"] }));
   const xwayland = probe.which("Xwayland");
   add("xwayland", "native", !!xwayland && await probe.file(xwayland, true),
-    { id: "no-xwayland", needsElevation: true, agentMayRun: false, command: "sudo dnf install -y xorg-x11-server-Xwayland",
-      message: "X11 applications on the private display need Xwayland on PATH." });
+    await systemPackages(probe, "no-xwayland", "X11 applications on the private display need Xwayland on PATH.",
+      { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
   return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound: available("native"), checks,
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],

@@ -27,6 +27,25 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   expect(noModules.nativePrerequisitesFound).toBe(false);
 });
 
+test("a package remedy follows the package manager that is actually on the machine", async () => {
+  const missing = { platform: "linux", module: () => false, which: () => null, userManager: async () => false };
+  const only = (manager: string) => inspectPrerequisites("/fixture", { ...missing, file: async (path: string) => path === manager });
+  const browserOn = async (manager: string) =>
+    (await only(manager)).checks.find(check => check.id === "chrome-or-chromium")?.remedy;
+
+  expect((await browserOn("/usr/bin/dnf"))?.command).toBe("sudo dnf install -y chromium");
+  expect((await browserOn("/usr/bin/apt-get"))?.command).toBe("sudo apt-get install -y chromium");
+  expect((await browserOn("/usr/bin/pacman"))?.command).toBe("sudo pacman -S --needed chromium");
+  // Package names are not the same everywhere, so the portable field is the software, not the command.
+  const arch = (await only("/usr/bin/pacman")).checks.find(check => check.id === "xwayland")?.remedy;
+  expect(arch?.command).toBe("sudo pacman -S --needed xorg-xwayland");
+  expect(arch?.packages).toEqual(["xwayland"]);
+  // An unrecognised system gets the names and no command. A wrong command is worse than none.
+  const unknown = await browserOn("none");
+  expect(unknown?.command).toBeUndefined();
+  expect(unknown?.packages).toEqual(["chromium"]);
+});
+
 test("a systemd tool with no user manager behind it is not availability", async () => {
   // The case a container found: systemctl present, nothing running it, and the install that needs it
   // refusing seconds after the check said the machine was ready.
