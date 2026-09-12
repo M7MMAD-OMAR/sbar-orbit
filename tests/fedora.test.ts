@@ -82,7 +82,7 @@ const enabled = process.env.ORBIT_TEST_NATIVE === "1";
     expect(await page.locator("#send").isDisabled()).toBe(true);
     await expect(call(broker.socket, "session.control", { ...session, input: { type: "paste", text: "must not paste" } })).rejects.toMatchObject({ code: "NOT_PAUSED" });
     await page.locator("#pause").click();
-    await page.waitForFunction(() => document.querySelector("#state")?.textContent === "paused");
+    await page.waitForFunction(() => document.querySelector<HTMLElement>("#state")?.dataset.state === "paused");
     expect(await page.locator("#key").isDisabled()).toBe(true);
     const box = await page.locator("#frame").boundingBox();
     if (!box) throw new Error("No native frame");

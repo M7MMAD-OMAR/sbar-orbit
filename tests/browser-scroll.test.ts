@@ -36,7 +36,7 @@ test("browser scrolling works through agent actions and paused viewer input", as
     await page.locator("#frame").waitFor({ state: "visible" });
     expect(await page.title()).toBe("Orbit workspace");
     await page.locator("#pause").click();
-    await page.waitForFunction(() => document.querySelector("#state")?.textContent === "paused");
+    await page.waitForFunction(() => document.querySelector<HTMLElement>("#state")?.dataset.state === "paused");
     await expect(act(scroll)).rejects.toMatchObject({ code: "PAUSED" });
     await page.locator("#frame").hover();
     await page.mouse.wheel(0, 300);
@@ -46,7 +46,7 @@ test("browser scrolling works through agent actions and paused viewer input", as
     await page.mouse.wheel(0, -300);
     await wait(() => offset === 0);
     await page.locator("#resume").click();
-    await page.waitForFunction(() => document.querySelector("#state")?.textContent === "running");
+    await page.waitForFunction(() => document.querySelector<HTMLElement>("#state")?.dataset.state === "running");
     await page.locator("#frame").hover();
     await page.mouse.wheel(0, 300);
     await Bun.sleep(300);

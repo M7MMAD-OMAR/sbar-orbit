@@ -18,8 +18,22 @@ try { desktopPalette = localStorage.getItem('orbit-palette') === 'desktop'; } ca
 function applyPalette() {
   document.documentElement?.setAttribute?.('data-palette', desktopPalette ? 'desktop' : 'orbit');
   paletteButton.setAttribute('aria-pressed', String(desktopPalette));
-  paletteButton.textContent = desktopPalette ? 'Desktop colours' : 'Follow desktop colours';
+  paletteButton.textContent = desktopPalette ? 'Using my desktop colours' : 'Match my desktop colours';
 }
+/*
+ * Bigger: the rail, the panels and the heading go away and the picture takes the
+ * window. It changes nothing about the session, so unlike the screen size below
+ * it needs no pause; it is the answer to "let me see it properly" that does not
+ * move a single coordinate out from under the assistant.
+ */
+const biggerButton = element('expand');
+let bigger = false;
+biggerButton.onclick = () => {
+  bigger = !bigger;
+  shell.classList.toggle('bigger', bigger);
+  biggerButton.setAttribute('aria-pressed', String(bigger));
+  biggerButton.textContent = bigger ? 'Back to normal size' : 'Make it bigger';
+};
 paletteButton.onclick = () => {
   desktopPalette = !desktopPalette;
   try { localStorage.setItem('orbit-palette', desktopPalette ? 'desktop' : 'orbit'); } catch { /* not remembered */ }
@@ -39,8 +53,18 @@ async function rpc(method, params = {}) {
   if (!result.ok) throw new Error(result.error.message);
   return result.result;
 }
+/*
+ * What each state is called on screen. The state itself stays on `data-state`,
+ * which is what anything reading the page for the state should use: the words
+ * here are for a person, and a person should not have to learn that an assistant
+ * is "running" or that they themselves are a "pause".
+ */
+const WORDS = { running: 'Open', paused: 'You are in control', closing: 'Finishing', closed: 'Finished' };
+/* A session with nothing in flight is open, not working, and saying "Working" over an assistant that is
+   sitting still is the kind of small lie that teaches a person to stop believing the screen. */
+const words = (state, working) => working ? 'Working' : WORDS[state] || state || 'Unknown';
 function controls() {
-  element('state').textContent = state || 'No session selected';
+  element('state').textContent = state ? words(state, element('state').dataset.working === 'true') : 'Nothing selected yet';
   element('state').dataset.state = state;
   shell.dataset.state = state;
   const live = !!selected && !['closed', 'closing'].includes(state);
@@ -52,13 +76,16 @@ function controls() {
   element('send').textContent = backend === 'fedora' ? 'Paste text' : 'Send text';
   element('text').maxLength = backend === 'fedora' ? 2048 : 16384;
   element('input-hint').textContent = backend === 'fedora'
-    ? 'Pause to click or scroll over the image. Paste uses this workspace\'s private clipboard. Wait for each action to finish.'
-    : 'Pause the agent, then click or scroll over its page above. Send text or a key below.';
+    ? 'Choose Take over first. Then click or scroll on the picture above, and type here. Wait for each step to finish before the next one.'
+    : 'Choose Take over first. Then click the picture above to pick a box, and type here.';
   element('account-controls').hidden = !accountName;
-  element('account-label').textContent = accountName ? `Account snapshot: ${accountName}. Pause, then save to reuse its login later.` : '';
+  element('account-label').textContent = accountName ? `This session signs in as ${accountName}. Take over, then save it so the next session starts already signed in.` : '';
   element('save-account').disabled = !accountName || !live || busy || state !== 'paused';
   const adjustable = live && !busy && state === 'paused';
   element('surface').disabled = !adjustable;
+  // A greyed control with no reason beside it teaches nobody anything. Changing the screen size moves
+  // every coordinate the assistant just read, which is why it waits for you to take over first.
+  element('size-note').textContent = !live ? '' : adjustable ? '' : 'Take over first to change this';
   for (const id of ['fullscreen', 'restore']) { element(id).hidden = backend !== 'fedora'; element(id).disabled = !adjustable; }
   for (const button of tabStrip.children || []) button.disabled = !adjustable;
   frame.classList.toggle('controllable', adjustable);
@@ -75,7 +102,7 @@ function renderSessions(list) {
   listed = list;
   const line = entry => `${entry.sessionId}/${entry.state}/${entry.agentName || ''}/${entry.taskName || ''}/${entry.activity?.state || ''}/${entry.sessionId === selected}`;
   const signature = list.map(line).join('|');
-  element('session-count').textContent = list.length ? `Sessions · ${list.length}` : 'Sessions';
+  element('session-count').textContent = list.length ? `Assistants · ${list.length}` : 'Assistants';
   if (signature === railSignature) return;
   railSignature = signature;
   if (!list.length) {
@@ -101,7 +128,13 @@ function renderSessions(list) {
     const task = document.createElement('div'); task.className = 'session-task';
     task.textContent = entry.taskName || entry.backend || 'Agent workspace';
     const meta = document.createElement('div'); meta.className = 'session-meta';
-    meta.textContent = `${entry.backend || 'session'} · ${String(entry.sessionId).slice(0, 4)} · ${entry.state || 'unknown'}`;
+    // The short identifier earns its place only when two cards would otherwise read the same. It was
+    // there to tell duplicates apart, and on every other card it is four characters of noise.
+    const twin = list.filter(other => (other.agentName || '') === (entry.agentName || '')
+      && (other.taskName || '') === (entry.taskName || '')).length > 1;
+    const busyHere = entry.activity?.state === 'working' && entry.state === 'running';
+    meta.textContent = `${entry.backend === 'fedora' ? 'App window' : 'Web page'} · ${words(entry.state, busyHere)}`
+      + (twin ? ` · ${String(entry.sessionId).slice(0, 4)}` : '');
     card.append(top, task, meta);
     card.onclick = () => selectSession(entry.sessionId);
     return card;
@@ -128,18 +161,25 @@ async function refreshSessions() {
   const previous = selected;
   if (!list.some(s => s.sessionId === selected)) selected = list.find(s => s.state !== 'closed')?.sessionId || list[0]?.sessionId || '';
   renderSessions(list);
-  if (previous !== selected) { element('account-result').textContent = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  }
+  if (previous !== selected) { element('account-result').textContent = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting to see what it is looking at'; element('page-location').textContent = '';  }
   const current = list.find(s => s.sessionId === selected);
   agentName = current?.agentName || 'SbarOrbit';
   actor = current?.activity?.actor || 'agent';
   element('agent-name').textContent = agentName;
   element('task-name').textContent = current?.taskName || 'Agent workspace';
   const activity = current?.activity;
-  const verbs = { navigate: 'Open page', fill: 'Fill field', click: 'Click', read: 'Read page', scroll: 'Scroll', pointer: 'Click', text: 'Type', paste: 'Paste', key: 'Press key', launch: 'Open application' };
-  element('activity').textContent = activity ? `${activity.actor === 'human' ? 'You' : agentName}: ${verbs[activity.type] || 'Input'} · ${activity.state} · Step ${activity.sequence}` : 'No actions yet';
+  const verbs = { navigate: 'opening a page', fill: 'filling in a box', click: 'clicking', read: 'reading the page', scroll: 'scrolling', pointer: 'clicking', text: 'typing', paste: 'pasting', key: 'pressing a key', launch: 'opening an application' };
+  const outcome = { working: 'right now', done: 'just now', failed: 'and it did not work' };
+  element('activity').textContent = activity
+    ? `${activity.actor === 'human' ? 'You' : agentName} ${activity.actor === 'human' ? 'were' : 'is'} ${verbs[activity.type] || 'doing something'} ${outcome[activity.state] || activity.state} · step ${activity.sequence}`
+    : 'Nothing has happened yet';
   // What makes the stage glow. An action in flight is the only honest signal the viewer has for "the
   // agent is doing something right now"; a running session with nothing in flight is merely open.
-  shell.dataset.working = String(activity?.state === 'working' && current?.state === 'running');
+  const working = String(activity?.state === 'working' && current?.state === 'running');
+  shell.dataset.working = working;
+  element('state').dataset.working = working;
+  element('agent-badge').dataset.working = working;
+  // controls() reads this back for the chip's word, so it is set before that call, not after.
   state = current?.state || '';
   backend = list.find(s => s.sessionId === selected)?.backend || '';
   const size = current?.surface;
@@ -157,13 +197,13 @@ async function refreshSessions() {
   }
   accountName = list.find(s => s.sessionId === selected)?.accountName || '';
   element('empty').hidden = !!selected && !frame.hidden;
-  if (state === 'closed') { capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  element('empty').hidden = false; element('empty').textContent = 'This session has stopped.'; }
+  if (state === 'closed') { capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting to see what it is looking at'; element('page-location').textContent = '';  element('empty').hidden = false; element('empty').textContent = 'This session has finished.'; }
   controls();
 }
 function selectSession(id) {
   if (id === selected) return;
   selected = id; state = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true;
-  element('page-title').textContent = 'Waiting for the current page or application';
+  element('page-title').textContent = 'Waiting to see what it is looking at';
   element('page-location').textContent = '';
   controls(); renderSessions(listed);
 }
@@ -209,7 +249,7 @@ async function poll() {
   try {
     if (document.hidden) { setTimeout(poll, 1000); return; }
     await refreshSessions();
-    element('connection').textContent = 'Connected locally';
+    element('connection').textContent = 'Connected';
     element('connection').dataset.connected = 'true';
     const id = selected;
     if (!document.hidden && id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
@@ -231,11 +271,17 @@ async function poll() {
             frame.getContext('2d').drawImage(bitmap, 0, 0);
             lastDraw = performance.now() - drawStarted;
             capturedAt = image.capturedAt; imageWidth = image.width; imageHeight = image.height;
+            // Read by the bigger view, which sizes the picture from the height of the window. It is set
+            // as a width so the canvas and the box the pointer is placed in stay the same rectangle.
+            element('stage').style.setProperty?.('--shot-width', String(image.width));
+            element('stage').style.setProperty?.('--shot-height', String(image.height));
             frame.dataset.capturedAt = String(capturedAt);
             frame.hidden = false; element('empty').hidden = true;
             const presence = image.presence;
             element('page-title').textContent = presence?.title || 'Untitled page or application';
-            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount ? ` · Controlled tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''} · ${image.width} × ${image.height}`;
+            // The size used to be repeated here; it is on the Screen size control, which is also where a
+            // person can do something about it.
+            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount > 1 ? ` · tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''}`;
             renderTabs(Array.isArray(presence?.tabs) ? presence.tabs : []);
             const position = presence?.pointer;
             pointer.hidden = !position;
@@ -252,7 +298,7 @@ async function poll() {
       }
     }
   pollFailures = 0;
-  } catch (e) { pollFailures++; element('connection').textContent = 'Connection interrupted'; element('connection').dataset.connected = 'false'; error(e.message); }
+  } catch (e) { pollFailures++; element('connection').textContent = 'Lost the connection, trying again'; element('connection').dataset.connected = 'false'; error(e.message); }
   const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
   // Idle at least as long as the iteration cost, so a viewer that cannot keep up
   // drops its frame rate instead of polling back to back and taking a whole core.
@@ -264,7 +310,9 @@ setInterval(() => {
   if (document.hidden) return;
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
   const share = lastCost + lastGap > 0 ? Math.round(lastCost / (lastCost + lastGap) * 100) : 0;
-  element('freshness').textContent = capturedAt ? `Frame age: ${(age / 1000).toFixed(1)}s` : 'Waiting for a frame';
+  element('freshness').textContent = capturedAt
+    ? age < 1500 ? 'Picture is up to date' : `Picture is ${Math.round(age / 1000)} seconds old`
+    : 'Waiting for the first picture';
   element('cost').textContent = lastCost
     ? `Viewer cycle: ${Math.round(lastCost)} ms of every ${Math.round(lastCost + lastGap)} ms (${share}%) · request ${Math.round(lastRpc)} ms · decode ${Math.round(lastDecode)} ms · draw ${Math.round(lastDraw)} ms`
     : '';
@@ -275,5 +323,5 @@ setInterval(() => {
   // working was the one thing on the page you could not rely on seeing.
   pointer.classList.toggle('stale', age > staleAfter);
 }, 250);
-if (!token) { element('connection').textContent = 'Access link required'; element('connection').dataset.connected = 'false'; error('Open the complete preview link printed by Orbit.'); }
+if (!token) { element('connection').textContent = 'This link is incomplete'; element('connection').dataset.connected = 'false'; error('Open the complete preview link printed by Orbit.'); }
 else poll();

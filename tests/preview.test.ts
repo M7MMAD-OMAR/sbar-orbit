@@ -58,8 +58,8 @@ test("viewer authenticates, renders live frames and controls only paused session
       const canvas = document.querySelector<HTMLCanvasElement>('#frame')!;
       return Array.from(canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data);
     })).toEqual([246, 247, 249, 255]);
-    await page.getByRole("button", { name: "Pause agent", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('#state')?.textContent === 'paused');
+    await page.getByRole("button", { name: "Take over", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'paused');
     await expect(call(broker.socket, "session.act", { ...session, requestId: "paused", action: { type: "click", selector: "button" } })).rejects.toMatchObject({ code: "PAUSED" });
     const box = await page.locator("#frame").boundingBox();
     if (!box) throw new Error("Preview image missing");
@@ -72,8 +72,8 @@ test("viewer authenticates, renders live frames and controls only paused session
     await page.locator("#save-account").click();
     await page.waitForFunction(() => document.querySelector("#account-result")?.textContent?.includes("saved"));
     expect(await Bun.file(join(accountRoot, "viewer-fixture/state.json")).exists()).toBe(true);
-    await page.getByRole("button", { name: "Resume agent", exact: true }).click();
-    await page.waitForFunction(() => document.querySelector('#state')?.textContent === 'running');
+    await page.getByRole("button", { name: "Hand back", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'running');
     expect(await call(broker.socket, "session.act", { ...session, requestId: "read", action: { type: "read", selector: "output" } })).toEqual({ text: "Manual control works" });
     const afterInput = Date.now();
     await page.waitForFunction(at => Number(document.querySelector<HTMLImageElement>('#frame')?.dataset.capturedAt) > at, afterInput);
@@ -102,9 +102,9 @@ test("viewer authenticates, renders live frames and controls only paused session
     const again = await browser.newPage();
     await again.goto(url);
     await again.locator("#frame").waitFor({ state: "visible" });
-    await again.getByRole("button", { name: "Stop session", exact: true }).click();
-    await again.waitForFunction(() => document.querySelector('#state')?.textContent === 'closed');
-    expect(await again.locator("#empty").textContent()).toBe("This session has stopped.");
+    await again.getByRole("button", { name: "End session", exact: true }).click();
+    await again.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'closed');
+    expect(await again.locator("#empty").textContent()).toBe("This session has finished.");
   } finally { await ownedViewer.close(); await broker.close(); fixture.stop(true); }
 }, 60000);
 

@@ -1,65 +1,62 @@
 /* ===========================================================================
    Orbit viewer design system
 
-   One fixed palette, dark, shipped in the fallback position of the Material 3
-   role each token reads. With no desktop palette applied the fallbacks are what
-   paints, which is Orbit's own design; `/theme.css` sets those roles under
-   [data-palette="desktop"], so following the desktop is a switch the person
-   throws rather than something that happens to them. See docs/theming.md.
+   Two rules shape everything below.
 
-   The rule the whole file keeps: a colour is never written twice. Every value
-   below is a token, and every rule after this block reads tokens only.
+   No lines. Nothing in this file draws a border, and nothing draws a hairline
+   ring with a shadow either, because that is a border wearing another
+   property's name. Separation comes from the surface a thing sits on and the
+   shadow it casts, never from an edge around it. Two exceptions, both for
+   reasons other than decoration: the focus ring, which a keyboard needs to
+   find, and the pointer's white stroke in the markup, which sits over somebody
+   else's page rather than over this design.
+
+   No hue. White, black and the greys between them. State is carried by
+   brightness, motion and words instead of by colour, which also means it
+   survives being read by somebody who cannot separate red from green. The one
+   thing that keeps its colour is the agent pointer, for the same reason its
+   stroke is white.
+
+   The palette ships in the fallback position of the Material 3 role each token
+   reads, so one declaration serves both this design and a desktop palette the
+   person opts into with the switch in the rail. See docs/viewer-design.md.
    =========================================================================== */
 
 :root {
   color-scheme: dark;
 
-  /* Ground and elevation. Five steps, each a lighter surface rather than a
-     heavier shadow, because a shadow on a dark ground is nearly invisible and
-     the separation has to come from the surface itself. */
-  --ground: var(--surface, #090c11);
-  --level-0: var(--surface-container-lowest, #0c1017);
-  --level-1: var(--surface-container-low, #11161f);
-  --level-2: var(--surface-container, #151c27);
-  --level-3: var(--surface-container-high, #1c2431);
-  --level-4: var(--surface-container-highest, #242e3e);
-  --sunken: var(--surface-variant, #070a0e);
+  /*
+   * Six surfaces. The steps are wider than a bordered design needs: with no
+   * line to hold an edge, the difference between one surface and the next is
+   * the entire separation, so each is about eight per cent lighter than the one
+   * below rather than the three or four a hairline would have carried.
+   */
+  --ground: var(--surface, #0b0b0c);
+  --level-0: var(--surface-container-lowest, #111113);
+  --level-1: var(--surface-container-low, #17181a);
+  --level-2: var(--surface-container, #1f2023);
+  --level-3: var(--surface-container-high, #282a2e);
+  --level-4: var(--surface-container-highest, #34363b);
+  --sunken: var(--surface-variant, #050506);
 
-  /* Ink */
-  --ink: var(--on-surface, #e7edf6);
-  --ink-dim: var(--on-surface-variant, #98a6bb);
+  /* Ink, in three weights. Nothing quieter than faint is legible on these. */
+  --ink: var(--on-surface, #f3f4f6);
+  --ink-dim: var(--on-surface-variant, #a3a6ad);
+  --ink-faint: color-mix(in srgb, var(--on-surface, #f3f4f6) 42%, transparent);
 
-  /* Lines. The hairline is what gives every card its edge; the strong one is
-     reserved for the stage, which is the thing the eye should land on. */
-  --line: var(--outline-variant, #212b39);
-  --line-strong: var(--outline, #35435a);
+  /* The loudest thing available without hue is inversion: light ground, dark
+     ink. It carries the one action a person most wants, and a real error. */
+  --loud: var(--primary, #f0f1f3);
+  --on-loud: var(--on-primary, #121315);
 
-  /* Accent. The fallback is the brand blue's dark value, from docs/brand.md. */
-  --accent: var(--primary, #6893ce);
-  --on-accent: var(--on-primary, #06121f);
-  --accent-soft: var(--primary-container, #16304f);
-  --on-accent-soft: var(--on-primary-container, #cfe0fb);
-  --accent-quiet: var(--secondary-container, #172433);
-  --on-accent-quiet: var(--on-secondary-container, #bcd2f0);
-
-  /* Live. Used for a session that is working and for the connection state, and
-     deliberately the same green the desktop mark uses for the same meaning. */
-  --live: var(--tertiary, #5cc98d);
-  --live-soft: var(--tertiary-container, #102e22);
-  --on-live-soft: var(--on-tertiary-container, #b4ecd0);
-
-  /* Trouble */
-  --alarm: var(--error, #ff8e7f);
-  --on-alarm: var(--on-error, #2c0c07);
-  --alarm-soft: var(--error-container, #3a1613);
-  --on-alarm-soft: var(--on-error-container, #ffd8d1);
-
-  /* Shape, spacing and motion. One scale each, so nothing is measured by eye. */
-  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-pill: 999px;
+  --r-sm: 9px; --r-md: 13px; --r-lg: 18px; --r-xl: 24px; --r-pill: 999px;
   --gap-1: 4px; --gap-2: 8px; --gap-3: 12px; --gap-4: 16px; --gap-5: 24px; --gap-6: 32px;
-  --shadow-1: 0 1px 2px rgb(0 0 0 / .5);
-  --shadow-2: 0 6px 18px -8px rgb(0 0 0 / .7);
-  --shadow-3: 0 24px 60px -28px rgb(0 0 0 / .85);
+
+  /* Three depths, each paired with one of the surfaces above. A shadow alone
+     never separates anything here; it tells you which way the stack goes. */
+  --shadow-1: 0 1px 3px rgb(0 0 0 / .55);
+  --shadow-2: 0 10px 26px -12px rgb(0 0 0 / .8);
+  --shadow-3: 0 28px 70px -30px rgb(0 0 0 / .95);
   --ease: cubic-bezier(.2, .7, .3, 1);
 
   font-family: var(--font-main, system-ui, sans-serif);
@@ -69,12 +66,12 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--ground); line-height: 1.45; }
-h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+body { margin: 0; background: var(--ground); line-height: 1.5; }
+h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
 
 /* --- Layout -------------------------------------------------------------- */
 
-.shell { display: grid; grid-template-columns: 296px minmax(0, 1fr); min-height: 100vh; }
+.shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 100vh; }
 .work { min-width: 0; padding: var(--gap-5) var(--gap-6) var(--gap-6); display: flex; flex-direction: column; gap: var(--gap-4); }
 
 /* --- The rail ------------------------------------------------------------ */
@@ -83,45 +80,51 @@ h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; 
   display: flex; flex-direction: column; gap: var(--gap-3);
   padding: var(--gap-5) var(--gap-4);
   background: var(--level-0);
-  border-inline-end: 1px solid var(--line);
 }
-.brand { display: flex; align-items: center; gap: var(--gap-2); color: var(--accent); }
-.wordmark { font-size: 15px; letter-spacing: .01em; color: var(--ink); }
+.brand { display: flex; align-items: center; gap: var(--gap-2); color: var(--ink); }
+.wordmark { font-size: 15px; color: var(--ink); }
 .wordmark strong { font-weight: 700; }
-.rail-note { margin: 0 0 var(--gap-3); font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
-.rail-heading { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); }
+.rail-note { margin: 0 0 var(--gap-3); font-size: 12.5px; color: var(--ink-dim); }
+.rail-heading { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
 .session-list { display: flex; flex-direction: column; gap: var(--gap-2); overflow-y: auto; flex: 1; min-height: 0; }
-.rail-foot { display: flex; flex-direction: column; gap: var(--gap-2); align-items: flex-start; padding-top: var(--gap-3); border-top: 1px solid var(--line); }
+.rail-foot { display: flex; flex-direction: column; gap: var(--gap-2); align-items: flex-start; margin-top: var(--gap-3); }
 
 /*
- * One card per session, which is the whole of navigation: the select this
- * replaced could show one session at a time and said nothing about the others,
- * so a person running several agents could not see which one needed them.
+ * One card per assistant, which is the whole of navigation. The selected one
+ * rises two surfaces rather than gaining an outline.
  */
 .session {
   display: block; width: 100%; text-align: start; cursor: pointer;
-  padding: var(--gap-3); border: 1px solid var(--line); border-radius: var(--r-md);
+  padding: var(--gap-3) var(--gap-3) var(--gap-3) var(--gap-4);
+  border: 0; border-radius: var(--r-md);
   background: var(--level-1); color: var(--ink); font: inherit;
-  transition: background .18s var(--ease), border-color .18s var(--ease), transform .18s var(--ease);
+  transition: background .18s var(--ease), box-shadow .18s var(--ease);
 }
-.session:hover { background: var(--level-2); border-color: var(--line-strong); }
-.session[aria-current="true"] { background: var(--level-3); border-color: var(--accent); }
+.session:hover { background: var(--level-2); }
+.session[aria-current="true"] { background: var(--level-3); box-shadow: var(--shadow-2); }
 .session-top { display: flex; align-items: center; gap: var(--gap-2); }
-.session-agent { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-task { margin-top: 3px; font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-meta { margin-top: var(--gap-2); font-size: 11px; color: var(--ink-dim); display: flex; gap: var(--gap-2); }
+.session-agent { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-task { margin-top: 2px; font-size: 12.5px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { margin-top: var(--gap-2); font-size: 11.5px; color: var(--ink-faint); }
 
 /*
- * The state light. It is the same vocabulary as the desktop mark, so a person
- * who learned the colours on their panel does not learn them again here.
+ * The light. With no hue left, the four states are four brightnesses, and the
+ * one that matters most is also the only one that moves.
  */
-.dot { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--ink-dim); flex: none; }
-.session[data-state="running"] .dot, .agent-badge .dot { background: var(--live); }
-.session[data-state="paused"] .dot { background: var(--accent); }
-.session[data-state="closed"] .dot, .session[data-state="closing"] .dot { background: var(--line-strong); }
-.session[data-working="true"] .dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--live, #5cc98d) 28%, transparent); animation: breathe 1.8s var(--ease) infinite; }
-
-@keyframes breathe { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--live, #5cc98d) 6%, transparent); } }
+.dot { width: 9px; height: 9px; border-radius: var(--r-pill); background: var(--ink-faint); flex: none; }
+.session[data-state="running"] .dot, .agent-badge .dot { background: var(--ink-dim); }
+/* Paused is you being asked for something, so it is bright and still: bright and moving is working,
+   bright and still needs you, dim is open, dimmest is done. */
+.session[data-state="paused"] .dot { background: var(--ink); }
+.session[data-state="closed"] .dot, .session[data-state="closing"] .dot { background: var(--level-4); }
+/* Working: full brightness and a halo. Both survive reduced motion, so the
+   state is still readable when the breathing below is switched off. */
+.session[data-working="true"] .dot, .agent-badge[data-working="true"] .dot {
+  background: var(--ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink, #f3f4f6) 16%, transparent);
+  animation: breathe 1.9s var(--ease) infinite;
+}
+@keyframes breathe { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--ink, #f3f4f6) 4%, transparent); } }
 
 /* --- Header -------------------------------------------------------------- */
 
@@ -130,137 +133,193 @@ h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; 
 .head-status { display: flex; flex-direction: column; align-items: flex-end; gap: var(--gap-2); }
 .agent-badge {
   display: inline-flex; align-items: center; gap: var(--gap-2);
-  background: var(--accent-quiet); color: var(--on-accent-quiet);
-  font-size: 12px; font-weight: 700; border-radius: var(--r-pill); padding: 5px 11px;
+  background: var(--level-2); color: var(--ink-dim);
+  font-size: 12px; font-weight: 600; border-radius: var(--r-pill); padding: 5px 12px;
 }
-#task-name { font-size: 26px; margin: var(--gap-2) 0 var(--gap-1); }
-#page-title { margin: 0; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
-#page-location { margin: 3px 0 0; font-size: 12px; color: var(--ink-dim); overflow-wrap: anywhere; }
-#activity { margin: 0; font-size: 12px; color: var(--ink-dim); text-align: end; }
+#task-name { font-size: 27px; margin: var(--gap-2) 0 var(--gap-1); }
+#page-title { margin: 0; font-size: 14px; color: var(--ink-dim); overflow-wrap: anywhere; }
+#page-location { margin: 2px 0 0; font-size: 12px; color: var(--ink-faint); overflow-wrap: anywhere; }
+#activity { margin: 0; font-size: 12.5px; color: var(--ink-dim); text-align: end; }
 
 .chip {
-  display: inline-block; padding: 5px 12px; border-radius: var(--r-pill);
-  font-size: 12px; font-weight: 700;
-  background: var(--level-3); color: var(--ink-dim); border: 1px solid var(--line);
+  display: inline-block; padding: 6px 14px; border-radius: var(--r-pill);
+  font-size: 12.5px; font-weight: 600;
+  background: var(--level-1); color: var(--ink-faint);
 }
-/* Only a state word is capitalised. With no session the chip carries a sentence, and title case made
-   it read as a heading. */
-.chip[data-state]:not([data-state=""]) { text-transform: capitalize; }
-.chip[data-state="running"] { background: var(--live-soft); color: var(--on-live-soft); border-color: transparent; }
-.chip[data-state="paused"] { background: var(--accent-soft); color: var(--on-accent-soft); border-color: transparent; }
-.chip[data-state="closed"], .chip[data-state="closing"] { background: var(--alarm-soft); color: var(--on-alarm-soft); border-color: transparent; }
+.chip[data-state="running"] { background: var(--level-2); color: var(--ink-dim); }
+.chip[data-state="paused"] { background: var(--level-3); color: var(--ink); }
+.chip[data-working="true"] { background: var(--loud); color: var(--on-loud); box-shadow: 0 0 26px -8px color-mix(in srgb, var(--ink, #f3f4f6) 40%, transparent); }
 
 /* --- Controls ------------------------------------------------------------ */
 
 .actions { display: flex; gap: var(--gap-2); flex-wrap: wrap; justify-content: flex-end; }
 button, input, select {
-  font: inherit; font-size: 13px; padding: 9px 13px;
-  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  font: inherit; font-size: 13px; padding: 10px 15px;
+  border: 0; border-radius: var(--r-sm);
   background: var(--level-2); color: var(--ink);
-  transition: background .15s var(--ease), border-color .15s var(--ease), opacity .15s var(--ease);
+  transition: background .15s var(--ease), opacity .15s var(--ease);
 }
 button { cursor: pointer; }
-button:hover:not(:disabled) { background: var(--level-4); border-color: var(--accent); }
-button:disabled, input:disabled, select:disabled { opacity: .42; cursor: default; }
-button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
-button.primary:hover:not(:disabled) { background: var(--on-accent-soft); }
-button.danger { color: var(--alarm); }
-button.danger:hover:not(:disabled) { background: var(--alarm-soft); color: var(--on-alarm-soft); border-color: transparent; }
-button.ghost { background: none; border-color: var(--line); color: var(--ink-dim); font-size: 12px; padding: 6px 10px; }
-button.ghost[aria-pressed="true"] { color: var(--on-accent-quiet); border-color: var(--accent); background: var(--accent-quiet); }
-button:focus-visible, input:focus-visible, select:focus-visible, .session:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
+button:hover:not(:disabled) { background: var(--level-4); }
+button:disabled, input:disabled, select:disabled { opacity: .38; cursor: default; }
+button.primary { background: var(--loud); color: var(--on-loud); font-weight: 600; box-shadow: var(--shadow-1); }
+button.primary:hover:not(:disabled) { background: var(--ink); }
+button.quiet { background: var(--level-1); color: var(--ink-dim); font-size: 12.5px; padding: 8px 12px; }
+button.quiet:hover:not(:disabled) { background: var(--level-3); color: var(--ink); }
+button.quiet[aria-pressed="true"] { background: var(--level-4); color: var(--ink); }
+input { background: var(--level-0); }
+input::placeholder { color: var(--ink-faint); }
+/* The one edge in the file, and it is not decoration: a keyboard has no other
+   way to find where it is. */
+button:focus-visible, input:focus-visible, select:focus-visible, .session:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--ink); outline-offset: 2px;
 }
 
-.link-state { font-size: 12px; color: var(--live); display: inline-flex; align-items: center; gap: var(--gap-2); }
-.link-state[data-connected="false"] { color: var(--alarm); }
+/*
+ * A select, with the platform's own arrow and casing taken off it. The list it
+ * opens is still drawn by the browser and cannot be styled; `color-scheme`
+ * above is what keeps that list dark rather than white.
+ */
+.field { display: inline-flex; align-items: center; gap: var(--gap-2); min-width: 0; }
+.field label { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
+.picker { position: relative; display: inline-flex; min-width: 0; }
+.picker select {
+  appearance: none; padding: 9px 34px 9px 13px; background: var(--level-2);
+  max-width: 100%; text-overflow: ellipsis; cursor: pointer;
+}
+.picker select:hover:not(:disabled) { background: var(--level-3); }
+/* The chevron, drawn from the same ink as the label rather than by the platform.
+   Cut out of a filled block rather than assembled from two borders, because two
+   borders is still two borders. */
+.picker::after {
+  content: ""; position: absolute; inset-inline-end: 13px; top: 50%;
+  width: 10px; height: 6px; margin-top: -3px; pointer-events: none;
+  background: var(--ink-dim);
+  clip-path: polygon(0 0, 50% 100%, 100% 0, 82% 0, 50% 62%, 18% 0);
+}
+.picker:has(select:disabled)::after { opacity: .3; }
+
+.note { margin: 0; font-size: 11.5px; color: var(--ink-dim); }
+.note:empty { display: none; }
+.link-state { font-size: 12px; color: var(--ink-dim); }
+.link-state[data-connected="false"] { color: var(--ink); font-weight: 600; }
 
 /* --- The stage ----------------------------------------------------------- */
 
 /*
- * The session image is the subject of the page, so it is the only thing that
- * gets the full elevation treatment: raised surface, its own border, a ring,
- * and a shadow deep enough that the page reads as sitting behind it.
+ * The picture is the subject of the page, so it is the only thing that inverts
+ * the stack: it sits in a well below the ground, under the deepest shadow,
+ * while everything else is a step up. The eye lands in the hole.
  */
 .stage-card {
-  background: var(--level-1); border: 1px solid var(--line); border-radius: var(--r-xl);
+  background: var(--level-1); border-radius: var(--r-xl);
   padding: var(--gap-3); box-shadow: var(--shadow-2);
   display: flex; flex-direction: column; gap: var(--gap-3);
 }
-.stage-bar { display: flex; gap: var(--gap-3); align-items: center; flex-wrap: wrap; justify-content: space-between; }
-.view-settings { display: flex; align-items: center; gap: var(--gap-2); flex-wrap: wrap; margin-inline-start: auto; }
-.view-settings select, .view-settings button { font-size: 12px; padding: 7px 10px; max-width: 100%; }
+.stage-bar { display: flex; flex-direction: column; gap: var(--gap-2); }
+/* Its own row, wrapping inside the card. The previous version pushed this group
+   to the end of a row it shared with the tabs, and the last control was cut off
+   at the edge of the card at ordinary widths. */
+.view-settings { display: flex; align-items: center; gap: var(--gap-4); flex-wrap: wrap; min-width: 0; }
+.group { display: flex; align-items: center; gap: var(--gap-2); flex-wrap: wrap; min-width: 0; }
+.group.end { margin-inline-start: auto; }
 
 .stage {
   position: relative; border-radius: var(--r-lg); background: var(--sunken);
-  border: 1px solid var(--line-strong); padding: var(--gap-2);
-  box-shadow: var(--shadow-3), inset 0 0 0 1px color-mix(in srgb, var(--ink, #e7edf6) 4%, transparent);
-  transition: border-color .3s var(--ease), box-shadow .3s var(--ease);
+  padding: var(--gap-4); overflow: hidden;
+  box-shadow: var(--shadow-3);
+  transition: box-shadow .3s var(--ease);
 }
-/* Where the model is working. The glow is on the stage rather than on a badge
-   somewhere, because the question it answers is "is something happening in
-   there", and there is the image. */
+/* Working, at the size the question is asked at: the well brightens from the
+   inside. No ring, because a ring is a border. */
 .shell[data-working="true"] .stage {
-  border-color: color-mix(in srgb, var(--live, #5cc98d) 55%, transparent);
-  box-shadow: var(--shadow-3), 0 0 0 1px color-mix(in srgb, var(--live, #5cc98d) 35%, transparent),
-              0 0 38px -6px color-mix(in srgb, var(--live, #5cc98d) 34%, transparent);
-  animation: stage-breathe 2.4s var(--ease) infinite;
+  background: color-mix(in srgb, var(--ink, #f3f4f6) 13%, var(--sunken, #050506));
+  box-shadow: var(--shadow-3), 0 0 44px -10px color-mix(in srgb, var(--ink, #f3f4f6) 30%, transparent);
+  animation: well 2.6s var(--ease) infinite;
 }
-.shell[data-state="paused"] .stage { border-color: color-mix(in srgb, var(--accent, #6893ce) 55%, transparent); }
+@keyframes well { 50% { background: color-mix(in srgb, var(--ink, #f3f4f6) 5%, var(--sunken, #050506)); } }
+.working-bar {
+  position: absolute; inset-inline: 0; top: 0; height: 3px; opacity: 0; z-index: 3;
+  background: linear-gradient(90deg, transparent, var(--ink), transparent);
+  transition: opacity .3s var(--ease);
+}
+.shell[data-working="true"] .working-bar { opacity: .85; animation: sweep 1.6s linear infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
 
-@keyframes stage-breathe { 50% { box-shadow: var(--shadow-3), 0 0 0 1px color-mix(in srgb, var(--live, #5cc98d) 22%, transparent), 0 0 26px -8px color-mix(in srgb, var(--live, #5cc98d) 22%, transparent); } }
-
-/* The pointer is positioned as a percentage of this box, so it carries no
-   padding or border of its own: its edges are the canvas's edges exactly. */
-.surface { position: relative; line-height: 0; border-radius: var(--r-md); overflow: hidden; }
+/* The pointer is placed as a percentage of this box, so it carries no padding
+   of its own: its edges are the canvas's edges exactly. */
+.surface { position: relative; line-height: 0; border-radius: var(--r-md); overflow: hidden; margin-inline: auto;
+  width: 100%; }
 #frame { width: 100%; height: auto; display: block; }
 #frame[hidden] { display: none; }
 #frame.controllable { cursor: crosshair; }
-.stage-card:has(#frame.controllable) .stage { border-color: var(--accent); }
-#empty { padding: 92px 24px; color: var(--ink-dim); text-align: center; font-size: 13px; line-height: 1.6; }
+#empty { padding: 96px 24px; color: var(--ink-faint); text-align: center; font-size: 13px; }
 
-.caption { display: flex; justify-content: space-between; gap: var(--gap-3); flex-wrap: wrap; font-size: 11px; color: var(--ink-dim); }
+.caption { display: flex; justify-content: space-between; gap: var(--gap-3); flex-wrap: wrap; font-size: 12px; color: var(--ink-dim); }
 #freshness { font-variant-numeric: tabular-nums; }
-#freshness.stale { color: var(--alarm); }
-.caption-note { margin-inline-start: auto; }
-#preview-note { margin: 0; font-size: 11px; color: var(--ink-dim); }
+#freshness.stale { color: var(--ink-faint); }
+.caption-note { margin-inline-start: auto; color: var(--ink-faint); }
+#preview-note { margin: 0; font-size: 12px; color: var(--ink-faint); }
+
+/* The instrument is kept and moved out of the way. It is the only readout of
+   what the viewer itself costs, and it is not a sentence a person needs. */
+.tech summary { font-size: 11.5px; color: var(--ink-faint); cursor: pointer; list-style: none; padding: 2px 0; }
+.tech summary::-webkit-details-marker { display: none; }
+.tech summary::before { content: "+ "; }
+.tech[open] summary::before { content: "\2212 "; }
+.tech p { margin: var(--gap-2) 0 0; font-size: 11.5px; color: var(--ink-dim); }
 
 /* --- Tabs ---------------------------------------------------------------- */
 
 .tabs { display: flex; gap: var(--gap-1); flex-wrap: wrap; }
 .tabs[hidden] { display: none; }
-.tab { font-size: 12px; padding: 6px 11px; border-radius: var(--r-pill); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab[aria-selected="true"] { border-color: var(--accent); background: var(--accent-quiet); color: var(--on-accent-quiet); font-weight: 600; }
+.tab { font-size: 12px; padding: 7px 13px; border-radius: var(--r-pill); background: var(--level-1); color: var(--ink-dim); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab[aria-selected="true"] { background: var(--level-3); color: var(--ink); font-weight: 600; }
 
 /* --- Panels -------------------------------------------------------------- */
 
-.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap-3); }
-.card { background: var(--level-1); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--gap-4); box-shadow: var(--shadow-1); }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--gap-3); }
+.card { background: var(--level-1); border-radius: var(--r-lg); padding: var(--gap-4) var(--gap-5) var(--gap-5); box-shadow: var(--shadow-1); }
 .card h2 { font-size: 15px; margin-bottom: var(--gap-2); }
-.card p { font-size: 12px; color: var(--ink-dim); margin: 0 0 var(--gap-3); line-height: 1.6; }
+.card p { font-size: 12.5px; color: var(--ink-dim); margin: 0 0 var(--gap-3); }
 .input-row { display: flex; gap: var(--gap-2); align-items: center; flex-wrap: wrap; }
-.input-row input { flex: 1; min-width: 140px; }
-.result { font-size: 12px; color: var(--live); }
-#error { padding: var(--gap-3) var(--gap-4); background: var(--alarm-soft); color: var(--on-alarm-soft); border-radius: var(--r-md); font-size: 13px; }
+.input-row input { flex: 1; min-width: 150px; }
+.result { font-size: 12.5px; color: var(--ink); }
+#error { padding: var(--gap-3) var(--gap-4); background: var(--loud); color: var(--on-loud); border-radius: var(--r-md); font-size: 13px; font-weight: 500; box-shadow: var(--shadow-2); }
 #error[hidden] { display: none; }
 
 .sr-only { position: absolute; clip: rect(0, 0, 0, 0); width: 1px; height: 1px; overflow: hidden; }
 
-/* Motion is decoration here; the glow still reads as a colour without it. */
+/* --- Bigger -------------------------------------------------------------- */
+
+/*
+ * Everything but the picture and the controls that act on it goes away, and the
+ * picture is allowed to use the height of the window as well as its width. The
+ * width is still what sizes it, computed from the height so the canvas and the
+ * box the pointer is placed in stay the same rectangle.
+ */
+.shell.bigger { grid-template-columns: minmax(0, 1fr); }
+.shell.bigger .rail, .shell.bigger .panels, .shell.bigger .head-identity, .shell.bigger .tech, .shell.bigger #preview-note { display: none; }
+.shell.bigger .work { padding: var(--gap-3) var(--gap-4) var(--gap-4); }
+.shell.bigger .head { align-items: center; }
+.shell.bigger .head-status { flex-direction: row; align-items: center; margin-inline-start: auto; gap: var(--gap-3); }
+.shell.bigger .surface { width: min(100%, calc((100vh - 220px) * var(--shot-width, 1280) / var(--shot-height, 800))); }
+
+/* Motion is decoration. Every state above is still separated by brightness with
+   this on, which is the whole reason none of them is separated by colour. */
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* --- Narrow ------------------------------------------------------------- */
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
-  .rail { border-inline-end: none; border-bottom: 1px solid var(--line); }
   .session-list { flex-direction: row; overflow-x: auto; }
-  .session { min-width: 220px; }
+  .session { min-width: 230px; }
   .work { padding: var(--gap-4) var(--gap-3) var(--gap-5); }
   .head-status { align-items: flex-start; }
   #activity { text-align: start; }
   .actions { justify-content: flex-start; }
-  #task-name { font-size: 21px; }
+  #task-name { font-size: 22px; }
   .caption-note { margin-inline-start: 0; }
   .panels { grid-template-columns: minmax(0, 1fr); }
 }

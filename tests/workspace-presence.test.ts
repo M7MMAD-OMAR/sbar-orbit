@@ -37,7 +37,7 @@ test("workspace identity, active page and trusted pointer are visible without ex
     expect(Math.abs(pointer.y - canvas.y - canvas.height * 220 / 800)).toBeLessThan(2);
     await page.screenshot({ path: "output/workspace-presence-desktop.png", fullPage: true });
     await page.locator("#pause").click();
-    await page.waitForFunction(() => document.querySelector("#state")?.textContent === "paused");
+    await page.waitForFunction(() => document.querySelector<HTMLElement>("#state")?.dataset.state === "paused");
     await call(broker.socket, "session.control", { ...session, input: { type: "click", x: 60, y: 50 } });
     await page.waitForFunction(() => document.querySelector("#pointer-label")?.textContent === "You");
     await page.setViewportSize({ width: 390, height: 844 });

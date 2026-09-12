@@ -63,6 +63,8 @@ The raster artwork does not hold one blue. Sampled: `#1f4e8d` in `mark-blue.png`
 
 Three values in the product are fixed and are not identity colours. The agent pointer is `#255fce` and the human pointer is `#167653`; they sit over arbitrary application content, so their contrast cannot depend on a palette. The panel states are `#8a8a8a` idle, `#4caf50` working, `#ff9800` paused, `#585858` offline.
 
+The state colours are the panel's, and the viewer no longer shares them. Its interface carries no hue at all: state there is brightness, motion and words, which is a deliberate divergence and not drift. See [viewer design](viewer-design.md). The pointer is the one thing the two surfaces still agree on, and only because it is drawn over somebody else's page rather than over either design.
+
 That is why the brand accent is blue. Green and orange already carry meaning in the same status bar, and a green mark would be read as an agent that is working.
 
 ## Type
