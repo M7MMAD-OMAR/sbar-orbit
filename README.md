@@ -18,6 +18,22 @@ flowchart LR
     Broker --> Viewer[Optional viewer]
 ```
 
+## What is actually supported
+
+Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation. There is no macOS,
+Windows or non Fedora Linux machine in this project's reach, so every statement about those platforms is
+reasoning about vendor documentation and not a test. `sbar-orbit doctor --report` prints which row of the
+[support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
+paste into an issue.
+
+`Reasoned` means installing here produces a test report, not a bug report. `Refused` means a primary
+source says it cannot work, so Orbit throws `UNSUPPORTED` rather than degrading quietly, and the tracker
+does not accept a bug for it. `Failed` means it ran here and did not pass, and the result is kept rather
+than retried into silence.
+
+**No telemetry.** No counters, no ping, no crash upload, no opt in prompt. The only thing that ever
+leaves the machine is a report you generated, read and pasted yourself.
+
 ## Start
 
 Requires Linux user cgroup delegation, Bun and Chrome/Chromium. The native backend needs the separate [Fedora bootstrap](docs/fedora-results.md).
