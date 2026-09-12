@@ -47,6 +47,9 @@ if os.environ.get("ORBIT_PANEL_PRELOADED") != "1" and LAYER_SHELL_LIBRARY:
 # A layer-shell surface only exists on Wayland, so the choice is not GTK's to make. A shell that
 # lost WAYLAND_DISPLAY, an agent's terminal for instance, still has the compositor's socket in the
 # runtime directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import orbit_settings  # noqa: E402  the path above is what makes this importable when run by absolute path
+
 os.environ["GDK_BACKEND"] = "wayland"
 if not os.environ.get("WAYLAND_DISPLAY"):
     runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
@@ -68,6 +71,10 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("Graphene", "1.0")
 gi.require_version("Gtk4LayerShell", "1.0")
 from gi.repository import Gdk, Gio, GLib, Graphene, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
+try:  # The unix helpers moved out of GLib; the old names still work and warn on every call.
+    from gi.repository import GLibUnix  # noqa: E402
+except ImportError:
+    GLibUnix = None
 import cairo  # noqa: E402
 import math  # noqa: E402
 
@@ -99,35 +106,15 @@ GRIP_SLACK = 9.0
 DROP_TARGET = 78.0
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 EDGE_LABELS = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
-STYLES = ("mark", "bar", "dot", "count")
 SHAPE_LABELS = ["logo", "capsule", "dot", "dot with count"]
-STATE_KEYS = ("idle", "working", "paused", "offline")
-DEFAULT_SETTINGS = {
-    "edge": "right",
-    "monitor": None,
-    "style": "mark",
-    # What the person settled on after living with it: a slimmer capsule, flush against the glass.
-    "size": 8,
-    "margin": 0,
-    "colors": {"idle": "#8a8a8a", "working": "#4caf50", "paused": "#ff9800", "offline": "#585858"},
-    "notifications": True,
-    "blink": True,
-    "frame": True,
-    # "accent" follows the desktop's own accent, light and dark, rather than naming a colour
-    # that belongs to no palette. A hex here overrides it.
-    "frameColor": "accent",
-    # The breathing. Separable from the glow because motion is the part that costs, and this
-    # machine keeps compositor effects off for that reason.
-    "framePulse": True,
-    "hideWhenIdle": False,
-    # Where along its edge the mark sits, from 0 at the start of the edge to 1 at the end. Set by
-    # dragging the mark, so a person who wants it under their top bar can put it there.
-    "position": 0.5,
-    "motion": True,
-    "blend": 80,
-}
-NUMBER_KEYS = {"size": (6, 40), "margin": (0, 64), "blend": (30, 100), "position": (0.0, 1.0)}
-SETTINGS_PATH = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "sbar-orbit", "panel.json")
+# Defaults, ranges, validation and the words a person might search for all live in one module, which the
+# settings window, `sbar-orbit config` and this file all read. A setting described in only one of the
+# three is a setting one of them silently disagrees about.
+STYLES = orbit_settings.STYLES
+STATE_KEYS = orbit_settings.STATE_KEYS
+DEFAULT_SETTINGS = orbit_settings.DEFAULT_SETTINGS
+NUMBER_KEYS = orbit_settings.NUMBER_KEYS
+SETTINGS_PATH = orbit_settings.SETTINGS_PATH
 
 # The panel is drawn in the person's own colour names when their theme or their gtk.css defines them,
 # the way a libadwaita application is, and in GTK's defaults otherwise. The fallbacks are loaded at the
@@ -320,57 +307,89 @@ def viewer_link_is_local(url):
     return isinstance(url, str) and url.startswith("http://127.0.0.1:") and "#" in url and len(url.split("#", 1)[1]) >= 32
 
 
+def launcher_json(args):
+    """Ask the launcher something and read its JSON answer, or None when it could not answer.
+
+    The panel is Python and the units are TypeScript, and the state this asks about, what systemd has
+    enabled and which desktop entries exist, has exactly one owner. A second implementation here would be
+    a second opinion about whether Orbit starts at login.
+    """
+    launcher = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "sbar-orbit")
+    try:
+        finished = subprocess.run([launcher, *args], capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"panel: could not run {' '.join(args)} ({error})", file=sys.stderr)
+        return None
+    try:
+        return json.loads(finished.stdout)
+    except ValueError:
+        print(f"panel: {' '.join(args)} did not answer with JSON: {finished.stderr.strip()[:200]}", file=sys.stderr)
+        return None
+
+
+def command_socket_path():
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return os.path.join(runtime, "sbar-orbit", "panel.sock")
+
+
+def claim_the_mark(message):
+    """One panel per desktop, and a way to talk to the one that is already there.
+
+    Two mechanisms in one, because they answer the same question. Binding this socket is how a panel
+    claims the mark: a second one cannot bind, so it sends its request to the first and leaves. That is
+    what makes it safe to enable both autostart paths at once, and what makes `sbar-orbit settings` work
+    whether or not a panel is running.
+
+    A second copy leaves with status zero on purpose. A systemd unit with Restart=on-failure would
+    otherwise retry the loser forever.
+    """
+    path = command_socket_path()
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    except OSError as error:
+        # No runtime directory means no single instance guard, which is worth a line and not worth
+        # refusing to draw over.
+        print(f"panel: no runtime directory for the command socket ({error}); running without one", file=sys.stderr)
+        return None, "unsupported"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    for attempt in (1, 2):
+        try:
+            listener.bind(path)
+            os.chmod(path, 0o600)
+            return listener, "owner"
+        except OSError:
+            # Either a panel is running or one died and left its socket file. A datagram tells them apart:
+            # nothing is listening on a stale path, so the send fails rather than disappearing.
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            try:
+                probe.sendto(message.encode(), path)
+                listener.close()
+                return None, "handed"
+            except OSError:
+                if attempt == 2:
+                    listener.close()
+                    return None, "unsupported"
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            finally:
+                probe.close()
+    return None, "unsupported"
+
+
 def load_settings():
     """The person's choices, under their config directory; command line flags override them for one run."""
-    settings = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_SETTINGS.items()}
-    try:
-        with open(SETTINGS_PATH, encoding="utf-8") as handle:
-            stored = json.load(handle)
-    except FileNotFoundError:
-        return settings
-    except (OSError, ValueError) as error:
-        # Say so rather than silently reverting every choice the person made.
-        print(f"panel: could not read {SETTINGS_PATH} ({error}); using defaults and leaving the file alone", file=sys.stderr)
-        return settings
-    if isinstance(stored, dict):
-        for key in DEFAULT_SETTINGS:
-            if key not in stored:
-                continue
-            if key == "colors" and isinstance(stored[key], dict):
-                settings[key].update({k: v for k, v in stored[key].items() if k in STATE_KEYS and isinstance(v, str)})
-            else:
-                settings[key] = stored[key]
-    if settings["edge"] not in EDGES:
-        settings["edge"] = DEFAULT_SETTINGS["edge"]
-    if settings["style"] not in STYLES:
-        settings["style"] = DEFAULT_SETTINGS["style"]
-    # A number that arrived as text, or outside its range, would only fail later inside a draw call,
-    # where the panel would be a blank surface with a traceback nobody reads.
-    for key, (low, high) in NUMBER_KEYS.items():
-        try:
-            value = float(settings[key])
-        except (TypeError, ValueError):
-            value = float(DEFAULT_SETTINGS[key])
-        value = min(high, max(low, value))
-        settings[key] = value if isinstance(DEFAULT_SETTINGS[key], float) else int(round(value))
-    settings["motion"] = bool(settings["motion"])
+    settings, note = orbit_settings.load()
+    if note:
+        print(f"panel: {note}", file=sys.stderr)
     return settings
 
 
 def save_settings(settings):
-    """Written beside the real file and renamed over it. A truncating write that is interrupted
-    leaves an empty file, which reads back as no settings at all."""
-    try:
-        os.makedirs(os.path.dirname(SETTINGS_PATH), mode=0o700, exist_ok=True)
-        temporary = SETTINGS_PATH + ".new"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump({k: settings[k] for k in DEFAULT_SETTINGS}, handle, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, SETTINGS_PATH)
-    except OSError as error:
-        print(f"panel: could not save settings: {error}", file=sys.stderr)
+    failure = orbit_settings.save(settings)
+    if failure:
+        print(f"panel: {failure}", file=sys.stderr)
 
 
 def notify(title, body):
@@ -801,9 +820,11 @@ class Glyph(Gtk.DrawingArea):
 
 
 class Panel(Gtk.Application):
-    def __init__(self, settings):
+    def __init__(self, settings, listener=None):
         super().__init__(application_id="io.sbar.orbit.panel", flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.settings = settings
+        self.listener = listener
+        self.settings_monitor = None
         self.frame = []
         self.frame_shown = False
         self.path = broker_socket()
@@ -877,6 +898,9 @@ class Panel(Gtk.Application):
         self.install_css(self.display, BASE_CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.dynamic_provider = self.install_css(self.display, dynamic_css(self.settings), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         self.surface_provider = self.install_css(self.display, surface_css(self.settings), Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
+
+        self.listen_for_commands()
+        self.watch_settings_file()
 
         self.shell = Liquid(self)
         self.shell.add_css_class("orbit-shell")
@@ -1621,6 +1645,59 @@ class Panel(Gtk.Application):
         # panel the moment the person clicks the mark.
         Gtk.UriLauncher.new(url).launch(None, None, done)
 
+    def listen_for_commands(self):
+        """Do what another invocation asked for, rather than letting it start a second mark."""
+        if self.listener is None:
+            return
+        def ready(fd, condition):
+            try:
+                message = self.listener.recv(64)
+            except OSError:
+                return True
+            if message.strip() == b"settings":
+                GLib.idle_add(self.open_settings)
+            elif message.strip() == b"viewer":
+                GLib.idle_add(self.open_viewer)
+            return True
+        # GLibUnix where the bindings have it, GLib where they do not: the function moved and the old
+        # name warns on every start, which in a service means a warning in the journal forever.
+        adder = getattr(GLibUnix, "fd_add_full", None) if GLibUnix is not None else None
+        (adder or GLib.unix_fd_add_full)(GLib.PRIORITY_DEFAULT, self.listener.fileno(), GLib.IOCondition.IN, ready)
+
+    def watch_settings_file(self):
+        """Apply a change made anywhere else, so `sbar-orbit config set` is visible on screen at once.
+
+        The panel's own saves come back through here too, since a write and a rename both look like a
+        change to the file. Comparing the loaded settings against the ones in memory is what makes that a
+        no-op, and it needs no bookkeeping to stay correct.
+        """
+        try:
+            Gio.File.new_for_path(os.path.dirname(SETTINGS_PATH)).make_directory_with_parents(None)
+        except GLib.Error:
+            pass
+        try:
+            self.settings_monitor = Gio.File.new_for_path(SETTINGS_PATH).monitor_file(Gio.FileMonitorFlags.WATCH_MOVES, None)
+        except GLib.Error as error:
+            print(f"panel: not watching {SETTINGS_PATH} ({error}); changes made elsewhere need a restart", file=sys.stderr)
+            return
+        self.settings_monitor.connect("changed", lambda *_: self.reload_settings())
+
+    def reload_settings(self):
+        stored = load_settings()
+        if stored == self.settings:
+            return
+        moved = any(stored[key] != self.settings[key] for key in ("edge", "monitor", "margin", "size", "position"))
+        self.settings = stored
+        if moved:
+            self.relocate()
+        self.apply_style()
+        self.sync_frame(force=True)
+        if self.settings_window is not None:
+            # Its controls now show values nothing set, so it is rebuilt rather than left disagreeing
+            # with the panel beside it.
+            self.settings_window.close()
+            self.open_settings()
+
     def change(self, key, value, restyle=True):
         self.settings[key] = value
         self.schedule_save()
@@ -1671,47 +1748,67 @@ class SettingsWindow(Gtk.Window):
     press and nothing to lose."""
 
     def __init__(self, panel):
-        super().__init__(title="Orbit panel settings")
+        super().__init__(title="Orbit settings")
         self.panel = panel
-        self.set_default_size(400, 660)
+        self.set_default_size(420, 700)
+        self.query = ""
+        self.row_terms = {}
+        self.groups = []
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
 
+        # There are twenty odd settings across six groups, which is past the number a person scans. The
+        # search answers the description and the Arabic terms as well as the label, so the word someone
+        # actually has in mind finds the switch even when the label uses another one.
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Search settings")
+        search.connect("search-changed", self.on_search)
+        # Focused on open, so the window can be used by typing what you came for. A preferences window
+        # whose search has to be clicked first is a list with a search box next to it.
+        GLib.idle_add(search.grab_focus)
+        self.nothing_found = self.note("Nothing matches that. Try the word for what it does: glow, startup, colour, motion.")
+        self.nothing_found.set_visible(False)
+
+        outer.append(self.group("Startup", [
+            self.autostart_row(),
+        ]))
         outer.append(self.group("Placement", [
             self.dropdown_row("Screen edge", [EDGE_LABELS[e] for e in EDGES], EDGE_LABELS[panel.settings["edge"]],
-                              lambda v: panel.change("edge", next(e for e in EDGES if EDGE_LABELS[e] == v))),
+                              lambda v: panel.change("edge", next(e for e in EDGES if EDGE_LABELS[e] == v)), "edge"),
             self.monitor_row(),
-            self.scale_row("Distance from the edge", 0, 64, panel.settings["margin"], lambda v: panel.change("margin", v)),
+            self.scale_row("Distance from the edge", 0, 64, panel.settings["margin"], lambda v: panel.change("margin", v), "margin"),
             self.scale_row("Place along the edge", 0, 100, round(panel.settings["position"] * 100),
-                           lambda v: panel.change("position", v / 100.0)),
+                           lambda v: panel.change("position", v / 100.0), "position"),
         ]))
         outer.append(self.group("The mark", [
             self.dropdown_row("Shape", SHAPE_LABELS, SHAPE_LABELS[STYLES.index(panel.settings["style"])],
-                              lambda v: panel.change("style", STYLES[SHAPE_LABELS.index(v)])),
-            self.scale_row("Size", 8, 22, panel.settings["size"], lambda v: panel.change("size", v)),
-            self.switch_row("Hide it while nothing runs", panel.settings["hideWhenIdle"], lambda v: panel.change("hideWhenIdle", v)),
+                              lambda v: panel.change("style", STYLES[SHAPE_LABELS.index(v)]), "style"),
+            self.scale_row("Size", 8, 22, panel.settings["size"], lambda v: panel.change("size", v), "size"),
+            self.switch_row("Hide it while nothing runs", panel.settings["hideWhenIdle"], lambda v: panel.change("hideWhenIdle", v), "hideWhenIdle"),
             self.color_row("Working colour", "working"),
             self.color_row("Paused colour", "paused"),
             self.color_row("Idle colour", "idle"),
             self.color_row("Colour when Orbit is off", "offline"),
         ]))
         outer.append(self.group("Working glow", [
-            self.switch_row("Glow the screen edges while working", panel.settings["frame"], lambda v: panel.change("frame", v)),
+            self.switch_row("Glow the screen edges while working", panel.settings["frame"], lambda v: panel.change("frame", v), "frame"),
             # Following the theme is the default, so the glow moves with the desktop instead of being
             # pinned to whatever the accent happened to be on the day it was chosen. Turning it off
             # keeps the colour currently on screen, rather than jumping to an unrelated one.
-            self.switch_row("Breathe while working", panel.settings["framePulse"], lambda v: panel.change("framePulse", v)),
+            self.switch_row("Breathe while working", panel.settings["framePulse"], lambda v: panel.change("framePulse", v), "framePulse"),
             self.switch_row("Follow the theme accent", panel.settings["frameColor"] == "accent",
-                            lambda v: panel.change("frameColor", "accent" if v else self.resolved_accent())),
-            self.row("Glow colour", self.color_button(panel.settings["frameColor"], lambda hexv: panel.change("frameColor", hexv))),
+                            lambda v: panel.change("frameColor", "accent" if v else self.resolved_accent()), "frameColor"),
+            self.row("Glow colour", self.color_button(panel.settings["frameColor"], lambda hexv: panel.change("frameColor", hexv)), "frameColor"),
         ]))
         outer.append(self.group("Motion and blending", [
-            self.switch_row("Liquid motion", panel.settings["motion"], lambda v: panel.change("motion", v)),
-            self.scale_row("How solid the card is", 30, 100, panel.settings["blend"], lambda v: panel.change("blend", v)),
+            self.switch_row("Liquid motion", panel.settings["motion"], lambda v: panel.change("motion", v), "motion"),
+            self.scale_row("How solid the card is", 30, 100, panel.settings["blend"], lambda v: panel.change("blend", v), "blend"),
         ]))
         outer.append(self.group("Notifications", [
-            self.switch_row("Desktop notifications", panel.settings["notifications"], lambda v: panel.change("notifications", v, restyle=False)),
-            self.switch_row("Blink when something happens", panel.settings["blink"], lambda v: panel.change("blink", v, restyle=False)),
+            self.switch_row("Desktop notifications", panel.settings["notifications"], lambda v: panel.change("notifications", v, restyle=False), "notifications"),
+            self.switch_row("Blink when something happens", panel.settings["blink"], lambda v: panel.change("blink", v, restyle=False), "blink"),
         ]))
+
+        outer.append(self.nothing_found)
 
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         viewer = Gtk.Button(label="Open the viewer")
@@ -1728,13 +1825,56 @@ class SettingsWindow(Gtk.Window):
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroller.set_child(outer)
-        self.set_child(scroller)
+        scroller.set_vexpand(True)
+        # The search stays put while the settings scroll under it.
+        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_start=18, margin_end=18)
+        frame.append(search)
+        frame.append(scroller)
+        self.set_child(frame)
 
         # Escape closes a preferences window everywhere else on this desktop.
         escape = Gtk.ShortcutController()
         escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
                                              Gtk.CallbackAction.new(lambda *_: (self.close(), True)[1])))
         self.add_controller(escape)
+
+    def autostart_row(self):
+        """Whether Orbit comes back on its own, which is the one setting that is not in the settings file.
+
+        It is systemd and an autostart entry, so the switch asks the launcher rather than writing a value,
+        and it does that on a thread: enabling runs systemctl twice and a person clicking a switch should
+        not watch the window stop repainting while it does.
+        """
+        self.autostart_switch = Gtk.Switch(active=False)
+        self.autostart_switch.set_sensitive(False)
+        self.autostart_switch.connect("state-set", self.on_autostart_toggled)
+        row, terms = self.row("Start Orbit with my desktop", self.autostart_switch, extra=(
+            "autostart auto start startup boot login session service systemd enable "
+            "بدء تشغيل تلقائي إقلاع دخول خدمة عند التشغيل"))
+        threading.Thread(target=self.read_autostart, daemon=True).start()
+        return row, terms
+
+    def read_autostart(self):
+        state = launcher_json(["autostart", "status"])
+        def apply():
+            if state is None:
+                self.autostart_switch.set_sensitive(False)
+                return False
+            self.autostart_switch.set_sensitive(True)
+            self.autostart_switch.handler_block_by_func(self.on_autostart_toggled)
+            self.autostart_switch.set_active(bool(state.get("startsWithTheDesktop")))
+            self.autostart_switch.handler_unblock_by_func(self.on_autostart_toggled)
+            return False
+        GLib.idle_add(apply)
+
+    def on_autostart_toggled(self, switch, wanted):
+        switch.set_sensitive(False)
+        def run():
+            launcher_json(["autostart", "enable" if wanted else "disable"])
+            self.read_autostart()
+            GLib.idle_add(lambda: (switch.set_sensitive(True), False)[1])
+        threading.Thread(target=run, daemon=True).start()
+        return False
 
     @staticmethod
     def note(text):
@@ -1748,17 +1888,54 @@ class SettingsWindow(Gtk.Window):
         return wrapped
 
     def group(self, title, rows):
+        """A titled list of rows, and the half of the search that has to be built with them.
+
+        Each row arrives as (widget, the words it answers to). A filter on the words alone would find
+        only what the label already says, so the words come from the schema: its description and its
+        English and Arabic terms, which is how "boot" finds the startup switch and "توهج" finds the glow.
+        """
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         box.append(label(title, "heading"))
         listbox = Gtk.ListBox()
         listbox.add_css_class("boxed-list")
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        for row in rows:
-            listbox.append(row)
+        held = []
+        for index, entry in enumerate(rows):
+            widget, terms = entry if isinstance(entry, tuple) else (entry, "")
+            listbox.append(widget)
+            line = listbox.get_row_at_index(index)
+            if line is not None:
+                self.row_terms[line] = f"{title} {orbit_settings.GROUP_TERMS.get(title, '')} {terms}".casefold()
+                held.append(line)
+        listbox.set_filter_func(self.row_visible)
         box.append(listbox)
+        self.groups.append((box, listbox, held))
         return box
 
-    def row(self, text, control):
+    def row_visible(self, line):
+        if not self.query:
+            return True
+        text = self.row_terms.get(line, "")
+        return all(word in text for word in self.query.split())
+
+    def on_search(self, entry):
+        self.query = entry.get_text().strip().casefold()
+        for box, listbox, rows in self.groups:
+            listbox.invalidate_filter()
+            # A heading with nothing under it reads as a group that has no matches rather than as one
+            # that was filtered out, so the whole group goes.
+            box.set_visible(any(self.row_visible(line) for line in rows))
+        self.nothing_found.set_visible(bool(self.query) and not any(box.get_visible() for box, _, _ in self.groups))
+
+    @staticmethod
+    def terms(key, extra=""):
+        """Everything a person might type to mean this setting, from the one place it is described."""
+        entry = orbit_settings.BY_KEY.get(key)
+        if entry is None:
+            return extra
+        return " ".join([entry["key"], entry["label"], entry["description"], *entry["terms"], extra])
+
+    def row(self, text, control, key=None, extra=""):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_top=8, margin_bottom=8, margin_start=12, margin_end=12)
         name = label(text)
         name.set_hexpand(True)
@@ -1769,29 +1946,29 @@ class SettingsWindow(Gtk.Window):
         # that takes a list of accessibles does not marshal correctly through PyGObject.
         control.update_property([Gtk.AccessibleProperty.LABEL], [text])
         row.append(control)
-        return row
+        return row, f"{text} {self.terms(key, extra)}".casefold()
 
-    def switch_row(self, text, value, on_change):
+    def switch_row(self, text, value, on_change, key=None, extra=""):
         switch = Gtk.Switch(active=bool(value))
         switch.connect("state-set", lambda _s, state: (on_change(state), False)[1])
-        return self.row(text, switch)
+        return self.row(text, switch, key, extra)
 
-    def dropdown_row(self, text, options, current, on_change):
+    def dropdown_row(self, text, options, current, on_change, key=None):
         model = Gtk.StringList()
         for option in options:
             model.append(option)
         drop = Gtk.DropDown(model=model)
         drop.set_selected(options.index(current) if current in options else 0)
         drop.connect("notify::selected", lambda d, _: on_change(options[d.get_selected()]))
-        return self.row(text, drop)
+        return self.row(text, drop, key)
 
-    def scale_row(self, text, low, high, value, on_change):
+    def scale_row(self, text, low, high, value, on_change, key=None):
         scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, low, high, 1)
         scale.set_value(value)
         scale.set_size_request(160, -1)
         scale.set_draw_value(True)
         scale.connect("value-changed", lambda s: on_change(int(s.get_value())))
-        return self.row(text, scale)
+        return self.row(text, scale, key)
 
     def monitor_row(self):
         """Every monitor by its connector name, which is what the person reads on their own screen
@@ -1809,10 +1986,11 @@ class SettingsWindow(Gtk.Window):
         current = self.panel.settings["monitor"]
         current = str(current) if current is not None else None
         chosen = names[values.index(current)] if current in values else names[0]
-        return self.dropdown_row("Monitor", names, chosen, lambda v: self.panel.change("monitor", values[names.index(v)]))
+        return self.dropdown_row("Monitor", names, chosen, lambda v: self.panel.change("monitor", values[names.index(v)]), "monitor")
 
     def color_row(self, text, key):
-        return self.row(text, self.color_button(self.panel.settings["colors"][key], lambda hexv: self.set_color(key, hexv)))
+        return self.row(text, self.color_button(self.panel.settings["colors"][key], lambda hexv: self.set_color(key, hexv)),
+                        "colors", extra=key)
 
     def resolved_accent(self):
         """The accent this desktop is using right now, as a hex the settings can store. Used when the
@@ -1879,7 +2057,14 @@ def main():
             print("                        [--no-notifications] [--settings]")
             print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens the settings window")
             return 0
-    panel = Panel(settings)
+    # Before anything is drawn: if a panel already owns the mark, this invocation's job is to ask it and
+    # leave. That is how `sbar-orbit settings` reaches a running panel, and how two autostart paths
+    # produce one mark.
+    listener, claim = claim_the_mark("settings" if open_settings else "ping")
+    if claim == "handed":
+        print("panel: a panel is already running; handed it the request instead of starting a second mark", file=sys.stderr)
+        return 0
+    panel = Panel(settings, listener)
     if open_settings:
         panel.connect("activate", lambda *_: GLib.idle_add(panel.open_settings))
     panel.run([])

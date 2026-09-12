@@ -12,12 +12,23 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit serve               Start the broker with shared resource limits
   sbar-orbit serve --managed-socket
                                  Bind the fixed socket a service unit expects
-  sbar-orbit service install     Write the user service and slice units
+  sbar-orbit service install     Install the units and start Orbit with your desktop
+  sbar-orbit service install --no-autostart
+                                 Write the units and enable nothing
   sbar-orbit service uninstall   Remove only the units Orbit wrote
+  sbar-orbit autostart status    Whether Orbit comes back by itself, and what would stop it
+  sbar-orbit autostart enable    Start with the desktop, by both paths a desktop might honour
+  sbar-orbit autostart disable   Stop starting by itself, on every path
   sbar-orbit status              Sessions, tabs and windows, for a glance or a bar
   sbar-orbit status --watch      Print a line whenever that changes
   sbar-orbit panel               Dock the session mark to the desktop edge
                                  (right click it for the settings window)
+  sbar-orbit settings            Open the settings window, searchable
+  sbar-orbit config list         Every setting, its value and its default
+  sbar-orbit config search WORD  Find a setting by name, meaning, English or Arabic
+  sbar-orbit config get KEY
+  sbar-orbit config set KEY VALUE
+                                 Takes effect immediately on a running panel
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
   sbar-orbit preflight           Check prerequisites without starting applications
@@ -41,6 +52,19 @@ HELP
   service)
     shift
     exec bun run "$orbit_root/scripts/service.ts" "$@"
+    ;;
+  autostart)
+    exec bun run "$orbit_root/scripts/service.ts" "$@"
+    ;;
+  config)
+    shift
+    # No GTK and no broker: this works over ssh, inside a service, and while the panel is not running.
+    exec /usr/bin/python3 "$orbit_root/desktop/orbit_settings.py" "$@"
+    ;;
+  settings)
+    shift
+    # Hands the request to the running panel when there is one, and starts one when there is not.
+    exec /usr/bin/python3 "$orbit_root/desktop/panel.py" --settings "$@"
     ;;
   serve)
     shift

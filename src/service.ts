@@ -41,7 +41,7 @@ export function serviceUnit(launcher: string) {
 
 const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit } as const;
 
-/** Write both units atomically. Enabling and starting stay separate, deliberate steps. */
+/** Write the units atomically. Enabling is a separate function, and `service install` calls it by default. */
 export async function installService(launcher: string, unitDirectory: string) {
   const source = resolve(launcher);
   try { if (!(await stat(source)).isFile()) throw new Error("Launcher is not a regular file"); }
@@ -61,7 +61,9 @@ export async function installService(launcher: string, unitDirectory: string) {
 /** Remove only units this project wrote, identified by their own description line. */
 export async function uninstallService(unitDirectory: string) {
   const removed: string[] = [];
-  for (const name of Object.keys(units)) {
+  // The panel unit belongs to the autostart pair rather than to the broker, and it is removed here for
+  // the same reason: a unit left behind after an uninstall starts something that is no longer installed.
+  for (const name of [...Object.keys(units), "sbar-orbit-panel.service"]) {
     const target = join(unitDirectory, name);
     let contents;
     try { contents = await readFile(target, "utf8"); } catch { continue; }
