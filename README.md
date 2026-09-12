@@ -139,4 +139,19 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Appearance](docs/appearance.md) | Applications in a private display look like the desktop |
 | [Brand](docs/brand.md) | The mark, the name, the palette and where each asset is used |
 
+## Support the work
+
+Orbit is Apache-2.0, runs entirely on your own machine, and sends nothing anywhere: no telemetry, no
+account, nothing metered. That is the point of it, and it is also the reason there is nothing behind
+it but time.
+
+If it saved you some, you can buy me a coffee:
+
+<a href="https://www.buymeacoffee.com/m7mmadomar"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" width="217" height="60"></a>
+
+A report from a machine this project has never touched is worth as much. Orbit is measured on exactly
+one host class, so `sbar-orbit doctor --report` from another distribution, desktop or operating system
+is evidence this project cannot produce for itself. [Support tiers](docs/support-tiers.md) says which
+report yours is, and [CONTRIBUTING.md](CONTRIBUTING.md) says where it goes.
+
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)

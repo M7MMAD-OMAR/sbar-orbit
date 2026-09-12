@@ -31,3 +31,9 @@ gitleaks dir . --redact --no-banner
 The directory scan reports findings inside `output/`, which is gitignored working evidence and never committed. Those are the API keys Chrome ships inside the throwaway browser profiles an experiment retains, not project secrets.
 
 Alpha version identifiers use `MAJOR.MINOR.PATCH-alpha.N`. Keep package metadata, MCP version and CHANGELOG.md aligned. Add an annotated `v` tag only after the intended source and archive checks pass. Do not silently replace a tagged artifact.
+
+The most useful thing anyone outside this workstation can send is a report from a machine this project
+has never touched. Orbit is measured on exactly one host class, so `sbar-orbit doctor --report` from
+another distribution, desktop or operating system is evidence nobody here can produce; [support
+tiers](docs/support-tiers.md) says which report yours is and which form it goes to. If you would rather
+support the work directly, there is a coffee button at the end of the [README](README.md).
