@@ -111,3 +111,33 @@ async function waitGone(pids: number[]) {
     expect(await call(broker.socket, "session.observe", b)).toMatchObject({ mimeType: "image/jpeg" });
   } finally { await broker.close(); }
 }, 20000);
+
+(enabled ? test : test.skip)("a supervisor killed on its own loses its application, and the session keeps working", async () => {
+  const { startBroker } = await import("../src/ipc");
+  const broker = await startBroker();
+  const root = await mkdtemp("/tmp/orbit-native-supervisor-");
+  let application = 0;
+  try {
+    const session = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };
+    const launched = await call(broker.socket, "session.act", { ...session, requestId: "launch", action: { type: "launch", toolkit: "wayland", argv: ["/usr/bin/python3", resolve("experiments/fedora-display/fixture.py"), join(root, "app.json")] } }) as { pid: number };
+    application = launched.pid;
+    // The supervisor is the application's parent, and the only process between it and the broker.
+    const stat = await readFile(`/proc/${application}/stat`, "utf8");
+    const supervisor = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    expect(supervisor).toBeGreaterThan(1);
+    expect(await readFile(`/proc/${supervisor}/cmdline`, "utf8")).toContain("supervise.py");
+
+    // Not the broker and not the compositor. Only the one process that would have done the reaping.
+    process.kill(supervisor, "SIGKILL");
+    expect(await waitGone([supervisor, application])).toBe(true);
+
+    // The display is untouched, so the session is still the agent's to use.
+    expect(await call(broker.socket, "session.observe", session)).toMatchObject({ mimeType: "image/jpeg" });
+    const again = await call(broker.socket, "session.act", { ...session, requestId: "relaunch", action: { type: "launch", toolkit: "wayland", argv: ["/usr/bin/python3", resolve("experiments/fedora-display/fixture.py"), join(root, "second.json")] } }) as { pid: number };
+    expect(again.pid).toBeGreaterThan(1);
+    expect(await Bun.file(`/proc/${again.pid}/stat`).exists()).toBe(true);
+  } finally {
+    await broker.close();
+    if (application) { try { process.kill(-application, "SIGKILL"); } catch {} }
+  }
+}, 60000);

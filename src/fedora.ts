@@ -9,6 +9,7 @@ import { defaultViewport, parseViewport, requireInside, type Viewport } from "./
 import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { nativeRuntimePaths } from "./runtime-paths";
+import { sweepOwnedGroup } from "./owned-group";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
@@ -83,7 +84,10 @@ export class FedoraBackend {
   readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
-  private children: ChildProcessWithoutNullStreams[] = [];
+  // Each entry is a supervisor and the group leader it reported, so a supervisor that dies without
+  // reaping still leaves the group identifier that has to be swept.
+  private children: { child: ChildProcessWithoutNullStreams; group?: number }[] = [];
+  private compositorGroup?: number;
   private device?: ChildProcessWithoutNullStreams;
   private clipboard?: ChildProcessWithoutNullStreams;
   private closing?: Promise<void>;
@@ -135,6 +139,9 @@ export class FedoraBackend {
         if (!ipc || !display) return false;
         env.SWAYSOCK = join(directory, ipc); env.WAYLAND_DISPLAY = display; return true;
       });
+      // The supervisor reports the compositor it started. Kept because a supervisor killed outright
+      // leaves that compositor running, and the display directory is removed out from under it.
+      try { backend.compositorGroup = JSON.parse(await readFile(join(directory, "compositor.json"), "utf8")).pid; } catch {}
       // Export only the private compositor's X11 endpoint, never the host environment.
       const handoff = join(directory, "display.json");
       const code = `import os,json;json.dump({'display':os.environ.get('DISPLAY')},open('${handoff}','w'))`;
@@ -201,7 +208,9 @@ export class FedoraBackend {
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(action.selectedFiles ?? []), executable, ...action.argv.slice(1)], { env: { ...this.env, GDK_BACKEND: action.toolkit }, detached: true });
-      child.on("error", () => {}); child.stdout.resume(); child.stderr.resume(); this.children.push(child);
+      child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
+      const supervised: { child: ChildProcessWithoutNullStreams; group?: number } = { child };
+      this.children.push(supervised);
       let applicationPid: number | undefined;
       let selectedFiles: string[] = [];
       try {
@@ -217,6 +226,10 @@ export class FedoraBackend {
         return find(tree);
       // Electron applications on a software-rendered display take well over ten seconds to map.
       }, 30000);
+      supervised.group = applicationPid;
+      // A supervisor can die on its own, without the broker and without the display. Nothing else
+      // notices, because the application it owned is not a child of this process and keeps running.
+      child.once("exit", () => { void this.reap(supervised); });
       await this.ipc(`[pid=${applicationPid}]`, "focus");
       await sleep(500);
       return { pid: applicationPid, applied: true, selectedFiles };
@@ -303,11 +316,17 @@ export class FedoraBackend {
     const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-t", capture.type, "-q", capture.quality, "-"], this.env);
     return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
+  /** Drop a supervisor that has exited and terminate whatever it left behind. */
+  private async reap(supervised: { child: ChildProcessWithoutNullStreams; group?: number }) {
+    this.children = this.children.filter(entry => entry !== supervised);
+    if (supervised.group !== undefined) await sweepOwnedGroup(supervised.group, this.directory);
+  }
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
     this.closing = (async () => {
-      const children = [...this.children, ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), this.compositor];
+      const supervised = [...this.children];
+      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), this.compositor];
       await Promise.all(children.map(async child => {
         if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
         const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
@@ -315,6 +334,11 @@ export class FedoraBackend {
         const timer = setTimeout(() => child.kill("SIGKILL"), 4000);
         try { await exited; } finally { clearTimeout(timer); }
       }));
+      // A live supervisor reaps its own tree on the way out, so by here every group is normally
+      // gone already. The exception is the supervisor that was killed rather than asked, and that
+      // is the one case where an application would otherwise survive the display it was given.
+      for (const group of [...supervised.map(entry => entry.group), this.compositorGroup])
+        if (group !== undefined) await sweepOwnedGroup(group, this.directory);
       // The runtime directory lives on tmpfs, and tmpfs pages are charged to the cgroup that wrote
       // them. Left behind, closed sessions kept filling the shared memory budget until the kernel
       // throttled everything that was still running.
