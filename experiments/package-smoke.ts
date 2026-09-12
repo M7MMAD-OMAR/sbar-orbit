@@ -40,8 +40,13 @@ try {
   }
   const { socket } = JSON.parse(line.split("\n")[0]!);
   const session = await call(socket, "session.create", { backend: "browser" }) as { sessionId: string };
-  const frame = await call(socket, "session.observe", session) as { image: string };
-  if (Buffer.from(frame.image, "base64").subarray(1, 4).toString() !== "PNG") throw new Error("Packaged browser capture failed");
+  const frame = await call(socket, "session.observe", session) as { image: string; mimeType?: string };
+  // A frame must carry the format it declares, the same rule tests/frame-format.ts holds the suite to.
+  const bytes = Buffer.from(frame.image, "base64");
+  const declared = frame.mimeType === "image/png"
+    ? bytes.subarray(1, 4).toString() === "PNG"
+    : frame.mimeType === "image/jpeg" && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!declared) throw new Error("Packaged browser capture failed");
   const { launchChrome } = await import(join(root, "src/chrome.ts"));
   const { createWorkspaceDirectory } = await import(join(root, "src/workspace-storage.ts"));
   const viewer = await launchChrome(await createWorkspaceDirectory("package-viewer"));
