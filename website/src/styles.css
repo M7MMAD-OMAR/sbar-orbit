@@ -8,3 +8,24 @@
 @media(max-width:700px){.hero-figure{margin-top:22px}.hero-figure img{aspect-ratio:1136/1385;width:100%;height:auto}.hero-figure figcaption{display:none}}
 
 .copy-status{display:block;font-size:12px;line-height:1.6;margin-top:8px;min-height:20px;color:var(--ink)}
+
+.language-switch{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:5px;font-size:14px;margin-inline-start:auto;white-space:nowrap}
+[lang=ar]{font-family:'Noto Sans Arabic Variable','DM Sans Variable',sans-serif}
+html[lang=ar] h1,html[lang=ar] h2,html[lang=ar] h3{letter-spacing:0;line-height:1.5}
+html[lang=ar] h1{font-size:clamp(38px,4.8vw,67px);line-height:1.45}
+html[lang=ar] p{line-height:1.95}
+html[lang=ar] .eyebrow,html[lang=ar] .small-label{letter-spacing:0;font-size:13px}
+html[lang=ar] .hero-copy>p{max-width:780px}
+html[lang=ar] .hero-note{flex-wrap:wrap;line-height:1.9}
+html[lang=ar] .hero-figure figcaption{direction:ltr}
+html[lang=ar] .hero-figure figcaption span{direction:rtl}
+html[lang=ar] .footer-links{margin-left:0;margin-inline-start:auto}
+html[lang=ar] .architecture-flow li{border-left:0;border-inline-start:1px solid #b6c4cd}
+html[lang=ar] .viewer-tabs button{font-size:12px}
+html[lang=ar] .viewer-explanation [role=tabpanel]{min-height:200px}
+html[lang=ar] .footer-bottom{font-size:12px}
+pre{direction:ltr;text-align:left;unicode-bidi:isolate}
+.arabic-coffee{display:inline-flex;align-items:center;justify-content:center;min-height:61px;padding:12px 24px;background:#ffdd00;color:#172e45;border-radius:9px;font-size:20px;font-weight:700}
+@media(max-width:700px){.nav-wrap{gap:10px}.language-switch{font-size:12px;padding:6px 8px}.menu-toggle{order:3;flex-shrink:0}.header .brand{width:135px}html[lang=ar] h1{font-size:clamp(30px,7.8vw,49px)}html[lang=ar] h2,html[lang=ar] .problem-layout h2,html[lang=ar] .support-heading h2{font-size:32px}html[lang=ar] .hero-eyebrow{font-size:11px}html[lang=ar] .hero-note{font-size:11px}html[lang=ar] .footer-links{margin-inline-start:0}html[lang=ar] .footer-bottom{flex-wrap:wrap}html[lang=ar] .viewer-tabs{gap:5px}html[lang=ar] .viewer-tabs button{font-size:11px}}
+
+html[dir=rtl] .directional-arrow{transform:scaleX(-1)}

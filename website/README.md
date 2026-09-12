@@ -58,3 +58,14 @@ is configured and a successful Actions run verifies it.
 
 The custom domain is managed in `wrangler.jsonc`; canonical metadata, robots and
 sitemap use https://orbit.sbarah.com/.
+
+## Languages
+
+English lives at `/`, Arabic at `/ar/`. Both are prerendered with their own
+language, direction, canonical URL and social metadata. The language switch uses
+ordinary links so it also works before JavaScript. Arabic copy is independently
+written in `src/locale.tsx`; linked technical documents remain English and are
+labelled accordingly. Terminal commands remain LTR in both layouts.
+
+Run `bun run scripts/limited.ts bun test website/tests/locale.test.tsx` from the
+repository root. Set `QA_LOCALE=ar` for the browser QA command to test Arabic.
