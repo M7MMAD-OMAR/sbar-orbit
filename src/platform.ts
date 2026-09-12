@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { access, constants, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, constants, lstat, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -348,7 +348,11 @@ export async function stripSingletonMarkers(profileCopy: string): Promise<string
   const removed: string[] = [];
   for (const marker of singletonMarkers) {
     const path = join(profileCopy, marker);
-    try { await stat(path); } catch { continue }
+    // lstat, not stat. All three are symlinks, and two of them are dangling by design: SingletonLock
+    // points at `hostname-pid` and SingletonCookie at a number, neither of which is a file. Written with
+    // stat, this found nothing and removed nothing, and a session cloned while the person's browser was
+    // running met their live lock and was refused with "the profile appears to be in use".
+    try { await lstat(path); } catch { continue }
     await rm(path, { force: true });
     removed.push(marker);
   }

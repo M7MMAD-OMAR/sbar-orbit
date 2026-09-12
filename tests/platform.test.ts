@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdir, mkdtemp, writeFile, readdir } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, symlink, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
@@ -46,13 +46,21 @@ test("the singleton markers are stripped from a copy and the source is never tou
   const source = join(root, "source"), copy = join(root, "copy");
   for (const directory of [source, copy]) {
     await mkdir(directory, { recursive: true });
-    for (const marker of singletonMarkers) await writeFile(join(directory, marker), "held");
+    // As Chrome actually writes them: symlinks, and two of them dangling by design. SingletonLock points
+    // at `hostname-pid` and SingletonCookie at a number, so a check that follows the link finds nothing,
+    // removes nothing, and hands the session the person's live lock. Written with regular files, this
+    // test passed while the real thing was broken.
+    await symlink("orbit-host-4242", join(directory, "SingletonLock"));
+    await symlink("6273928560075026783", join(directory, "SingletonCookie"));
+    await writeFile(join(directory, "socket-target"), "");
+    await symlink(join(directory, "socket-target"), join(directory, "SingletonSocket"));
     await writeFile(join(directory, "Preferences"), "{}");
   }
+  for (const marker of singletonMarkers) await expect(lstat(join(copy, marker))).resolves.toBeTruthy();
   expect(await stripSingletonMarkers(copy)).toEqual([...singletonMarkers]);
-  expect((await readdir(copy)).sort()).toEqual(["Preferences"]);
+  expect((await readdir(copy)).sort()).toEqual(["Preferences", "socket-target"]);
   // The person's own browser keeps its lock, or their running browser would be corrupted.
-  expect((await readdir(source)).length).toBe(1 + singletonMarkers.length);
+  expect((await readdir(source)).length).toBe(2 + singletonMarkers.length);
   // Stripping a copy that has none is not an error.
   expect(await stripSingletonMarkers(copy)).toEqual([]);
 });

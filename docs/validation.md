@@ -30,6 +30,23 @@ All runtime experiments must use `bun run scripts/limited.ts` on supported Linux
 
 Sampling cannot exclude every transient focus or cgroup change. Frame metadata approximates readiness, not physical display latency. A successful scripted run does not confirm simultaneous human work. macOS, Windows, clean-machine installation, broader application coverage and broader failure coverage remain open.
 
+### A shipped bug the confined measurement found
+
+The clone's singleton markers were never being stripped. `stripSingletonMarkers` checked for each marker
+with `stat`, and all three are symlinks that Chrome writes dangling by design: `SingletonLock` points at
+`hostname-pid` and `SingletonCookie` at a number, neither of which is a file. So the check followed the
+link, found nothing, removed nothing, and reported that it had removed nothing.
+
+The consequence only appears while the person's own browser is running, which is most of the time and is
+the case the clone exists for: the cloned profile carried their live lock, and Chrome refused it with
+"The profile appears to be in use by another Google Chrome process on another computer". The unit test
+passed throughout, because it wrote the markers as regular files.
+
+Fixed with `lstat`, and the test now writes them the way Chrome does. Measured afterwards, with the
+person's Chrome running: a cloned session confined to a network of its own started, reported the
+`namespace` tier, and carried 168 cookies in its clone. Reproduce with
+`ORBIT_REAL_PROFILE=1 bun run scripts/limited.ts bun run experiments/confined-egress.ts`.
+
 ### Three things measured against an assumption, each wrong in the obvious direction
 
 Recorded here rather than only in a commit message, because each cost a debugging session and each will

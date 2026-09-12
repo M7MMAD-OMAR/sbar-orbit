@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { listen } from "bun";
@@ -104,6 +104,49 @@ try {
 } finally {
   page.stop(true); unleasedPage.stop(true); leasedTls.stop(); unleasedTls.stop();
   await rm(root, { recursive: true, force: true }).catch(() => {});
+}
+
+/**
+ * The interaction the whole feature exists for: a session cloned from the person's own browser, which
+ * therefore needs its keyring key, running with no network of its own.
+ *
+ * The secret service is reached over a bus socket, which is filesystem rather than network and so crosses
+ * the namespace the same way the CDP relay does. That is the reasoning; this measures it. Opt in, because
+ * it reads the person's real profile. Nothing about a cookie is recorded except a count, the clone is
+ * removed before this exits, and the browser is never navigated anywhere.
+ */
+if (process.env.ORBIT_REAL_PROFILE === "1") {
+  const { Sessions } = await import("../src/session");
+  const { createWorkspaceDirectory } = await import("../src/workspace-storage");
+  const workspace = await createWorkspaceDirectory("confined-clone");
+  const sessions = new Sessions(workspace);
+  const clone: Record<string, unknown> = {};
+  try {
+    const created = await sessions.dispatch({ method: "session.create", params: {
+      backend: "browser", agentName: "confined-egress", taskName: "cloned and confined",
+      cloneOf: join(homedir(), ".config", "google-chrome"),
+      // A session carrying real logins must name its origins, which is also what makes it confinable.
+      policy: { mode: "autonomous", origins: ["https://example.com"], allow: ["read", "navigate"] },
+    } }) as { sessionId: string; egressTier: string };
+    clone.started = true;
+    clone.tier = created.egressTier;
+    const journal = await sessions.dispatch({ method: "session.journal", params: { sessionId: created.sessionId } }) as { entries: { reason?: string }[] };
+    clone.firstLine = journal.entries[0]?.reason?.includes("cloned profile");
+    clone.cookiesInTheClone = await (async () => {
+      const { Database } = await import("bun:sqlite");
+      const profiles = (await readdir(workspace)).filter(name => name.startsWith("profile-"));
+      const path = join(workspace, profiles[0] ?? "", "Default", "Cookies");
+      try {
+        const database = new Database(path, { readonly: true });
+        const [row] = database.query("select count(*) n from cookies").all() as { n: number }[];
+        database.close();
+        return row?.n ?? 0;
+      } catch { return 0; }
+    })();
+    await sessions.dispatch({ method: "session.stop", params: { sessionId: created.sessionId } });
+  } catch (error) { clone.failure = String(error).split("\n").at(0)?.slice(0, 200); }
+  finally { await sessions.close(); await rm(workspace, { recursive: true, force: true }).catch(() => {}); }
+  report.clonedAndConfined = clone;
 }
 
 await mkdir("output", { recursive: true, mode: 0o700 });
