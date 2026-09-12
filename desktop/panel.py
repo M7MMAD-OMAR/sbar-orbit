@@ -1698,6 +1698,26 @@ class Panel(Gtk.Application):
             self.settings_window.close()
             self.open_settings()
 
+    def open_own_session(self):
+        """A private browser the person drives themselves, from a button rather than a terminal.
+
+        Paused before the viewer opens, because manual control is what a paused session allows and a
+        person who opened a browser expects to be able to type in it. It carries their name, not an
+        agent's: the whole premise of the mark is that you can tell whose work you are watching.
+        """
+        def run():
+            try:
+                created = rpc(self.path, "session.create", {
+                    "backend": "browser", "agentName": "You", "taskName": "Opened from the panel",
+                })
+                rpc(self.path, "session.pause", {"sessionId": created["sessionId"]})
+            except Exception as error:
+                print(f"panel: could not open a session: {error}", file=sys.stderr)
+                GLib.idle_add(lambda: (notify("Orbit", "Could not open a browser session. Is the broker running?"), False)[1])
+                return
+            GLib.idle_add(self.open_viewer)
+        threading.Thread(target=run, daemon=True).start()
+
     def change(self, key, value, restyle=True):
         self.settings[key] = value
         self.schedule_save()
@@ -1810,12 +1830,20 @@ class SettingsWindow(Gtk.Window):
 
         outer.append(self.nothing_found)
 
+        # A browser of the person's own, for the complaint that Orbit is a thing agents use and they never
+        # see. It is created paused, because a paused session is the one they can drive themselves in the
+        # viewer, and it is named for them rather than for an agent so the mark does not imply that
+        # somebody else is working.
         buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        session = Gtk.Button(label="Open a browser of my own")
+        session.set_hexpand(True)
+        session.connect("clicked", lambda *_: panel.open_own_session())
         viewer = Gtk.Button(label="Open the viewer")
         viewer.set_hexpand(True)
         viewer.connect("clicked", lambda *_: panel.open_viewer())
         reset = Gtk.Button(label="Reset to defaults")
         reset.connect("clicked", lambda *_: panel.reset())
+        buttons.append(session)
         buttons.append(viewer)
         buttons.append(reset)
         outer.append(buttons)
@@ -1848,9 +1876,7 @@ class SettingsWindow(Gtk.Window):
         self.autostart_switch = Gtk.Switch(active=False)
         self.autostart_switch.set_sensitive(False)
         self.autostart_switch.connect("state-set", self.on_autostart_toggled)
-        row, terms = self.row("Start Orbit with my desktop", self.autostart_switch, extra=(
-            "autostart auto start startup boot login session service systemd enable "
-            "بدء تشغيل تلقائي إقلاع دخول خدمة عند التشغيل"))
+        row, terms = self.row(orbit_settings.BY_KEY["autostart"]["label"], self.autostart_switch, "autostart")
         threading.Thread(target=self.read_autostart, daemon=True).start()
         return row, terms
 

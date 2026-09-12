@@ -134,8 +134,14 @@ export async function autostartStatus(paths = autostartPaths()): Promise<Autosta
   };
 }
 
-/** Both paths, and the launcher entry. Idempotent: run it twice and the second run changes nothing. */
-export async function enableAutostart(launcher: string, paths = autostartPaths()) {
+/**
+ * Both paths, and the launcher entry. Idempotent: run it twice and the second run changes nothing.
+ *
+ * `register` exists for tests. systemctl reads the real unit directory whatever paths this was given, so
+ * a test that writes its units elsewhere and still calls enable is a test that changes what the person's
+ * own machine starts at login. It did exactly that once.
+ */
+export async function enableAutostart(launcher: string, paths = autostartPaths(), register = true) {
   try { if (!(await stat(launcher)).isFile()) throw new Error("not a file"); }
   catch { throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file"); }
   const wrote: string[] = [];
@@ -151,27 +157,27 @@ export async function enableAutostart(launcher: string, paths = autostartPaths()
   const icon = join(paths.icons, "sbar-orbit.svg");
   const mark = join(launcher, "../../brand/orbit-mark.svg");
   if (await present(mark)) { await writeAtomic(icon, await readFile(mark, "utf8")); wrote.push(icon); }
-  await systemctl("daemon-reload");
-  const enabled = {
+  if (register) await systemctl("daemon-reload");
+  const enabled = register ? {
     broker: (await systemctl("enable", "--now", "sbar-orbit.service")).ok,
     // Not --now for the panel: it is started by the graphical session, and starting one from a context
     // with no compositor is a process that exits before the command returns.
     panel: (await systemctl("enable", "sbar-orbit-panel.service")).ok,
-  };
+  } : { broker: false, panel: false };
   return { wrote, enabled, status: await autostartStatus(paths) };
 }
 
 /** Off means off on every path, including the one this desktop happens to ignore. */
-export async function disableAutostart(paths = autostartPaths()) {
+export async function disableAutostart(paths = autostartPaths(), register = true) {
   const removed: string[] = [];
   for (const path of [join(paths.xdgAutostart, "sbar-orbit-panel.desktop")]) {
     if (await present(path)) { await rm(path, { force: true }); removed.push(path); }
   }
-  const disabled = {
+  const disabled = register ? {
     broker: (await systemctl("disable", "sbar-orbit.service")).ok,
     panel: (await systemctl("disable", "sbar-orbit-panel.service")).ok,
-  };
-  await systemctl("daemon-reload");
+  } : { broker: false, panel: false };
+  if (register) await systemctl("daemon-reload");
   // The launcher entry stays. It is how a person finds Orbit, not how it starts, and removing it would
   // answer a question nobody asked.
   return { removed, disabled, status: await autostartStatus(paths) };

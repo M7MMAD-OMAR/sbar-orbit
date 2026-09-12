@@ -41,12 +41,21 @@ GROUP_TERMS = {
 }
 
 
-def setting(key, group, label, default, kind, description, terms, choices=None, bounds=None):
+def setting(key, group, label, default, kind, description, terms, choices=None, bounds=None, stored=True):
+    """One setting. `stored` is false for the ones that are not ours to store: whether Orbit starts with
+    the desktop is systemd's answer and an autostart entry's, and keeping a copy of it here would be a
+    second opinion about a thing that already has one."""
     return {"key": key, "group": group, "label": label, "default": default, "kind": kind,
-            "description": description, "terms": tuple(terms), "choices": choices, "bounds": bounds}
+            "description": description, "terms": tuple(terms), "choices": choices, "bounds": bounds,
+            "stored": stored}
 
 
 SCHEMA = (
+    setting("autostart", "Startup", "Start Orbit with my desktop", True, "switch",
+            "Whether the broker and the mark come back on their own. Installed by default; this is systemd and an autostart entry rather than a value in the settings file.",
+            ["autostart", "auto start", "startup", "boot", "login", "start", "service", "systemd", "enable", "launch",
+             "بدء", "تشغيل", "تلقائي", "إقلاع", "دخول", "خدمة", "عند التشغيل"],
+            stored=False),
     setting("edge", "Placement", "Screen edge", "right", "choice",
             "Which edge of the screen the mark is docked to.",
             ["edge", "side", "left", "right", "top", "bottom", "place", "position", "move",
@@ -117,8 +126,9 @@ SCHEMA = (
 )
 
 BY_KEY = {entry["key"]: entry for entry in SCHEMA}
-DEFAULT_SETTINGS = {entry["key"]: (dict(entry["default"]) if isinstance(entry["default"], dict) else entry["default"]) for entry in SCHEMA}
-NUMBER_KEYS = {entry["key"]: entry["bounds"] for entry in SCHEMA if entry["kind"] in ("number", "fraction")}
+STORED = tuple(entry for entry in SCHEMA if entry["stored"])
+DEFAULT_SETTINGS = {entry["key"]: (dict(entry["default"]) if isinstance(entry["default"], dict) else entry["default"]) for entry in STORED}
+NUMBER_KEYS = {entry["key"]: entry["bounds"] for entry in STORED if entry["kind"] in ("number", "fraction")}
 EDGES_FALLBACK = "right"
 
 
@@ -249,7 +259,32 @@ def save(settings, path=None):
         return f"could not save settings: {error}"
 
 
+def launcher_path():
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "sbar-orbit")
+
+
+def autostart(*args):
+    """Ask the launcher, which owns the units and the desktop entries. None when it could not answer."""
+    import subprocess
+    try:
+        finished = subprocess.run([launcher_path(), "autostart", *args], capture_output=True, text=True, timeout=60)
+        return json.loads(finished.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def autostart_value():
+    state = autostart("status")
+    if state is None:
+        return None
+    return bool(state.get("startsWithTheDesktop"))
+
+
 def describe(entry, settings):
+    if not entry["stored"]:
+        return {"key": entry["key"], "group": entry["group"], "label": entry["label"],
+                "description": entry["description"], "value": autostart_value(), "default": entry["default"],
+                "storedIn": "systemd and an autostart entry, not the settings file"}
     value = settings.get(entry["key"], entry["default"])
     described = {"key": entry["key"], "group": entry["group"], "label": entry["label"],
                  "description": entry["description"], "value": value, "default": entry["default"]}
@@ -298,6 +333,9 @@ def main(argv):
             print(USAGE, file=sys.stderr)
             return 1
         key, _, leaf = argv[1].partition(".")
+        if key in BY_KEY and not BY_KEY[key]["stored"]:
+            print(json.dumps(autostart_value()))
+            return 0
         if key not in BY_KEY:
             print(f"config: there is no setting called {argv[1]}", file=sys.stderr)
             return 1
@@ -315,6 +353,17 @@ def main(argv):
             if key not in BY_KEY:
                 print(f"config: there is no setting called {argv[1]}", file=sys.stderr)
                 return 1
+            if not BY_KEY[key]["stored"]:
+                wanted, note = coerce(key, DEFAULT_SETTINGS.get(key, True) if command == "reset" else argv[2])
+                if note and wanted is None:
+                    print(f"config: {note}", file=sys.stderr)
+                    return 1
+                changed = autostart("enable" if wanted else "disable")
+                if changed is None:
+                    print("config: could not reach the launcher to change autostart", file=sys.stderr)
+                    return 1
+                print(json.dumps(changed.get("status", changed), indent=2, ensure_ascii=False))
+                return 0
             if leaf:
                 if key != "colors" or leaf not in STATE_KEYS:
                     print(f"config: {argv[1]} is not a setting; the nested ones are colors.{', colors.'.join(STATE_KEYS)}", file=sys.stderr)
