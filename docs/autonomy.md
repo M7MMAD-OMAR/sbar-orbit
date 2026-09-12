@@ -377,16 +377,25 @@ Ordered. Each item is one change with one test.
 | 1 | ~~Stop forcing `--password-store=basic`, and launch the binary that owns the profile~~ **Done.** Measured against the real profile: 142 of 142 cookies decrypt, a share of 1.0 | Closed |
 | 2 | ~~`consult` as a fourth outcome, and the advisor subprocess~~ **Done.** `src/advisor.ts`, with the rule grain in `src/policy.ts`. Every failure path denies and names itself: a crash reported `exited with code 137`, a hang decided at 2001 ms against a 2000 ms budget, and a non zero exit, unparsable output, a non object, an answer that is neither allow nor deny, an answer of `ask`, a missing command and an empty command all deny | Closed |
 | 3 | ~~The immune table, and the containment rule~~ **Done.** Five ids matched on whole path segments, method and query. Measured end to end against the most permissive policy the parser produces, autonomous with every class allowed, nothing denied and an advisor answering allow to everything: the immune action was refused, the advisor never saw it, and `allow` went from `read, navigate, write, irreversible` to `read, navigate` for the rest of the session | Closed |
-| 4 | Expose `session.narrow` in the dispatch list, and set a taint flag the first time an observation returns page content | **Half done.** `session.narrow` is exposed and measured: narrowing to `read` held, asking for `read, navigate, write` back returned `read`, and an empty request is refused. The taint flag is not built |
-| 5 | ~~Journal envelope and durability~~ **Done**, except `afterOrigins`. Appended to a 0600 per session file under the workspace, outside the profile that is deleted at stop. Measured: first line is the agreement the rest was judged against, every action carries `at` and `requestId`, and a read of the file found no URL path, no query and no selector | Closed but for `afterOrigins` |
-| 6 | ~~Restore points~~ **Done**, as `src/restore.ts`, minus restore by path swap. The session profile is made a subvolume where the filesystem allows one, a point is taken before each action a snapshot could actually undo, and the refusal set is enforced by `canRestoreTo`. Snapshots measured at 0.00 B exclusive. Two corrections to the plan below | Closed but for the swap |
+| 4 | ~~Expose `session.narrow` in the dispatch list, and set a taint flag the first time an observation returns page content~~ **Done.** Narrowing to `read` held, asking for `read, navigate, write` back returned `read`, and an empty request is refused. The taint flag is set by any action that carries page content in, including a screenshot on its own path | Closed |
+| 5 | ~~Journal envelope and durability~~ **Done.** Appended to a 0600 per session file under the workspace, outside the profile that is deleted at stop. Measured: first line is the agreement the rest was judged against, every action carries `at` and `requestId`, and a read of the file found no URL path, no query and no selector. `afterOrigins` and `afterAllow` are carried by the entry that moved the boundary and by no other, so the lines where the policy actually changed are not buried under a policy repeated on every line | Closed |
+| 6 | ~~Restore points, and restore by path swap~~ **Done**, as `src/restore.ts` and `session.restore`. The profile is made a subvolume where the filesystem allows one, a point is taken before each action a snapshot could actually undo, the refusal set is enforced by `canRestoreTo`, and a granted restore replaces the profile directory with a writable snapshot of the point rather than copying into it. Snapshots measured at 0.00 B exclusive. Three corrections to the plan below | Closed |
 | 7 | Request layer enforcement: `Fetch.enable` over every resource type with `Target.setAutoAttach`, judging origin, path prefix and method | An off lease image beacon on an allowed page fails and is journalled by origin |
-| 8 | ~~Egress below the browser~~ **Measured, not yet wired into the session lifecycle.** The probe ships in `src/platform.ts` as `confinedEgress`, and a host without it drops a tier with a note rather than running unconfined. The mechanism is measured in `experiments/egress-lease.ts` | Mechanism closed, integration open |
+| 8 | ~~Egress below the browser~~ **Done**, as `src/egress.ts`, wired into the session lifecycle. A session whose origins are bounded runs in an empty network namespace whose only route out is a unix socket into a proxy holding the lease. Confined only when the origins are bounded and the host can be asked, so a fresh profile, which names no origins, takes the path it was always measured on. A host that cannot confine drops a tier and says so in the journal | Closed |
 
-Items 1 through 6 are done, item 4 but for the taint flag which is now also built, and item 7 in a
-different form than proposed: request interception rather than raw `Fetch.enable`, measured at eleven
-of eleven page initiated routes blocked. Item 8's mechanism is measured and its probe ships; wiring
-it into the session lifecycle is what remains.
+All eight are done. Item 7 took a different form than proposed, request interception rather than raw
+`Fetch.enable`, measured at eleven of eleven page initiated routes blocked. Item 8 is now two layers
+rather than one, and the difference between them is worth naming rather than hiding:
+
+| | Resolution | Holds |
+|---|---|---|
+| In the browser, request interception | Per origin, and a document's redirect target checked a hop at a time | A page that misbehaves |
+| Below it, the network namespace | Per authority, because CONNECT tells a proxy `host:port` and nothing else | A browser that misbehaves |
+
+Neither replaces the other. The inner layer knows the scheme and the path; the outer one is the only
+one a renderer running with `--no-sandbox` cannot talk its way past. The outer layer reads the session's
+origins on every request rather than copying them when the lease was opened, so `session.narrow` and an
+immune containment tighten the route out as well as the agent.
 
 ### What item 8 measured
 
@@ -411,8 +420,71 @@ default**, so a lease that leans on a proxy needs `--proxy-bypass-list=<-loopbac
 fixtures here are on `127.0.0.1`, so without that flag the browser talked straight to the origin and
 the proxy saw nothing.
 
+### What wiring item 8 measured, and the three things that were wrong first
+
+`experiments/egress-lease.ts` measured the mechanism and left the two things that decide whether it can
+be wired at all unmeasured. Both are now measured in `experiments/confined-egress.ts`.
+
+**CDP over TCP.** That experiment drove the browser with `launchPersistentContext`, which speaks CDP
+over an inherited pipe, so the namespace was invisible to it. Orbit's own launcher publishes a debugging
+port and dials `ws://127.0.0.1:port`, and inside a network namespace that port is not a port on this
+machine. The endpoint is therefore exported onto a unix socket from inside the sandbox, which is
+filesystem rather than network and crosses the boundary, and put back on a loopback port by a relay in
+the broker.
+
+**CONNECT.** That experiment's fixtures were plain HTTP. Every origin worth leasing is https, and https
+through a proxy is a CONNECT tunnel, which a `Bun.serve` handler cannot answer at all. The lease is
+therefore bytes on a socket. Measured: the leased authority was tunnelled and the far end saw the
+connection, the unleased one was refused before anything was opened, and a leased page still loaded.
+
+| Measured on this host | Result |
+|---|---|
+| CDP across the namespace | crossed |
+| Leased plain HTTP origin | loaded, server touched |
+| Leased https authority | tunnelled, far end saw the connection |
+| Unleased https authority | not tunnelled |
+| Unleased plain HTTP origin | server never touched |
+| Sockets, wrapper and helpers after the session | none left |
+
+Three things were measured rather than assumed, each having first been wrong in the obvious direction:
+
+**Chrome writes `DevToolsActivePort` only when it chose the port itself.** Measured on Chrome 152: an
+explicit `--remote-debugging-port=9222` listens and writes no file at all, and only `=0` publishes one.
+A fixed port inside the namespace would have been simpler and would have left the launcher with no way
+to learn the path half of the endpoint, so the port is discovered from inside instead.
+
+**`--unshare-pid` is load bearing, not tidiness.** Without it the relays inside the sandbox are orphaned
+when the browser exits, reparent to init on the host, and hold the network namespace open after the
+session that owned it is gone. With it the sandbox has an init of its own and everything in it goes when
+the browser does. It also costs the browser its escape route: inside a pid namespace its attempt to move
+itself into a systemd scope of its own is refused by systemd itself, which is a boundary Orbit otherwise
+has to remove a bus to keep.
+
+**A unix socket path is 108 bytes.** Past that the kernel silently truncates, so the relay binds a
+shortened path, nothing dials it, and the session dies waiting for a browser that started perfectly.
+The sockets live in the runtime directory, which is short, and a path that would still not fit drops the
+tier deliberately rather than binding a truncated one.
+
+And one bug worth recording because it presented as something else entirely: the relay's retry fired
+twice per failure, once from `connectError` and once from the promise's own rejection, so every retry
+doubled the number of connections into one browser and the first to close took CDP with it. It looked
+like an intermittent 20 second timeout.
+
+### Two more corrections to the restore plan
+
+**A restore point is a snapshot of a running browser**, so it holds that browser's `DevToolsActivePort`
+and singleton markers. The launcher waits for that file to appear, so a stale one is read as the new
+browser's endpoint and dialled at a port that is nothing, or somebody else.
+
+**The honest reach of restore on a browser session is narrow, and the refusals are the feature.** A point
+is only taken before an action a snapshot could undo, and a restore is refused if anything since has left
+the machine, so it is permitted only for a session that has not browsed. The interesting undos are
+exactly the ones it refuses. Restoring a profile after a message was sent would put the browser back,
+leave the message sent, and report success.
+
 Reproduce items 2 through 6 with `bun run scripts/limited.ts bun run experiments/advisor-session.ts`,
-and item 8 with `bun run scripts/limited.ts bun run experiments/egress-lease.ts`.
+item 8's mechanism with `bun run scripts/limited.ts bun run experiments/egress-lease.ts`, and the wired
+lease with `bun run scripts/limited.ts bun run experiments/confined-egress.ts`.
 
 ## 8. What nobody has solved
 
@@ -426,9 +498,9 @@ Listed so the frontier is visible and so none of these is quietly assumed away.
    shapes and nothing on unknown ones.
 3. **Remote undo.** No project surveyed can take back a remote write. Aider's nearest analogue is a
    refusal to undo a pushed commit, which is an acknowledgement of the same wall.
-4. **A secret service that serves exactly one item.** This is open question 5 in the review and it is
-   the difference between a shippable clone and a credential handover. Nothing surveyed does it, and
-   the measured filtered bus enumerates 25 login keyring items to reach one cookie key.
+4. ~~**A secret service that serves exactly one item.**~~ Closed after this survey, as
+   `src/native/one_secret.py`: 1 item enumerated against the filtering proxy's 25, for the same 142 of
+   142 cookies. Nothing surveyed did it, which is why it is still listed here.
 5. **A per origin credential grant for a real browser session.** Sandbox Runtime restricts a process,
    not an identity. Playwright MCP's token is a connection grant, not an origin scoped credential. The
    extension hybrid in the review is the candidate and it is unbuilt, with two of its preconditions,

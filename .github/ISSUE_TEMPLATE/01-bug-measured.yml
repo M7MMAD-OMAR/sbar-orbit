@@ -1,0 +1,44 @@
+name: Bug on a measured host class
+description: Something the support tiers call Measured did not hold on Fedora 44, wlroots, cgroup delegation.
+labels: ["type:bug", "tier:measured", "needs:report-bundle"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is only for a host class [docs/support-tiers.md](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/support-tiers.md) calls **Measured**.
+
+        On any other host class you have not found a bug, you have become the first person to run Orbit
+        there, which is form 02. `sbar-orbit doctor --report` prints which row applies to you.
+  - type: textarea
+    id: report
+    attributes:
+      label: Capability report
+      description: |
+        `sbar-orbit doctor --report > ~/orbit-report.json`, then paste it here. Write it outside the work
+        tree, as shown: a diagnostic built from a browser profile does not belong in a git repository.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: The command you ran
+      placeholder: bun run verify, or sbar-orbit session create browser
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+      description: Quote the error, not a description of it. If a test failed, paste the failing test's output.
+    validations:
+      required: true
+  - type: checkboxes
+    id: read
+    attributes:
+      label: Before you send it
+      options:
+        - label: I read the report above before pasting it, and it contains nothing I would not publish.
+          required: true
+        - label: This is not a way out of a session boundary. Those go to SECURITY.md privately, never here.
+          required: true

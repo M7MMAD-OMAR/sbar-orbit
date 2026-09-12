@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { access, constants, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { access, constants, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -250,6 +250,33 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
  * or a path that names the person: the home directory is collapsed to a tilde, and a profile is
  * reported as present or absent with a row count, never by its contents.
  */
+/**
+ * The distribution, from `/etc/os-release`, and nothing else from that file. `ID` and `VERSION_ID` are
+ * what decides which host class a report belongs to; `PRETTY_NAME` and the rest carry variant and
+ * sometimes vendor strings that are not needed to read a bug.
+ */
+export async function distributionName(): Promise<{ id: string; versionId: string }> {
+  const release = await readFile("/etc/os-release", "utf8").catch(() => "");
+  const field = (key: string) => (new RegExp(`^${key}="?([^"\n]*)"?$`, "m").exec(release)?.[1] ?? "").slice(0, 32);
+  return { id: field("ID"), versionId: field("VERSION_ID") };
+}
+
+/**
+ * Which tier a host of this class may claim, before it has run anything.
+ *
+ * Never `Measured`. Measured is a named test in `docs/validation.md` that ran and passed, and a capability
+ * probe cannot award it: the most a probe can say is that this host is the same class as the one the
+ * measurements were taken on, which is a reason to expect a test report rather than a bug report.
+ */
+export async function hostClassTier(): Promise<{ assigned: string; why: string }> {
+  if (process.platform !== "linux")
+    return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
+  const { id, versionId } = await distributionName();
+  if (id === "fedora" && versionId === "44")
+    return { assigned: "Reasoned", why: "This is the same host class the measurements were taken on, which is a reason to expect a test report rather than a bug report. It is not a claim that anything passed here: run bun run verify for that." };
+  return { assigned: "Reasoned", why: "Linux, and not the one class this project measures. The primitives are documented; no host of this class has run the suite. See docs/support-tiers.md." };
+}
+
 export async function describeMachine(home = homedir()): Promise<Record<string, unknown>> {
   const capabilities = await detectPlatform(home);
   const redact = (path: string) => path.startsWith(home) ? `~${path.slice(home.length)}` : path;
@@ -272,6 +299,7 @@ export async function describeMachine(home = homedir()): Promise<Record<string, 
     filteredBusProxy: Boolean(capabilities.filteredBusProxy),
     systemdUserScopes: capabilities.systemdUserScopes,
     confinedEgress: capabilities.confinedEgress,
+    distribution: await distributionName(),
     browsers, notes: capabilities.notes,
     redacted: ["home directory collapsed to ~", "no cookie names, hosts or values", "no account names", "no viewer tokens"],
   };

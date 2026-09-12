@@ -1,0 +1,17 @@
+name: Documentation
+description: Something in the docs is wrong, missing, or claims more than the evidence supports.
+labels: ["type:docs"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Which file, and which line or heading
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it says, and what it should say
+      description: A claim stronger than its evidence is the most useful thing to report here.
+    validations:
+      required: true

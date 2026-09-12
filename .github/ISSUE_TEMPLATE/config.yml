@@ -1,0 +1,10 @@
+# A blank issue is how an unredacted profile path arrives. Every route in is a form that asks for the
+# report first.
+blank_issues_enabled: false
+contact_links:
+  - name: Platform tests
+    url: https://github.com/M7MMAD-OMAR/sbar-orbit/discussions/categories/platform-tests
+    about: Ran Orbit on a host class this project has never touched? Start here. A gate closes with a commit that references an issue, never in a discussion, so open form 03 once you have evidence.
+  - name: Security
+    url: https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/SECURITY.md
+    about: Do not open an issue for a way out of a session boundary, a leaked cookie or an escaped process. Read SECURITY.md and report privately.

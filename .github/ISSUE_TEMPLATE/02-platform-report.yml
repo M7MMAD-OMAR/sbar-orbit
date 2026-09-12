@@ -1,0 +1,54 @@
+name: Platform test report
+description: You ran Orbit on a host class this project has no machine for. This is a test report, not a bug.
+labels: ["type:platform-report", "tier:reasoned", "needs:report-bundle"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A `Reasoned` row means the platform documents the primitive and **nothing has ever been tested on
+        a host of your class**. So a failure here is a measurement, and it is the most useful thing
+        anyone outside this workstation can send.
+
+        A report that closes a gate moves a row in
+        [docs/support-tiers.md](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/support-tiers.md)
+        from `Reasoned` to `Measured, 1 host, issue #N`, with the date and version it was run against.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Host class
+      options:
+        - Linux, another glibc distribution
+        - Linux, musl
+        - Linux, rootless container or atomic host
+        - Windows 10 1809 or later
+        - macOS 13 or later
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Worked
+        - Worked inside a limit I describe below
+        - Refused at preflight, with a message
+        - Crashed before preflight
+        - Never started, no output
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Capability report, if Orbit ran far enough to print one
+      description: |
+        `sbar-orbit doctor --report > ~/orbit-report.json`. Optional on purpose: if Orbit never started,
+        you cannot produce one, and that is itself the finding.
+      render: json
+  - type: textarea
+    id: detail
+    attributes:
+      label: What you ran and what it did
+      description: Commands and output. `bun run verify` is the strongest single thing you can run.
+    validations:
+      required: true

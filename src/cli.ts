@@ -2,7 +2,9 @@ import { startBroker, call } from "./ipc";
 import { serviceSocketPath } from "./service";
 import { OrbitError } from "./errors";
 
-const [command, verb, arg, accountName] = process.argv.slice(2);
+// The fourth word means whatever the verb needs: an account name to create with, a restore point to
+// return to. Named for its position rather than for one of its meanings.
+const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   if (command === "status") {
     // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
@@ -13,6 +15,19 @@ try {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.
     const { cleanWorkspaces } = await import("./workspace-storage");
     console.log(JSON.stringify(await cleanWorkspaces(), null, 2));
+  } else if (command === "doctor" && process.argv.includes("--report")) {
+    // Deliberately local, and before the branch that requires a socket. The most common thing a person
+    // reports is a broker that will not start, which is exactly the case a broker RPC cannot answer.
+    // Nothing here needs Orbit to be running, and nothing here leaves the machine on its own.
+    const { describeMachine, hostClassTier } = await import("./platform");
+    const { version } = await import("../package.json");
+    console.log(JSON.stringify({
+      ...await describeMachine(),
+      orbitVersion: version,
+      // What this host class may claim, which is never what it managed to run.
+      tier: { ...await hostClassTier(), reference: "docs/support-tiers.md" },
+      paste: "This report is safe to paste into a public issue. Read it first anyway.",
+    }, null, 2));
   } else if (command === "serve") {
     // A managed broker binds the fixed path a service unit and generated host configuration expect.
     const managed = process.argv.includes("--managed-socket");
@@ -34,13 +49,17 @@ try {
     if (command === "doctor") method = "doctor";
     else if (command === "preview") method = "preview.open";
     else if (command === "account" && verb === "save") { method = "session.account.save"; params = { sessionId: arg }; }
-    else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list"].includes(verb ?? "")) {
+    else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
       method = `session.${verb}`;
-      params = verb === "create" ? { backend: arg ?? "browser", accountName, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME } : { sessionId: arg };
+      // The journal is how an autonomous run is reviewed after it finishes, and a restore is how one is
+      // put back, so both belong on the command line a person uses rather than in the agent API alone.
+      params = verb === "create" ? { backend: arg ?? "browser", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME }
+        : verb === "restore" && fourth !== undefined ? { sessionId: arg, sequence: Number(fourth) }
+        : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, session create/list/stop/pause/resume/observe, or act ID JSON");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON");
     console.log(JSON.stringify({ ok: true, result: await call(socket, method, params) }));
   }
 } catch (error) {

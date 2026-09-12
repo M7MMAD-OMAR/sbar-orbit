@@ -15,3 +15,6 @@ __pycache__/
 .DS_Store
 *.pem
 *.key
+
+# A capability report is built from a browser profile. It never belongs in the work tree.
+orbit-report*.json

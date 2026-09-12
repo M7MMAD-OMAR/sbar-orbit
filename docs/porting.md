@@ -203,6 +203,28 @@ downloading the current sway onto an un upgraded Arch system is the textbook par
 **Verdict: prototype on Fedora and openSUSE. Do not claim Debian, Ubuntu or Arch until the contract
 probe has passed on a real host of that family.**
 
+### The egress tier, and where it exists
+
+A session whose origins are bounded gets a browser with no network of its own: an empty network
+namespace whose only route out is a unix socket into a proxy that holds the lease. It is built on
+`bwrap --unshare-net --unshare-pid`, which is unprivileged user namespaces, so it exists exactly where
+those do. The probe asks for a sandbox rather than looking for the binary, because unprivileged user
+namespaces can be present, absent, or present and administratively disabled, and only trying tells the
+three apart.
+
+| Host | What the tier is expected to be | Why it is not asserted |
+|---|---|---|
+| Fedora 44, this host | `namespace`. Measured | Measured, `confinedEgress: true`, and the wired lease measured end to end |
+| Debian, Ubuntu, Arch, openSUSE | Probably `namespace`, subject to G29 | `kernel.unprivileged_userns_clone` and AppArmor's `userns` restrictions differ by distribution and release, and `socat` is not installed everywhere |
+| A rootless container | Unknown | Nesting a user namespace inside one is where this most plausibly fails, and it is untested |
+| Windows | `in-browser`, with no equivalent designed | There is no `--unshare-net`. What exists is a Windows Filtering Platform filter or a network compartment, both of which are a different design and one of which needs a driver. G28 |
+| macOS | `in-browser`, with no equivalent designed | No network namespaces. `pf` is system wide and root only, and a per process filter means a Network Extension, which means an entitlement and a signed installer. G30 |
+
+On any host where the tier is `in-browser`, the lease is the request interception inside the browser,
+which holds a page that misbehaves and not a browser that does. That is a real difference in what the
+session guarantees, so it is printed by `doctor`, written into the session's first journal line, and
+never silently substituted.
+
 ### The container variant, for atomic hosts
 
 Silverblue, Kinoite and Bazzite have no `dnf` in the host image and `rpm-ostree install` mutates the
@@ -649,16 +671,16 @@ regression test, not a gate.
 The release apparatus was proposed as three independent items and it is one chain. Nothing downstream
 works until the thing above it exists.
 
-1. **`docs/support-tiers.md`, proposed and not yet written, and the tier vocabulary.** One row per capability per host class, four
-   columns: tier, evidence, date, Orbit version. Every `Refused` row carries its primary citation in
-   this file, because `UNSUPPORTED` is thrown on that authority and a cross reference to an internal
-   review is not a citation.
-2. **A local only `doctor --report`.** It does not exist today in any form: `src/cli.ts` parses bare
-   verbs, so `doctor --report` throws `INVALID_REQUEST`, and in the client branch a missing
-   `ORBIT_SOCKET` throws `CONFIG_REQUIRED` before `doctor` is dispatched. `doctor` is a broker RPC with
-   no local path, so the broker unreachable case, which is the most common report, is exactly the case
-   that cannot run. Build the local collector first and the flag parsing with it. The emitted bundle
-   carries `tier.assigned`.
+1. ~~**`docs/support-tiers.md`, and the tier vocabulary.**~~ **Written**, as
+   [support-tiers.md](support-tiers.md). One row per capability per host class, with tier, evidence,
+   date and Orbit version. Every `Refused` row carries its primary citation there, because
+   `UNSUPPORTED` is thrown on that authority and a cross reference to an internal review is not a
+   citation.
+2. ~~**A local only `doctor --report`.**~~ **Built.** It is answered before the branch that requires a
+   socket, so the broker unreachable case, which is the most common report, is the case it serves. It
+   carries `tier.assigned`, which is never `Measured`: a probe can say that a host is the same class as
+   the one the measurements were taken on, and nothing more. `bun run verify` is how a host earns
+   anything stronger.
 3. **The GitHub forms**, written against the tier table and the bundle, not against either as a
    promise.
 
@@ -825,4 +847,7 @@ closes. Nothing here may be described as solved.
 | G24 | Is `proc_pid_rusage` reachable from Bun without a compiled helper, and is a summed `ri_phys_footprint` accurate enough to govern against | A Mac | Compare against `footprint` and `ps -o rss= -g <pgid>` on the same tree |
 | G25 | Does anything survive `launchctl bootout`, specifically a launchd started updater agent | A Mac | `pgrep` and `ps -o pgid,comm -g <pgid>` after bootout |
 | G26 | Is loopback exempt from macOS 15 local network privacy | A Mac on 15 or later | `m.localnetwork`. Apple's TN3179 is the primary source and its body did not render in this run's fetch, so this is not established by reading |
+| G28 | Is there a Windows equivalent of an empty network namespace that does not need a driver, and does it hold a `--no-sandbox` renderer | A Windows host | Place the browser in a network compartment or behind a Windows Filtering Platform filter scoped to its job, then repeat `experiments/confined-egress.ts`: the leased authority tunnelled, the unleased one not, and the browser unable to reach anything with its proxy setting removed |
+| G29 | Do unprivileged user namespaces work for this on the other Linux families, and is `socat` present | Debian stable, Ubuntu LTS, Arch, openSUSE | Run the `confinedEgress` probe, then `experiments/confined-egress.ts`. A host that refuses the sandbox must report `in-browser` and start sessions normally, which is the half that matters more than the half that works |
+| G30 | Can a per process egress filter exist on macOS without an entitlement and a signed installer | A Mac | Establish whether anything short of a Network Extension confines one process's egress. If not, macOS is `in-browser` by design and the tier table says so rather than leaving it open |
 | G27 | Human takeover and resume, end to end, with a participant | A participant, and a low cost viewing mode first | The manual phrase and resume workflow completed without the participant stopping the trial. `docs/validation.md` records this as not completed and further interactive trials as on hold |

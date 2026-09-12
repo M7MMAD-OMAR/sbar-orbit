@@ -22,10 +22,33 @@ These are alpha measurements, not guarantees for arbitrary applications. Raw wor
 | Host load | With `CPUWeight=10` a busy host starves Orbit by design; under a host load of 20 to 32 on 24 cores, session creation and launches timed out that succeed on a quiet host. Every experiment report carries `hostBusyPercent` for this reason | `experiments/concurrent-sessions.ts` |
 | Agent hosts | Claude Code and Codex completed browser tasks and native editor saves in opt-in trials | Model-host experiments; authenticated host required |
 | Source archive | Extraction, source checksums, browser capture and packaged Canvas rendering passed for `0.1.0-alpha.1` | `scripts/package.ts`, `experiments/package-smoke.ts` |
+| A browser with no network of its own | A leased session browsed normally while confined; CDP crossed the network namespace, the leased https authority was tunnelled and the far end saw the connection, the unleased one was not, the unleased plain HTTP server was never touched, and no sockets, wrapper or helper processes were left behind | `bun run scripts/limited.ts bun run experiments/confined-egress.ts` |
+| Removing the browser's own proxy setting | Reaches nothing at all while confined, against everything while unconfined. This is the difference between a lease and a setting the browser agreed to honour | `bun run scripts/limited.ts bun run experiments/egress-lease.ts` |
+| Restore | A granted restore swapped the profile for a writable snapshot of the point, dropped the file written after it, kept the directory a subvolume, and the session browsed afterwards on the same lease. Refused when anything since the point had left the machine, when not paused, and for an unknown point | `bun test tests/restore.test.ts tests/session.test.ts` |
 
 All runtime experiments must use `bun run scripts/limited.ts` on supported Linux systems. The native tests require the documented Fedora bootstrap. Model-host trials are not part of the default suite and may incur model-service usage.
 
 Sampling cannot exclude every transient focus or cgroup change. Frame metadata approximates readiness, not physical display latency. A successful scripted run does not confirm simultaneous human work. macOS, Windows, clean-machine installation, broader application coverage and broader failure coverage remain open.
+
+### Three things measured against an assumption, each wrong in the obvious direction
+
+Recorded here rather than only in a commit message, because each cost a debugging session and each will
+be rediscovered by whoever ports this.
+
+**Chrome writes `DevToolsActivePort` only when it chose the port itself.** Measured on Chrome 152 on this
+host: `--remote-debugging-port=9222` listens, prints its endpoint to stderr, and writes no file at all.
+Only `=0` publishes one. A launcher that waits for that file therefore cannot use a fixed port, which is
+the opposite of what a confined browser on a private loopback would otherwise want.
+
+**A unix socket path is 108 bytes, and past it the kernel truncates silently.** A workspace path plus a
+session id spends most of that, so a relay bound a shortened path, nothing dialled it, and the session
+died waiting for a browser that had started perfectly.
+
+**`bwrap --unshare-pid` is load bearing.** Without it the relay processes inside the sandbox are orphaned
+when the browser exits, reparent to init on the host, and hold the network namespace open after the
+session that owned it is gone. It also refuses the browser its escape: inside a pid namespace, Chrome's
+attempt to move itself into a systemd scope of its own is refused by systemd with `Process 2 is a kernel
+thread, refusing`, which is a containment Orbit otherwise has to remove a session bus to keep.
 
 ## Repeated recovery on Fedora
 

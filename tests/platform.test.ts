@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   canCloneProfile, describeMachine, detectBrowsers, detectPlatform, passwordStoreFor, profileCookieScheme,
   singletonMarkers, stripSingletonMarkers, supportsReflink, type PlatformCapabilities,
@@ -174,4 +174,27 @@ test("confined egress is probed by asking for a namespace, not by finding a bina
   // The report a person pastes into an issue carries the answer, because it decides a tier.
   const machine = await describeMachine();
   expect(machine.confinedEgress).toBe(capabilities.confinedEgress);
+});
+
+test("a capability report can be produced with no broker, and carries nothing private", async () => {
+  // The most commonly reported problem is a broker that will not start, which is exactly the case a
+  // broker RPC cannot answer. So this path is answered before the one that needs a socket, and the test
+  // runs it the way a reporter would: with no ORBIT_SOCKET set at all.
+  const environment = { ...process.env };
+  delete environment.ORBIT_SOCKET;
+  const cli = Bun.spawn(["bun", "src/cli.ts", "doctor", "--report"], { env: environment, stdout: "pipe", stderr: "pipe" });
+  const printed = await new Response(cli.stdout).text();
+  expect(await cli.exited).toBe(0);
+  const report = JSON.parse(printed) as Record<string, unknown>;
+  expect(report.report).toBe("orbit-capabilities");
+  expect(report.orbitVersion).toBe("0.1.0-alpha.1");
+  // Never Measured. A probe can say that a host is the same class as the one the measurements were taken
+  // on; awarding the tier itself would print a pass over a suite that never ran here.
+  expect((report.tier as { assigned: string }).assigned).not.toBe("Measured");
+  expect((report.tier as { reference: string }).reference).toBe("docs/support-tiers.md");
+  // The redaction is a property of the shape, so it is asserted on the serialised text rather than on
+  // the fields anyone remembered to check.
+  expect(printed).not.toContain(homedir());
+  expect(printed.toLowerCase()).not.toContain("cookie_name");
+  expect(printed).not.toContain("ORBIT_SOCKET");
 });

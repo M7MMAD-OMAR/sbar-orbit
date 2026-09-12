@@ -1,0 +1,47 @@
+name: Gate evidence
+description: You have evidence that closes or fails one of the open gates.
+labels: ["type:gate"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The gates are in [docs/porting.md section 9](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/porting.md).
+
+        A gate closes on a primary source URL, or on a command anyone can rerun, and on nothing else. A
+        reading of a secondary summary does not close one, and neither does a confident argument.
+  - type: dropdown
+    id: gate
+    attributes:
+      label: Gate
+      options:
+        - G1 to G7, Linux compositor, distribution and container
+        - G9, an all v10 Linux profile in the wild
+        - G10, a filtered session bus and a GTK file chooser
+        - G11, headed forwarding into the person's browser. Orbit never runs this, at any tier
+        - G12 to G14, the browser extension mint
+        - G15 to G17, Windows transport, job containment and limits
+        - G18, whether a service tolerates a forked session
+        - G19 to G26, macOS profile, Keychain, TCC, accounting and local network
+        - G27, human takeover with a participant
+        - G28, a Windows equivalent of an empty network namespace
+        - G29, unprivileged user namespaces on the other Linux families
+        - G30, a per process egress filter on macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - The gate closes
+        - The gate fails, and the failure is the result
+        - Partial, and I state exactly what is still open
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: A primary source URL, or the exact command and its output. Say which host it ran on.
+    validations:
+      required: true

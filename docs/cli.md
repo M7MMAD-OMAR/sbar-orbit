@@ -30,6 +30,39 @@ bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
 
 `session observe ID` returns a JPEG as base64 JSON, with the format named in the `mimeType` field. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
 
+Two commands are for reading a run back rather than driving one:
+
+```sh
+bun run src/cli.ts session journal "$ORBIT_SESSION_ID"
+bun run src/cli.ts session restore "$ORBIT_SESSION_ID" 12
+```
+
+`session journal` returns every decision the session made, the policy it was judged against, the origins
+a page reached for and the lease refused, whether a page has spoken to the session yet, which layer held
+the origin lease, and the restore points it holds. It identifies actions by class, type, destination
+origin and the size of what they carried, and quotes neither typed text nor page content.
+
+`session restore` puts a paused session back to one of those points, named by the sequence the journal
+reports, or the most recent one when no sequence is given. It refuses far more often than it grants, and
+the refusal is the point: a point is only taken before an action a snapshot could undo, and a restore is
+refused outright if anything since has left the machine. Restoring a profile after a message was sent
+would put the browser back, leave the message sent, and report success. See
+[autonomy](autonomy.md) for what that reduces to in practice.
+
+A capability report needs no broker at all, which is deliberate: the most commonly reported problem is a
+broker that will not start.
+
+```sh
+sbar-orbit doctor --report > ~/orbit-report.json
+```
+
+It prints the platform, the session type, whether a secret service answered, whether a browser can be
+confined to a network of its own, one line per browser install with its cookie scheme and row count, the
+distribution id and version, and the tier this host class may claim. It collapses the home directory to
+`~` and carries no cookie names, hosts or values, no account names and no viewer tokens. Write it outside
+the work tree, as above: it is built from a browser profile. See [support tiers](support-tiers.md) for
+which report to file.
+
 ## Keeping a broker available
 
 `sbar-orbit serve` runs in the foreground and binds a fresh socket each time, so every client must be told the new path. A managed broker instead binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so generated host configuration survives a restart.
@@ -66,7 +99,9 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 | `session.create` | `{backend:"browser"|"fedora", profileKey?:string, accountName?:string}` |
 | `session.account.save` | `{sessionId}`, paused named browser session only |
 | `session.act` | `{sessionId, requestId, action}` |
-| `session.observe`, `session.pause`, `session.resume`, `session.stop` | `{sessionId}` |
+| `session.observe`, `session.pause`, `session.resume`, `session.stop`, `session.journal` | `{sessionId}` |
+| `session.narrow` | `{sessionId, origins?:string[], allow?:ActionClass[]}`, tightening only |
+| `session.restore` | `{sessionId, sequence?}`, paused browser session only |
 
 Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The Fedora backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
 
