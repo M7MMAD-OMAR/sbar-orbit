@@ -48,6 +48,47 @@ The smoke test extracts the exact archive, verifies its manifest, installs froze
 
 No GitHub remote, hosted release, global service or system installer is created by these commands. Removing an extracted program directory does not remove account snapshots, nor any workspace a killed broker left behind; `sbar-orbit clean` does the latter.
 
+## The whole installation in one command
+
+```sh
+./install.sh
+```
+
+This is the checkout's one command installation. It is a driver over the steps documented in the rest
+of this file rather than a second implementation of any of them: prerequisites come from
+`inspectPrerequisites`, the command link from `activateLocal`, the units from `installService` and
+`enableAutostart`, and the closing check is a real `doctor` call to the managed broker. It runs inside
+the same shared resource budget as every other Orbit entry point, through `scripts/limited.ts`.
+
+Six steps, each reported as it happens, with the reason beside it when one does not pass:
+
+| Step | What it does | What it refuses to do |
+|---|---|---|
+| Check what this machine already has | Reads prerequisites only | Never starts a browser, compositor or broker |
+| Prepare project dependencies | `bun install --frozen-lockfile --ignore-scripts` | Skipped when the modules already resolve; no lifecycle scripts, ever |
+| Link the sbar-orbit command | `activateLocal` into the prefix, default `~/.local` | Never edits shell configuration, and never puts the prefix on PATH for you |
+| Install the broker service and desktop entries | The units, the panel autostart pair, then enable and start | Nothing that needs elevation, so a full logout still needs `loginctl enable-linger` |
+| Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, Orbit's own directory | Never writes into an agent host's configuration; the command to register it is printed instead |
+| Verify the installed broker answers | One `doctor` call on the managed socket | Does not claim the browser, the display or any application works |
+
+Options are `--prefix PATH`, `--no-service`, `--dry-run`, `--reinstall-deps`, `--json` and `--plain`.
+A dry run reports every step and writes nothing, which is the safe way to read what it would do on a
+machine you have not installed on before.
+
+What it cannot do, and says so rather than failing later: it does not install Bun, since it is running
+on Bun; it does not install Chrome, Xwayland, grim or wl-clipboard, since those need a package manager
+and elevation. Each missing item is printed with the remedy `inspectPrerequisites` already carries for
+it, gathered at the end under a heading that says these are left for the person.
+
+The final report is installation state, not a measurement. It ends with the sentence saying so, because
+a run that has linked a command and started a service has not shown that a browser session works on this
+host, and the gates that would show it live in [validation.md](validation.md).
+
+Tested with nine checks in `tests/install.test.ts`: a dry run that leaves the filesystem untouched, a
+real install into a temporary prefix with no service, a refused source that is not an Orbit checkout,
+the separation between prerequisites a dependency install can fix and ones it cannot, PATH membership,
+and the display in both its terminal and non terminal forms. No test spawns a package manager.
+
 ## Activate a local source installation
 
 The current checkout adds a launcher-link manager. It is not included in the older `0.1.0-alpha.1` archive. Keep the source in a stable directory, verify the release digest, and prepare dependencies with `bun install --frozen-lockfile --ignore-scripts` first. Use only trusted source: package-name checks recognize Orbit but do not authenticate a release.
@@ -86,3 +127,30 @@ The JSON report separates browser and native prerequisites, gives a remedy for m
 Browser candidates currently match the owned launcher: `/opt/google/chrome/chrome`, `/usr/bin/chromium`, `/usr/bin/chromium-browser`. Native files must exist in this source version's `.runtime/sway`, alongside system Python, Xwayland, grim and wl-clipboard. The existing native bootstrap is `experiments/fedora-display/bootstrap.sh`; inspect its pinned Fedora package versions before using it on another release. Shared-library compatibility, cgroup delegation, private disk-backed storage and real application behavior need separate validation.
 
 On the development workstation the read-only command found both prerequisite groups. Three focused tests cover missing browser/native/common inputs, unsupported OS, executable-check semantics and standalone invocation without ORBIT_SOCKET. No live trial was restarted for this check.
+
+## Load the mint extension by hand (untested instructions)
+
+`extension/` holds the browser extension that mints narrow, short lived, origin scoped state for a separate Orbit browser, as decided in [the separate workspace review](separate-workspace-review.md). It is **written, not loaded, not verified**. Nobody has run any of the steps below, on this machine or any other, and the steps are written from Chrome's documented behaviour rather than from a run. Gates G12, G13 and G14 in [porting](porting.md) stay open, and they stay open precisely because closing them means loading this in a real browser: a person does that themselves, at a moment they choose, and no agent on this workstation does it for them.
+
+The whole sequence is the person's, not an agent's, for the same reason.
+
+```sh
+# 1. Build the service worker. The manifest points at dist/, which the repository does not carry,
+#    so an unpacked load before this step fails outright. This command has never been run here.
+bun build extension/src/service-worker.ts --target=browser --format=esm --outdir=extension/dist
+
+# 2. Load it: chrome://extensions, turn on Developer mode, "Load unpacked", pick the extension
+#    directory. Chrome assigns an extension ID at this point, and it does not exist before it.
+
+# 3. Fill in the native messaging host manifest with that ID and an absolute path, then install it.
+install -Dm644 extension/host/com.sbarorbit.mint.json \
+  ~/.config/google-chrome/NativeMessagingHosts/com.sbarorbit.mint.json
+# Chromium reads its own directory instead:
+#   ~/.config/chromium/NativeMessagingHosts/com.sbarorbit.mint.json
+```
+
+The shipped `extension/host/com.sbarorbit.mint.json` carries obvious placeholders in `path` and `allowed_origins` rather than a plausible looking extension ID. That is deliberate: an ID that looked real would read as though this had been loaded. Both fields have to be edited before Chrome will connect, `path` must be absolute, and `extension/host/mint_host.py` must stay executable.
+
+To remove it: delete the host manifest from the `NativeMessagingHosts` directory, remove the extension from `chrome://extensions`, and delete `extension/dist`. Nothing else on the machine is touched, because nothing else was written. The host program never writes a grant to disk.
+
+What is verified is the pure logic only, in `tests/extension.test.ts` under `bun test`: envelope parsing in both directions, origin and cookie domain scoping, grant lifetimes and expiry, the refusal codes, and the native messaging framing. No browser API is faked in those tests, and passing them says nothing about whether the extension loads or works.

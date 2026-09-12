@@ -39,6 +39,22 @@ leaves the machine is a report you generated, read and pasted yourself.
 Requires Linux user cgroup delegation, Bun and Chrome/Chromium. The native backend needs the separate [Fedora bootstrap](docs/fedora-results.md).
 
 ```sh
+./install.sh
+```
+
+One command, and it shows every step as it happens. It checks what the machine already has, prepares
+dependencies from the frozen lockfile, links the `sbar-orbit` command into `~/.local/bin`, installs and
+starts the broker service and the desktop mark, writes the agent connector configuration, then verifies
+that the installed broker answers. `./install.sh --dry-run` reports the same steps and changes nothing.
+
+It installs nothing that needs root. Bun, Chrome and the Fedora capture tools stay your package
+manager's job, and the run prints the exact command for each one it finds missing rather than reporting
+a success you would discover was false minutes later. It is not a measurement either: it says what was
+installed, not what was proven to work.
+
+The individual steps remain available, which is what to reach for when only one of them is wanted:
+
+```sh
 bun install --frozen-lockfile --ignore-scripts
 ./bin/sbar-orbit service install
 ```

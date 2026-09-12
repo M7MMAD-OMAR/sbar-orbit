@@ -9,6 +9,8 @@ case "${1:-help}" in
     cat <<'HELP'
 Sbar Orbit, local agent workspace prototype
 
+  sbar-orbit install             Do the whole installation in one command
+  sbar-orbit install --dry-run   Show every step without changing anything
   sbar-orbit serve               Start the broker with shared resource limits
   sbar-orbit serve --managed-socket
                                  Bind the fixed socket a service unit expects
@@ -48,6 +50,10 @@ HELP
   preflight)
     shift
     exec bun run "$orbit_root/scripts/preflight.ts" "$@"
+    ;;
+  install)
+    shift
+    exec bun run "$orbit_root/scripts/limited.ts" bun run "$orbit_root/scripts/install.ts" "$@"
     ;;
   service)
     shift
