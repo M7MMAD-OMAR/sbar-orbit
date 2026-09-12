@@ -1,6 +1,6 @@
 import { requireResourceBudget } from "./resource-budget";
 import { chromium, type Browser, type ConnectOverCDPTransport } from "playwright";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { chromeExecutables } from "./runtime-paths";
@@ -55,6 +55,11 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   const executable = options.executable ?? defaultChromeExecutable();
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");
   if (options.executable && !(Bun.file(options.executable).size > 0)) throw new OrbitError("UNSUPPORTED", "The requested browser executable is not present");
+  // A profile that already holds one of these is a profile that held a browser: a restore point is a
+  // snapshot of a running browser, and a clone is a copy of the person's. The poll below waits for this
+  // file to appear, so a stale one is read as this browser's endpoint and dialled at a port that is
+  // either nothing or somebody else.
+  await rm(join(profile, "DevToolsActivePort"), { force: true }).catch(() => {});
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined &&
     !["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY"].includes(key))) as Record<string, string>;
   // Chrome can use the desktop bus to move itself into an uncapped systemd scope.

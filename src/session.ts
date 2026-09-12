@@ -13,7 +13,7 @@ import { defaultChromeExecutable } from "./chrome";
 import { cloneProfile } from "./clone";
 import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { consultAdvisor } from "./advisor";
-import { canRestoreTo, clearRestorePoints, createSubvolume, takeRestorePoint, type RestorePoint } from "./restore";
+import { canRestoreTo, clearRestorePoints, createSubvolume, removeRestorePoint, restoreProfile, takeRestorePoint, type RestorePoint } from "./restore";
 import { defaultViewport, parseViewport } from "./viewport";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
@@ -56,6 +56,19 @@ interface Session {
    * which side of the line every decision fell on.
    */
   tainted: boolean;
+  /**
+   * Start another browser on the same profile, for a restore. The policy and the surface are read at
+   * call time rather than captured here: a restored session that came back with the boundary it was
+   * created with, rather than the one it currently holds, would undo a narrowing silently.
+   */
+  relaunch?: () => Promise<BrowserBackend>;
+  /** Registered on every backend a session owns, including one started by a restore. */
+  reap?: () => void;
+  /**
+   * Set while a restore is deliberately closing the browser, so the close is not mistaken for the end
+   * of the session and does not take the profile with it. Cleared whether the relaunch worked or not.
+   */
+  restoring?: boolean;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
@@ -182,20 +195,30 @@ export class Sessions {
       void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
         actionType: "session.create", actionClass: "read", outcome: "allow",
         reason: `${String(input.backend)} session, ${policy.mode}, origins ${policy.origins === "any" ? "any" : policy.origins.join(" ") || "none"}, allow ${policy.allow.join(" ")}, deny ${policy.deny.join(" ") || "none"}${input.cloneOf === undefined ? "" : ", from a cloned profile"}${egress === undefined ? "" : `, egress held ${egress.tier === "namespace" ? "below the browser in a network namespace of its own" : "inside the browser only, because this host cannot confine one"}`}` });
+      session.relaunch = () => BrowserBackend.create(session.profile, session.backend.surface, clone?.launch,
+        session.policy.origins, origin => blockedOrigins.push(origin),
+        // The same lease, not a new one. Its proxy and relay are the broker's and outlive any one
+        // browser, the wrapper is still on disk, and the relay's port is in the journal already.
+        egress);
       live = session;
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
       // nothing reclaims. The backend's own exit is one of those ways, so the removal hangs off
       // the release that every ending awaits.
-      backend.onClose(() => {
+      const reap = () => {
+        // A restore closes the browser on purpose and starts another on the same profile, so that close
+        // is not the end of the session and must not take the profile with it.
+        if (session.restoring) return;
         session.state = "closed"; this.leases.delete(lease);
         // Restore points go before the profile does. Each is a copy of the person's live cookies, and
         // a read only snapshot inside the profile would stop the profile itself being removed.
         session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).then(() => session.egress.close())
           .then(async () => { if (session.restoreStore) await clearRestorePoints(session.restoreStore); })
           .finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
-      });
+      };
+      session.reap = reap;
+      backend.onClose(reap);
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);
     } catch (error) {
@@ -324,6 +347,54 @@ export class Sessions {
     this.taintedBy(session, action.type);
     return result;
   }
+  /**
+   * Put a session back to one of its restore points.
+   *
+   * The refusals are most of what this does, and that is not an accident of the implementation. A point
+   * is only taken before an action a snapshot could undo, and `canRestoreTo` then refuses if anything
+   * since has left the machine. On a browser session that means a restore is permitted only for a
+   * session that has not browsed: the interesting undos are exactly the ones refused, because restoring
+   * a profile after a message was sent would put the browser back, leave the message sent, and report
+   * success. Nothing here widens that.
+   */
+  private async restore(session: Session, sequence: number | undefined): Promise<unknown> {
+    if (!(session.backend instanceof BrowserBackend) || !session.relaunch)
+      throw new OrbitError("UNSUPPORTED", "Restore points are taken for browser sessions; a private display is reaped whole instead");
+    if (!session.restoreStore) throw new OrbitError("UNSUPPORTED", "This filesystem cannot snapshot a profile, so this session has no restore points");
+    // Paused, because a restore replaces the profile under the session and a queued action would run
+    // against a browser that is no longer the one it was queued for.
+    if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before restoring");
+    const point = sequence === undefined ? session.restorePoints.at(-1) : session.restorePoints.find(held => held.sequence === sequence);
+    const since = session.journal.filter(entry => entry.actor === "agent" && entry.outcome === "allow" && entry.sequence > (point?.sequence ?? 0));
+    const verdict = canRestoreTo(point, since);
+    if (!verdict.allowed) throw new OrbitError("RESTORE_REFUSED", verdict.reason);
+    session.restoring = true;
+    try {
+      // The browser holds the profile open, so it goes first. A swap under a live browser puts the files
+      // back and lets the browser write its own copy out again at exit.
+      await session.backend.close();
+      if (!await restoreProfile(session.profile, verdict.point))
+        throw new OrbitError("BACKEND_FAILED", "The profile could not be swapped for its restore point; nothing was changed");
+      session.backend = await session.relaunch();
+      session.backend.onClose(session.reap ?? (() => {}));
+    } catch (error) {
+      // A session whose browser is gone and cannot be replaced is over. Reaping is what the guard above
+      // suppressed, so it is done here rather than left to a close that will not come again.
+      session.restoring = false;
+      session.reap?.();
+      throw error;
+    } finally { session.restoring = false; }
+    // Points at or after the one used are gone: the session's history past this line did not happen.
+    for (const held of session.restorePoints.filter(entry => entry.sequence >= verdict.point.sequence))
+      await removeRestorePoint(held.path).catch(() => {});
+    session.restorePoints = session.restorePoints.filter(entry => entry.sequence < verdict.point.sequence);
+    void this.record(session, journalEntry({
+      at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
+      actor: "person", actionType: "session.restore", decision: { outcome: "allow" }, after: session.policy,
+    }));
+    return { sessionId: session.id, restoredTo: verdict.point.sequence, consistent: verdict.point.consistent,
+      state: session.state, restorePoints: session.restorePoints };
+  }
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
     session.activity = activity;
@@ -355,7 +426,7 @@ export class Sessions {
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
-    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow", "session.restore"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
     if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints,
@@ -383,6 +454,12 @@ export class Sessions {
       return { sessionId: session.id, policy: session.policy, tainted: session.tainted };
     }
     if (request.method === "session.stop") return this.stop(session);
+    if (request.method === "session.restore") {
+      if (params.sequence !== undefined && (!Number.isInteger(params.sequence) || Number(params.sequence) < 0))
+        throw new OrbitError("INVALID_REQUEST", "A restore point is named by the sequence reported in the journal");
+      this.ensureOpen(session);
+      return this.restore(session, params.sequence === undefined ? undefined : Number(params.sequence));
+    }
     this.ensureOpen(session);
     // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.
     if (request.method === "session.presence") return session.backend.presence().catch(error => { this.ensureOpen(session); throw error; });

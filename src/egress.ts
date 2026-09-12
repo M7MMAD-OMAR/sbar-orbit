@@ -249,7 +249,10 @@ exec /usr/bin/bwrap --unshare-net --unshare-pid --dev-bind / / --proc /proc --di
     case "$port" in
       "" | *[!0-9]* ) exit 1 ;;
     esac
-    exec /usr/bin/socat UNIX-LISTEN:${cdpSocket},fork,mode=600 TCP:127.0.0.1:$port
+    # unlink-early, because a restore starts a second browser on the same lease: the socket file from the
+    # first one is still on disk, and socat would refuse to bind over it while the relay waited out its
+    # deadline on a browser that had started perfectly.
+    exec /usr/bin/socat UNIX-LISTEN:${cdpSocket},fork,mode=600,unlink-early TCP:127.0.0.1:$port
   ) &
   exec ${executable} "$@"
 ' confined-browser "$@"

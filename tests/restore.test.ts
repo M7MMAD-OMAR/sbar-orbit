@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import {
   canRestoreTo, clearRestorePoints, createSubvolume, isSubvolume, listRestorePoints,
-  removeRestorePoint, reversibilityOf, takeRestorePoint, undoCompleteness,
+  removeRestorePoint, restoreProfile, reversibilityOf, takeRestorePoint, undoCompleteness,
 } from "../src/restore";
 
 /** Snapshots need btrfs, so the filesystem tests run where the workspaces actually live. */
@@ -167,4 +167,57 @@ test.if(onBtrfs)("a new subvolume is no looser than the directory it replaces", 
     await Bun.spawn(["/usr/bin/btrfs", "property", "set", "-ts", profile, "ro", "false"], { stdout: "ignore", stderr: "ignore" }).exited;
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }
+});
+
+test.if(onBtrfs)("a restore swaps the profile for the point, and what happened after it is gone", async () => {
+  const root = await mkdtemp(join(workspaceRoot, "orbit-restore-swap-"));
+  const profile = join(root, "profile");
+  const store = join(root, "points");
+  try {
+    expect(await createSubvolume(profile)).toBe(true);
+    await writeFile(join(profile, "Preferences"), "before");
+    const point = await takeRestorePoint(profile, store, 1, "launch", true);
+    expect(point).not.toBeNull();
+    if (!point) return;
+
+    // The session carries on: one file changed, one file it never had before.
+    await writeFile(join(profile, "Preferences"), "after");
+    await writeFile(join(profile, "Local State"), "written after the point");
+
+    expect(await restoreProfile(profile, point)).toBe(true);
+    expect(await readFile(join(profile, "Preferences"), "utf8")).toBe("before");
+    // A copy into place would have left this behind, and a browser profile is mostly files nothing
+    // else knows the names of, so what a restore leaves is what makes it a restore.
+    await expect(stat(join(profile, "Local State"))).rejects.toThrow();
+    // Still a subvolume, so the session can keep taking points after being restored.
+    expect(await isSubvolume(profile)).toBe(true);
+    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    // And neither side of the swap is left lying around.
+    await expect(stat(`${profile}.replaced`)).rejects.toThrow();
+    await expect(stat(`${profile}.restored`)).rejects.toThrow();
+
+    // A point taken after a restore still works, which is the reason the incoming snapshot is writable.
+    const second = await takeRestorePoint(profile, store, 2, "launch", true);
+    expect(second).not.toBeNull();
+    await clearRestorePoints(store);
+  } finally {
+    await Bun.spawn(["/usr/bin/btrfs", "property", "set", "-ts", profile, "ro", "false"], { stdout: "ignore", stderr: "ignore" }).exited;
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("a filesystem that cannot snapshot leaves the profile exactly as it was", async () => {
+  const root = await mkdtemp(join("/tmp", "orbit-restore-nosnap-"));
+  const profile = join(root, "profile");
+  await mkdir(profile, { recursive: true, mode: 0o700 });
+  await writeFile(join(profile, "Preferences"), "live");
+  try {
+    const point = { sequence: 1, path: join(root, "nothing"), actionType: "launch", reversibility: "workspace" as const, consistent: true, milliseconds: 1 };
+    expect(await restoreProfile(profile, point)).toBe(false);
+    // The caller has a profile either way, so a refusal must not be the reason it loses one.
+    expect(await readFile(join(profile, "Preferences"), "utf8")).toBe("live");
+    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    await expect(stat(`${profile}.restored`)).rejects.toThrow();
+    await expect(stat(`${profile}.replaced`)).rejects.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

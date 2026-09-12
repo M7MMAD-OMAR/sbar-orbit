@@ -1,5 +1,6 @@
 import { chmod, mkdir, rename, rm, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { stripSingletonMarkers } from "./platform";
 
 /**
  * Restore points, and the honest limit on what they can take back.
@@ -130,6 +131,47 @@ export async function takeRestorePoint(profile: string, store: string, sequence:
   const snapshot = await btrfs(["subvolume", "snapshot", "-r", profile, path]);
   if (!snapshot.ok) return null;
   return { sequence, path, actionType, reversibility, consistent: quiesced, milliseconds: Math.round(performance.now() - started) };
+}
+
+/**
+ * Put a profile back to what a point holds, by swapping paths rather than copying into place.
+ *
+ * A copy into the live directory would not be a restore. It leaves behind everything the point does
+ * not mention, so a file the session created afterwards survives its own undo, and a browser profile is
+ * mostly files nothing else knows the names of. The swap replaces the directory itself.
+ *
+ * The browser must be gone first. Chrome holds its profile open, so a swap under a live browser puts
+ * the files back while the browser keeps working from the copy in its own memory and writes that out
+ * again when it exits. That is not a restore, it is a restore that undoes itself.
+ *
+ * A filesystem that cannot make the writable snapshot leaves everything exactly as it was, which is the
+ * same contract as `createSubvolume` and for the same reason: the caller has a profile either way.
+ */
+export async function restoreProfile(profile: string, point: RestorePoint): Promise<boolean> {
+  const incoming = `${profile}.restored`;
+  const outgoing = `${profile}.replaced`;
+  await removeRestorePoint(incoming).catch(() => {});
+  // A snapshot of the read only point, writable, so the session can carry on into it. It is itself a
+  // subvolume, so further points can still be taken after a restore.
+  const made = await btrfs(["subvolume", "snapshot", point.path, incoming]);
+  if (!made.ok) return false;
+  try {
+    await rename(profile, outgoing);
+    await rename(incoming, profile);
+    await chmod(profile, 0o700);
+  } catch {
+    await removeRestorePoint(incoming).catch(() => {});
+    // Whatever the first rename did, put the name back rather than leave a session with no profile.
+    try { await stat(profile); } catch { await rename(outgoing, profile).catch(() => {}); }
+    return false;
+  }
+  // The point was taken from a running browser, so it holds that browser's singleton markers. Another
+  // Chrome starting on them either refuses the profile or asks the first one to hand over, and the
+  // first one is gone.
+  await stripSingletonMarkers(profile);
+  // What was replaced is a copy of the person's live cookies, like every other point.
+  await removeRestorePoint(outgoing).catch(() => {});
+  return true;
 }
 
 export type RestoreVerdict = { allowed: true; point: RestorePoint } | { allowed: false; reason: string };

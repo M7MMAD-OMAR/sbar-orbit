@@ -132,3 +132,69 @@ test("a journal line says where the boundary moved, not just that it moved", asy
     expect(narrowed?.afterAllow).toEqual(["read"]);
   } finally { await sessions.close(); server.stop(true); }
 }, 30000);
+
+test("a restore is refused far more often than it is granted, and says why", async () => {
+  const workspace = await createWorkspaceDirectory("restore-session-test");
+  const sessions = new Sessions(workspace);
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<output>page</output>", { headers: { "Content-Type": "text/html" } }) });
+  const origin = `http://127.0.0.1:${server.port}`;
+  const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
+  const onBtrfs = await (async () => {
+    const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", workspace], { stdout: "pipe", stderr: "ignore" });
+    return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
+  })();
+  try {
+    const session = await run("session.create", {
+      backend: "browser", policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
+    }) as { sessionId: string; egressTier: string };
+    const act = (action: unknown) => run("session.act", { ...session, requestId: crypto.randomUUID(), action });
+
+    // A restore replaces the profile under the session, so a queued action would run against a browser
+    // that is not the one it was queued for.
+    await expect(run("session.restore", session)).rejects.toMatchObject({ code: "NOT_PAUSED" });
+    await expect(run("session.restore", { ...session, sequence: -1 })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+
+    // Points are taken before the actions a snapshot could undo, and a resize is one of those.
+    await act({ type: "resize", width: 900, height: 700 });
+    await run("session.pause", session);
+    if (!onBtrfs) {
+      await expect(run("session.restore", session)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+      return;
+    }
+    const journal = await run("session.journal", session) as { restorePoints: { sequence: number }[] };
+    expect(journal.restorePoints.length).toBeGreaterThan(0);
+
+    // The granted case. A session that has only read, observed, scrolled or resized can be put back,
+    // and the browser works afterwards, on the same lease it had before.
+    const latest = journal.restorePoints.at(-1)?.sequence ?? -1;
+    const restored = await run("session.restore", session) as { restoredTo: number; restorePoints: unknown[] };
+    expect(restored.restoredTo).toBe(latest);
+    // The point used is gone with everything after it: the session's history past that line did not happen.
+    expect(restored.restorePoints.length).toBe(journal.restorePoints.length - 1);
+    await run("session.resume", session);
+    // A point of its own, before the session browses anywhere, so the refusal below is about what
+    // happened after this line rather than about there being no point to return to.
+    await act({ type: "resize", width: 1000, height: 800 });
+    const beforeBrowsing = (await run("session.journal", session) as { restorePoints: { sequence: number }[] }).restorePoints.at(-1)?.sequence;
+    await act({ type: "navigate", url: origin });
+    expect(await act({ type: "read", selector: "output" })).toEqual({ text: "page" });
+    const after = await run("session.journal", session) as { entries: { actionType: string }[]; egressTier: string };
+    expect(after.entries.some(entry => entry.actionType === "session.restore")).toBe(true);
+    // The lease is the broker's and outlives any one browser, so the tier did not change under the
+    // journal line that already recorded it.
+    expect(after.egressTier).toBe(session.egressTier);
+
+    // And now the refusal that matters. A point taken BEFORE the navigation cannot be returned to,
+    // because the navigation left an access entry on a service and no local snapshot retracts it. The
+    // most recent point is a different question: it was taken after the navigation, so returning to it
+    // takes nothing back that left the machine.
+    expect(beforeBrowsing).toBeDefined();
+    await run("session.pause", session);
+    const refused = await run("session.restore", { ...session, sequence: beforeBrowsing })
+      .then(() => null, (error: { code: string; message: string }) => error);
+    expect(refused?.code).toBe("RESTORE_REFUSED");
+    expect(refused?.message).toContain("does not undo what it cannot undo");
+    // And an unknown point is a refusal too, rather than a restore to the nearest thing.
+    await expect(run("session.restore", { ...session, sequence: 99999 })).rejects.toMatchObject({ code: "RESTORE_REFUSED" });
+  } finally { await sessions.close(); server.stop(true); }
+}, 60000);
