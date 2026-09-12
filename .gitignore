@@ -18,3 +18,17 @@ __pycache__/
 
 # A capability report is built from a browser profile. It never belongs in the work tree.
 orbit-report*.json
+
+# graft's local graph cache: regenerable, not committed (run `graft build`).
+/graft/
+
+# Built by hand from extension/src before an unpacked load. Never committed.
+extension/dist/
+
+# Local agent tooling wiring, installed by graft rather than written here.
+# AGENTS.md is this project's tracked instructions; these are one machine's setup.
+/.agents/
+/.claude/
+/.codex/
+/.mcp.json
+/.ignore
