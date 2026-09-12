@@ -147,6 +147,15 @@ Following extra tabs does not add per-frame cost. Each followed tab gets its own
 
 These are single-host medians, not guarantees, and they do not by themselves establish participant-acceptable cost.
 
+The mechanism was read off the counters on 12 September 2026, while two other agents held live Orbit
+sessions on this workstation. The shared slice stood at 357 of 512 tasks and 1.74 of 2 GiB, and its own
+counters recorded `pids.events max 180` and `memory.events high 493588`. So the limit a contended suite
+hits first is the task count, not processor time: a spawn fails with `EAGAIN` and the failure surfaces
+wherever the next process was going to start. One of those paths reported it as an account lock helper
+being unavailable, which sends a person looking for a program that is installed; that path now says the
+budget is at its limit instead. The classification is reasoned from the captured failure, since
+reproducing it on demand means filling the budget that other agents' sessions are using.
+
 The suites are sensitive to machine contention rather than flaky in themselves. Running a second `scripts/limited.ts` command alongside a suite splits one shared cgroup budget, and viewer tests that wait for a fresh frame then time out. Six consecutive gate runs failed only in the two runs that overlapped other measured work, including pre-existing browser scroll and CLI tests. Run one bounded command at a time.
 
 This is a confirmed defect with a regression test, not yet a confirmed explanation of the participant's report. Participant-read viewer cost figures remain required before another resource-acceptance claim.

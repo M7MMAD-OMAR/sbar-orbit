@@ -26,7 +26,15 @@ export class AccountLease {
       await new Promise<void>((resolve, reject) => {
         let buffer = "";
         const cleanup = () => { clearTimeout(timer); holder.stdout.off("data", data); holder.off("exit", exit); holder.off("error", error); };
-        const error = () => { cleanup(); reject(new OrbitError("UNSUPPORTED", "Account lock helper unavailable")); };
+        // A helper that cannot be spawned and a helper that is not installed are different problems
+        // with the same symptom. Under a full shared budget the spawn fails with EAGAIN, and calling
+        // that "unavailable" sends a person looking for a missing program that is right there.
+        const error = (failure?: NodeJS.ErrnoException) => {
+          cleanup();
+          reject(["EAGAIN", "ENOMEM"].includes(failure?.code ?? "")
+            ? new OrbitError("RESOURCE_UNAVAILABLE", "The account lock helper could not start; the shared Orbit budget is at its task or memory limit")
+            : new OrbitError("UNSUPPORTED", "Account lock helper unavailable"));
+        };
         const exit = (code: number | null) => { cleanup(); reject(new OrbitError(code === 73 ? "PROFILE_BUSY" : "BACKEND_FAILED", code === 73 ? "Account is in use by another session" : "Account lock failed")); };
         const data = (chunk: Buffer) => { buffer += chunk.toString(); if (buffer === "ready\n") { cleanup(); resolve(); } };
         const timer = setTimeout(() => { cleanup(); reject(new OrbitError("DEADLINE_EXCEEDED", "Account lock timed out")); }, 3000);
