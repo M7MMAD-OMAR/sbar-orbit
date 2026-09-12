@@ -69,10 +69,23 @@ export function createMcpServer(socket: string) {
     pause: "Pause one Orbit session so a person can take over in the viewer. Rejects new actions and waits for accepted work to drain before acknowledging.",
     resume: "Resume a paused Orbit session after its pause acknowledgement.",
     stop: "Close one Orbit session and its owned browser or private desktop, invalidating pending work. Other sessions keep running.",
+    journal: "Read back every decision one Orbit session made: the policy it was judged against, what was allowed, refused or referred to an advisor, the origins a page reached for and the lease refused, whether a page has spoken to the session yet, and the restore points it holds. Identifies actions by class, type, destination origin and the size of what they carried; quotes no typed text and no page content.",
   };
   for (const [operation, description] of Object.entries(descriptions)) {
     server.registerTool(`orbit_${operation}`, { description, inputSchema: { sessionId: id } }, params => invoke(`session.${operation}`, params));
   }
+  server.registerTool("orbit_narrow", {
+    description: "Tighten what this session may do, for the rest of its life. Origins and action classes can only shrink: naming an origin the session does not hold does not add it, and there is deliberately no way to widen a running session, because the value of the boundary is that a page the agent reads cannot cause it to grow. Narrow before handing a session a task smaller than the one it was created for.",
+    inputSchema: {
+      sessionId: id,
+      origins: z.array(z.string().url()).max(64).optional().describe("Keep only these origins, out of the ones the session already holds."),
+      allow: z.array(z.enum(["read", "navigate", "write", "irreversible"])).max(4).optional().describe("Keep only these action classes."),
+    },
+  }, params => invoke("session.narrow", params));
+  server.registerTool("orbit_restore", {
+    description: "Put a paused session back to one of its restore points, named by the sequence the journal reports, or the most recent one when no sequence is given. It refuses more often than it grants, and the refusal is the point: a point is only taken before an action a snapshot could undo, and a restore is refused outright if anything since has left the machine. Restoring a profile after a message was sent would put the browser back and leave the message sent, so Orbit does not undo what it cannot undo.",
+    inputSchema: { sessionId: id, sequence: z.number().int().min(0).optional().describe("The restore point's sequence, from orbit_journal. Defaults to the most recent point.") },
+  }, params => invoke("session.restore", params));
   return server;
 }
 

@@ -1,6 +1,6 @@
 # Agent connectors
 
-Orbit exposes seven MCP tools over stdio: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
+Orbit exposes ten MCP tools over stdio. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
 
 ## Setup
 
@@ -18,7 +18,7 @@ Tool approval and selection belong to the host. An API model requires a runtime 
 
 ## Trial with a real agent host
 
-Run against a local agent host that loads MCP servers from its own configuration, with the managed broker on its fixed socket. The host registered all seven tools on every start, in 774 ms on a cold stdio connection.
+Run against a local agent host that loads MCP servers from its own configuration, with the managed broker on its fixed socket. The host registered every tool on every start, in 774 ms on a cold stdio connection with the seven session tools of that version.
 
 What the host did with them depended on what was asked, and on what else it had:
 

@@ -25,7 +25,7 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     const a = await connect();
     const b = await connect();
     expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version: "0.1.0-alpha.1" });
-    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_observe", "orbit_pause", "orbit_resume", "orbit_status", "orbit_stop"]);
+    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop"]);
     const session = payload(await tool(a, "orbit_create")) as { sessionId: string };
     const act = (action: unknown, requestId = crypto.randomUUID()) => tool(a, "orbit_act", { ...session, requestId, action });
     expect((await act({ type: "navigate", url: `http://127.0.0.2:${fixture.port}` })).isError).not.toBe(true);
@@ -38,8 +38,25 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     await tool(b, "orbit_pause", session);
     expect(payload(await act({ type: "click", selector: "button" }))).toMatchObject({ code: "PAUSED" });
     await tool(b, "orbit_resume", session);
+    // An agent can read its own record back and tighten itself, and neither needs a person.
+    const journal = payload(await tool(a, "orbit_journal", session)) as { entries: { actionType: string }[]; tainted: boolean; egressTier: string };
+    expect(journal.entries[0]?.actionType).toBe("session.create");
+    // A read returned page content, which is the line after which everything the session decides has
+    // been influenced by something a page said.
+    expect(journal.tainted).toBe(true);
+    expect(journal.egressTier).toBe("in-browser");
+    const narrowed = payload(await tool(a, "orbit_narrow", { ...session, allow: ["read"] })) as { policy: { allow: string[] } };
+    expect(narrowed.policy.allow).toEqual(["read"]);
+    // And it cannot get back what it just gave up, which is the whole value of the boundary.
+    expect(payload(await tool(a, "orbit_narrow", { ...session, allow: ["read", "navigate", "write"] })) as { policy: { allow: string[] } })
+      .toMatchObject({ policy: { allow: ["read"] } });
+    // A supervised session stops and waits for the person rather than refusing outright, which is the
+    // difference between this default and the autonomous mode.
+    expect(payload(await act({ type: "click", selector: "button" }))).toMatchObject({ code: "POLICY_CONFIRMATION_REQUIRED" });
     await a.close();
-    expect(payload(await tool(b, "orbit_status"))).toContainEqual(expect.objectContaining({ ...session, state: "running" }));
+    // By sessionId, not by the whole creation payload: the narrowing above deliberately changed the
+    // policy this session reports, which is the point of it.
+    expect(payload(await tool(b, "orbit_status"))).toContainEqual(expect.objectContaining({ sessionId: session.sessionId, state: "running", policy: expect.objectContaining({ allow: ["read"] }) }));
     expect(payload(await tool(b, "orbit_stop", session))).toMatchObject({ state: "closed" });
     expect(payload(await tool(b, "orbit_observe", session))).toMatchObject({ code: "SESSION_CLOSED" });
     expect(payload(await tool(b, "orbit_stop", { sessionId: "unknown" }))).toMatchObject({ code: "SESSION_NOT_FOUND" });
