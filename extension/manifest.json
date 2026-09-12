@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Sbar Orbit mint",
+  "version": "0.1.0",
+  "description": "Mints narrow, short lived, origin scoped state for a separate Orbit browser. Never drives this one.",
+  "background": { "service_worker": "dist/service-worker.js", "type": "module" },
+  "action": { "default_title": "Mint this origin for an Orbit session" },
+  "permissions": ["activeTab", "cookies", "nativeMessaging", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "host_permissions": []
+}

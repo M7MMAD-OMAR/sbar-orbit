@@ -1,0 +1,7 @@
+{
+  "name": "com.sbarorbit.mint",
+  "description": "Carries a minted Orbit grant from the person's browser to the Orbit broker.",
+  "path": "/REPLACE/WITH/ABSOLUTE/PATH/TO/extension/host/mint_host.py",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://REPLACE_WITH_THE_UNPACKED_EXTENSION_ID/"]
+}
