@@ -195,7 +195,7 @@ test("a capability report can be produced with no broker, and carries nothing pr
   expect(await cli.exited).toBe(0);
   const report = JSON.parse(printed) as Record<string, unknown>;
   expect(report.report).toBe("orbit-capabilities");
-  expect(report.orbitVersion).toBe("0.1.0-alpha.1");
+  expect(report.orbitVersion).toBe("0.1.0-alpha.2");
   // Never Measured. A probe can say that a host is the same class as the one the measurements were taken
   // on; awarding the tier itself would print a pass over a suite that never ran here.
   expect((report.tier as { assigned: string }).assigned).not.toBe("Measured");

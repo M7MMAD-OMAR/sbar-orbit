@@ -4,6 +4,10 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0-alpha.2 - 13 September 2026
+
 - Took the lines and the colours out of the viewer, and the project's vocabulary with them. Nothing draws a border any more, including the hairline rings that were borders wearing a shadow's name, so separation is carried by the surface a thing sits on and the shadow it casts; the surfaces had to move about eight per cent apart to do alone what a line was helping with. The palette is white, black and the greys between, which means state can no longer be a green light and an amber one. It is brightness, motion and words instead: bright and moving is working, bright and still needs you, dim is open, dimmest is done. That also survives being read by somebody who cannot separate red from green, which the light it replaces did not. `prefers-reduced-motion` removes every animation, so the halo that separates working from paused is a shadow rather than a keyframe; the four states were rendered with motion switched off to check they stay apart rather than assumed to.
 
 - Gave the picture a way to be bigger, and said why the other one is greyed out. **Make it bigger** hides the rail, the panels and the heading and lets the picture use the height of the window as well as its width, computed from the window height and the picture's shape so the canvas and the box the pointer is placed in stay the same rectangle; the pointer lands on its coordinate in both views and both are asserted. It changes nothing about the session, so unlike **Screen size** it needs no pause, which is the answer to "let me see it properly" that does not move a coordinate out from under the assistant. **Screen size** still waits for a takeover, and now says so beside itself rather than being greyed out in silence.

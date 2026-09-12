@@ -1,6 +1,6 @@
 # Source releases
 
-The first public version is `0.1.0-alpha.1`. It is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
+The first published release is `0.1.0-alpha.2`. `0.1.0-alpha.1` was tagged and packaged locally and never published, so nothing but this repository's history refers to it. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
 
 ## Build
 
@@ -29,9 +29,9 @@ The verifier accepted all 98 source entries in the existing `0.1.0-alpha.1` arch
 ## Use
 
 ```sh
-sha256sum -c sbar-orbit-0.1.0-alpha.1-source.tar.gz.sha256
-tar -xzf sbar-orbit-0.1.0-alpha.1-source.tar.gz
-cd sbar-orbit-0.1.0-alpha.1-source
+sha256sum -c sbar-orbit-0.1.0-alpha.2-source.tar.gz.sha256
+tar -xzf sbar-orbit-0.1.0-alpha.2-source.tar.gz
+cd sbar-orbit-0.1.0-alpha.2-source
 bun install --frozen-lockfile --ignore-scripts
 ./bin/sbar-orbit serve
 ```
@@ -103,7 +103,7 @@ and the display in both its terminal and non terminal forms. No test spawns a pa
 
 ## Activate a local source installation
 
-The current checkout adds a launcher-link manager. It is not included in the older `0.1.0-alpha.1` archive. Keep the source in a stable directory, verify the release digest, and prepare dependencies with `bun install --frozen-lockfile --ignore-scripts` first. Use only trusted source: package-name checks recognize Orbit but do not authenticate a release.
+The launcher-link manager arrived after the `0.1.0-alpha.1` archive, which does not carry it, and is part of `0.1.0-alpha.2`. Keep the source in a stable directory, verify the release digest, and prepare dependencies with `bun install --frozen-lockfile --ignore-scripts` first. Use only trusted source: package-name checks recognize Orbit but do not authenticate a release.
 
 From the prepared source directory:
 

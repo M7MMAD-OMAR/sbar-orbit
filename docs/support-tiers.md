@@ -37,7 +37,7 @@ column. That is the evidence column doing its job, not a sixth tier.
 
 ## Fedora 44, wlroots, cgroup delegation
 
-The only class with rows that are not reasoning. Orbit version `0.1.0-alpha.1` throughout.
+The only class with rows that are not reasoning. Measured on `0.1.0-alpha.1` and on the commits that became `0.1.0-alpha.2`; each row carries its own date.
 
 | Capability | Tier | Evidence | Date |
 |---|---|---|---|
