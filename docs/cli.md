@@ -46,6 +46,16 @@ bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
 
 `session observe ID` returns a JPEG as base64 JSON, with the format named in the `mimeType` field. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
 
+Watching a session is the viewer's job:
+
+```sh
+bun run src/cli.ts preview           # print the link and open nothing
+bun run src/cli.ts preview open      # open it in the chosen browser, in a window of its own
+bun run src/cli.ts preview browsers  # the browsers this desktop has, and which can do that
+```
+
+The link carries an access token in its fragment, so `preview open` hands it straight to the browser rather than through anything that only wanted a window. Which browser, and whether it gets a window of its own, are settings; see [preview](preview.md).
+
 Two commands are for reading a run back rather than driving one:
 
 ```sh
@@ -165,14 +175,16 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 | Method | Parameters |
 |---|---|
 | `doctor`, `session.list` | `{}` |
-| `session.create` | `{backend:"browser"|"fedora", profileKey?:string, accountName?:string}` |
+| `session.create` | `{backend:"browser"|"fedora"|"system", profileKey?:string, accountName?:string}` |
 | `session.account.save` | `{sessionId}`, paused named browser session only |
 | `session.act` | `{sessionId, requestId, action}` |
 | `session.observe`, `session.pause`, `session.resume`, `session.stop`, `session.journal` | `{sessionId}` |
 | `session.narrow` | `{sessionId, origins?:string[], allow?:ActionClass[]}`, tightening only |
 | `session.restore` | `{sessionId, sequence?}`, paused browser session only |
+| `preview.open` | `{launch?:boolean, browser?:string, appWindow?:boolean}`; without `launch` it returns the link and opens nothing |
+| `viewer.browsers` | `{}`, the browsers installed on this desktop and the stored choice |
 
-Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The Fedora backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
+Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The private display backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Ask for it as `system` or as `fedora`: `system` exists because a caller should not have to name a distribution to ask for a private desktop, and it is an alias rather than a wider claim, since the backend still needs the wlroots runtime this project builds and has run on one host class. Everything reported back, in `session.list`, observation and the journal, says `fedora`, so one thing keeps one name; `doctor` lists the aliases. Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
 
 `profileKey` is currently a mutual-exclusion label, not a persistent account profile. Use `accountName` for [saved account state](accounts.md). Every browser receives a fresh temporary profile; no existing directory can be supplied. The profile is removed when the session stops; see the section on disk below.
 

@@ -51,11 +51,11 @@ export function createMcpServer(socket: string) {
   };
   server.registerTool("orbit_status", { description: "List every open Orbit session, its backend, state, current activity and surface size.", inputSchema: {} }, () => invoke("session.list"));
   server.registerTool("orbit_create", {
-    description: "Open an isolated browser session, or a private Linux desktop for real applications, that this agent owns. It shares nothing with the person's own browser windows, desktop, pointer or keyboard, so web and desktop work runs while they keep using the machine. Returns the sessionId every other Orbit tool needs. The private desktop requires the local Fedora bootstrap. Optional viewport sets the surface size, accountName restores an Orbit-owned saved login snapshot, and profileKey only prevents concurrent use of a label rather than restoring login state.",
+    description: "Open an isolated browser session, or a private Linux desktop for real applications, that this agent owns. It shares nothing with the person's own browser windows, desktop, pointer or keyboard, so web and desktop work runs while they keep using the machine. Returns the sessionId every other Orbit tool needs. The private desktop requires the local wlroots runtime built by this project's bootstrap. Optional viewport sets the surface size, accountName restores an Orbit-owned saved login snapshot, and profileKey only prevents concurrent use of a label rather than restoring login state.",
     inputSchema: {
       agentName: z.string().min(1).max(80).optional().describe("Your own name, shown on the session and on the pointer in the viewer, so the person watching knows who is working. Defaults to SbarOrbit."),
       taskName: z.string().min(1).max(80).optional().describe("A short description of the work, shown beside the session."),
-      backend: z.enum(["browser", "fedora"]).default("browser"),
+      backend: z.enum(["browser", "fedora", "system"]).default("browser").describe("browser for a private browser, or system (also accepted as fedora) for a private desktop display. The private desktop needs the local wlroots runtime this project builds."),
       viewport: viewport.optional().describe("Surface size in pixels, default 1280 by 800, capped at 1920 by 1200 in total. Larger surfaces cost more to capture, so ask for one only when an application needs the room."),
       profileKey: id.optional(), accountName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
     },

@@ -1,6 +1,6 @@
 # Agent connectors
 
-Orbit exposes ten MCP tools over stdio. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
+Orbit exposes ten MCP tools over stdio. `orbit_create` takes `browser` or `system`, and `fedora` is still accepted for the same private display; the alias is vocabulary, not a wider platform claim, and every reply says `fedora`. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
 
 ## Setup
 

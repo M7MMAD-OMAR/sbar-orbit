@@ -22,11 +22,11 @@ nav{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--rule);paddin
 </style>
 </head>
 <body><main>
-<header><div><div class="eyebrow"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true" style="vertical-align:-3px;margin-inline-end:7px"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg>Sbar Orbit / project map</div><h1>Your agent has its own workspace.</h1><p class="lead">Same computer. Independent application surfaces and input.<br>You keep working and choose when to watch.</p></div><div class="stamp">11 September 2026<br>Fedora first<br>Broker + MCP + live preview</div></header>
+<header><div><div class="eyebrow"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true" style="vertical-align:-3px;margin-inline-end:7px"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg>Sbar Orbit / project map</div><h1>Your agent has its own workspace.</h1><p class="lead">Same computer. Independent application surfaces and input.<br>You keep working and choose when to watch.</p></div><div class="stamp">12 September 2026<br>One measured host class<br>One command install + MCP + viewer</div></header>
 <div class="diagram">
 <svg viewBox="0 0 1104 464" role="img" aria-labelledby="orbit-map-title orbit-map-desc">
 <title id="orbit-map-title">Orbit architecture and separate human workspace</title>
-<desc id="orbit-map-desc">Agent tools and the CLI reach a local broker, which routes work to a browser or a Fedora native display backend, while the human desktop remains separate and an optional viewer receives application frames.</desc>
+<desc id="orbit-map-desc">Agent tools and the CLI reach a local broker, which routes work to a browser or a private display backend, while the human desktop remains separate and an optional viewer receives application frames.</desc>
 <defs><marker id="orbit-map-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="none" stroke="#55667d"/></marker></defs>
 <g fill="none" stroke="#55667d" stroke-width="1.2" marker-end="url(#orbit-map-arrow)">
 <path d="M232 104 H320"/>
@@ -46,19 +46,19 @@ nav{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--rule);paddin
 <rect x="640" y="64" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
 <text x="740" y="96" font-size="16" font-weight="600">Browser backend</text><text x="740" y="120" font-size="12" fill="#55667d">600 s run, 3005 frames</text>
 <rect x="640" y="208" width="200" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
-<text x="740" y="240" font-size="16" font-weight="600">Native display</text><text x="740" y="264" font-size="12" fill="#55667d">Fedora bootstrap required</text>
+<text x="740" y="240" font-size="16" font-weight="600">Native display</text><text x="740" y="264" font-size="12" fill="#55667d">wlroots runtime required</text>
 <rect x="640" y="320" width="192" height="80" rx="8" fill="#fff" stroke="#aebdce"/>
 <text x="736" y="352" font-size="16" font-weight="600">Optional viewer</text><text x="736" y="376" font-size="12" fill="#55667d">Live session view + control</text>
 <rect x="920" y="64" width="160" height="224" rx="8" fill="#ececec"/>
 <text x="1000" y="120" font-size="20" font-weight="600">Your desktop</text><text x="1000" y="156" font-size="12" fill="#55667d">Your mouse</text><text x="1000" y="180" font-size="12" fill="#55667d">Your keyboard</text><text x="1000" y="204" font-size="12" fill="#55667d">Your active window</text><text x="1000" y="256" font-size="12" fill="#55667d">NO INPUT ROUTE</text>
 </g>
 <line x1="32" y1="432" x2="1080" y2="432" stroke="#aebdce" stroke-width=".8"/>
-<text x="32" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Solid: control path</text><text x="288" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Dashed: observation path</text><text x="744" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Alpha, 27 tests passed</text>
+<text x="32" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Solid: control path</text><text x="288" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Dashed: observation path</text><text x="744" y="456" font-family="'Geist Mono',monospace" font-size="12" fill="#55667d">Alpha, evidence in validation.md</text>
 </svg></div>
 <section class="grid" aria-label="Evidence and next gates">
 <article><div class="eyebrow">01 / demonstrated</div><h2>Independent browsers</h2><p><span class="metric">2</span> sessions, <span class="metric">26</span> submissions</p><p>Separate form state survives reload. Stop one browser; the other keeps working.</p><p class="note">0 sampled focus or window hits. A short smoke test, not continuous isolation proof.</p></article>
-<article><div class="eyebrow">02 / build next</div><h2>One tool for agents</h2><p>Broker, CLI, MCP and live preview tested. Synthetic login state survives restart.</p><p class="note">Verify two actual agent hosts. Register a connector in each; install Orbit once.</p></article>
-<article><div class="eyebrow">03 / prove before promising</div><h2>Desktop and accounts</h2><p>Wayland and X11 fixtures accept input on a private display. Broker and viewer connected. Next: crash recovery, real accounts and shared files.</p><p class="note">No VM required by the plan. Universal app support remains unproven.</p></article>
+<article><div class="eyebrow">02 / demonstrated</div><h2>One command, or none</h2><p>Installation is <span class="metric">1</span> command, and an agent can run it from a contract rather than from prose.</p><p class="note">Installation state, not a measurement. The participant cost figure is still the open gate.</p></article>
+<article><div class="eyebrow">03 / prove before promising</div><h2>Desktop and accounts</h2><p>Wayland and X11 fixtures accept input on a private display. A broker, a compositor or a supervisor that dies leaves nothing running behind it.</p><p class="note">Real accounts, wider applications and any other operating system remain unproven.</p></article>
 </section>
 <nav aria-label="Project documents"><a href="../PROJECT.md">Project brief</a><a href="architecture.md">Architecture</a><a href="acceptance.md">Stories and tests</a><a href="superpowers/plans/2026-09-10-orbit.md">Build plan</a><a href="research.md">Research sources</a><a href="experiment.md">Browser results</a><a href="fedora-results.md">Native results</a><a href="accounts.md">Saved accounts</a></nav>
 </main></body></html>

@@ -107,7 +107,13 @@ export class Sessions {
     return operation;
   }
   private async createOwned(input: Record<string, unknown>) {
-    if (!["browser", "fedora"].includes(String(input.backend))) throw new OrbitError("UNSUPPORTED", "Unknown backend");
+    // `system` is accepted for the private display, because a caller should not have to name a
+    // distribution to ask for one. It is an alias and nothing more: the backend still needs the
+    // wlroots runtime this project builds, and everything reported back says `fedora`, so status,
+    // observation and the journal keep one name for one thing.
+    const requested = String(input.backend) === "system" ? "fedora" : String(input.backend);
+    if (!["browser", "fedora"].includes(requested)) throw new OrbitError("UNSUPPORTED", "Unknown backend");
+    input = { ...input, backend: requested };
     if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
@@ -173,7 +179,7 @@ export class Sessions {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        return input.backend === "fedora" ? await FedoraBackend.create(surface)
+        return requested === "fedora" ? await FedoraBackend.create(surface)
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
       this.creationTail = start.catch(() => {});
@@ -425,7 +431,7 @@ export class Sessions {
     const params = request.params === undefined ? {} : record(request.params);
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
-    if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"],
+    if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"], backendAliases: { system: "fedora" },
       capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine() };
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));

@@ -198,3 +198,24 @@ test("a restore is refused far more often than it is granted, and says why", asy
     await expect(run("session.restore", { ...session, sequence: 99999 })).rejects.toMatchObject({ code: "RESTORE_REFUSED" });
   } finally { await sessions.close(); server.stop(true); }
 }, 60000);
+
+test("system is an alias for the private display, and one name comes back", async () => {
+  const broker = await startBroker();
+  try {
+    // Not the backend itself: this host may have no wlroots runtime, and the point is only that the
+    // alias resolves to the same backend rather than to an unknown one.
+    const unknown = call(broker.socket, "session.create", { backend: "desktop" });
+    await expect(unknown).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    const doctor = await call(broker.socket, "doctor") as { backends: string[]; backendAliases: Record<string, string> };
+    expect(doctor.backends).toEqual(["browser", "fedora"]);
+    expect(doctor.backendAliases).toEqual({ system: "fedora" });
+
+    if (process.env.ORBIT_TEST_NATIVE !== "1") return;
+    const session = await call(broker.socket, "session.create", { backend: "system" }) as { sessionId: string; backend: string };
+    // Reported canonically, so status, observation and the journal never carry two names for one thing.
+    expect(session.backend).toBe("fedora");
+    const listed = await call(broker.socket, "session.list") as { sessionId: string; backend: string }[];
+    expect(listed.find(entry => entry.sessionId === session.sessionId)?.backend).toBe("fedora");
+    await call(broker.socket, "session.stop", { sessionId: session.sessionId });
+  } finally { await broker.close(); }
+}, 60000);
