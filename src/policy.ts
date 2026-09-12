@@ -405,12 +405,23 @@ export type JournalEntry = {
   decidedBy?: string;
   /** Characters typed, never the characters themselves. */
   inputLength?: number;
+  /**
+   * The origins the session held AFTER this entry, present only on an entry that changed them.
+   *
+   * A policy is fixed when a session is created and can only be tightened afterwards, by the person
+   * narrowing it or by an immune denial containing the session. Both leave the create line describing
+   * a session that no longer exists, so the entry that moved the boundary carries where it moved it to.
+   * Without this a reader has to replay every narrowing to know what was in force at a given line.
+   */
+  afterOrigins?: string[] | "any";
+  /** The action classes still allowed after this entry, on the same terms. */
+  afterAllow?: ActionClass[];
 };
 
 export function journalEntry(input: {
   sequence: number; sessionId: string; actor: "agent" | "person"; actionType: string;
   decision: PolicyDecision; url?: string; inputLength?: number; decidedBy?: string;
-  at?: string; requestId?: string;
+  at?: string; requestId?: string; after?: SessionPolicy;
 }): JournalEntry {
   let origin: string | undefined;
   if (input.url !== undefined) { try { origin = new URL(input.url).origin; } catch { origin = undefined; } }
@@ -426,5 +437,6 @@ export function journalEntry(input: {
     ...("immuneId" in input.decision && input.decision.immuneId ? { immuneId: input.decision.immuneId } : {}),
     ...(input.decidedBy === undefined ? {} : { decidedBy: input.decidedBy }),
     ...(input.inputLength === undefined ? {} : { inputLength: input.inputLength }),
+    ...(input.after === undefined ? {} : { afterOrigins: input.after.origins, afterAllow: input.after.allow }),
   };
 }

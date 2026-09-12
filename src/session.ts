@@ -256,26 +256,34 @@ export class Sessions {
    * by a person, because an autonomous session has nobody to wait for.
    */
   private decided(session: Session, action: { type: string }, destination: string | undefined, inputLength: number | undefined, requestId: string): Promise<unknown> {
-    const record = (decision: ReturnType<typeof decide>, decidedBy?: string) => {
+    const record = (decision: ReturnType<typeof decide>, decidedBy?: string, after?: SessionPolicy) => {
       void this.record(session, journalEntry({
         at: new Date().toISOString(), requestId,
         sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
         actionType: action.type, decision, url: destination,
         ...(decidedBy === undefined ? {} : { decidedBy }),
         ...(inputLength === undefined ? {} : { inputLength }),
+        ...(after === undefined ? {} : { after }),
       }));
     };
-    const refuse = (decision: Extract<ReturnType<typeof decide>, { outcome: "deny" }>) => {
+    const refuse = (decision: Extract<ReturnType<typeof decide>, { outcome: "deny" }>, decidedBy?: string) => {
       // An immune deny contains the session as well as refusing the action. An autonomous agent that
       // has just attempted a credential change is either compromised or wrong, and in both cases the
       // next action should not run either. Narrowing is one way, so this cannot be undone.
-      if (decision.immuneId) session.policy = narrow(session.policy, { allow: ["read", "navigate"] });
+      //
+      // The line is written after the containment rather than before it, so it carries the boundary the
+      // session is left with. A reader following an autonomous run should not have to replay the rule to
+      // know what was still permitted afterwards.
+      if (decision.immuneId) {
+        session.policy = narrow(session.policy, { allow: ["read", "navigate"] });
+        record(decision, decidedBy, session.policy);
+      } else record(decision, decidedBy);
       throw new OrbitError("POLICY_DENIED", decision.reason);
     };
     const decision = decide(session.policy, action.type, destination);
     if (decision.outcome !== "consult") {
-      record(decision);
       if (decision.outcome === "deny") refuse(decision);
+      record(decision);
       // A supervised session stops and waits for the person. An autonomous one never reaches here
       // with anything but an allow, which is what lets it finish a task without them.
       if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
@@ -292,8 +300,8 @@ export class Sessions {
       const answer = await consultAdvisor(session.policy.advisor!, {
         pending, tail: session.journal.slice(-20), reason: decision.reason, ruleId: decision.ruleId,
       });
+      if (answer.decision.outcome === "deny") return refuse(answer.decision, answer.decidedBy);
       record(answer.decision, answer.decidedBy);
-      if (answer.decision.outcome === "deny") return refuse(answer.decision);
       return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
     })();
   }
@@ -370,7 +378,7 @@ export class Sessions {
       void this.record(session, journalEntry({
         at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
         actor: "person", actionType: "session.narrow",
-        decision: { outcome: "allow" },
+        decision: { outcome: "allow" }, after: session.policy,
       }));
       return { sessionId: session.id, policy: session.policy, tainted: session.tainted };
     }

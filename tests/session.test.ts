@@ -96,3 +96,39 @@ test("CLI creates a session, acts on it, observes it and closes it", async () =>
     expect(await cli("session", "stop", sessionId)).toMatchObject({ result: { state: "closed" } });
   } finally { await broker.close(); fixture.stop(true); }
 }, 30000);
+
+test("a journal line says where the boundary moved, not just that it moved", async () => {
+  const sessions = new Sessions(await createWorkspaceDirectory("boundary-test"));
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<output>page</output>", { headers: { "Content-Type": "text/html" } }) });
+  const origin = `http://127.0.0.1:${server.port}`;
+  const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
+  try {
+    const session = await run("session.create", {
+      backend: "browser", policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
+    }) as { sessionId: string };
+    const journal = async () => (await run("session.journal", session) as { entries: { actionType: string; afterOrigins?: unknown; afterAllow?: unknown }[] }).entries;
+
+    // An allowed action changed no boundary, so it carries none. A journal that repeated the policy on
+    // every line would bury the lines where it actually moved.
+    await run("session.act", { ...session, requestId: crypto.randomUUID(), action: { type: "navigate", url: origin } });
+    expect((await journal()).at(-1)).toMatchObject({ actionType: "navigate" });
+    expect((await journal()).at(-1)).not.toHaveProperty("afterOrigins");
+
+    // An immune denial contains the session. The line records what is still permitted afterwards, which
+    // is the part a reader of an autonomous run needs and cannot infer from the refusal.
+    await expect(run("session.act", { ...session, requestId: crypto.randomUUID(),
+      action: { type: "navigate", url: `${origin}/oauth/authorize?response_type=code&client_id=x` } }))
+      .rejects.toMatchObject({ code: "POLICY_DENIED" });
+    const contained = (await journal()).at(-1);
+    expect(contained).toMatchObject({ actionType: "navigate", outcome: "deny", immuneId: "oauth-grant" });
+    expect(contained?.afterAllow).toEqual(["read", "navigate"]);
+    expect(contained?.afterOrigins).toEqual([origin]);
+
+    // And the same for a narrowing the person asked for.
+    await run("session.narrow", { ...session, origins: [], allow: ["read"] });
+    const narrowed = (await journal()).at(-1);
+    expect(narrowed).toMatchObject({ actionType: "session.narrow", actor: "person" });
+    expect(narrowed?.afterOrigins).toEqual([]);
+    expect(narrowed?.afterAllow).toEqual(["read"]);
+  } finally { await sessions.close(); server.stop(true); }
+}, 30000);
