@@ -52,6 +52,32 @@ manager's job, and the run prints the exact command for each one it finds missin
 a success you would discover was false minutes later. It is not a measurement either: it says what was
 installed, not what was proven to work.
 
+### Or hand it to an agent
+
+Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:
+
+```text
+Install Sbar Orbit in the source directory I have given you.
+
+1. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
+2. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
+   never on the prose.
+3. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
+   which step stopped it.
+4. Act only on remedies whose needsElevation is false. Every remedy with needsElevation true is mine
+   to run: print its command and stop, never run it yourself, and never use sudo for anything.
+5. Report back: every step with its state, the capabilities object, and the remedies you did not run.
+   Say plainly what is installed and what is not. Do not describe an installation as verified: the
+   run reports installation state, not a measurement.
+6. Do not open, automate, read or copy my own browser profile at any point, for any reason.
+```
+
+The prompt is short on purpose: it points at [the contract](docs/agent-install.md) rather than
+restating it, so it cannot drift away from the installer. The contract carries the commands, the JSON
+shape, the exit codes, every refusal an agent should expect, and the `needsElevation` flag that marks
+the line between what an agent may run and what it hands back. No model, host or vendor is assumed:
+it needs a shell and the ability to read JSON.
+
 The individual steps remain available, which is what to reach for when only one of them is wanted:
 
 ```sh

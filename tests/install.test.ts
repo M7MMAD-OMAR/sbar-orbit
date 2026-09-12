@@ -53,7 +53,9 @@ test("an install without a service links the command and writes connector config
     expect(report.steps.find(step => step.id === "service")?.state).toBe("skipped");
     expect(report.steps.find(step => step.id === "verify")?.state).toBe("skipped");
     // A prefix outside PATH is a real limit on the person's next command, so it is carried out.
-    expect(report.remedies.some(remedy => remedy.includes("PATH"))).toBe(true);
+    const path = report.remedies.find(remedy => remedy.id === "prefix-not-on-path");
+    expect(path?.needsElevation).toBe(false);
+    expect(path?.message).toContain(link);
   } finally { await box.restore(); }
 }, 20000);
 
@@ -79,11 +81,11 @@ test("an install refuses a directory that is not an Orbit source, and says which
 
 test("the checks a dependency install can fix are separated from the ones it cannot", () => {
   const checks = [
-    { id: "linux", group: "common", available: false, remedy: "Linux required" },
-    { id: "zod", group: "common", available: false, remedy: "Run bun install" },
-    { id: "playwright", group: "common", available: false, remedy: "Run bun install" },
-    { id: "chrome-or-chromium", group: "browser", available: false, remedy: "Install Chrome" },
-  ];
+    { id: "linux", group: "common", available: false },
+    { id: "zod", group: "common", available: false },
+    { id: "playwright", group: "common", available: false },
+    { id: "chrome-or-chromium", group: "browser", available: false },
+  ] satisfies { id: string; group: "common" | "browser" | "native"; available: boolean }[];
   expect(blockingPrerequisites(checks).map(check => check.id)).toEqual(["linux"]);
 });
 

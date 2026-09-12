@@ -77,7 +77,14 @@ if (json) {
     display.summary("Orbit is not installed.", failed.map(step => `  ${step.title}: ${step.detail}`), "bad");
   }
   if (report.remedies.length) {
-    display.summary("Left for you, because it needs a package manager or a decision:", report.remedies.map(remedy => `  ${remedy}`), "warn");
+    // Elevation first, because that is the part nobody here can do, and each one carries its command
+    // on its own line so it can be copied without editing.
+    const lines: string[] = [];
+    for (const remedy of [...report.remedies].sort((a, b) => Number(b.needsElevation) - Number(a.needsElevation))) {
+      lines.push(`  ${remedy.needsElevation ? "yours to run" : "optional"}: ${remedy.message}`);
+      if (remedy.command) lines.push(`      ${remedy.command}`);
+    }
+    display.summary("Left for you, because it needs a package manager or a decision:", lines, "warn");
   }
   display.summary("What this run did not check:", [`  ${report.verified}`], "warn");
 }

@@ -71,6 +71,10 @@ Six steps, each reported as it happens, with the reason beside it when one does 
 | Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, Orbit's own directory | Never writes into an agent host's configuration; the command to register it is printed instead |
 | Verify the installed broker answers | One `doctor` call on the managed socket | Does not claim the browser, the display or any application works |
 
+`--json` prints the report and nothing else, which is how an agent runs this: the report's shape, the
+exit codes and the refusals are a contract in [agent-install.md](agent-install.md), checked against the
+program by `tests/agent-contract.test.ts` so the document cannot drift away from it.
+
 Options are `--prefix PATH`, `--no-service`, `--dry-run`, `--reinstall-deps`, `--json` and `--plain`.
 A dry run reports every step and writes nothing, which is the safe way to read what it would do on a
 machine you have not installed on before.
@@ -78,7 +82,11 @@ machine you have not installed on before.
 What it cannot do, and says so rather than failing later: it does not install Bun, since it is running
 on Bun; it does not install Chrome, Xwayland, grim or wl-clipboard, since those need a package manager
 and elevation. Each missing item is printed with the remedy `inspectPrerequisites` already carries for
-it, gathered at the end under a heading that says these are left for the person.
+it, gathered at the end under a heading that says these are left for the person. A remedy is a record
+rather than a sentence: an id, a message, sometimes a command, and `needsElevation`, which is the
+boundary. True means a package manager and a person, so the command is printed and handed over. False
+with a command means it can be run where the source is. That one field is what lets any agent, of any
+brand, act on the report without reading English prose.
 
 The final report is installation state, not a measurement. It ends with the sentence saying so, because
 a run that has linked a command and started a service has not shown that a browser session works on this

@@ -14,7 +14,11 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   const noBrowser = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes("chrom") });
   expect(noBrowser.browserPrerequisitesFound).toBe(false);
   expect(noBrowser.nativePrerequisitesFound).toBe(true);
-  expect(noBrowser.checks.find(check => check.id === "chrome-or-chromium")?.remedy).not.toBe("");
+  const browser = noBrowser.checks.find(check => check.id === "chrome-or-chromium")?.remedy;
+  // A remedy an agent can branch on: the elevation flag is the boundary, not a sentence about one.
+  expect(browser).toMatchObject({ id: "no-browser", needsElevation: true });
+  expect(browser?.command).toContain("chromium");
+  expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
   const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes(".runtime") });
   expect(noNative.browserPrerequisitesFound).toBe(true);
   expect(noNative.nativePrerequisitesFound).toBe(false);
@@ -31,7 +35,8 @@ test("a systemd tool with no user manager behind it is not availability", async 
   expect(report.nativePrerequisitesFound).toBe(false);
   const check = report.checks.find(entry => entry.id === "systemd-user-session");
   expect(check?.available).toBe(false);
-  expect(check?.remedy).toContain("user manager");
+  expect(check?.remedy?.id).toBe("no-systemd-user-session");
+  expect(check?.remedy?.needsElevation).toBe(false);
 });
 
 test("unsupported OS and absent executable checks cannot claim availability", async () => {
