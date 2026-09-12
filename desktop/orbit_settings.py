@@ -26,7 +26,7 @@ STYLES = ("mark", "bar", "dot", "count")
 STATE_KEYS = ("idle", "working", "paused", "offline")
 SETTINGS_PATH = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "sbar-orbit", "panel.json")
 
-GROUPS = ("Startup", "Placement", "The mark", "Working glow", "Motion and blending", "Notifications")
+GROUPS = ("Startup", "Placement", "The mark", "The viewer", "Working glow", "Motion and blending", "Notifications")
 
 # What each group is called in the other language the person searching uses. Carried on every setting in
 # the group, so a word that names the whole group finds all of it rather than the one row that happens to
@@ -35,6 +35,7 @@ GROUP_TERMS = {
     "Startup": "بدء تشغيل إقلاع",
     "Placement": "مكان موضع تموضع",
     "The mark": "العلامة الشعار المؤشر",
+    "The viewer": "العارض المشاهدة نافذة تطبيق متصفح",
     "Working glow": "توهج إضاءة أثناء العمل",
     "Motion and blending": "حركة مزج شفافية",
     "Notifications": "إشعارات تنبيهات",
@@ -94,6 +95,14 @@ SCHEMA = (
             "One colour per state: idle, working, paused, and Orbit not running.",
             ["colour", "color", "green", "amber", "grey", "gray", "state", "working", "paused", "idle", "offline", "palette",
              "لون", "ألوان", "أخضر", "برتقالي", "رمادي", "حالة", "يعمل", "متوقف"]),
+    setting("viewerBrowser", "The viewer", "Open the viewer in", "", "browser",
+            "Which installed browser the viewer opens in. Unset picks the desktop's own browser when it can open a window of its own, and otherwise the first installed browser that can.",
+            ["browser", "viewer", "open", "chrome", "chromium", "edge", "firefox", "zen", "default", "which",
+             "متصفح", "العارض", "فتح", "افتراضي", "كروم", "حافة", "أي متصفح"]),
+    setting("viewerAppWindow", "The viewer", "Open it as its own window", True, "switch",
+            "A window with no tab strip and no address bar, the way an installed web application opens. Browsers in the Firefox family have no such mode and open a tab whatever this says.",
+            ["app", "pwa", "window", "tab", "standalone", "chromeless", "application", "kiosk",
+             "تطبيق", "نافذة", "تبويب", "مستقل", "بي دبليو ايه"]),
     setting("frame", "Working glow", "Glow the screen edges while working", True, "switch",
             "A soft glow inside the edges of the screen while an agent is working, with no border and nothing to click through.",
             ["glow", "frame", "edge", "border", "halo", "light", "working", "signal", "aura",
@@ -187,6 +196,12 @@ def coerce(key, value):
         clamped = min(high, max(low, number))
         note = None if clamped == number else f"{key} was clamped to {clamped}, its range is {low} to {high}."
         return (clamped if kind == "fraction" else int(round(clamped))), note
+    if kind == "browser":
+        # A desktop entry id, or empty for the automatic choice. It is not checked against the installed
+        # list here: this module runs without a broker, and a browser that is missing today may be back
+        # tomorrow, so resolution happens where the viewer is actually opened.
+        text = str(value).strip()
+        return ("" if text.casefold() in ("", "none", "auto", "default") else text), None
     if kind == "monitor":
         text = str(value).strip()
         if text.casefold() in ("", "none", "auto", "null"):

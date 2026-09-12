@@ -71,7 +71,10 @@ export function themeCss(source: unknown): string {
 
   const surface = colours.surface;
   if (typeof surface === "string" && colour.test(surface)) declarations.push(`color-scheme:${isDark(surface) ? "dark" : "light"}`);
-  return `:root{${declarations.join(";")}}\n`;
+  // Scoped to the attribute the viewer sets when the person asks to follow the desktop. Orbit's own
+  // palette lives in the fallback of every role the stylesheet reads, so an unscoped rule here would
+  // make the desktop's colours the default rather than the choice they are.
+  return `:root[data-palette="desktop"]{${declarations.join(";")}}\n`;
 }
 
 /**

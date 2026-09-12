@@ -1,7 +1,7 @@
 # Live workspace preview
 
 **Measurements:** Current resource and sustained-run results are summarized in [validation](validation.md). Older timing numbers below describe their individual trials.
-Implemented for browser and Fedora native sessions: live images, session selection, pause/resume/stop, and manual input while paused. The viewer never opens automatically.
+Implemented for browser and Fedora native sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open`, and the desktop mark, open it in the person's chosen browser.
 
 ## Use
 
@@ -13,13 +13,40 @@ bun run src/cli.ts preview
 
 Open the complete returned URL. Its fragment contains a per-broker access token. The viewer runs on an automatically allocated loopback port. Closing the page leaves sessions running. Stopping the broker closes the preview server as well.
 
-To take control: select a session, choose **Pause agent**, wait for **Paused**, then click inside its image. Use **Send text** or **Send key** to operate the focused element. **Resume agent** enables agent actions again. For Fedora native sessions, **Paste text** uses the workspace clipboard and Ctrl+V, supporting Arabic and emoji in applications that accept that shortcut. Wait for the text to appear before taking the next action. For browser and native sessions, use the mouse wheel over the image to scroll vertically while paused. Image coordinates scale to the application viewport. Gestures received while a manual command is busy are discarded instead of replayed after resume. Horizontal wheel gestures and touch scrolling are not implemented. Native general key controls remain disabled. All input targets the owned session; the human desktop receives no injected input.
+## Opening it as its own window
 
-Preview now defaults to a 1000 ms target cadence. Choose On demand to stop automatic image capture and use Refresh image, or explicitly choose Smooth for a 200 ms target cadence. An already in-flight capture may finish after changing modes. These controls affect viewing, not the agent's execution state. Slow work does not create overlapping polls. Hidden tabs perform no polling. Connection failures back off to a 10-second cadence, and RPC requests time out after 5 seconds. Frame-age indicators remain visible; stale pointers are hidden after 1 second in Smooth or 2 seconds otherwise. Capture still does not wait behind an agent's locator action, and overlapping requests share one in-flight screenshot.
+```sh
+bun run src/cli.ts preview open
+bun run src/cli.ts preview browsers
+```
+
+`preview open` hands the link to a browser rather than printing it, in a window with no tab strip and no address bar. `preview browsers` lists what is installed, which is also what the settings row reads. Clicking the desktop mark takes the same path.
+
+A browser is any desktop entry that handles `x-scheme-handler/http` and declares the `WebBrowser` category. Both conditions are needed: an application that registers the scheme to catch its own sign-in links is not somewhere to read the viewer. Flatpaks are found the same way as system packages, since on a desktop where the default browser is a flatpak a list of binary paths finds nothing.
+
+The window itself is Chromium's `--app=`. That is the whole mechanism: no manifest, no installation and no fixed port, which is what makes it work with a link whose port is allocated per broker and whose access token lives in the fragment. An installed progressive web app is scoped to an origin, port included, and would be launched at `/` carrying no token at all, so it is a different change rather than a tidier version of this one.
+
+Browsers in the Firefox family have no such mode. Site specific browsers were removed in Firefox 86 and no release build carries a replacement flag, so Firefox, Zen, LibreWolf and the rest open the viewer as an ordinary tab. Nothing is invented for them: a browser that cannot drop its tab strip gets a tab, which is why an unset choice passes over a default browser that cannot open a window and takes the first installed one that can. Choosing that browser explicitly is honoured, tab and all.
+
+The family is read from the executable's name where it is recognisable, and otherwise from the private window action every browser ships, which the two families spell differently. That is what identifies a Chromium build whose name carries no Chromium token, such as Helium.
+
+Both choices live in the panel's settings, under **The viewer**, and in `sbar-orbit config`: `viewerBrowser` is a desktop entry id or empty for the automatic choice, and `viewerAppWindow` turns the window off in favour of a tab. A browser that has since been uninstalled falls back rather than failing. Where the fallback has several browsers to choose between it takes them in the order `platform.ts` already uses for session browsers, Chrome before Chromium, rather than alphabetically.
+
+Spawning is not opening. A binary that is missing or not executable fails at once, and a browser that starts, rejects its arguments and exits is given a moment for its exit code to arrive, because reporting that as opened is what would leave the desktop mark with no window and no fallback. Exiting immediately with success is not that case: it is the ordinary second invocation, whose command line is forwarded to the browser already running, and that instance is what opens the window.
+
+Desktop entries are a Linux mechanism, so this is a Linux path. On macOS and Windows the viewer is handed to `open` or `start` and arrives as a tab in the default browser. Chrome's in-bundle binary on macOS does take `--app=`; nothing here uses it yet. See [porting](porting.md).
+
+To take control: select a session in the rail, choose **Pause agent**, wait for **Paused**, then click inside its image. Use **Send text** or **Send key** to operate the focused element. **Resume agent** enables agent actions again. For Fedora native sessions, **Paste text** uses the workspace clipboard and Ctrl+V, supporting Arabic and emoji in applications that accept that shortcut. Wait for the text to appear before taking the next action. For browser and native sessions, use the mouse wheel over the image to scroll vertically while paused. Image coordinates scale to the application viewport. Gestures received while a manual command is busy are discarded instead of replayed after resume. Horizontal wheel gestures and touch scrolling are not implemented. Native general key controls remain disabled. All input targets the owned session; the human desktop receives no injected input.
+
+Preview now defaults to a 1000 ms target cadence. Choose On demand to stop automatic image capture and use Refresh image, or explicitly choose Smooth for a 200 ms target cadence. An already in-flight capture may finish after changing modes. These controls affect viewing, not the agent's execution state. Slow work does not create overlapping polls. Hidden tabs perform no polling. Connection failures back off to a 10-second cadence, and RPC requests time out after 5 seconds. Frame-age indicators remain visible; a pointer over a frame older than 1 second in Smooth, or 2 seconds otherwise, is dimmed rather than removed, because at the default one frame a second hiding it meant the marker saying where the agent is working was the one thing on the page you could not rely on seeing. Capture still does not wait behind an agent's locator action, and overlapping requests share one in-flight screenshot.
 
 The viewer draws into a reusable Canvas and closes each decoded ImageBitmap immediately after drawing, including discarded frames. This replaces the image-element path that retained hundreds of MiB of renderer shared memory. See the [memory investigation](viewer-memory.md) for measurements; the scripted sustained run passed, while simultaneous human-work confirmation remains open.
 
 ## Tabs, windows and surface size
+
+Sessions are listed in the rail down the left, one card each, carrying the agent, the task, the backend, the state and a light that breathes while an action is in flight. That is the whole of navigation: the drop-down it replaced showed one session at a time and said nothing about the rest, so a person running several agents could not see which one had stopped without opening it. The rail is built from `session.list` alone and holds no second live image, because every live image is a capture, an encode and a decode on each poll.
+
+The stage carries the same signal at the size the question is asked at: while the selected session has an action in flight its frame glows, so "is something happening in there" is answered by the thing being watched rather than by a badge somewhere else.
 
 Below the settings row the viewer shows one entry per tab of a browser session, or per window of a private display, numbered the way `observe` reports them. Selecting one follows that tab, or focuses that window. Native sessions also get **Fullscreen window** and **Restore window**.
 
@@ -27,9 +54,11 @@ The **Size** control changes the session surface. Browser sessions resize every 
 
 All of these are manual control, so they require **Pause agent** first, for the same reason typing does: they change what the coordinates an agent just read refer to. An agent changes them for itself with the `resize`, `select-tab`, `close-tab` and `window` actions. Sizes are capped by total pixel count; the [measured cost curve](resources.md) is why.
 
-## Theming
+## Design and theming
 
-The viewer takes the desktop's own colour scheme when one is available, and otherwise uses its shipped palette. See [theming](theming.md).
+The viewer paints from Orbit's own design system: one fixed dark palette, one elevation scale, one spacing scale. See [viewer design](viewer-design.md) for the tokens and what each rank of elevation is for.
+
+Following the desktop's generated colour scheme is a switch in the rail rather than the default, so the page looks the same on every machine until somebody asks for otherwise. See [theming](theming.md).
 
 ## Boundaries
 

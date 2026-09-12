@@ -47,7 +47,10 @@ try {
     let method: string;
     let params: unknown = {};
     if (command === "doctor") method = "doctor";
-    else if (command === "preview") method = "preview.open";
+    else if (command === "preview" && verb === "browsers") method = "viewer.browsers";
+    // `preview` prints the link and opens nothing, which is what a script wants. `preview open` is the
+    // person's command: it opens their chosen browser, in a window of its own where that browser has one.
+    else if (command === "preview") { method = "preview.open"; params = { launch: verb === "open", browser: arg }; }
     else if (command === "account" && verb === "save") { method = "session.account.save"; params = { sessionId: arg }; }
     else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
       method = `session.${verb}`;
@@ -59,7 +62,7 @@ try {
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON");
     console.log(JSON.stringify({ ok: true, result: await call(socket, method, params) }));
   }
 } catch (error) {

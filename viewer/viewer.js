@@ -6,11 +6,30 @@ let previewMode = 'balanced', captureQueued = false, pollFailures = 0;
 let lastCost = 0, lastGap = 0, lastRpc = 0, lastDecode = 0, lastDraw = 0;
 element('preview-mode').addEventListener('change', () => { previewMode = element('preview-mode').value; captureQueued = false; });
 element('refresh-frame').onclick = () => { captureQueued = true; };
-const frame = element('frame'), sessions = element('sessions'), tabStrip = element('tabs');
+const frame = element('frame'), sessions = element('sessions'), tabStrip = element('tabs'), shell = element('shell');
+/*
+ * Orbit's own palette is what the stylesheet falls back to, and the desktop's generated one is applied
+ * only under this attribute, so following the desktop is a switch rather than the default. The choice is
+ * remembered per browser; storage that is unavailable or blocked leaves Orbit's palette in place.
+ */
+const paletteButton = element('palette');
+let desktopPalette = false;
+try { desktopPalette = localStorage.getItem('orbit-palette') === 'desktop'; } catch { desktopPalette = false; }
+function applyPalette() {
+  document.documentElement?.setAttribute?.('data-palette', desktopPalette ? 'desktop' : 'orbit');
+  paletteButton.setAttribute('aria-pressed', String(desktopPalette));
+  paletteButton.textContent = desktopPalette ? 'Desktop colours' : 'Follow desktop colours';
+}
+paletteButton.onclick = () => {
+  desktopPalette = !desktopPalette;
+  try { localStorage.setItem('orbit-palette', desktopPalette ? 'desktop' : 'orbit'); } catch { /* not remembered */ }
+  applyPalette();
+};
+applyPalette();
 // Sizes an agent or a person can pick. The broker caps the total pixel count, because every frame
 // at the chosen size is captured, encoded and decoded again on each poll.
 const surfaces = [[1280, 800], [1440, 900], [1600, 1000], [1920, 1080], [1920, 1200]];
-let tabs = [], surfaceValue = '1280x800';
+let tabs = [], surfaceValue = '1280x800', listed = [], railSignature = '';
 let selected = '', state = '', backend = '', accountName = '', capturedAt = 0, imageWidth = 1280, imageHeight = 800, busy = false;
 function error(message) { element('error').textContent = message; element('error').hidden = !message; }
 async function rpc(method, params = {}) {
@@ -22,6 +41,8 @@ async function rpc(method, params = {}) {
 }
 function controls() {
   element('state').textContent = state || 'No session selected';
+  element('state').dataset.state = state;
+  shell.dataset.state = state;
   const live = !!selected && !['closed', 'closing'].includes(state);
   element('pause').disabled = !live || busy || state !== 'running';
   element('resume').disabled = !live || busy || state !== 'paused';
@@ -41,6 +62,50 @@ function controls() {
   for (const id of ['fullscreen', 'restore']) { element(id).hidden = backend !== 'fedora'; element(id).disabled = !adjustable; }
   for (const button of tabStrip.children || []) button.disabled = !adjustable;
   frame.classList.toggle('controllable', adjustable);
+}
+/**
+ * The rail: one card per session, which is the whole of navigation here. A drop-down showed one session
+ * at a time and said nothing about the rest, so a person running several agents could not see which one
+ * had stopped or which one was working without opening it.
+ *
+ * Rebuilt only when a card's own text changes, for the same reason the tab strip is: this runs inside the
+ * poll, and the viewer's cost is the thing it is measured on.
+ */
+function renderSessions(list) {
+  listed = list;
+  const line = entry => `${entry.sessionId}/${entry.state}/${entry.agentName || ''}/${entry.taskName || ''}/${entry.activity?.state || ''}/${entry.sessionId === selected}`;
+  const signature = list.map(line).join('|');
+  element('session-count').textContent = list.length ? `Sessions · ${list.length}` : 'Sessions';
+  if (signature === railSignature) return;
+  railSignature = signature;
+  if (!list.length) {
+    const note = document.createElement('p');
+    note.className = 'rail-note'; note.textContent = 'No sessions yet. Create one from your agent or the CLI.';
+    sessions.replaceChildren(note);
+    return;
+  }
+  sessions.replaceChildren(...list.map(entry => {
+    const card = document.createElement('button');
+    card.type = 'button'; card.className = 'session';
+    // A plain button, announced as a button. `aria-current` says which session is on the stage without
+    // promising the arrow key navigation a listbox role would, which the select this replaced gave for
+    // free and this does not.
+    if (entry.sessionId === selected) card.setAttribute('aria-current', 'true');
+    card.dataset.state = entry.state || '';
+    card.dataset.working = String(entry.activity?.state === 'working' && entry.state === 'running');
+    const top = document.createElement('div'); top.className = 'session-top';
+    const light = document.createElement('span'); light.className = 'dot';
+    const who = document.createElement('span'); who.className = 'session-agent';
+    who.textContent = entry.agentName || 'SbarOrbit';
+    top.append(light, who);
+    const task = document.createElement('div'); task.className = 'session-task';
+    task.textContent = entry.taskName || entry.backend || 'Agent workspace';
+    const meta = document.createElement('div'); meta.className = 'session-meta';
+    meta.textContent = `${entry.backend || 'session'} · ${String(entry.sessionId).slice(0, 4)} · ${entry.state || 'unknown'}`;
+    card.append(top, task, meta);
+    card.onclick = () => selectSession(entry.sessionId);
+    return card;
+  }));
 }
 /** One entry per browser tab or per window of the private display, numbered the way observe reports them. */
 function renderTabs(list) {
@@ -62,11 +127,7 @@ async function refreshSessions() {
   const list = await rpc('session.list');
   const previous = selected;
   if (!list.some(s => s.sessionId === selected)) selected = list.find(s => s.state !== 'closed')?.sessionId || list[0]?.sessionId || '';
-  sessions.replaceChildren(...list.map(s => {
-    const option = document.createElement('option'); option.value = s.sessionId; option.textContent = `${s.agentName || "SbarOrbit"} · ${s.taskName || s.backend} · ${s.sessionId.slice(0, 4)} / ${s.state}`; return option;
-  }));
-  if (!list.length) { const option = document.createElement('option'); option.textContent = 'No sessions'; sessions.append(option); }
-  sessions.value = selected;
+  renderSessions(list);
   if (previous !== selected) { element('account-result').textContent = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  }
   const current = list.find(s => s.sessionId === selected);
   agentName = current?.agentName || 'SbarOrbit';
@@ -76,6 +137,9 @@ async function refreshSessions() {
   const activity = current?.activity;
   const verbs = { navigate: 'Open page', fill: 'Fill field', click: 'Click', read: 'Read page', scroll: 'Scroll', pointer: 'Click', text: 'Type', paste: 'Paste', key: 'Press key', launch: 'Open application' };
   element('activity').textContent = activity ? `${activity.actor === 'human' ? 'You' : agentName}: ${verbs[activity.type] || 'Input'} · ${activity.state} · Step ${activity.sequence}` : 'No actions yet';
+  // What makes the stage glow. An action in flight is the only honest signal the viewer has for "the
+  // agent is doing something right now"; a running session with nothing in flight is merely open.
+  shell.dataset.working = String(activity?.state === 'working' && current?.state === 'running');
   state = current?.state || '';
   backend = list.find(s => s.sessionId === selected)?.backend || '';
   const size = current?.surface;
@@ -96,7 +160,13 @@ async function refreshSessions() {
   if (state === 'closed') { capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  element('empty').hidden = false; element('empty').textContent = 'This session has stopped.'; }
   controls();
 }
-sessions.addEventListener('change', () => { selected = sessions.value; state = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true; element('page-title').textContent = 'Waiting for the current page or application'; element('page-location').textContent = '';  controls(); });
+function selectSession(id) {
+  if (id === selected) return;
+  selected = id; state = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true;
+  element('page-title').textContent = 'Waiting for the current page or application';
+  element('page-location').textContent = '';
+  controls(); renderSessions(listed);
+}
 async function command(method, params = {}) {
   if (busy || !selected) return;
   busy = true; controls(); error('');
@@ -140,6 +210,7 @@ async function poll() {
     if (document.hidden) { setTimeout(poll, 1000); return; }
     await refreshSessions();
     element('connection').textContent = 'Connected locally';
+    element('connection').dataset.connected = 'true';
     const id = selected;
     if (!document.hidden && id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
       captureQueued = false;
@@ -169,6 +240,7 @@ async function poll() {
             const position = presence?.pointer;
             pointer.hidden = !position;
             if (position) {
+              pointer.classList.toggle('stale', false);
               pointer.style.left = `${position.x / imageWidth * 100}%`;
               pointer.style.top = `${position.y / imageHeight * 100}%`;
               pointer.classList.toggle('human', actor === 'human');
@@ -180,7 +252,7 @@ async function poll() {
       }
     }
   pollFailures = 0;
-  } catch (e) { pollFailures++; element('connection').textContent = 'Connection interrupted'; error(e.message); }
+  } catch (e) { pollFailures++; element('connection').textContent = 'Connection interrupted'; element('connection').dataset.connected = 'false'; error(e.message); }
   const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
   // Idle at least as long as the iteration cost, so a viewer that cannot keep up
   // drops its frame rate instead of polling back to back and taking a whole core.
@@ -198,7 +270,10 @@ setInterval(() => {
     : '';
   const staleAfter = previewMode === 'smooth' ? 1000 : 2000;
   element('freshness').classList.toggle('stale', age > staleAfter);
-  if (age > staleAfter) pointer.hidden = true;
+  // A pointer over a stale frame is dimmed rather than removed. Hiding it meant that at the default one
+  // frame a second it spent most of its life invisible, so the marker that says where the agent is
+  // working was the one thing on the page you could not rely on seeing.
+  pointer.classList.toggle('stale', age > staleAfter);
 }, 250);
-if (!token) { element('connection').textContent = 'Access link required'; error('Open the complete preview link printed by Orbit.'); }
+if (!token) { element('connection').textContent = 'Access link required'; element('connection').dataset.connected = 'false'; error('Open the complete preview link printed by Orbit.'); }
 else poll();

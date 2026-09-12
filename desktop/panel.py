@@ -1635,12 +1635,20 @@ class Panel(Gtk.Application):
         # The viewer link carries an access token, so it is requested now and handed straight to the
         # browser rather than written anywhere. Which session to show is selected in the viewer.
         try:
-            url = rpc(self.path, "preview.open")["url"]
+            answer = rpc(self.path, "preview.open", {"launch": True,
+                                                     "browser": self.settings["viewerBrowser"],
+                                                     "appWindow": self.settings["viewerAppWindow"]})
         except Exception as error:
             print(f"panel: could not open the viewer: {error}", file=sys.stderr)
             return
+        url = answer.get("url", "")
         if not viewer_link_is_local(url):
             print("panel: the broker returned something other than a local viewer link; not opening it", file=sys.stderr)
+            return
+        # The broker opened it in the chosen browser, which is the only path that can give the viewer a
+        # window of its own. The launcher below is the fallback for a broker too old to have opened it,
+        # and it always produces a tab in whatever the desktop's default browser is.
+        if answer.get("opened"):
             return
 
         def done(launcher, result):
@@ -1817,6 +1825,11 @@ class SettingsWindow(Gtk.Window):
             self.color_row("Paused colour", "paused"),
             self.color_row("Idle colour", "idle"),
             self.color_row("Colour when Orbit is off", "offline"),
+        ]))
+        outer.append(self.group("The viewer", [
+            self.browser_row(),
+            self.switch_row("Open it as its own window", panel.settings["viewerAppWindow"],
+                            lambda v: panel.change("viewerAppWindow", v, restyle=False), "viewerAppWindow"),
         ]))
         outer.append(self.group("Working glow", [
             self.switch_row("Glow the screen edges while working", panel.settings["frame"], lambda v: panel.change("frame", v), "frame"),
@@ -2022,6 +2035,28 @@ class SettingsWindow(Gtk.Window):
         current = str(current) if current is not None else None
         chosen = names[values.index(current)] if current in values else names[0]
         return self.dropdown_row("Monitor", names, chosen, lambda v: self.panel.change("monitor", values[names.index(v)]), "monitor")
+
+    def browser_row(self):
+        """Every browser installed on this desktop, asked of the broker rather than guessed here: the
+        broker already reads the desktop entries, and a second list in Python would drift from it. With
+        no broker running the row still appears, carrying the automatic choice alone, because settings
+        are not a thing a person should have to start a service to change."""
+        names, values = ["Automatic"], [""]
+        try:
+            answer = rpc(self.panel.path, "viewer.browsers")
+            for entry in answer.get("browsers", []):
+                # The row says which browsers cannot drop their tab strip, so the window switch above it
+                # reads as a setting that does nothing rather than as a setting that is broken.
+                suffix = "" if entry.get("appWindow") else " (opens a tab)"
+                names.append(f"{entry.get('name') or entry.get('id')}{suffix}")
+                values.append(entry.get("id", ""))
+        except Exception:
+            pass
+        current = self.panel.settings["viewerBrowser"]
+        chosen = names[values.index(current)] if current in values else names[0]
+        return self.dropdown_row("Open the viewer in", names, chosen,
+                                 lambda v: self.panel.change("viewerBrowser", values[names.index(v)], restyle=False),
+                                 "viewerBrowser")
 
     def color_row(self, text, key):
         return self.row(text, self.color_button(self.panel.settings["colors"][key], lambda hexv: self.set_color(key, hexv)),

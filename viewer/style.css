@@ -1,9 +1,276 @@
-:root{font-family:var(--font-main,system-ui,sans-serif);color:var(--on-surface,#192842);background:var(--surface,#f1f4f8);font-synthesis:none}*{box-sizing:border-box}body{margin:0}main{max-width:1440px;padding:32px 40px;margin:auto}header{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-bottom:28px}.eyebrow{font-size:12px;font-weight:700;letter-spacing:.18em;color:var(--on-surface-variant,#506681);margin:0 0 10px}h1{font-size:32px;font-weight:600;margin:0 0 8px}.intro{color:var(--on-surface-variant,#55667d);margin:0}#connection{font-size:14px;color:var(--tertiary,#325948)}.toolbar{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-bottom:16px}.toolbar label{font-size:14px;display:flex;align-items:center;gap:10px}.actions{margin-left:auto;display:flex;gap:8px}button,input,select{font:inherit;font-size:14px;padding:10px 12px;border:1px solid var(--outline,#aebdce);border-radius:6px;background:var(--surface-container-lowest,#fff);color:var(--on-surface,#192842)}button{cursor:pointer}button:hover:not(:disabled){background:var(--surface-container-high,#e4ecf8)}button:disabled,input:disabled,select:disabled{opacity:.5;cursor:default}#pause,#send{background:var(--primary,#204c87);color:var(--on-primary,#fff);border-color:var(--primary,#204c87)}#stop{color:var(--error,#8a3939)}#state{font-size:14px;font-weight:600;text-transform:capitalize}.stage{position:relative;display:flex;align-items:center;justify-content:center;background:var(--surface-container-high,#dce3ed);min-height:280px;border-radius:8px;overflow:hidden}#frame{width:100%;height:auto;display:block}#frame[hidden]{display:none}#frame.controllable{cursor:crosshair;outline:3px solid var(--primary,#204c87);outline-offset:-3px}#empty{padding:80px 20px;color:var(--on-surface-variant,#55667d);text-align:center}.caption{display:flex;justify-content:space-between;gap:20px;font-size:12px;color:var(--on-surface-variant,#55667d);margin:12px 0 28px}#freshness.stale{color:var(--error,#973d2d)}h2{font-size:18px;margin:0 0 8px}#manual p{font-size:14px;color:var(--on-surface-variant,#55667d);margin:0 0 16px}.input-row{display:flex;gap:8px}.input-row input{flex:1;min-width:100px}#error{padding:12px;background:var(--error-container,#fcece8);color:var(--on-error-container,#873c2f);margin-bottom:16px;border-radius:6px}.sr-only{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--primary,#6893ce);outline-offset:2px}@media(max-width:720px){main{padding:24px 16px}header{display:block}#connection{display:block;margin-top:16px}h1{font-size:26px}.toolbar{gap:12px}.actions{margin-left:0;flex-wrap:wrap}.caption{flex-direction:column;gap:4px}.input-row{flex-wrap:wrap}.input-row input{flex-basis:100%}select#sessions{max-width:190px}.stage{min-height:200px}}
+/* ===========================================================================
+   Orbit viewer design system
 
-.workspace-identity{background:var(--surface-container,#fff);border:1px solid var(--outline-variant,#d4dfed);border-radius:8px;padding:16px 20px;margin-bottom:12px;overflow-wrap:anywhere}.workspace-identity>div{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.agent-badge{background:var(--secondary-container,#e4eefc);color:var(--on-secondary-container,#17447f);font-size:13px;font-weight:700;border-radius:20px;padding:5px 10px}#page-title{font-size:18px;font-weight:600;margin:12px 0 4px}#page-location{font-size:12px;color:var(--on-surface-variant,#55667d);margin:0}#activity{font-size:13px;color:var(--tertiary,#325948);margin:10px 0 0}/* Pointer colours stay fixed: they sit over foreign page content, not over themed chrome. */
-#agent-pointer{position:absolute;pointer-events:none;color:#255fce;z-index:2;filter:drop-shadow(0 1px 2px #0006)}#agent-pointer[hidden]{display:none}#pointer-label{position:absolute;left:20px;top:22px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;background:#255fce;color:white;border-radius:5px;padding:3px 7px;font-size:12px;font-weight:700}#agent-pointer.human{color:#167653}#agent-pointer.human #pointer-label{background:#167653}#agent-pointer.near-right #pointer-label{left:auto;right:4px}.toolbar select#sessions{max-width:min(440px,65vw)}
+   One fixed palette, dark, shipped in the fallback position of the Material 3
+   role each token reads. With no desktop palette applied the fallbacks are what
+   paints, which is Orbit's own design; `/theme.css` sets those roles under
+   [data-palette="desktop"], so following the desktop is a switch the person
+   throws rather than something that happens to them. See docs/theming.md.
 
-.brand-mark{vertical-align:-2px;margin-inline-end:7px}
-.view-settings{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 16px;font-size:13px;color:var(--on-surface-variant,#55667d)}.view-settings select{max-width:100%}#preview-note{font-size:12px}
+   The rule the whole file keeps: a colour is never written twice. Every value
+   below is a token, and every rule after this block reads tokens only.
+   =========================================================================== */
 
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 8px}.tabs[hidden]{display:none}.tab{font-size:12px;padding:6px 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tab[aria-selected="true"]{border-color:var(--primary,#204c87);font-weight:700}
+:root {
+  color-scheme: dark;
+
+  /* Ground and elevation. Five steps, each a lighter surface rather than a
+     heavier shadow, because a shadow on a dark ground is nearly invisible and
+     the separation has to come from the surface itself. */
+  --ground: var(--surface, #090c11);
+  --level-0: var(--surface-container-lowest, #0c1017);
+  --level-1: var(--surface-container-low, #11161f);
+  --level-2: var(--surface-container, #151c27);
+  --level-3: var(--surface-container-high, #1c2431);
+  --level-4: var(--surface-container-highest, #242e3e);
+  --sunken: var(--surface-variant, #070a0e);
+
+  /* Ink */
+  --ink: var(--on-surface, #e7edf6);
+  --ink-dim: var(--on-surface-variant, #98a6bb);
+
+  /* Lines. The hairline is what gives every card its edge; the strong one is
+     reserved for the stage, which is the thing the eye should land on. */
+  --line: var(--outline-variant, #212b39);
+  --line-strong: var(--outline, #35435a);
+
+  /* Accent. The fallback is the brand blue's dark value, from docs/brand.md. */
+  --accent: var(--primary, #6893ce);
+  --on-accent: var(--on-primary, #06121f);
+  --accent-soft: var(--primary-container, #16304f);
+  --on-accent-soft: var(--on-primary-container, #cfe0fb);
+  --accent-quiet: var(--secondary-container, #172433);
+  --on-accent-quiet: var(--on-secondary-container, #bcd2f0);
+
+  /* Live. Used for a session that is working and for the connection state, and
+     deliberately the same green the desktop mark uses for the same meaning. */
+  --live: var(--tertiary, #5cc98d);
+  --live-soft: var(--tertiary-container, #102e22);
+  --on-live-soft: var(--on-tertiary-container, #b4ecd0);
+
+  /* Trouble */
+  --alarm: var(--error, #ff8e7f);
+  --on-alarm: var(--on-error, #2c0c07);
+  --alarm-soft: var(--error-container, #3a1613);
+  --on-alarm-soft: var(--on-error-container, #ffd8d1);
+
+  /* Shape, spacing and motion. One scale each, so nothing is measured by eye. */
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-pill: 999px;
+  --gap-1: 4px; --gap-2: 8px; --gap-3: 12px; --gap-4: 16px; --gap-5: 24px; --gap-6: 32px;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .5);
+  --shadow-2: 0 6px 18px -8px rgb(0 0 0 / .7);
+  --shadow-3: 0 24px 60px -28px rgb(0 0 0 / .85);
+  --ease: cubic-bezier(.2, .7, .3, 1);
+
+  font-family: var(--font-main, system-ui, sans-serif);
+  font-synthesis: none;
+  color: var(--ink);
+  background: var(--ground);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); line-height: 1.45; }
+h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; }
+
+/* --- Layout -------------------------------------------------------------- */
+
+.shell { display: grid; grid-template-columns: 296px minmax(0, 1fr); min-height: 100vh; }
+.work { min-width: 0; padding: var(--gap-5) var(--gap-6) var(--gap-6); display: flex; flex-direction: column; gap: var(--gap-4); }
+
+/* --- The rail ------------------------------------------------------------ */
+
+.rail {
+  display: flex; flex-direction: column; gap: var(--gap-3);
+  padding: var(--gap-5) var(--gap-4);
+  background: var(--level-0);
+  border-inline-end: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: var(--gap-2); color: var(--accent); }
+.wordmark { font-size: 15px; letter-spacing: .01em; color: var(--ink); }
+.wordmark strong { font-weight: 700; }
+.rail-note { margin: 0 0 var(--gap-3); font-size: 12px; color: var(--ink-dim); line-height: 1.5; }
+.rail-heading { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); }
+.session-list { display: flex; flex-direction: column; gap: var(--gap-2); overflow-y: auto; flex: 1; min-height: 0; }
+.rail-foot { display: flex; flex-direction: column; gap: var(--gap-2); align-items: flex-start; padding-top: var(--gap-3); border-top: 1px solid var(--line); }
+
+/*
+ * One card per session, which is the whole of navigation: the select this
+ * replaced could show one session at a time and said nothing about the others,
+ * so a person running several agents could not see which one needed them.
+ */
+.session {
+  display: block; width: 100%; text-align: start; cursor: pointer;
+  padding: var(--gap-3); border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--level-1); color: var(--ink); font: inherit;
+  transition: background .18s var(--ease), border-color .18s var(--ease), transform .18s var(--ease);
+}
+.session:hover { background: var(--level-2); border-color: var(--line-strong); }
+.session[aria-current="true"] { background: var(--level-3); border-color: var(--accent); }
+.session-top { display: flex; align-items: center; gap: var(--gap-2); }
+.session-agent { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-task { margin-top: 3px; font-size: 12px; color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { margin-top: var(--gap-2); font-size: 11px; color: var(--ink-dim); display: flex; gap: var(--gap-2); }
+
+/*
+ * The state light. It is the same vocabulary as the desktop mark, so a person
+ * who learned the colours on their panel does not learn them again here.
+ */
+.dot { width: 8px; height: 8px; border-radius: var(--r-pill); background: var(--ink-dim); flex: none; }
+.session[data-state="running"] .dot, .agent-badge .dot { background: var(--live); }
+.session[data-state="paused"] .dot { background: var(--accent); }
+.session[data-state="closed"] .dot, .session[data-state="closing"] .dot { background: var(--line-strong); }
+.session[data-working="true"] .dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--live, #5cc98d) 28%, transparent); animation: breathe 1.8s var(--ease) infinite; }
+
+@keyframes breathe { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--live, #5cc98d) 6%, transparent); } }
+
+/* --- Header -------------------------------------------------------------- */
+
+.head { display: flex; gap: var(--gap-5); align-items: flex-start; flex-wrap: wrap; }
+.head-identity { flex: 1; min-width: 260px; }
+.head-status { display: flex; flex-direction: column; align-items: flex-end; gap: var(--gap-2); }
+.agent-badge {
+  display: inline-flex; align-items: center; gap: var(--gap-2);
+  background: var(--accent-quiet); color: var(--on-accent-quiet);
+  font-size: 12px; font-weight: 700; border-radius: var(--r-pill); padding: 5px 11px;
+}
+#task-name { font-size: 26px; margin: var(--gap-2) 0 var(--gap-1); }
+#page-title { margin: 0; font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+#page-location { margin: 3px 0 0; font-size: 12px; color: var(--ink-dim); overflow-wrap: anywhere; }
+#activity { margin: 0; font-size: 12px; color: var(--ink-dim); text-align: end; }
+
+.chip {
+  display: inline-block; padding: 5px 12px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 700;
+  background: var(--level-3); color: var(--ink-dim); border: 1px solid var(--line);
+}
+/* Only a state word is capitalised. With no session the chip carries a sentence, and title case made
+   it read as a heading. */
+.chip[data-state]:not([data-state=""]) { text-transform: capitalize; }
+.chip[data-state="running"] { background: var(--live-soft); color: var(--on-live-soft); border-color: transparent; }
+.chip[data-state="paused"] { background: var(--accent-soft); color: var(--on-accent-soft); border-color: transparent; }
+.chip[data-state="closed"], .chip[data-state="closing"] { background: var(--alarm-soft); color: var(--on-alarm-soft); border-color: transparent; }
+
+/* --- Controls ------------------------------------------------------------ */
+
+.actions { display: flex; gap: var(--gap-2); flex-wrap: wrap; justify-content: flex-end; }
+button, input, select {
+  font: inherit; font-size: 13px; padding: 9px 13px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--level-2); color: var(--ink);
+  transition: background .15s var(--ease), border-color .15s var(--ease), opacity .15s var(--ease);
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { background: var(--level-4); border-color: var(--accent); }
+button:disabled, input:disabled, select:disabled { opacity: .42; cursor: default; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--on-accent-soft); }
+button.danger { color: var(--alarm); }
+button.danger:hover:not(:disabled) { background: var(--alarm-soft); color: var(--on-alarm-soft); border-color: transparent; }
+button.ghost { background: none; border-color: var(--line); color: var(--ink-dim); font-size: 12px; padding: 6px 10px; }
+button.ghost[aria-pressed="true"] { color: var(--on-accent-quiet); border-color: var(--accent); background: var(--accent-quiet); }
+button:focus-visible, input:focus-visible, select:focus-visible, .session:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+.link-state { font-size: 12px; color: var(--live); display: inline-flex; align-items: center; gap: var(--gap-2); }
+.link-state[data-connected="false"] { color: var(--alarm); }
+
+/* --- The stage ----------------------------------------------------------- */
+
+/*
+ * The session image is the subject of the page, so it is the only thing that
+ * gets the full elevation treatment: raised surface, its own border, a ring,
+ * and a shadow deep enough that the page reads as sitting behind it.
+ */
+.stage-card {
+  background: var(--level-1); border: 1px solid var(--line); border-radius: var(--r-xl);
+  padding: var(--gap-3); box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column; gap: var(--gap-3);
+}
+.stage-bar { display: flex; gap: var(--gap-3); align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.view-settings { display: flex; align-items: center; gap: var(--gap-2); flex-wrap: wrap; margin-inline-start: auto; }
+.view-settings select, .view-settings button { font-size: 12px; padding: 7px 10px; max-width: 100%; }
+
+.stage {
+  position: relative; border-radius: var(--r-lg); background: var(--sunken);
+  border: 1px solid var(--line-strong); padding: var(--gap-2);
+  box-shadow: var(--shadow-3), inset 0 0 0 1px color-mix(in srgb, var(--ink, #e7edf6) 4%, transparent);
+  transition: border-color .3s var(--ease), box-shadow .3s var(--ease);
+}
+/* Where the model is working. The glow is on the stage rather than on a badge
+   somewhere, because the question it answers is "is something happening in
+   there", and there is the image. */
+.shell[data-working="true"] .stage {
+  border-color: color-mix(in srgb, var(--live, #5cc98d) 55%, transparent);
+  box-shadow: var(--shadow-3), 0 0 0 1px color-mix(in srgb, var(--live, #5cc98d) 35%, transparent),
+              0 0 38px -6px color-mix(in srgb, var(--live, #5cc98d) 34%, transparent);
+  animation: stage-breathe 2.4s var(--ease) infinite;
+}
+.shell[data-state="paused"] .stage { border-color: color-mix(in srgb, var(--accent, #6893ce) 55%, transparent); }
+
+@keyframes stage-breathe { 50% { box-shadow: var(--shadow-3), 0 0 0 1px color-mix(in srgb, var(--live, #5cc98d) 22%, transparent), 0 0 26px -8px color-mix(in srgb, var(--live, #5cc98d) 22%, transparent); } }
+
+/* The pointer is positioned as a percentage of this box, so it carries no
+   padding or border of its own: its edges are the canvas's edges exactly. */
+.surface { position: relative; line-height: 0; border-radius: var(--r-md); overflow: hidden; }
+#frame { width: 100%; height: auto; display: block; }
+#frame[hidden] { display: none; }
+#frame.controllable { cursor: crosshair; }
+.stage-card:has(#frame.controllable) .stage { border-color: var(--accent); }
+#empty { padding: 92px 24px; color: var(--ink-dim); text-align: center; font-size: 13px; line-height: 1.6; }
+
+.caption { display: flex; justify-content: space-between; gap: var(--gap-3); flex-wrap: wrap; font-size: 11px; color: var(--ink-dim); }
+#freshness { font-variant-numeric: tabular-nums; }
+#freshness.stale { color: var(--alarm); }
+.caption-note { margin-inline-start: auto; }
+#preview-note { margin: 0; font-size: 11px; color: var(--ink-dim); }
+
+/* --- Tabs ---------------------------------------------------------------- */
+
+.tabs { display: flex; gap: var(--gap-1); flex-wrap: wrap; }
+.tabs[hidden] { display: none; }
+.tab { font-size: 12px; padding: 6px 11px; border-radius: var(--r-pill); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab[aria-selected="true"] { border-color: var(--accent); background: var(--accent-quiet); color: var(--on-accent-quiet); font-weight: 600; }
+
+/* --- Panels -------------------------------------------------------------- */
+
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap-3); }
+.card { background: var(--level-1); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--gap-4); box-shadow: var(--shadow-1); }
+.card h2 { font-size: 15px; margin-bottom: var(--gap-2); }
+.card p { font-size: 12px; color: var(--ink-dim); margin: 0 0 var(--gap-3); line-height: 1.6; }
+.input-row { display: flex; gap: var(--gap-2); align-items: center; flex-wrap: wrap; }
+.input-row input { flex: 1; min-width: 140px; }
+.result { font-size: 12px; color: var(--live); }
+#error { padding: var(--gap-3) var(--gap-4); background: var(--alarm-soft); color: var(--on-alarm-soft); border-radius: var(--r-md); font-size: 13px; }
+#error[hidden] { display: none; }
+
+.sr-only { position: absolute; clip: rect(0, 0, 0, 0); width: 1px; height: 1px; overflow: hidden; }
+
+/* Motion is decoration here; the glow still reads as a colour without it. */
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* --- Narrow ------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .rail { border-inline-end: none; border-bottom: 1px solid var(--line); }
+  .session-list { flex-direction: row; overflow-x: auto; }
+  .session { min-width: 220px; }
+  .work { padding: var(--gap-4) var(--gap-3) var(--gap-5); }
+  .head-status { align-items: flex-start; }
+  #activity { text-align: start; }
+  .actions { justify-content: flex-start; }
+  #task-name { font-size: 21px; }
+  .caption-note { margin-inline-start: 0; }
+  .panels { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* --- The pointer --------------------------------------------------------- */
+/* Pointer colours stay fixed: they sit over foreign page content, not over themed chrome. */
+#agent-pointer{position:absolute;pointer-events:none;color:#255fce;z-index:2;filter:drop-shadow(0 1px 3px #000a);transition:opacity .3s ease}
+#agent-pointer[hidden]{display:none}
+#agent-pointer.stale{opacity:.45}
+#pointer-label{position:absolute;left:20px;top:22px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;background:#255fce;color:#fff;border-radius:6px;padding:3px 8px;font-size:12px;font-weight:700;line-height:1.4;box-shadow:0 2px 8px #0006}
+#agent-pointer.human{color:#167653}
+#agent-pointer.human #pointer-label{background:#167653}
+#agent-pointer.near-right #pointer-label{left:auto;right:4px}

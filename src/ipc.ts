@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Sessions } from "./session";
 import { OrbitError } from "./errors";
 import { startPreview } from "./preview";
+import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
 
@@ -32,9 +33,19 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       if (request.method !== "POST" || new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
       try {
         const body = await request.json();
+        // The viewer's own browser is a host concern, not a session one, so it is answered here rather
+        // than in the session dispatcher the agent API shares.
+        if (body?.method === "viewer.browsers") return Response.json({ ok: true, result: { browsers: await listHostBrowsers(), ...await viewerPreference() } });
         if (body?.method === "preview.open") {
           preview ??= startPreview(sessions);
-          return Response.json({ ok: true, result: { url: preview.url } });
+          const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean };
+          // The link carries an access token, so opening it here keeps it out of any caller that only
+          // wanted a window. A caller that asks for the URL alone still gets the URL alone.
+          if (!params.launch) return Response.json({ ok: true, result: { url: preview.url } });
+          const preference = await viewerPreference();
+          const opened = await openViewer(preview.url, params.browser ?? preference.browser,
+            params.appWindow ?? preference.appWindow);
+          return Response.json({ ok: true, result: { url: preview.url, ...opened } });
         }
         return Response.json({ ok: true, result: await sessions.dispatch(body) });
       }
