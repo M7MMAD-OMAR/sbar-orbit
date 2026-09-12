@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { startBroker, call } from "../src/ipc";
@@ -24,6 +24,10 @@ await requireResourceBudget();
 const directory = join("output", `settings-${new Date().toISOString().slice(0, 10)}`);
 await mkdir(directory, { recursive: true, mode: 0o700 });
 const config = await mkdtemp(join(tmpdir(), "orbit-settings-config-"));
+// A command socket of its own, so the panel under test does not answer for the person's own panel. The
+// runtime directory itself is left alone: it is where libwayland looks for the compositor, and a panel
+// pointed at a different one finds no display.
+const runtime = await mkdtemp(join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "orbit-settings-run-"));
 const broker = await startBroker();
 const report: Record<string, unknown> = { date: new Date().toISOString().slice(0, 10) };
 const launcher = resolve("bin/sbar-orbit");
@@ -52,11 +56,26 @@ try {
   // The panel, and its settings window with it. A layer shell surface is not a window in the compositor
   // tree, so it is started beside a plain one; the supervisor is a subreaper, so both end with the session.
   const log = join(directory, "panel.log");
+  // Started WITHOUT --settings, so the window has to be asked for the way the applications menu asks for
+  // it: a datagram to the socket the running panel bound. That is the path the launcher entry uses, and
+  // testing it by passing a flag at startup would test something else.
   await act({ type: "launch", toolkit: "wayland", argv: ["/bin/sh", "-c",
-    `ORBIT_SOCKET=${JSON.stringify(broker.socket)} XDG_CONFIG_HOME=${JSON.stringify(config)} ` +
-    `/usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} --settings >${JSON.stringify(log)} 2>&1 & ` +
+    `ORBIT_SOCKET=${JSON.stringify(broker.socket)} XDG_CONFIG_HOME=${JSON.stringify(config)} ORBIT_PANEL_SOCKET=${JSON.stringify(join(runtime, "panel.sock"))} ` +
+    `/usr/bin/python3 ${JSON.stringify(resolve("desktop/panel.py"))} >${JSON.stringify(log)} 2>&1 & ` +
     "exec /usr/bin/gnome-calculator"] });
   await Bun.sleep(4000);
+  report.windowsBeforeAsking = (await call(broker.socket, "session.observe", { sessionId: display.sessionId }) as { presence: { tabs: { label: string }[] } }).presence.tabs.map(w => w.label);
+  // A unix socket is not a regular file, so this asks the filesystem rather than Bun.file().exists().
+  report.commandSocketBound = await stat(join(runtime, "panel.sock")).then(entry => entry.isSocket(), () => false);
+  // The panel bound its socket under the runtime directory it was given, so this reaches that panel and
+  // not the person's. WAYLAND_DISPLAY and DISPLAY are cleared as well: if the socket were missing, the
+  // fallback is to start a panel, and a panel started from here must not be able to find their screen.
+  const asked = Bun.spawn([resolve("bin/sbar-orbit"), "settings"], {
+    env: { ...process.env, ORBIT_PANEL_SOCKET: join(runtime, "panel.sock"), WAYLAND_DISPLAY: "", DISPLAY: "" },
+    stdout: "pipe", stderr: "pipe",
+  });
+  report.askedForSettings = { exit: await asked.exited, said: (await new Response(asked.stderr).text()).trim().slice(0, 120) };
+  await Bun.sleep(1500);
   // The window that the compositor happens to have focused is the one typing reaches, and here that is
   // the plain window the panel was started beside. On the person's own desktop the settings window is
   // opened by their click and arrives focused; inside a private display it has to be asked for.
@@ -99,6 +118,33 @@ try {
   report.changedFromTheTerminal = { before: before.out.trim(), applied: changed.ok, after: (await config_("get", "style")).out.trim() };
   report.afterTheChange = await shot("after-config-set");
 
+  // The button that answers "I have never seen this work": a browser of the person's own, from the
+  // window rather than a terminal. Clicked for real, because the handler is the thing being measured.
+  // The button is on screen and reachable, which is what the frame shows. What it does is measured
+  // underneath it rather than through it: a private display moves the pointer and never clicks, by
+  // design, and a Tab into a filtered list is not a stable way to press a particular button. So this
+  // runs the three calls the handler runs, in the order it runs them, and checks what they leave behind.
+  await act({ type: "text", text: "printer" });
+  await Bun.sleep(700);
+  report.buttonOnScreen = await shot("own-session");
+  const own = await call(broker.socket, "session.create", { backend: "browser", agentName: "You", taskName: "Opened from the panel" }) as { sessionId: string };
+  await call(broker.socket, "session.pause", { sessionId: own.sessionId });
+  const link = await call(broker.socket, "preview.open") as { url: string };
+  const listed = (await call(broker.socket, "session.list") as { sessionId: string; agentName: string; state: string }[])
+    .find(open => open.sessionId === own.sessionId);
+  report.aBrowserOfTheirOwn = {
+    // Paused, because manual control in the viewer is what a paused session allows, and a person who
+    // opened a browser expects to be able to type in it.
+    state: listed?.state,
+    // Named for them, because the whole premise of the mark is telling whose work you are watching.
+    agentName: listed?.agentName,
+    viewerIsLocalAndTokened: /^http:\/\/127\.0\.0\.1:\d+\/#.{32,}$/.test(link.url),
+  };
+  await call(broker.socket, "session.stop", { sessionId: own.sessionId });
+  await act({ type: "key", key: "Ctrl+A" });
+  await act({ type: "text", text: " " });
+  await Bun.sleep(600);
+
   // Every shape the mark can take, on the edge it would sit on, captured rather than described. The
   // person asking what this looks like should not have to read four adjectives and imagine it.
   const shapes: Record<string, string> = {};
@@ -126,6 +172,7 @@ try {
 } finally {
   await broker.close();
   await rm(config, { recursive: true, force: true }).catch(() => {});
+  await rm(runtime, { recursive: true, force: true }).catch(() => {});
 }
 
 await writeFile(join(directory, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });

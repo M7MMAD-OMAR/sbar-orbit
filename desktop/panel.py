@@ -328,6 +328,15 @@ def launcher_json(args):
 
 
 def command_socket_path():
+    """Where a panel listens for another invocation's request.
+
+    ORBIT_PANEL_SOCKET overrides it. That exists because the runtime directory cannot be moved to test
+    this: it is also where libwayland looks for the compositor, so a panel pointed at a different one
+    finds no display at all.
+    """
+    override = os.environ.get("ORBIT_PANEL_SOCKET")
+    if override:
+        return override
     runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
     return os.path.join(runtime, "sbar-orbit", "panel.sock")
 
