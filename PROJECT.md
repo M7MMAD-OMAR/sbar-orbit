@@ -13,6 +13,8 @@ Orbit gives a tool-capable agent its own local application workspace while the u
 
 The broker belongs to the OS user. MCP configuration belongs to each host, so Orbit does not need a separate application-control implementation for each model brand. Closed applications without custom tools are not automatically compatible.
 
+Installation is one command, `./install.sh`, which shows each step as it runs and prints a remedy for every prerequisite only a package manager can supply. It reports installation state, not a measurement.
+
 The alpha has browser/native integration tests and a successful scripted 10-minute browser/viewer run. See [validation](docs/validation.md). Display separation is not a security sandbox, and same-user applications retain filesystem permissions.
 
-Next milestones: a participant-read viewer cost figure closing the resource gate, participant-confirmed takeover, repeatable recovery, wider application/account coverage, fresh-machine verification of the existing local install, then actual tests on other operating systems. See the [roadmap](docs/roadmap.md), [architecture](docs/architecture.md) and [acceptance cases](docs/acceptance.md).
+Next milestones: a participant-read viewer cost figure closing the resource gate, participant-confirmed takeover, wider application/account coverage, fresh-machine verification on a real machine with a systemd user session and a compositor, the native runtime a fresh machine cannot get from tracked source, then actual tests on other operating systems. Repeatable recovery now includes a supervisor killed rather than asked; the unprivileged half of a fresh install runs in a clean container at tier `Limited`. See the [roadmap](docs/roadmap.md), [architecture](docs/architecture.md) and [acceptance cases](docs/acceptance.md).

@@ -122,6 +122,10 @@ Filesystem tests cover install, upgrade, rollback, removal, preserved data, refu
 
 This new checkout command requires Bun, but no broker socket or installed project dependencies to load its checks. It only checks files, executable permissions and module resolution. It does not start a browser, compositor, broker or system service, download anything, or record personal paths. `doctor` remains the separate command for a running broker.
 
+It also asks whether a systemd user manager is actually running for this account, rather than only whether `systemctl` is installed. A container image carrying the binary with nothing behind it used to read as available here while the install that needs it refused seconds later, which is a green check on a machine where the thing cannot work.
+
+Native prerequisites are the one group a fresh machine cannot satisfy from a source release: the private compositor and the pointer helper live in an untracked runtime directory that never leaves the development workstation, so `experiments/fedora-display/bootstrap.sh` is the only path to them. Inspect its pinned package versions before using it.
+
 The JSON report separates browser and native prerequisites, gives a remedy for missing items, and lists what is not verified. Exit status is 0 when browser prerequisites are found, otherwise 1. Inspect `nativePrerequisitesFound` separately if using native apps. This is an availability check, not a successful runtime or resource-acceptance result.
 
 Browser candidates currently match the owned launcher: `/opt/google/chrome/chrome`, `/usr/bin/chromium`, `/usr/bin/chromium-browser`. Native files must exist in this source version's `.runtime/sway`, alongside system Python, Xwayland, grim and wl-clipboard. The existing native bootstrap is `experiments/fedora-display/bootstrap.sh`; inspect its pinned Fedora package versions before using it on another release. Shared-library compatibility, cgroup delegation, private disk-backed storage and real application behavior need separate validation.

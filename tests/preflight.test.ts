@@ -2,7 +2,8 @@ import { test, expect } from "bun:test";
 import { resolve } from "node:path";
 import { inspectPrerequisites } from "../src/preflight";
 
-const complete = { platform: "linux", file: async () => true, module: () => true, which: () => "/usr/bin/Xwayland" };
+const complete = { platform: "linux", file: async () => true, module: () => true, which: () => "/usr/bin/Xwayland",
+  userManager: async () => true };
 
 test("preflight distinguishes browser, native and common missing prerequisites", async () => {
   const all = await inspectPrerequisites("/fixture", complete);
@@ -20,6 +21,17 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   const noModules = await inspectPrerequisites("/fixture", { ...complete, module: () => false });
   expect(noModules.browserPrerequisitesFound).toBe(false);
   expect(noModules.nativePrerequisitesFound).toBe(false);
+});
+
+test("a systemd tool with no user manager behind it is not availability", async () => {
+  // The case a container found: systemctl present, nothing running it, and the install that needs it
+  // refusing seconds after the check said the machine was ready.
+  const report = await inspectPrerequisites("/fixture", { ...complete, userManager: async () => false });
+  expect(report.browserPrerequisitesFound).toBe(false);
+  expect(report.nativePrerequisitesFound).toBe(false);
+  const check = report.checks.find(entry => entry.id === "systemd-user-session");
+  expect(check?.available).toBe(false);
+  expect(check?.remedy).toContain("user manager");
 });
 
 test("unsupported OS and absent executable checks cannot claim availability", async () => {

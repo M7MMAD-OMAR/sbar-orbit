@@ -181,3 +181,89 @@ the first signal.
 
 This covers one failure mode of one component. The rest of gate 2, account coverage and applications
 beyond the four already launched, is untouched by it.
+
+## Fresh machine installation, the unprivileged half
+
+**Tier: Limited. The limit is that a container has no systemd user session, no cgroup delegation, no
+wlroots compositor and no desktop, so the broker service, autostart, the private display and the
+shared resource budget were never exercised.** This is not gate 3 closed. Clean machine installation
+stays open, and the only thing that closes it is a real machine.
+
+Run on 12 September 2026 with rootless podman 5.8.4 and crun, against `docker.io/library/fedora:44`
+at digest `sha256:be9d65e2344d805cc11114319c685ecaa96b6d9b4350a0a6460cdb931babbd19`. Two images are
+built from one Containerfile: `minimal` is Fedora plus Bun and nothing else, `deps` adds the packages
+a person would install by hand. Those packages go in with `dnf` as root while the image is built, not
+through any Orbit command, because Orbit installs none of them and never asks for elevation. Source reaches the container as a `git archive` of tracked files at
+`489813a`, 237 entries, so no `node_modules` and no runtime directory cross the boundary. Bun is
+pinned to 1.3.14, the version this workstation runs, and its release zip is checked against the
+digest in the release's own `SHASUMS256.txt` before it is installed. No port is published, no host
+namespace is shared, and the only host path inside the container is the read only source archive.
+
+Reproduce the whole thing with `experiments/fresh-machine/run.sh`.
+
+| Area | Observed outcome | Reproduce |
+|---|---|---|
+| Tracked source is enough to install from | `git archive` of 237 tracked files extracted and `bin/sbar-orbit` arrived executable | `experiments/fresh-machine/run.sh` |
+| Frozen dependency install | 100 packages in 22.9 s from the committed lockfile, no lifecycle scripts | `bun install --frozen-lockfile --ignore-scripts` in both images |
+| Prerequisites on a bare machine | Exit 1. Every group absent and each one carrying its remedy: no `systemctl`, no `systemd-run`, no `python3`, no Chrome or Chromium, no native runtime. Nothing was started | `./bin/sbar-orbit preflight` in the `minimal` image |
+| Prerequisites once the packages are installed | Exit 0, `browserPrerequisitesFound` true with Fedora's `chromium` 152.0.7977.82 found at `/usr/bin/chromium`. `nativePrerequisitesFound` stayed false. This shows the check recognizing what a root build step put in place, not a path by which a person gets there | Same command in the `deps` image |
+| The one command install | Exit 1 in both images, with the guard's own message naming a container as an expected case rather than a budget crash. `--dry-run` refused identically, so the refusal is not a dry run artifact | `./install.sh --dry-run`, then `./install.sh` |
+| The launcher link install | Exit 1, `RESOURCE_LIMIT_REQUIRED` from `src/resource-budget.ts`, thrown before any filesystem work | `bun run scripts/local-install.ts install "$PWD" "$HOME/.local"` |
+| The installed command | Not run. `~/.local/bin/sbar-orbit` was never created, because the install above refused | |
+| The local report | Exit 0 from the source checkout. `sessionType` none, `secretService` absent, `systemdUserScopes` false, `confinedEgress` false, and the three notes that follow from those | `./bin/sbar-orbit doctor --report` |
+
+### What the refusals say
+
+`/proc/self/cgroup` inside the container reads `0::/`. That one line explains every refusal below it.
+`requireResourceBudget()` looks for a path component named `sbarorbit.slice` in its own cgroup, and a
+container with its own cgroup namespace and no systemd user session has none, so there is nothing for
+it to read a quota out of. `scripts/local-install.ts` calls it on line 7, before it does any work at
+all, so the launcher link install stops there rather than half way through.
+
+This was recorded rather than worked around. Giving the container the host's cgroup namespace, or a
+parent slice by that name, would have written host cgroup state to make a test pass, and the result
+would have measured the workaround instead of the product. Whether `local-install.ts` should gain a
+documented path for a machine with no systemd user session is an open question, not something this
+run decided.
+
+`install.sh` already answers it for itself. Its guard checks `systemctl --user show-environment` and
+refuses with a message that names a container, a bare ssh session with no lingering user manager, and
+a Linux system without systemd, and it points at `preflight` as the check that runs anywhere. Both
+images produced that message: the `minimal` one has no `systemctl` at all, and the `deps` one has the
+binary and no user manager for it to talk to. The same refusal from two different causes is the
+useful part.
+
+### Three things this run found that a reading of the source would not have
+
+**`preflight` could not tell an installed file from a working one.** In the `deps` image it reported
+`systemctl` and `systemd-run` available, because the files exist, while the install that needs them
+refused a moment later. An availability check that goes green on a machine where the thing cannot
+work is read as a pass, so the check was changed rather than documented: `preflight` now also asks
+whether a systemd user manager is actually running for this account, by looking for the private
+socket it keeps in the runtime directory. It is still a file check and still spawns nothing. The
+container that found this is where the new check first returns false, and the workstation is where it
+returns true. Covered by `tests/preflight.test.ts`.
+
+**Native prerequisites cannot be satisfied from tracked source at all.** `private-sway` and
+`private-pointer` were absent in both images, and installing every Fedora package did not change
+that, because the compositor and the pointer helper live in `.runtime/`, which is not tracked and
+never leaves this workstation. A fresh machine gets them from `experiments/fedora-display/bootstrap.sh`
+or not at all. That is a real gap in the fresh machine story and it belongs in the packaging notes,
+not only here.
+
+**`doctor --report` read the container as this project's own host class.** It printed
+`tier.assigned` "Reasoned" with the reason given for a Fedora 44 host, because `/etc/os-release`
+inside the image says Fedora 44 and nothing in the probe distinguished a container from the machine
+around it. Every capability line was correctly false or absent; the tier line was the weakest thing
+in the report, because a person filing from a container would be told they are on the measured host
+class when they are not. The tier now checks for the markers a container runtime writes itself, and
+says a container is not the measured class whatever distribution it carries. The tier stays
+"Reasoned" either way: what changed is the reason printed beside it, which is the part a person reads.
+
+### What this run cannot be read as
+
+No browser was launched, no broker started, no session created, no frame captured and no unit
+installed. The CPU and memory figures elsewhere in this file were taken under a budget that did not
+exist here, so nothing in this section speaks to cost. A second container is not a second host: both
+images ran on the same kernel as the workstation, so shared library compatibility on another
+distribution is still untested. Gate 3 needs a machine.

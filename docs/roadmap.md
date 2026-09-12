@@ -36,7 +36,19 @@
    name this session. Five checks in `tests/owned-group.test.ts` and one end to end native check cover
    it, and the end to end check was run first against the unfixed code, where it failed. Still open in
    this gate: account coverage, and applications beyond the four launched so far.
-3. Verify full local installation on a fresh machine, including native dependencies. Launcher activation, upgrade, rollback and link-only uninstall pass filesystem tests without touching workspaces or accounts.
+3. Verify full local installation on a fresh machine, including native dependencies. Launcher
+   activation, upgrade, rollback and link-only uninstall pass filesystem tests without touching
+   workspaces or accounts. The unprivileged half now also runs in a clean Fedora 44 container, at
+   tier `Limited` with the limit printed: tracked source is enough to install from, the frozen
+   dependency install completes, and both the one command install and the launcher link refuse
+   cleanly where there is no systemd user session, by two different causes and with the same message.
+   That run found three things a reading of the source would not have, two of which are now fixed:
+   `preflight` reported systemd tools as available with no user manager behind them, and
+   `doctor --report` read a Fedora container as this project's measured host class. The third is a
+   real gap and stays open: the native runtime, the private compositor and the pointer helper, lives
+   in an untracked directory, so a fresh machine gets it from the Fedora bootstrap or not at all.
+   What still closes this gate is a real machine with a systemd user session, cgroup delegation and
+   wlroots, where `./install.sh` runs to completion and the broker it starts answers.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts.
 5. Publish capabilities from evidence; unsupported closed tools remain explicit. The tier table,
    the local `doctor --report` and the issue forms now exist; what they need is a host this project

@@ -268,10 +268,24 @@ export async function distributionName(): Promise<{ id: string; versionId: strin
  * probe cannot award it: the most a probe can say is that this host is the same class as the one the
  * measurements were taken on, which is a reason to expect a test report rather than a bug report.
  */
+/**
+ * Whether this is a container rather than a machine.
+ *
+ * It matters for the tier, not for a capability: a Fedora 44 container reads as the measured host
+ * class by distribution alone, while having no user manager, no cgroup delegation and no compositor.
+ * Reporting it as that class invites a bug report against a host the measurements never covered.
+ * Both markers are written by the runtime itself, podman's first and Docker's second.
+ */
+export async function containerized(): Promise<boolean> {
+  return await exists("/run/.containerenv", false) || await exists("/.dockerenv", false);
+}
+
 export async function hostClassTier(): Promise<{ assigned: string; why: string }> {
   if (process.platform !== "linux")
     return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
   const { id, versionId } = await distributionName();
+  if (await containerized())
+    return { assigned: "Reasoned", why: "A container, whatever distribution it carries. It has no user manager, no cgroup delegation and no compositor of its own, so it is not the host class the measurements were taken on. See docs/support-tiers.md." };
   if (id === "fedora" && versionId === "44")
     return { assigned: "Reasoned", why: "This is the same host class the measurements were taken on, which is a reason to expect a test report rather than a bug report. It is not a claim that anything passed here: run bun run verify for that." };
   return { assigned: "Reasoned", why: "Linux, and not the one class this project measures. The primitives are documented; no host of this class has run the suite. See docs/support-tiers.md." };

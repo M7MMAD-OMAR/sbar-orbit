@@ -1,0 +1,48 @@
+# A clean Fedora 44 image for the unprivileged half of a fresh-machine installation.
+#
+# What it can show: that the tracked source, a pinned Bun and a frozen lockfile are enough
+# to resolve dependencies and run the read-only commands on a machine that has never seen
+# this project.
+#
+# What it cannot show: anything that needs a systemd user session, cgroup delegation, a
+# wlroots compositor or a browser. The broker service, autostart, the native display and
+# the shared resource budget are all out of reach here by construction, not by accident.
+
+FROM docker.io/library/fedora:44
+
+# unzip for the Bun release archive, tar for the source archive.
+RUN dnf -y install --setopt=install_weak_deps=False unzip tar && dnf clean all
+
+# Two variants from one file, so the same image build answers two different questions.
+#   WITH_DEPS=0  nothing from the prerequisite groups is installed, and preflight reports every
+#                one of them absent. This is the honest fresh-machine starting point.
+#   WITH_DEPS=1  the packages a person would install by hand are installed, so preflight's browser
+#                group is actually exercised rather than assumed. systemd is installed here for its
+#                two binaries only: the container still has no user session for them to talk to,
+#                which is the point, since preflight checks that a file exists and says so.
+ARG WITH_DEPS=0
+RUN if [ "$WITH_DEPS" = "1" ]; then \
+      dnf -y install --setopt=install_weak_deps=False \
+        chromium python3 systemd grim wl-clipboard xorg-x11-server-Xwayland \
+      && dnf clean all; \
+    fi
+
+# Pinned to the version the development workstation runs, with the digest from the release's
+# own SHASUMS256.txt, so the image does not drift when upstream publishes a new Bun.
+ARG BUN_VERSION=1.3.14
+ARG BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
+RUN curl -fsSL -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
+ && echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - \
+ && unzip -q /tmp/bun.zip -d /tmp \
+ && install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun \
+ && rm -rf /tmp/bun.zip /tmp/bun-linux-x64
+
+# An ordinary unprivileged account, because that is who installs a launcher link into ~/.local.
+RUN useradd --create-home orbit
+
+COPY inside.sh /usr/local/bin/fresh-machine-inside.sh
+RUN chmod 0755 /usr/local/bin/fresh-machine-inside.sh
+
+USER orbit
+WORKDIR /home/orbit
+ENTRYPOINT ["/usr/local/bin/fresh-machine-inside.sh"]
