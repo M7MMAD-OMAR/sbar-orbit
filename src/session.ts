@@ -364,6 +364,10 @@ export class Sessions {
     // Paused, because a restore replaces the profile under the session and a queued action would run
     // against a browser that is no longer the one it was queued for.
     if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before restoring");
+    // A pause acknowledges only after accepted actions have drained, so this is normally settled already.
+    // It is awaited anyway: a caller racing a resume against a restore would otherwise have the backend
+    // replaced under a session that believes it is running.
+    await session.tail.catch(() => {});
     const point = sequence === undefined ? session.restorePoints.at(-1) : session.restorePoints.find(held => held.sequence === sequence);
     const since = session.journal.filter(entry => entry.actor === "agent" && entry.outcome === "allow" && entry.sequence > (point?.sequence ?? 0));
     const verdict = canRestoreTo(point, since);

@@ -53,6 +53,10 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     // A supervised session stops and waits for the person rather than refusing outright, which is the
     // difference between this default and the autonomous mode.
     expect(payload(await act({ type: "click", selector: "button" }))).toMatchObject({ code: "POLICY_CONFIRMATION_REQUIRED" });
+    // A stop and wait is a decision, so it is journalled like a refusal. An action that vanished from the
+    // record because nobody answered it is the one a reader would most want to see.
+    expect((payload(await tool(a, "orbit_journal", session)) as { entries: { actionType: string; outcome: string }[] }).entries.at(-1))
+      .toMatchObject({ actionType: "click", outcome: "ask" });
     await a.close();
     // By sessionId, not by the whole creation payload: the narrowing above deliberately changed the
     // policy this session reports, which is the point of it.
