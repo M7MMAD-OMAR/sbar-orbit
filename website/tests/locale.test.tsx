@@ -28,3 +28,12 @@ test('English remains available with an Arabic language link', () => {
   expect(html).toContain('Your agent has work.');
   expect(html).toContain('href="/ar/" lang="ar"');
 });
+
+test('essential guidance is visible without disclosures or JavaScript', () => {
+  const html=renderToString(<App locale="ar" />);
+  expect(html).not.toContain('<details');
+  expect(html).toContain('id="architecture"');
+  expect(html).toContain('id="guide"');
+  expect(html).toContain('sbar-orbit connector-config');
+  expect(html).toContain('sbar-orbit preview');
+});

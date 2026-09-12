@@ -69,3 +69,8 @@ labelled accordingly. Terminal commands remain LTR in both layouts.
 
 Run `bun run scripts/limited.ts bun test website/tests/locale.test.tsx` from the
 repository root. Set `QA_LOCALE=ar` for the browser QA command to test Arabic.
+
+The landing page includes an illustrated bento overview, an always-visible
+architecture diagram and a three-step quick guide in both languages. The viewer
+tabs explain session controls; they do not control a live agent. Deeper technical
+reference stays on GitHub. No essential guidance is hidden in disclosures.

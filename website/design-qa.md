@@ -69,3 +69,38 @@ images, JavaScript errors, missing anchors or empty links. Menu, viewer controls
 disclosures and Arabic clipboard feedback passed. Screenshots were reviewed for
 Arabic shaping, spacing and illustration placement. Technical documents linked on
 GitHub remain English; Arabic link labels disclose that limitation.
+
+## Illustrated bento revision, 13 September 2026
+
+The revised middle-page concept is `exec-e2669256-a7a4-4fb6-8869-adcf428d6cea.png`.
+The original hero and support identity remain. The asymmetric overview reuses the
+approved private-spaces and viewer illustrations, with live translated labels.
+The architecture is native HTML/CSS so Arabic remains readable on narrow screens.
+The quick guide replaces FAQ disclosures with visible setup steps and commands.
+
+Intentional concept adjustments: existing brand artwork replaces the concept's
+invented orbit symbol. The viewer tile retains real explanatory tabs. Architecture
+copy describes screen and input separation, never filesystem or security isolation.
+The quick guide is an open three-step layout, not another set of bordered tiles.
+
+Visual comparison ledger:
+
+- Layout: asymmetric two-column bento follows the section concept; RTL reverses the reading order.
+- Palette: retained ivory, navy and sage tiles, with coral reserved for the broker.
+- Typography: live DM Sans and Noto Sans Arabic replace raster concept text, with wrapping reviewed.
+- Images: reused approved ink artwork, enlarged the viewer crop and removed excess space above the browser illustration.
+- Hierarchy: attached the optional viewer connector to the broker, with a separate mobile branch layout.
+- Guidance: visible numbered steps, LTR commands and an optional English reference replace all accordions.
+- First viewport: hero wording and images are unchanged; navigation now links to the in-page guide and hierarchy.
+
+Concept and local Orbit screenshots were inspected with view_image at a 1440-pixel
+browser width, plus mobile screenshots at 390 pixels. The concept was generated at
+1488 pixels; layout comparison accounts for the 48-pixel viewport difference.
+
+Verification limits: the shared Orbit service restarted during full browser runs.
+The Arabic run reached all four viewport checks, menu and clipboard checks, viewer
+tabs and desktop/mobile captures of all three changed sections, then failed on a
+later support screenshot. A final focused Arabic capture was reviewed after the
+image-size adjustment. The final English browser navigation timed out. These are
+partial browser runs, not a complete browser-suite pass. Type checking, production
+build and four locale/static-content tests passed. No diagnostic script is deployed.
