@@ -21,4 +21,26 @@ MISSING
   exit 1
 fi
 
+# Orbit runs everything inside a shared systemd user slice, the installer included. Without a usable
+# systemd user session there is no slice to put it in, and the budget refusal that follows reads like a
+# crash to somebody who has just downloaded this. Say what is missing instead.
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+  cat >&2 <<'NOSYSTEMD'
+This machine has no usable systemd user session.
+
+Orbit keeps every process it owns, the installer included, inside a shared CPU and memory budget on a
+systemd user slice. Without that session there is nothing to install into, so this stops here rather
+than installing something that cannot start.
+
+This is the expected result inside a container, over a bare ssh session with no lingering user
+manager, and on a Linux system that does not use systemd. On a normal desktop login it should work;
+if it does not, `systemctl --user status` is the place to look.
+
+The read-only check still runs anywhere:
+
+  ./bin/sbar-orbit preflight
+NOSYSTEMD
+  exit 1
+fi
+
 exec bun run scripts/limited.ts bun run scripts/install.ts "$@"
