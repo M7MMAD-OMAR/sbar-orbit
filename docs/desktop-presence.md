@@ -1,6 +1,6 @@
 # Desktop presence
 
-Status: the status source, the edge panel, the working indicator and a quickshell bar module exist and are measured. A tray icon remains a proposal.
+Status: the status source, the edge panel, the working indicator, the settings window with its search, starting with the desktop, and a quickshell bar module exist and are measured. A tray icon remains a proposal.
 
 ## The request
 
@@ -41,6 +41,53 @@ sbar-orbit panel --settings       # open the settings window at once
 A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks the protocol, and it never becomes one of the person's windows. By default it is the project mark from `brand/orbit-mark-small.svg`, sixteen pixels wide, drawn rather than styled because it is a shape and not a rectangle. A capsule, a bare dot and a dot with a count remain as alternatives. Whichever is chosen says the current state by colour: grey when nothing runs, the working colour while an agent works, amber when a session is paused, dim when the broker is off. There is no number on it and nothing else on the screen. It blinks once when a session starts or an application or tab appears. Measured on the person's main screen with the capsule chosen, the surface is 29 by 53 pixels, of which the capsule is 5 by 29 and the rest is transparent padding, so the pointer has something to hit without aiming at the very edge of the glass. The mark is wider than that, so its surface is larger, but the padding around it is the same.
 
 Resting the pointer on it opens one card per session: agent, a state chip, task, what is on screen, which tab or window of how many, and the current action, with a Viewer and a Settings button under them. Clicking a card opens the viewer, a left click on the capsule opens the viewer, a right click opens the settings. Opening waits 220 ms and closing waits 320 ms, so a pointer crossing the edge of the screen on its way elsewhere does not flash the whole list. The surface is pinned to one end of its edge with a margin that puts the capsule where the person left it, because a surface anchored to a single edge is centred by the compositor and the capsule would then jump by half the height of the cards every time they opened. The card keeps its place in the layout even while closed, so the surface never resizes under the pointer; what changes is the surface's input region, which is tightened back onto the capsule so a closed panel swallows no clicks in the card-sized rectangle beside it.
+
+### Starting with the desktop, and one mark whoever starts it
+
+`sbar-orbit service install` enables both the broker and the mark. Two paths are installed because a
+desktop honours one or the other and nothing here can tell which from the inside: a user unit wanting
+`graphical-session.target`, which is where a layer shell surface can expect a compositor, and an XDG
+autostart entry for the desktops that never reach that target under a session manager the person may not
+be running.
+
+Both at once is the point rather than a hazard. The panel binds a datagram socket at
+`$XDG_RUNTIME_DIR/sbar-orbit/panel.sock` before it draws anything: binding is the claim, and a second
+panel that cannot bind sends its request to the first and leaves with status zero. That is what makes
+two autostart paths safe, what makes `sbar-orbit settings` reach a panel that is already running, and
+what lets the unit carry `Restart=on-failure` without retrying the loser of a race forever. A socket file
+left behind by a panel that died is told apart from a live one by sending to it: nothing is listening on
+a stale path, so the send fails rather than disappearing.
+
+`sbar-orbit autostart status` reports both paths and says what it cannot see, which is a compositor that
+starts the panel from its own configuration.
+
+### The settings window, and its search
+
+A right click on the mark opens it, so does `sbar-orbit settings`, and so does the launcher entry that
+`autostart enable` installs, which is how a person who has never opened a terminal finds Orbit at all.
+
+Every setting is described once, in `desktop/orbit_settings.py`: its default, its range, its group, a
+sentence of description, and the words a person might search for. The panel validates with it, the
+settings window builds its rows from it, `sbar-orbit config` reads and writes through it, and the search
+box filters on it. Before that, the panel held the validation inline and the window repeated the names in
+its labels, which was fine while clicking was the only way to change a setting and stops being fine the
+moment a command line exists: a value accepted at a terminal and silently clamped on screen is worse than
+a refusal.
+
+The search matters because there are twenty odd settings across six groups, which is past the number a
+person scans, and because the word someone has in mind is usually not the word on the label. The terms
+are carried in English and in Arabic: the labels stay English, like all shipped text in this project, and
+the person this was built for does not search in English. Measured inside a private display, which is
+where the panel can be photographed without touching the person's screen: "boot" leaves only the Startup
+group standing, and that word appears nowhere in the window; "توهج" leaves only the three glow settings.
+
+The window also opens a browser the person owns, paused, so they can drive it themselves in the viewer.
+It is named for them rather than for an agent, because the whole premise of the mark is that you can tell
+whose work you are watching.
+
+Changes made anywhere arrive everywhere: the panel watches its settings file, so `sbar-orbit config set`
+is on screen before the command returns. The panel's own saves come back through the same watch, and
+comparing the loaded settings against the ones in memory is what makes that a no-op rather than a loop.
 
 ### One body, not two backgrounds
 

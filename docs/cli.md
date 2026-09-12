@@ -63,6 +63,59 @@ distribution id and version, and the tier this host class may claim. It collapse
 the work tree, as above: it is built from a browser profile. See [support tiers](support-tiers.md) for
 which report to file.
 
+## Starting with the desktop
+
+```sh
+sbar-orbit service install
+```
+
+installs the units and turns Orbit on: the broker at login, and the mark with the graphical session.
+That is the default because a person who installs something meant to be waiting for their agents should
+not have to read documentation to discover it is not running. `sbar-orbit service install --no-autostart`
+writes the units and enables nothing, which is what this command used to do.
+
+```sh
+sbar-orbit autostart status
+```
+
+answers the only question that matters, `startsWithTheDesktop`, and says what it cannot see. It reports
+on two paths, because a desktop honours one or the other and Orbit cannot tell which from here: a systemd
+user unit wanting `graphical-session.target`, and an XDG autostart entry for the desktops that never
+reach it. Both may be enabled at once. The panel claims a socket at startup, so a second copy hands over
+its request and exits with status zero rather than drawing a second mark; that is also why the unit can
+carry `Restart=on-failure` without retrying the loser of a race forever.
+
+A compositor that starts the panel from its own configuration, a Hyprland `exec-once` line for example,
+is invisible to this status. It reports what Orbit installed, not everything on the machine that might
+start it. Surviving a full logout rather than only a login needs `loginctl enable-linger $USER`, which
+requires elevation and is therefore never done for you.
+
+`sbar-orbit autostart disable` turns both paths off. The launcher entry stays: it is how a person finds
+Orbit, not how it starts.
+
+## Settings
+
+Every setting is described in one place, `desktop/orbit_settings.py`, which the panel, the settings
+window and the command line all read. A value the command line accepts is therefore the value the panel
+keeps, rather than one it silently clamps afterwards.
+
+```sh
+sbar-orbit settings              # the window, searchable, on a running panel or a new one
+sbar-orbit config list           # every setting, its value and its default
+sbar-orbit config search glow    # or search توهج, or boot, or transparent
+sbar-orbit config get size
+sbar-orbit config set size 14
+sbar-orbit config reset          # one setting, or all of them
+```
+
+`config` needs no broker and no GTK, so it works over ssh and inside a service. The panel watches its
+settings file, so a change from a terminal is on screen before the command returns. Out of range values
+are clamped and the clamp is printed; an unusable one is refused rather than stored.
+
+The search answers the description and a list of terms, in English and in Arabic, not only the label:
+"boot" finds the startup switch, whose window says neither word, and "توهج" finds the three glow
+settings. Labels are English, like all shipped text here; the person searching often is not.
+
 ## Keeping a broker available
 
 `sbar-orbit serve` runs in the foreground and binds a fresh socket each time, so every client must be told the new path. A managed broker instead binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so generated host configuration survives a restart.

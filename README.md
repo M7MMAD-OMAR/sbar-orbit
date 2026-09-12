@@ -40,10 +40,17 @@ Requires Linux user cgroup delegation, Bun and Chrome/Chromium. The native backe
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
-./bin/sbar-orbit serve
+./bin/sbar-orbit service install
 ```
 
-The broker prints a socket path. Set `ORBIT_SOCKET` to that value in another terminal, then use `./bin/sbar-orbit session create` or generate MCP configuration with `./bin/sbar-orbit connector-config`. [CLI guide](docs/cli.md).
+That installs the broker and the desktop mark and starts both with your desktop, which is the default: a
+thing meant to be waiting for your agents should be running. `./bin/sbar-orbit service install
+--no-autostart` writes the units and enables nothing. To run it in the foreground instead, use
+`./bin/sbar-orbit serve`, which prints a socket path to set as `ORBIT_SOCKET` in another terminal.
+
+Then `./bin/sbar-orbit session create`, or generate MCP configuration with
+`./bin/sbar-orbit connector-config`. A right click on the mark opens the settings, which are searchable,
+and `./bin/sbar-orbit config search WORD` is the same settings from a terminal. [CLI guide](docs/cli.md).
 
 ## Scope
 

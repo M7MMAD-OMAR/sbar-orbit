@@ -99,6 +99,24 @@ try {
   report.changedFromTheTerminal = { before: before.out.trim(), applied: changed.ok, after: (await config_("get", "style")).out.trim() };
   report.afterTheChange = await shot("after-config-set");
 
+  // Every shape the mark can take, on the edge it would sit on, captured rather than described. The
+  // person asking what this looks like should not have to read four adjectives and imagine it.
+  const shapes: Record<string, string> = {};
+  for (const style of ["mark", "bar", "dot", "count"]) {
+    await config_("set", "style", style);
+    await Bun.sleep(1200);
+    shapes[style] = await shot(`mark-${style}`);
+  }
+  report.shapes = shapes;
+  // And on another edge, because placement is the setting people change first.
+  await config_("set", "style", "mark");
+  await config_("set", "edge", "left");
+  await Bun.sleep(1200);
+  report.onTheLeftEdge = await shot("mark-left-edge");
+  await config_("set", "edge", "top");
+  await Bun.sleep(1200);
+  report.onTheTopEdge = await shot("mark-top-edge");
+
   // What the panel said about itself while all of that happened.
   report.panelOutput = (await Bun.file(log).text().catch(() => "")).split("\n").filter(Boolean).slice(-8);
   report.sessionTabs = (await call(broker.socket, "session.observe", { sessionId: display.sessionId }) as { presence: { tabs: unknown[] } }).presence.tabs.length;
