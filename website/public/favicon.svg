@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32" fill="none" role="img" aria-label="Sbar Orbit">
+  <!-- One fixed colour. A favicon is rendered outside the page, where prefers-color-scheme is not
+       reliably evaluated, so a theme swap here risks an invisible tab icon. -->
+  <g color="#204c87">
+    <path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46"
+          stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/>
+  </g>
+</svg>

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env*
+evidence/
+public/images/*.png
+asset-sources/
