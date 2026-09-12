@@ -2,6 +2,7 @@ import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
+import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
 
@@ -89,8 +90,13 @@ export class BrowserBackend {
     });
   }
 
-  static async create(profile: string, size: Viewport = defaultViewport, launch: ChromeLaunchOptions = {}, lease: string[] | "any" = "any", onBlocked: (origin: string) => void = () => {}): Promise<BrowserBackend> {
-    const owned = await launchChrome(profile, size, launch);
+  static async create(profile: string, size: Viewport = defaultViewport, launch: ChromeLaunchOptions = {}, lease: string[] | "any" = "any", onBlocked: (origin: string) => void = () => {}, egress?: EgressLease): Promise<BrowserBackend> {
+    // A confined browser is started through a wrapper and reached at the relay, not where it says it
+    // is: inside its own network namespace, the port it publishes is not a port on this machine. The
+    // wrapper execs the executable the caller named, so a cloned profile is still opened by its owner.
+    const owned = await launchChrome(profile, size, egress?.tier === "namespace"
+      ? { ...launch, executable: egress.launch.executable, extraArgs: egress.launch.args, endpointPort: egress.endpointPort }
+      : launch);
     // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
     // seconds with four other sessions working; that is contention, not a missing element. Ten
     // seconds made a missing element cost every caller ten seconds, so this sits in between.

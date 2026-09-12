@@ -26,12 +26,33 @@ export type ChromeLaunchOptions = {
   sessionBus?: string;
   /** Load the extensions present in the profile. Off by default, as for a fresh profile there are none. */
   extensions?: boolean;
+  /**
+   * Arguments appended to the browser's own. Used by the egress lease to point the browser at the only
+   * route out it has, which is a setting on the browser and therefore not where the enforcement lives.
+   */
+  extraArgs?: string[];
+  /**
+   * Where CDP is reachable, when that is not where the browser says it is.
+   *
+   * A confined browser owns its own loopback, so the port it writes into DevToolsActivePort is a port
+   * inside its network namespace and not one on this machine. The path in that file is still its path.
+   */
+  endpointPort?: number;
 };
+
+/**
+ * Which browser a session gets when the caller has not named one. The first present install, which is
+ * correct only for a profile Orbit created: a profile written by another install can be decrypted by
+ * that install alone, so a caller handing one over names its owner.
+ */
+export function defaultChromeExecutable(): string | undefined {
+  return chromeExecutables.find(path => Bun.file(path).size > 0);
+}
 
 /** Own Chrome separately from its CDP connection, including failed startup. */
 export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
   await requireResourceBudget();
-  const executable = options.executable ?? chromeExecutables.find(path => Bun.file(path).size > 0);
+  const executable = options.executable ?? defaultChromeExecutable();
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");
   if (options.executable && !(Bun.file(options.executable).size > 0)) throw new OrbitError("UNSUPPORTED", "The requested browser executable is not present");
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined &&
@@ -42,7 +63,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   const owner = Bun.spawn(["/usr/bin/python3", resolve(import.meta.dir, "native/supervise.py"), join(profile, "owner.json"), executable,
     `--user-data-dir=${profile}`, "--headless", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
     "--disable-background-networking", "--disable-dev-shm-usage", "--no-sandbox", `--password-store=${options.passwordStore ?? "basic"}`,
-    ...(options.extensions ? [] : ["--disable-extensions"]), "about:blank"],
+    ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"],
     { env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
   let browser: Browser | undefined;
   let closing: Promise<void> | undefined;
@@ -64,7 +85,8 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     while (Date.now() < deadline && owner.exitCode === null) {
       try {
         const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
-        if (port && /^\d+$/.test(port) && path?.startsWith("/devtools/browser/")) { endpoint = `ws://127.0.0.1:${port}${path}`; break; }
+        const reachable = options.endpointPort ? String(options.endpointPort) : port;
+        if (port && /^\d+$/.test(port) && path?.startsWith("/devtools/browser/")) { endpoint = `ws://127.0.0.1:${reachable}${path}`; break; }
       } catch {}
       await Bun.sleep(25);
     }

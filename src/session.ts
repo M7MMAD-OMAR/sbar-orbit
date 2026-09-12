@@ -1,4 +1,5 @@
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { homedir } from "node:os";
 import { AccountLease } from "./profiles";
 import { join } from "node:path";
@@ -6,7 +7,9 @@ import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
-import { describeMachine } from "./platform";
+import { describeMachine, detectPlatform, type PlatformCapabilities } from "./platform";
+import { openEgressLease, type EgressLease } from "./egress";
+import { defaultChromeExecutable } from "./chrome";
 import { cloneProfile } from "./clone";
 import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { consultAdvisor } from "./advisor";
@@ -25,6 +28,12 @@ interface Session {
   journal: JournalEntry[];
   /** Releases anything the clone needed, such as its filtered secret bus. */
   releaseClone?: () => Promise<void>;
+  /**
+   * Which layer held this session's origin lease, and the lease itself where it is held below the
+   * browser. A reader of the journal must be able to tell the two apart: one holds a page that
+   * misbehaves, the other holds a browser that does.
+   */
+  egress: EgressLease;
   /** Off-lease requests the page itself made, which no agent action would show. */
   blockedOrigins: string[];
   /**
@@ -59,7 +68,15 @@ export class Sessions {
   // where one after another all start; the queue costs the later ones only the earlier ones' start.
   private creationTail: Promise<unknown> = Promise.resolve();
   private shuttingDown = false;
+  /**
+   * Probed once. The probe starts a sandbox to find out whether it can, and a session creation is not
+   * the place to pay for that repeatedly; nothing it reports changes while the broker runs.
+   */
+  private probed?: Promise<PlatformCapabilities>;
   constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts")) {}
+  private capabilities() { return this.probed ??= detectPlatform(); }
+  /** Where a session's route out lives. Short, because what goes in it are unix sockets. */
+  private get egressRoot() { return join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress"); }
   private get(id: unknown): Session {
     const session = this.sessions.get(text(id, "sessionId"));
     if (!session) throw new OrbitError("SESSION_NOT_FOUND", "Unknown session");
@@ -68,7 +85,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -113,32 +130,59 @@ export class Sessions {
       // Requests the PAGE made and the lease refused. The agent never asked for these, so they are
       // recorded separately from its own denied actions.
       const blockedOrigins: string[] = [];
+      // The lease below the browser, opened before the browser so the browser has somewhere to go.
+      //
+      // Only for a session whose origins are bounded: with "any" there is nothing to enforce, and a
+      // namespace whose proxy forwards everything would add a hop and no boundary. That is also what
+      // keeps every existing session on the path it was measured on, since a fresh profile is "any".
+      //
+      // The origin set is read on every request rather than copied here, so `session.narrow` and an
+      // immune deny tighten this layer too. A live session's policy is the one that decides.
+      let live: Session | undefined;
+      // Named after the session's own id, which Orbit generated. The profile key is a label a caller
+      // chose, and a directory path built from one is a path a caller chose.
+      const id = crypto.randomUUID();
+      const egress = input.backend !== "browser" || policy.origins === "any" ? undefined : await openEgressLease({
+        // Not under the workspace root: these are sockets, a unix socket path is capped at 108 bytes,
+        // and a workspace path plus a session id already spends most of that. The runtime directory is
+        // short, private to this user, and cleared when the session ends.
+        directory: join(this.egressRoot, id.slice(0, 8)),
+        executable: clone?.launch.executable ?? defaultChromeExecutable() ?? "",
+        profile,
+        confinable: (await this.capabilities()).confinedEgress,
+        origins: () => {
+          const current = live?.policy.origins ?? policy.origins;
+          return current === "any" ? [] : current;
+        },
+      });
       const queued = Date.now();
       const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        return input.backend === "fedora" ? await FedoraBackend.create(surface) : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin));
+        return input.backend === "fedora" ? await FedoraBackend.create(surface)
+          : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
       this.creationTail = start.catch(() => {});
       let backend: BrowserBackend | FedoraBackend;
       try { backend = await start; }
-      catch (error) { await clone?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
+      catch (error) { await egress?.close(); await clone?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       if (account && backend instanceof BrowserBackend) {
         try { if (restoredState) await backend.context.setStorageState(restoredState); }
-        catch (error) { await backend.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
+        catch (error) { await backend.close(); await egress?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
       }
-      const id = crypto.randomUUID();
       const journals = join(this.root, "journals");
       await mkdir(journals, { recursive: true, mode: 0o700 });
       const journalPath = join(journals, `${id}.jsonl`);
       const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
+        egress: egress ?? { tier: "in-browser", launch: { executable: "", args: [] }, endpointPort: 0, refused: () => [], close: async () => {} },
         restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [], tainted: false };
       // The first line says what was agreed to, so a reader knows what the rest of the file was
       // judged against without having to ask the broker that is no longer running.
       void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
         actionType: "session.create", actionClass: "read", outcome: "allow",
-        reason: `${String(input.backend)} session, ${policy.mode}, origins ${policy.origins === "any" ? "any" : policy.origins.join(" ") || "none"}, allow ${policy.allow.join(" ")}, deny ${policy.deny.join(" ") || "none"}${input.cloneOf === undefined ? "" : ", from a cloned profile"}` });
+        reason: `${String(input.backend)} session, ${policy.mode}, origins ${policy.origins === "any" ? "any" : policy.origins.join(" ") || "none"}, allow ${policy.allow.join(" ")}, deny ${policy.deny.join(" ") || "none"}${input.cloneOf === undefined ? "" : ", from a cloned profile"}${egress === undefined ? "" : `, egress held ${egress.tier === "namespace" ? "below the browser in a network namespace of its own" : "inside the browser only, because this host cannot confine one"}`}` });
+      live = session;
       this.sessions.set(id, session);
       // Whichever way the session ends, its profile goes with it: account state was copied out
       // while it ran, so nothing in it outlives the session, and a retained one is disk that
@@ -148,7 +192,7 @@ export class Sessions {
         session.state = "closed"; this.leases.delete(lease);
         // Restore points go before the profile does. Each is a copy of the person's live cookies, and
         // a read only snapshot inside the profile would stop the profile itself being removed.
-        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.())
+        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).then(() => session.egress.close())
           .then(async () => { if (session.restoreStore) await clearRestorePoints(session.restoreStore); })
           .finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
       });
@@ -306,7 +350,8 @@ export class Sessions {
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
-    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints };
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints,
+      egressTier: session.egress.tier, refusedAuthorities: session.egress.refused() };
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {
