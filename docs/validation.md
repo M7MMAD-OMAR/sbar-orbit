@@ -152,3 +152,32 @@ The suites are sensitive to machine contention rather than flaky in themselves. 
 This is a confirmed defect with a regression test, not yet a confirmed explanation of the participant's report. Participant-read viewer cost figures remain required before another resource-acceptance claim.
 
 The participant's desktop viewer runs outside Orbit's runtime cgroup. Prior headless-viewer measurements do not prove acceptable cost inside the actual desktop app. Further interactive trials are on hold pending investigation of capture/decode/compositing cost and a participant-controlled low-cost viewing mode. Preserve the failed result when judging release readiness.
+
+## A supervisor killed on its own
+
+Recorded 12 September 2026, Fedora 44, one host, under `scripts/limited.ts`.
+
+A native application is owned by a small supervisor process, and the supervisor asked to stop reaps its
+whole tree on the way out. That path was already covered. The path that was not: a supervisor killed
+outright, which runs nothing at all. Its application kept running, became nobody's child, and outlived
+the private runtime directory the session had given it. The broker watched the supervisor it spawned,
+so nothing reported the loss.
+
+The failure was reproduced before it was fixed, not after. With the fix removed, the end to end check
+killed the supervisor of a mapped fixture application and the application was still alive when the
+check gave up. With the fix in place the same check passes, the session keeps working, and a second
+application launches into it.
+
+| Check | What it exercises | Result |
+|---|---|---|
+| `tests/owned-group.test.ts`, 5 checks | An application that ignores a graceful stop, one that accepts it, a process from another session, a process that does not lead its own group, and identifiers that could reach something else | Pass |
+| `tests/native-crash.test.ts`, the supervisor case | A real Fedora session: kill only the supervisor, then observe and launch again | Pass, and failed first against the unfixed code |
+
+Ownership is checked before any signal. A process identifier alone is not evidence, because the number
+can be reused between the supervisor's death and the sweep, so the group is signalled only when the
+process leads its own group and its own environment names this session's runtime directory. The escalation
+from a graceful stop to a forced one is measured by the first test against an application that ignores
+the first signal.
+
+This covers one failure mode of one component. The rest of gate 2, account coverage and applications
+beyond the four already launched, is untouched by it.
