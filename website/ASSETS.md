@@ -22,3 +22,7 @@ WebP conversion preserves the generated artwork. Original PNG copies used during
 ## Typography and icons
 
 DM Sans is distributed under the SIL Open Font License included in `public/fonts/OFL.txt`. Phosphor icons are provided by `@phosphor-icons/react` under its MIT license. Dependency licenses remain applicable separately from this repository's Apache-2.0 license.
+
+Arabic typography uses Noto Sans Arabic Variable from the pinned Fontsource package.
+Vite bundles the font subsets locally, with no request to a remote font provider.
+The redistributed SIL Open Font License is in `public/fonts/NotoSansArabic-OFL.txt`.

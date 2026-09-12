@@ -56,3 +56,16 @@ Local evidence, intentionally excluded from source control:
 Published at https://sbar-orbit-site.default-1a8.workers.dev/. The home page and both hero variants plus the support image return HTTP 200. Unknown routes and the removed diagnostic script return HTTP 404. Response headers include nosniff and frame protection; initial HTML contains the real page content.
 
 The public page heading was read through Orbit. Public-site screenshot and interaction attempts hit Orbit browser timeouts, so live visual and interaction verification is not measured. The same production assets passed the complete local Chromium visual and interaction audit. Initial Python HTTP requests received 403; subsequent curl requests returned the expected 200/404 responses.
+
+## Arabic edition, 13 September 2026
+
+Rewrote the landing-page copy in conversational Arabic, including accessibility
+labels, feedback, FAQs and support. Added a persistent language switch, RTL layout,
+local Noto Sans Arabic, RTL tab keyboard navigation and LTR installation commands.
+Both language pages include static HTML and their own canonical metadata.
+
+Arabic browser checks passed at 1440, 768, 390 and 320 pixels: no overflow, broken
+images, JavaScript errors, missing anchors or empty links. Menu, viewer controls,
+disclosures and Arabic clipboard feedback passed. Screenshots were reviewed for
+Arabic shaping, spacing and illustration placement. Technical documents linked on
+GitHub remain English; Arabic link labels disclose that limitation.

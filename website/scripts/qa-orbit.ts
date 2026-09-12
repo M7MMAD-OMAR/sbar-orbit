@@ -1,6 +1,8 @@
 import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
 const socket = `${process.env.XDG_RUNTIME_DIR}/sbar-orbit/broker.sock`;
-const base = 'http://127.0.0.1:4196/';
+const arabic = process.env.QA_LOCALE === 'ar';
+const pagePath = arabic ? 'dist/ar/index.html' : 'dist/index.html';
+const base = `http://127.0.0.1:4196/${arabic ? 'ar/' : ''}`;
 async function rpc(method:string, params:Record<string,unknown> = {}) {
   const response = await fetch('http://localhost/rpc', { unix: socket, method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({method,params}) });
   const data = await response.json() as {ok:boolean;result:any;error?:{message:string}};
@@ -8,9 +10,9 @@ async function rpc(method:string, params:Record<string,unknown> = {}) {
   return data.result;
 }
 await mkdir('evidence',{recursive:true});
-const productionHTML=(await readFile('dist/index.html','utf8')).replaceAll('<script src="/__qa-capture.js"></script>','');
+const productionHTML=(await readFile(pagePath,'utf8')).replaceAll('<script src="/__qa-capture.js"></script>','');
 await writeFile('dist/__qa-capture.js',await readFile('scripts/qa-capture.js'));
-await writeFile('dist/index.html',productionHTML.replace('<head>','<head><script src="/__qa-capture.js"></script>'));
+await writeFile(pagePath,productionHTML.replace('<head>','<head><script src="/__qa-capture.js"></script>'));
 const created = await rpc('session.create',{backend:'browser',agentName:'Codex',taskName:'Orbit website responsive and interaction audit',viewport:{width:1440,height:1000}});
 const sessionId=created.sessionId;
 await writeFile('evidence/session-id.txt',sessionId);
@@ -53,11 +55,11 @@ try {
     const metrics=JSON.parse((report[String(width)] as {text:string}).text);
     if(metrics.overflow||metrics.brokenImages.length||metrics.errors.length||metrics.missingAnchors.length||metrics.emptyLinks) failures.push(`${width}px: ${JSON.stringify(metrics)}`);
   }
-  if((report.copy as {text:string}).text !== 'Copied') failures.push(`Clipboard: ${JSON.stringify(report.copy)}`);
+  if((report.copy as {text:string}).text !== (arabic ? 'تم النسخ' : 'Copied')) failures.push(`Clipboard: ${JSON.stringify(report.copy)}`);
   console.log(JSON.stringify({widths:[1440,768,390,320],failures,copy:report.copy,sessionId,evidence:'evidence/browser-audit.json'},null,2));
   if(failures.length) process.exitCode=1;
 } finally {
-  await writeFile('dist/index.html',productionHTML);
+  await writeFile(pagePath,productionHTML);
   await unlink('dist/__qa-capture.js').catch(()=>{});
   await rpc('session.stop',{sessionId}).catch(()=>{});
 }
