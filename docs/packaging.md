@@ -1,6 +1,6 @@
 # Source releases
 
-The first published release is `0.1.0-alpha.2`. `0.1.0-alpha.1` was tagged and packaged locally and never published, so nothing but this repository's history refers to it. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
+The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
 
 ## Build
 
@@ -29,9 +29,9 @@ The verifier accepted all 98 source entries in the existing `0.1.0-alpha.1` arch
 ## Use
 
 ```sh
-sha256sum -c sbar-orbit-0.1.0-alpha.2-source.tar.gz.sha256
-tar -xzf sbar-orbit-0.1.0-alpha.2-source.tar.gz
-cd sbar-orbit-0.1.0-alpha.2-source
+sha256sum -c sbar-orbit-0.1.0-alpha.3-source.tar.gz.sha256
+tar -xzf sbar-orbit-0.1.0-alpha.3-source.tar.gz
+cd sbar-orbit-0.1.0-alpha.3-source
 bun install --frozen-lockfile --ignore-scripts
 ./bin/sbar-orbit serve
 ```
