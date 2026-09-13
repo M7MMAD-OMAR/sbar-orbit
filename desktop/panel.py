@@ -83,10 +83,13 @@ os.environ.pop("LD_PRELOAD", None)
 os.environ.pop("ORBIT_PANEL_PRELOADED", None)
 
 # How deep the working glow reaches in from the screen edge. A hairline had nothing to fade across;
-# this is the distance the wash has to die out over. Four strips at this depth cost about 0.9 MiB of
-# buffer between them on a 2560 by 1440 output, against tens of megabytes for one surface covering
-# the whole output with a transparent middle.
-FRAME_GLOW = 28
+# this is the distance the wash has to die out over. The depth is what makes the glow readable from
+# across the room: at a shallow depth the only way to be seen is to be dense, and dense against the
+# edge is a border. So the wash keeps a bright core against the edge and spends the rest of this
+# distance dying out, which is a large soft area rather than a small hard one. Four strips at this
+# depth cost about 3.8 MiB of buffer between them on a 2560 by 1440 output, against tens of megabytes
+# for one surface covering the whole output with a transparent middle.
+FRAME_GLOW = 120
 OPEN_DELAY_MS = 220
 CLOSE_DELAY_MS = 320
 PRESENCE_WHILE_COLLAPSED_S = 10
@@ -138,23 +141,29 @@ window.orbit-clear, window.orbit-clear.background { background: none; background
   background: none; background-color: transparent; background-image: none; box-shadow: none; }
 /* The working glow. Not a border: a wash that is densest against the screen edge and gone before it
    reaches anything the person is reading, so the screen reads as in use without a line drawn round
-   it. The four strips overlap at the corners, and the overlap is wanted: two soft washes crossing is
-   what gives a corner its vignette instead of a mitred join. */
+   it. The stops are bunched near the edge and thin out over the rest of the depth, which is what
+   lets the glow cover a large part of the screen while the part with any weight in it stays out at
+   the edge. The four strips overlap at the corners, and the overlap is wanted: two soft washes
+   crossing is what gives a corner its vignette instead of a mitred join. */
 .orbit-frame box.on.pulse {
   animation: orbit-glow 2600ms ease-in-out infinite;
 }
 .orbit-frame box.on.top { background-image: linear-gradient(to bottom,
-  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
-  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+  alpha(@orbit-frame-color, 0.80) 0%, alpha(@orbit-frame-color, 0.45) 18%,
+  alpha(@orbit-frame-color, 0.20) 40%, alpha(@orbit-frame-color, 0.07) 68%,
+  alpha(@orbit-frame-color, 0) 100%); }
 .orbit-frame box.on.bottom { background-image: linear-gradient(to top,
-  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
-  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+  alpha(@orbit-frame-color, 0.80) 0%, alpha(@orbit-frame-color, 0.45) 18%,
+  alpha(@orbit-frame-color, 0.20) 40%, alpha(@orbit-frame-color, 0.07) 68%,
+  alpha(@orbit-frame-color, 0) 100%); }
 .orbit-frame box.on.left { background-image: linear-gradient(to right,
-  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
-  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+  alpha(@orbit-frame-color, 0.80) 0%, alpha(@orbit-frame-color, 0.45) 18%,
+  alpha(@orbit-frame-color, 0.20) 40%, alpha(@orbit-frame-color, 0.07) 68%,
+  alpha(@orbit-frame-color, 0) 100%); }
 .orbit-frame box.on.right { background-image: linear-gradient(to left,
-  alpha(@orbit-frame-color, 0.55) 0%, alpha(@orbit-frame-color, 0.27) 32%,
-  alpha(@orbit-frame-color, 0.09) 64%, alpha(@orbit-frame-color, 0) 100%); }
+  alpha(@orbit-frame-color, 0.80) 0%, alpha(@orbit-frame-color, 0.45) 18%,
+  alpha(@orbit-frame-color, 0.20) 40%, alpha(@orbit-frame-color, 0.07) 68%,
+  alpha(@orbit-frame-color, 0) 100%); }
 /* Breathing, not flashing. A working indicator is looked at out of the corner of an eye for minutes
    at a time, so the swing is small and slow enough to read as alive rather than as an alarm. */
 @keyframes orbit-glow { 0%, 100% { opacity: 0.62; } 50% { opacity: 1; } }
@@ -209,8 +218,10 @@ def surface_css(settings):
     """The rules that must outrank the theme. The frame colour rides along because the rule that uses
     it lives here too, and a colour name defined in a lower provider would be the theme's to shadow."""
     chosen = settings["frameColor"]
-    # A name rather than a value, so the glow moves with the theme instead of being pinned to whatever
-    # the accent happened to be on the day it was chosen.
+    # Orbit's own blue by default, the same value the agent pointer is drawn in, because both sit over
+    # a wallpaper and an application nobody chose and neither can borrow its contrast from a palette.
+    # The word accent asks for the desktop's colour instead, as a name rather than a value, so the
+    # glow moves with the theme instead of being pinned to whatever the accent was that day.
     value = "@accent_bg_color" if chosen == "accent" else chosen
     return SURFACE_CSS + f"\n@define-color orbit-frame-color {value};\n".encode()
 

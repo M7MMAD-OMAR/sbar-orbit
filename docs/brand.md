@@ -61,11 +61,13 @@ The lockups exist as raster only. Anything that needs a vector lockup, print or 
 
 The raster artwork does not hold one blue. Sampled: `#1f4e8d` in `mark-blue.png`, `#18467f` in `lockup-arabic-blue.png`, and the two dark fields differ as well, `#022154` against `#061d4a`. The SVGs are on the pinned value; the rasters drift and need re-exporting against it.
 
-Three values in the product are fixed and are not identity colours. The agent pointer is `#255fce` and the human pointer is `#167653`; they sit over arbitrary application content, so their contrast cannot depend on a palette. The panel states are `#8a8a8a` idle, `#4caf50` working, `#ff9800` paused, `#585858` offline.
+Three values in the product are fixed and are not identity colours. The agent pointer is `#255fce` and the human pointer is `#167653`; they sit over arbitrary application content, so their contrast cannot depend on a palette. The panel states are `#8a8a8a` idle, `#255fce` working, `#ff9800` paused, `#585858` offline.
+
+`#255fce` now carries working everywhere it appears: the pointer, the mark while an agent acts, and the wash at the screen edges. That is one colour for one meaning, and it is why the mark's blue and the brand's blue are not the same value. The brand is the navy `#204c87`; working is the vivid `#255fce`, which reads as a light rather than as the mark's own colour. Keep the gap between those two values: closing it would leave the mark looking lit whenever it is drawn.
 
 The state colours are the panel's, and the viewer no longer shares them. Its interface carries no hue at all: state there is brightness, motion and words, which is a deliberate divergence and not drift. See [viewer design](viewer-design.md). The pointer is the one thing the two surfaces still agree on, and only because it is drawn over somebody else's page rather than over either design.
 
-That is why the brand accent is blue. Green and orange already carry meaning in the same status bar, and a green mark would be read as an agent that is working.
+The brand accent is blue because the alternatives were already spoken for: orange carries paused in the same status bar, and green carried working until working moved to blue. It stays blue now for the reason above, that the navy and the working blue are far enough apart to read as different things.
 
 ## Type
 
@@ -91,4 +93,4 @@ The QML copy is the one exception to the 24 grid. It carries the same drawing wi
 
 1. Fill the whole mark with a single flat colour. If it stops reading, the gap or the stroke is wrong.
 2. Render at 16px in black on white. If the two squares merge, use the small variant.
-3. Put it on `#4caf50`. The mark must still read as a mark, not as a status light.
+3. Paint it in `#255fce`, the working colour, beside a copy in the brand navy `#204c87`. Both must still read as the mark. The check used to be that the mark survived the working colour, back when working was green and no confusion was possible; now that working is a blue of its own the risk is the other way round, that the two blues collapse into one and the mark looks lit whenever it is drawn.

@@ -66,7 +66,7 @@ print(json.dumps(s.validate({"edge": "diagonal", "size": "huge", "position": 9, 
   expect(loaded.position).toBe(1);
   // A good colour beside a bad one keeps the good one.
   expect(loaded.colors.idle).toBe("#112233");
-  expect(loaded.colors.working).toBe("#4caf50");
+  expect(loaded.colors.working).toBe("#255fce");
   expect(loaded.colors).not.toHaveProperty("wat");
   expect(loaded).not.toHaveProperty("unknown");
 });
@@ -141,7 +141,7 @@ test("the command line reads and writes the same file the panel does", async () 
     expect((await config(["reset", "size"], home)).ok).toBe(true);
     expect((await config(["get", "size"], home)).out).toBe("8");
     expect((await config(["reset"], home)).ok).toBe(true);
-    expect((await config(["get", "colors.working"], home)).out).toBe('"#4caf50"');
+    expect((await config(["get", "colors.working"], home)).out).toBe('"#255fce"');
 
     // An unknown setting is a refusal that names the thing, not a stack trace.
     const unknown = await config(["set", "wallpaper", "blue"], home);
