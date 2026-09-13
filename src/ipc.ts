@@ -8,6 +8,7 @@ import { startPreview } from "./preview";
 import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
+import { Diagnostics, diagnosticRoot } from "./diagnostics";
 
 export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
   await requireResourceBudget();
@@ -24,7 +25,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     socket = join(privateRoot, "broker.sock");
   }
   const workspace = await createWorkspaceDirectory("broker");
-  const sessions = new Sessions(workspace, options.accountRoot);
+  const sessions = new Sessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")));
   let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
@@ -52,10 +53,8 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       catch (error) {
         const code = error instanceof OrbitError ? error.code : error instanceof SyntaxError ? "INVALID_REQUEST" : "BACKEND_ERROR";
         const message = error instanceof OrbitError ? error.message : "Request failed";
-        // Clients get a fixed message; the broker's own stderr keeps the cause, or a failure that
-        // only shows up under load is impossible to attribute afterwards.
-        if (code === "BACKEND_ERROR") console.error(JSON.stringify({ unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }));
-        return Response.json({ ok: false, error: { code, message } });
+        // The private metadata journal holds the correlation ID. Raw exceptions can contain secrets.
+        return Response.json({ ok: false, error: { code, message, diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined } });
       }
     },
   });
@@ -64,6 +63,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {
     preview?.close(); server.stop(true); await sessions.close();
+    await sessions.diagnostics.flush();
     await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});
   } };
@@ -71,7 +71,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
 export async function call(socket: string, method: string, params: unknown = {}): Promise<unknown> {
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(45000) });
-  const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string } };
-  if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed");
+  const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string } };
+  if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
   return result.result;
 }

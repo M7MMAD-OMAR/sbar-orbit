@@ -15,10 +15,11 @@ import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, p
 import { consultAdvisor } from "./advisor";
 import { canRestoreTo, clearRestorePoints, createSubvolume, removeRestorePoint, restoreProfile, takeRestorePoint, type RestorePoint } from "./restore";
 import { defaultViewport, parseViewport } from "./viewport";
+import { Diagnostics } from "./diagnostics";
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
-  agentName: string; taskName: string; activity?: { type: string; actor: string; state: string; sequence: number };
+  agentName: string; taskName: string; conversationName?: string; projectName?: string; activity?: { type: string; actor: string; state: string; sequence: number };
   id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string; profile: string;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
@@ -86,7 +87,7 @@ export class Sessions {
    * the place to pay for that repeatedly; nothing it reports changes while the broker runs.
    */
   private probed?: Promise<PlatformCapabilities>;
-  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts")) {}
+  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics"))) {}
   private capabilities() { return this.probed ??= detectPlatform(); }
   /** Where a session's route out lives. Short, because what goes in it are unix sockets. */
   private get egressRoot() { return join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress"); }
@@ -98,7 +99,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -122,6 +123,8 @@ export class Sessions {
       return value.trim();
     };
     const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Agent workspace");
+    const conversationName = input.conversationName === undefined ? undefined : label(input.conversationName, "");
+    const projectName = input.projectName === undefined ? undefined : label(input.projectName, "");
     // Parsed before anything is started, so an unusable policy fails the request rather than a later action.
     const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
     const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
@@ -193,7 +196,7 @@ export class Sessions {
       const journals = join(this.root, "journals");
       await mkdir(journals, { recursive: true, mode: 0o700 });
       const journalPath = join(journals, `${id}.jsonl`);
-      const session: Session = { id, agentName, taskName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
+      const session: Session = { id, agentName, taskName, conversationName, projectName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
         egress: egress ?? { tier: "in-browser", launch: { executable: "", args: [] }, endpointPort: 0, refused: () => [], close: async () => {} },
         restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [], tainted: false };
       // The first line says what was agreed to, so a reader knows what the rest of the file was
@@ -216,6 +219,11 @@ export class Sessions {
         // A restore closes the browser on purpose and starts another on the same profile, so that close
         // is not the end of the session and must not take the profile with it.
         if (session.restoring) return;
+        if (session.state !== "closing" && session.state !== "closed") {
+          void this.diagnostics.run({ method: "backend.exit", params: { sessionId: id, backend: session.kind } }, async () => {
+            throw new OrbitError("BACKEND_ERROR", "Backend exited outside a stop request");
+          }).catch(() => {});
+        }
         session.state = "closed"; this.leases.delete(lease);
         // Restore points go before the profile does. Each is a copy of the person's live cookies, and
         // a read only snapshot inside the profile would stop the profile itself being removed.
@@ -427,6 +435,14 @@ export class Sessions {
     return session.closing;
   }
   async dispatch(value: unknown): Promise<unknown> {
+    if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.report") return this.diagnostics.report();
+    if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.status") return this.diagnostics.status();
+    const request = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const params = request.params && typeof request.params === "object" ? request.params as Record<string, unknown> : {};
+    const session = typeof params.sessionId === "string" ? this.sessions.get(params.sessionId) : undefined;
+    return this.diagnostics.run({ ...request, params: { ...params, backend: session?.kind ?? params.backend } }, () => this.dispatchRequest(value));
+  }
+  private async dispatchRequest(value: unknown): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
     // Doctor is what a person on an unverified platform runs first, and what a community bug report

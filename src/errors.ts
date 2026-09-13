@@ -1,5 +1,5 @@
 export class OrbitError extends Error {
-  constructor(public code: string, message: string) { super(message); }
+  constructor(public code: string, message: string, public diagnosticId?: string) { super(message); }
 }
 export function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new OrbitError("INVALID_REQUEST", "Expected an object");
