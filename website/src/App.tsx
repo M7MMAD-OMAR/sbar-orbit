@@ -41,7 +41,7 @@ function Header() {
 
 function Viewer() {
   const { t } = useCopy();
-  const show = usePresentation(viewerStates.length, 7000);
+  const show = usePresentation(viewerStates.length, 4000);
   const current = viewerStates[show.step] ?? viewerStates[0];
   if (!current) return null;
   return <article ref={show.element} {...show.interaction} className="bento-tile bento-viewer" id="in-control" aria-labelledby="viewer-heading" aria-roledescription={t("Automatic presentation")} data-running={show.running}>
@@ -86,7 +86,7 @@ function Spaces() {
 
 function Architecture() {
   const { t } = useCopy();
-  const flow = usePresentation<HTMLDivElement>(4, 2600);
+  const flow = usePresentation<HTMLDivElement>(4, 1800);
   return <section className="architecture-section" id="architecture" aria-labelledby="architecture-heading"><div className="container">
     <div className="bento-heading"><h2 id="architecture-heading">{t("One agent. A clear chain of control.")}</h2><p>{t("Your agent gives instructions. Orbit manages the workspace.")}</p></div>
     <div ref={flow.element} {...flow.interaction} className="architecture-board" data-step={flow.reduced ? 'static' : flow.step} data-running={flow.running}>
@@ -108,8 +108,8 @@ function Guide() {
     <div className="bento-heading"><h2 id="guide-heading">{t("From setup to your first task.")}</h2><p>{t("Three steps. The essentials are right here.")}</p></div>
     <ol className="quick-guide">
       <li><div className="guide-visual"><TerminalWindow size={60} weight="thin"/><span>01</span></div><h3>{t("Install on your machine.")}</h3><p>{t("Use the commands below. The installer checks what your system needs.")}</p><a className="text-link" href="#get-started">{t("Go to installation")}<ArrowDown size={18}/></a></li>
-      <li><div className="guide-visual"><PlugsConnected size={60} weight="thin"/><span>02</span></div><h3>{t("Connect your agent.")}</h3><p>{t("Run this command, then add the generated configuration to your agent host’s MCP settings.")}</p><code className="guide-command" dir="ltr">sbar-orbit connector-config</code></li>
-      <li><div className="guide-visual"><Eye size={60} weight="thin"/><span>03</span></div><h3>{t("Give it a first task.")}</h3><p>{t("Ask your connected agent to open a private browser with Orbit and carry out a task. Open the viewer whenever you want to follow along.")}</p><code className="guide-command" dir="ltr">sbar-orbit preview</code></li>
+      <li><div className="guide-visual"><PlugsConnected size={60} weight="thin"/><span>02</span></div><h3>{t("Connect your agent.")}</h3><p>{t("After installation, run this in your terminal. It prints configuration to paste into your agent host’s MCP settings; it does not connect the host for you.")}</p><code className="guide-command" dir="ltr">sbar-orbit connector-config</code></li>
+      <li><div className="guide-visual"><Eye size={60} weight="thin"/><span>03</span></div><h3>{t("Give it a first task.")}</h3><p>{t("Ask your connected agent to open a private browser with Orbit and carry out a task. Open the viewer whenever you want to follow along.")}</p><code className="guide-command" dir="ltr">{'export ORBIT_SOCKET="$XDG_RUNTIME_DIR/sbar-orbit/broker.sock"\nsbar-orbit preview'}</code><p className="command-hint">{t("For the installed service: copy the printed URL into your browser. This command does not open a window. If you started Orbit with serve, use the socket path it printed instead.")}</p></li>
     </ol>
     <div className="guide-footnote"><p>{t("Orbit does not collect usage data. Your agent tools and visited websites still make their own network requests.")}</p><a className="text-link" href="https://github.com/M7MMAD-OMAR/sbar-orbit/tree/main/docs">{t("Developer reference (English)")}<ArrowUpRight className="directional-arrow" size={18}/></a></div>
   </div></section>;
@@ -119,7 +119,12 @@ function Landing() {
   const { locale, t } = useCopy();
   return <><a className="skip-link" href="#main">{t("Skip to content")}</a><div id="top" /><Header /><main id="main">
     <section className="hero" aria-labelledby="hero-heading"><div className="container"><div className="hero-copy"><span className="eyebrow hero-eyebrow"><span className="status-dot" />{t("OPEN SOURCE. ON YOUR MACHINE.")}</span><h1 id="hero-heading">{t("Your agent has work.")}<br />{t("You have your own.")}</h1><p>{t("Give your AI agent a private browser or display.")}<br className="desktop-break" />{" "}{t("Keep your desktop, your focus, and your flow.")}</p><div className="hero-actions"><a className="button" href="#get-started">{t("Get started")} <ArrowRight className="directional-arrow" size={20} /></a><a className="button button-outline" href={repo}><GithubLogo weight="fill" size={23} />{t("View on GitHub")}</a></div><span className="hero-note">{t("Experimental alpha")} <span>·</span> Apache-2.0 <span>·</span>{t("No telemetry")}</span></div>
-      <figure className="hero-figure"><picture><source media="(max-width: 700px)" srcSet="/images/hero-workspaces-mobile.webp" /><img src="/images/hero-workspaces.webp" width="1870" height="841" fetchPriority="high" alt={t("You work at your own desk while an agent uses separate browser and application windows beside it")} /></picture><figcaption><span>{t("Your desktop. Your rhythm.")}</span><span>{t("The agent’s own workspace.")}</span></figcaption></figure>
+      <div className="hero-scene" role="img" aria-label={t("One machine, two independent workspaces. Your desktop stays free while Orbit runs the agent’s browser.")}>
+        <div className="scene-top"><span className="scene-dot"/><span>{t("ONE MACHINE. ROOM FOR BOTH.")}</span><span className="scene-local">Orbit</span></div>
+        <div className="scene-desktop"><Monitor size={30} weight="thin"/><strong>{t("Your space")}</strong><span>{t("Keep doing your thing.")}</span><div className="scene-document"><i/><i/><i/><i/></div><Cursor className="scene-cursor" size={27} weight="fill"/></div>
+        <div className="scene-agent"><div className="scene-browser-bar"><span/><span/><span/><Browser size={19}/></div><div className="scene-agent-content"><img src="/favicon.svg" alt="" width="46" height="46"/><strong>{t("The agent’s space")}</strong><span>{t("A private browser. A separate display.")}</span><div className="scene-task"><Check size={18}/>{t("Space to get things done.")}</div></div></div>
+        <div className="scene-footer"><ShieldCheck size={21}/>{t("Separate workspaces. You stay in control.")}</div>
+      </div>
     </div></section>
     <section className="problem-section" id="why-orbit" aria-labelledby="problem-heading"><div className="container problem-layout"><span className="eyebrow">{t("THE PROBLEM")}</span><div><h2 id="problem-heading">{t("One desktop.")}<br />{t("Two things competing.")}</h2><p>{t("When an agent works on your screen, its clicks, windows and typing get in the way of yours. You end up waiting for your own computer.")}</p><p className="problem-answer">{t("You should both be able to keep working.")}</p></div></div></section>
     <Spaces /><Architecture /><Guide /><Install />

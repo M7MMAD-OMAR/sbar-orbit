@@ -2,6 +2,17 @@ import { createContext, useContext } from 'react';
 export type Locale = 'en' | 'ar';
 export const LocaleContext = createContext<Locale>('en');
 export const arabic: Record<string, string> = {
+  "One machine, two independent workspaces. Your desktop stays free while Orbit runs the agent’s browser.": "جهاز واحد ومساحتان مستقلتان. تابع شغلك بينما يعمل الوكيل في متصفحه الخاص.",
+  "ONE MACHINE. ROOM FOR BOTH.": "جهاز واحد. مساحة لكل واحد.",
+  "Your space": "مساحتك إلك",
+  "Keep doing your thing.": "كمّل شغلك براحتك.",
+  "The agent’s space": "مساحة الوكيل",
+  "A private browser. A separate display.": "متصفح خاص. وشاشة مستقلة.",
+  "Space to get things done.": "مساحته جاهزة للشغل.",
+  "Separate workspaces. You stay in control.": "كل واحد بمساحته، والتحكم بإيدك.",
+  "After installation, run this in your terminal. It prints configuration to paste into your agent host’s MCP settings; it does not connect the host for you.": "بعد التثبيت، نفّذ الأمر في الطرفية. سيطبع إعدادات تنسخها إلى قسم MCP في برنامج الوكيل. الأمر وحده لا يربط البرنامج تلقائيًا.",
+  "For the installed service: copy the printed URL into your browser. This command does not open a window. If you started Orbit with serve, use the socket path it printed instead.": "إذا ثبّتَّ خدمة Orbit، نفّذ الأمرين ثم انسخ الرابط الناتج وافتحه في المتصفح. لن تفتح نافذة تلقائيًا. وإذا شغّلت Orbit بأمر serve، استخدم مسار الاتصال الذي طبعه بدل المسار هنا.",
+
   "Watch": "راقب",
   "Pause": "أوقف مؤقتًا",
   "Take over": "تولَّ التحكم",

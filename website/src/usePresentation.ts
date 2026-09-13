@@ -6,7 +6,6 @@ export function usePresentation<T extends HTMLElement = HTMLElement>(count: numb
   const remaining = useRef(interval);
   const [step, setStep] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const [visible, setVisible] = useState(false);
   const [reduced, setReduced] = useState(true);
@@ -22,7 +21,7 @@ export function usePresentation<T extends HTMLElement = HTMLElement>(count: numb
     if (element.current) observer.observe(element.current);
     return () => { observer.disconnect(); media.removeEventListener('change', preference); document.removeEventListener('visibilitychange', visibility); };
   }, []);
-  const running = !paused && !hovered && !focused && !reduced && visible && foreground;
+  const running = !paused && !focused && !reduced && visible && foreground;
   useEffect(() => {
     if (!running) return;
     const started = performance.now();
@@ -38,7 +37,6 @@ export function usePresentation<T extends HTMLElement = HTMLElement>(count: numb
   }, [running, count, interval, step]);
   return { element, step, paused, setPaused, reduced, running,
     interaction: {
-      onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false),
       onFocusCapture: () => setFocused(true),
       onBlurCapture: (event: React.FocusEvent<HTMLElement>) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); },
     },
