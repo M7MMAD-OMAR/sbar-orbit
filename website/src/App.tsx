@@ -1,7 +1,7 @@
 import { usePresentation } from './usePresentation';
 import { LocaleContext, useCopy, type Locale } from './locale';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpRight, Check, Copy, Cursor, Eye, GithubLogo, Heart, List, Monitor, Pause, Play, TerminalWindow, X, Browser, ArrowDown, PlugsConnected, ShieldCheck, TreeStructure } from '@phosphor-icons/react';
+import { ArrowRight, ArrowUpRight, Check, Copy, Cursor, Eye, GithubLogo, Heart, List, Monitor, Pause, Play, TerminalWindow, X, Browser, ArrowDown, PlugsConnected, ShieldCheck, TreeStructure, Translate } from '@phosphor-icons/react';
 
 const repo = 'https://github.com/M7MMAD-OMAR/sbar-orbit';
 const docs = `${repo}/blob/main/docs`;
@@ -29,11 +29,13 @@ function Header() {
     return () => document.removeEventListener('keydown', close);
   }, [open]);
   return <header className="header"><div className="container nav-wrap"><Brand />
-    <button ref={toggle} className="menu-toggle" aria-label={t(open ? 'Close navigation' : 'Open navigation')} aria-expanded={open} aria-controls="navigation" onClick={() => setOpen(!open)}>{open ? <X size={25} /> : <List size={25} />}</button>
-    <a className="language-switch" href={locale === 'ar' ? '/' : '/ar/'} lang={locale === 'ar' ? 'en' : 'ar'} hrefLang={locale === 'ar' ? 'en' : 'ar'}>{locale === 'ar' ? 'English' : 'العربية'}</a>
     <nav id="navigation" aria-label={t("Main navigation")} className={open ? 'nav is-open' : 'nav'} onClick={() => setOpen(false)}>
       <a href="#why-orbit">{t("Why Orbit")}</a><a href="#guide">{t("Quick guide")}</a><a href="#architecture">{t("How it connects")}</a><a href="#support">{t("Support")}</a><a className="button button-small" href="#get-started">{t("Get started")} <ArrowRight className="directional-arrow" size={16} /></a>
     </nav>
+    <div className="nav-controls">
+      <a className="language-switch" href={locale === 'ar' ? '/' : '/ar/'} lang={locale === 'ar' ? 'en' : 'ar'} hrefLang={locale === 'ar' ? 'en' : 'ar'} aria-label={locale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'} title={locale === 'ar' ? 'Switch to English' : 'التبديل إلى العربية'}><Translate size={23} aria-hidden="true" /></a>
+      <button ref={toggle} className="menu-toggle" aria-label={t(open ? 'Close navigation' : 'Open navigation')} aria-expanded={open} aria-controls="navigation" onClick={() => setOpen(!open)}>{open ? <X size={23} /> : <List size={23} />}</button>
+    </div>
   </div></header>;
 }
 
