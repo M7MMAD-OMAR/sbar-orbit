@@ -121,6 +121,39 @@ Then `./bin/sbar-orbit session create`, or generate MCP configuration with
 `./bin/sbar-orbit connector-config`. A right click on the mark opens the settings, which are searchable,
 and `./bin/sbar-orbit config search WORD` is the same settings from a terminal. [CLI guide](docs/cli.md).
 
+## Main agent commands
+
+With the Orbit skill selected, type just `off`, `on`, or `status`. For example:
+`$sbar-orbit off` or `$orbit-usage off`. The agent resolves the conversation ID.
+The default suggestion is `status`, which reads usage state without changing it.
+The shell commands below are for direct CLI use.
+
+```sh
+export ORBIT_CONVERSATION_ID=unique-task-id  # keep this ID for this conversation
+sbar-orbit usage status
+sbar-orbit usage off       # reject new Orbit calls in this scope
+sbar-orbit usage on        # re-enable only when you ask
+sbar-orbit session create
+sbar-orbit session observe SESSION_ID --metadata
+sbar-orbit session observe SESSION_ID --output /absolute/new-image.jpg
+sbar-orbit act SESSION_ID '{"type":"read","selector":"h1"}'
+sbar-orbit session stop SESSION_ID
+```
+
+MCP has the equivalent `orbit_usage` tool with `mode: "on"`, `"off"` or `"status"`.
+Without an explicit conversation ID its switch is connection-local and resets on
+reconnect. CLI and MCP share a persistent switch only when launched with the same
+ID. A host sharing one MCP process across chats must provide separate scopes.
+Off does not close applications, cancel accepted work or remove tool definitions.
+
+The [portable orbit-usage skill](skills/orbit-usage/SKILL.md) makes an explicit
+"Do not use Orbit in this conversation" take priority over automatic selection.
+It includes setup for CLI/MCP scope and compact observations. Metadata mode avoids
+screenshot capture; image mode preserves the title, tabs/windows and dimensions
+alongside the image. CLI file output keeps base64 out of the text context.
+
+[Usage, host integration, research and measured limits](docs/agent-interface.md).
+
 ## Scope
 
 The alpha includes browser/native lifecycle tests and a successful scripted 10-minute viewer run. See [validation](docs/validation.md). Human participation, wider account/application compatibility, clean-machine installation, macOS and Windows remain separate gates.
