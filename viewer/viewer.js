@@ -32,7 +32,7 @@ biggerButton.onclick = () => {
   bigger = !bigger;
   shell.classList.toggle('bigger', bigger);
   biggerButton.setAttribute('aria-pressed', String(bigger));
-  biggerButton.textContent = bigger ? 'Back to normal size' : 'Make it bigger';
+  biggerButton.textContent = bigger ? 'Exit focus' : 'Focus view';
 };
 paletteButton.onclick = () => {
   desktopPalette = !desktopPalette;
@@ -88,6 +88,7 @@ function controls() {
   element('size-note').textContent = !live ? '' : adjustable ? '' : 'Take over first to change this';
   for (const id of ['fullscreen', 'restore']) { element(id).hidden = backend !== 'fedora'; element(id).disabled = !adjustable; }
   for (const button of tabStrip.children || []) button.disabled = !adjustable;
+  element('tab-hint').textContent = tabs.length > 1 && live && !adjustable ? 'Take over to switch pages' : '';
   frame.classList.toggle('controllable', adjustable);
 }
 /**
@@ -100,11 +101,24 @@ function controls() {
  */
 function renderSessions(list) {
   listed = list;
-  const line = entry => `${entry.sessionId}/${entry.state}/${entry.agentName || ''}/${entry.taskName || ''}/${entry.activity?.state || ''}/${entry.sessionId === selected}`;
+  const line = entry => JSON.stringify([entry.sessionId, entry.state, entry.agentName, entry.taskName, entry.conversationName, entry.projectName, entry.activity?.state, entry.sessionId === selected]);
   const signature = list.map(line).join('|');
   element('session-count').textContent = list.length ? `Assistants · ${list.length}` : 'Assistants';
   if (signature === railSignature) return;
   railSignature = signature;
+  element('conversation-tabs').replaceChildren(...list.map(entry => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'conversation-tab';
+    button.setAttribute('aria-current', String(entry.sessionId === selected));
+    const name = entry.conversationName || entry.taskName || 'Agent workspace';
+    const project = entry.projectName || 'Project not provided';
+    button.title = `${name} · ${project} · ${entry.agentName || 'SbarOrbit'}`;
+    const title = document.createElement('strong'); title.textContent = name;
+    const subtitle = document.createElement('span'); subtitle.textContent = `${project} · ${entry.agentName || 'SbarOrbit'}`;
+    button.append(title, subtitle);
+    button.onclick = () => selectSession(entry.sessionId);
+    return button;
+  }));
   if (!list.length) {
     const note = document.createElement('p');
     note.className = 'rail-note'; note.textContent = 'No sessions yet. Create one from your agent or the CLI.';
@@ -123,17 +137,17 @@ function renderSessions(list) {
     const top = document.createElement('div'); top.className = 'session-top';
     const light = document.createElement('span'); light.className = 'dot';
     const who = document.createElement('span'); who.className = 'session-agent';
-    who.textContent = entry.agentName || 'SbarOrbit';
+    who.textContent = entry.conversationName || entry.taskName || 'Agent workspace';
     top.append(light, who);
     const task = document.createElement('div'); task.className = 'session-task';
-    task.textContent = entry.taskName || entry.backend || 'Agent workspace';
+    task.textContent = entry.projectName || 'Project not provided';
     const meta = document.createElement('div'); meta.className = 'session-meta';
     // The short identifier earns its place only when two cards would otherwise read the same. It was
     // there to tell duplicates apart, and on every other card it is four characters of noise.
     const twin = list.filter(other => (other.agentName || '') === (entry.agentName || '')
       && (other.taskName || '') === (entry.taskName || '')).length > 1;
     const busyHere = entry.activity?.state === 'working' && entry.state === 'running';
-    meta.textContent = `${entry.backend === 'fedora' ? 'App window' : 'Web page'} · ${words(entry.state, busyHere)}`
+    meta.textContent = `${entry.agentName || 'SbarOrbit'} · ${words(entry.state, busyHere)}`
       + (twin ? ` · ${String(entry.sessionId).slice(0, 4)}` : '');
     card.append(top, task, meta);
     card.onclick = () => selectSession(entry.sessionId);
@@ -142,13 +156,14 @@ function renderSessions(list) {
 }
 /** One entry per browser tab or per window of the private display, numbered the way observe reports them. */
 function renderTabs(list) {
-  const same = list.length === tabs.length && list.every((entry, index) => entry.label === tabs[index].label && entry.active === tabs[index].active);
+  const same = list.length === tabs.length && list.every((entry, index) => entry.tab === tabs[index].tab && entry.label === tabs[index].label && entry.active === tabs[index].active);
   tabs = list;
   tabStrip.hidden = list.length < 2;
   if (same) return;
   tabStrip.replaceChildren(...list.map(entry => {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'tab'; button.textContent = entry.label || `Tab ${entry.tab}`;
+    button.title = entry.label || `Tab ${entry.tab}`;
     button.setAttribute('role', 'tab'); button.setAttribute('aria-selected', String(!!entry.active));
     button.onclick = () => command('session.control', { input: backend === 'fedora'
       ? { type: 'window', command: 'focus', tab: entry.tab } : { type: 'select-tab', tab: entry.tab } });
@@ -166,9 +181,11 @@ async function refreshSessions() {
   agentName = current?.agentName || 'SbarOrbit';
   actor = current?.activity?.actor || 'agent';
   element('agent-name').textContent = agentName;
-  element('task-name').textContent = current?.taskName || 'Agent workspace';
+  element('task-name').textContent = current?.conversationName || current?.taskName || 'Agent workspace';
+  element('project-name').textContent = current?.projectName || 'Project not provided';
+  document.title = current ? `${current.conversationName || current.taskName || 'Agent workspace'}${current.projectName ? ` · ${current.projectName}` : ''} | Orbit` : 'Orbit workspace';
   const activity = current?.activity;
-  const verbs = { navigate: 'opening a page', fill: 'filling in a box', click: 'clicking', read: 'reading the page', scroll: 'scrolling', pointer: 'clicking', text: 'typing', paste: 'pasting', key: 'pressing a key', launch: 'opening an application' };
+  const verbs = { 'select-tab': 'switching pages', 'open-tab': 'opening a tab', window: 'managing a window', resize: 'resizing the workspace', navigate: 'opening a page', fill: 'filling in a box', click: 'clicking', read: 'reading the page', scroll: 'scrolling', pointer: 'clicking', text: 'typing', paste: 'pasting', key: 'pressing a key', launch: 'opening an application' };
   const outcome = { working: 'right now', done: 'just now', failed: 'and it did not work' };
   element('activity').textContent = activity
     ? `${activity.actor === 'human' ? 'You' : agentName} ${activity.actor === 'human' ? 'were' : 'is'} ${verbs[activity.type] || 'doing something'} ${outcome[activity.state] || activity.state} · step ${activity.sequence}`
@@ -180,6 +197,7 @@ async function refreshSessions() {
   element('state').dataset.working = working;
   element('agent-badge').dataset.working = working;
   // controls() reads this back for the chip's word, so it is set before that call, not after.
+  if (current?.state === 'paused' && state !== 'paused') element('manual').open = true;
   state = current?.state || '';
   backend = list.find(s => s.sessionId === selected)?.backend || '';
   const size = current?.surface;
@@ -203,6 +221,10 @@ async function refreshSessions() {
 function selectSession(id) {
   if (id === selected) return;
   selected = id; state = ''; capturedAt = 0; frame.hidden = true; pointer.hidden = true;
+  renderTabs([]); captureQueued = true;
+  const current = listed.find(entry => entry.sessionId === id);
+  element('task-name').textContent = current?.conversationName || current?.taskName || 'Agent workspace';
+  element('project-name').textContent = current?.projectName || 'Project not provided';
   element('page-title').textContent = 'Waiting to see what it is looking at';
   element('page-location').textContent = '';
   controls(); renderSessions(listed);
@@ -330,3 +352,66 @@ setInterval(() => {
 }, 250);
 if (!token) { element('connection').textContent = 'This link is incomplete'; element('connection').dataset.connected = 'false'; error('Open the complete preview link printed by Orbit.'); }
 else poll();
+
+// Keep layout in the existing asset so a running broker can serve it without interrupting sessions.
+if (typeof window !== "undefined") {
+(() => {
+  const toggle = document.getElementById('sidebar-toggle');
+  const mobile = matchMedia('(max-width: 900px)');
+  let collapsed = mobile.matches;
+  try { collapsed = mobile.matches || localStorage.getItem('orbit-sidebar') === 'collapsed'; } catch {}
+  function sidebar() {
+    shell.classList.toggle('sidebar-collapsed', collapsed);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? 'Show sidebar' : 'Hide sidebar');
+  }
+  toggle.onclick = () => {
+    collapsed = !collapsed;
+    try { localStorage.setItem('orbit-sidebar', collapsed ? 'collapsed' : 'open'); } catch {}
+    sidebar();
+  };
+  mobile.addEventListener('change', () => { collapsed = mobile.matches; sidebar(); });
+  sidebar();
+  let sizing = false;
+  function fitScreen() {
+    if (sizing) return;
+    sizing = true;
+    requestAnimationFrame(() => {
+      sizing = false;
+      const stage = document.getElementById('stage');
+      const caption = document.querySelector('.caption');
+      const panels = document.querySelector('.panels');
+      const footer = bigger ? 0 : Math.min(56, panels.getBoundingClientRect().height);
+      const top = stage.getBoundingClientRect().top + scrollY;
+      const available = Math.max(180, innerHeight - top - caption.getBoundingClientRect().height - footer - 56);
+      stage.style.setProperty('--available-height', `${available}px`);
+    });
+  }
+  const sizingObserver = new ResizeObserver(fitScreen);
+  for (const target of [document.querySelector('.head'), document.querySelector('.stage-bar'), document.querySelector('.tab-row'), document.querySelector('.panels')]) sizingObserver.observe(target);
+  window.addEventListener('resize', fitScreen);
+  fitScreen();
+  function focusView(enabled) {
+    bigger = enabled;
+    shell.classList.toggle('bigger', bigger);
+    biggerButton.setAttribute('aria-pressed', String(bigger));
+    biggerButton.textContent = bigger ? 'Exit focus' : 'Focus view';
+    fitScreen();
+  }
+  biggerButton.onclick = () => focusView(!bigger);
+  const fullscreen = document.getElementById('viewer-fullscreen');
+  fullscreen.onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch { error('Fullscreen is unavailable here. Use Focus view to enlarge the picture.'); }
+  };
+  document.addEventListener('fullscreenchange', () => {
+    fullscreen.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+    if (document.fullscreenElement) focusView(true);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { if (bigger) focusView(false); else if (mobile.matches && !collapsed) { collapsed = true; sidebar(); toggle.focus(); } }
+  });
+})();
+}

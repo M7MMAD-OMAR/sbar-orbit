@@ -34,7 +34,7 @@ test("browser scrolling works through agent actions and paused viewer input", as
     await page.setViewportSize({ width: 1000, height: 1000 });
     await page.goto(url);
     await page.locator("#frame").waitFor({ state: "visible" });
-    expect(await page.title()).toBe("Orbit workspace");
+    expect(await page.title()).toBe("Agent workspace | Orbit");
     await page.locator("#pause").click();
     await page.waitForFunction(() => document.querySelector<HTMLElement>("#state")?.dataset.state === "paused");
     await expect(act(scroll)).rejects.toMatchObject({ code: "PAUSED" });

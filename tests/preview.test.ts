@@ -51,7 +51,7 @@ test("viewer authenticates, renders live frames and controls only paused session
     expect(await page.locator("#frame").getAttribute("data-captured-at")).toBeNull();
     expect(await page.locator("#frame").isVisible()).toBe(false);
     await page.evaluate(() => (window as any).__releaseOrbitDecode());
-    expect(await page.title()).toBe("Orbit workspace");
+    expect(await page.title()).toBe("Agent workspace | Orbit");
     await page.locator("#frame").waitFor({ state: "visible" });
     expect(await page.evaluate(() => (window as any).__orbitBitmaps.maximumLive)).toBe(1);
     expect(await page.evaluate(() => {
@@ -102,6 +102,7 @@ test("viewer authenticates, renders live frames and controls only paused session
     const again = await browser.newPage();
     await again.goto(url);
     await again.locator("#frame").waitFor({ state: "visible" });
+    await again.getByText("Session actions", { exact: true }).click();
     await again.getByRole("button", { name: "End session", exact: true }).click();
     await again.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'closed');
     expect(await again.locator("#empty").textContent()).toBe("This session has finished.");

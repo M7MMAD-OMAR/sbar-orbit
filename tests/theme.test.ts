@@ -62,6 +62,6 @@ test("the viewer paints from tokens rather than fixed colours", async () => {
   const literals = style.replaceAll(/var\(--[a-z-]+,\s*[^)]*\)/g, "var()");
   // The agent pointer keeps fixed colours on purpose: it is drawn over arbitrary page content.
   const pointer = literals.slice(literals.indexOf("#agent-pointer{"), literals.indexOf("#agent-pointer.near-right"));
-  expect(literals.replace(pointer, "")).not.toMatch(/#[0-9a-fA-F]{3,8}/);
+  expect(literals.replace(pointer, "")).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   expect(await Bun.file("viewer/index.html").text()).toContain('href="/theme.css"');
 });
