@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-runtime="$PWD/.runtime/sway"
+# ORBIT_RUNTIME_DIR lets the installer and its tests build somewhere other than the live runtime.
+runtime="${ORBIT_RUNTIME_DIR:-$PWD/.runtime/sway}"
 mkdir -p "$runtime/rpms" "$runtime/root"
 # Download Fedora packages without installing them or enabling any services.
 dnf download --destdir "$runtime/rpms" sway-1.11-3.fc44.x86_64 wlroots0.19-0.19.3-1.fc44.x86_64 libliftoff-0.5.0-5.fc44.x86_64

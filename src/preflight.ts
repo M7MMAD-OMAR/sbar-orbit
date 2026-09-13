@@ -104,7 +104,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     add(id, "native", await probe.file(path, true),
       // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
       // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
-      { id: "no-native-runtime", needsElevation: true, agentMayRun: false, command: "bash experiments/fedora-display/bootstrap.sh",
+      { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
         message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
   for (const name of ["grim", "wl-copy", "wl-paste"])
     add(name, "native", await probe.file(`/usr/bin/${name}`, true),

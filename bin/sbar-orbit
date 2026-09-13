@@ -11,6 +11,7 @@ Sbar Orbit, local agent workspace prototype
 
   sbar-orbit install             Do the whole installation in one command
   sbar-orbit install --dry-run   Show every step without changing anything
+  sbar-orbit install --native    Also build the private display runtime for native sessions
   sbar-orbit serve               Start the broker with shared resource limits
   sbar-orbit serve --managed-socket
                                  Bind the fixed socket a service unit expects

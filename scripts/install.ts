@@ -13,6 +13,7 @@ if (flag("--help") || flag("-h")) {
   --no-service      Write nothing into systemd and start nothing
   --dry-run         Report every step without changing anything
   --reinstall-deps  Run bun install even when dependencies already resolve
+  --native          Build the private display runtime (downloads Fedora packages, compiles)
   --json            Print the report only, for a script rather than a person
   --plain           One line per step, no repainting`);
   process.exit(0);
@@ -44,6 +45,7 @@ const report = await runInstall({
   service: !flag("--no-service"),
   dryRun: flag("--dry-run"),
   reinstallDependencies: flag("--reinstall-deps"),
+  native: flag("--native"),
   onStep(id, state, record?: StepRecord) {
     const view = views.find(entry => entry.id === id);
     if (!view) return;

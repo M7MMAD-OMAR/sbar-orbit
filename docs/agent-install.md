@@ -69,8 +69,11 @@ it, `--reinstall-deps` to force a dependency install.
 }
 ```
 
-- `steps[].id` is one of `prerequisites`, `dependencies`, `launcher`, `service`, `connector`,
-  `verify`, always in that order, and a run that fails early simply carries fewer of them.
+- `steps[].id` is one of `prerequisites`, `dependencies`, `native`, `launcher`, `service`,
+  `connector`, `verify`, always in that order, and a run that fails early simply carries fewer of them.
+  `native` is skipped unless `--native` was passed: it downloads pinned Fedora packages and compiles
+  the pointer helper, and browser sessions do not need it. When the build tools are missing it fails
+  with the `dnf` line that installs them, which needs elevation and is yours to hand back.
 - `steps[].state` is `done`, `skipped` or `failed`. `skipped` is never a failure: a dry run skips
   everything that writes, and `--no-service` skips the two steps that need a broker.
 - A skipped step is not a failure, so a run whose steps are mostly `skipped` still exits 0. `installed`

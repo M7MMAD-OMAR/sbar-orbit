@@ -45,8 +45,11 @@
    That run found three things a reading of the source would not have, two of which are now fixed:
    `preflight` reported systemd tools as available with no user manager behind them, and
    `doctor --report` read a Fedora container as this project's measured host class. The third is a
-   real gap and stays open: the native runtime, the private compositor and the pointer helper, lives
-   in an untracked directory, so a fresh machine gets it from the Fedora bootstrap or not at all.
+   real gap and is now narrower: the native runtime, the private compositor and the pointer helper,
+   lives in an untracked directory, and since 13 September 2026 `./install.sh --native` builds it
+   from the tracked bootstrap, measured on this host into a scratch directory. Whether that build
+   completes on a fresh Fedora machine is still `not measured`; the container has no systemd session
+   and stops before the step runs.
    What still closes this gate is a real machine with a systemd user session, cgroup delegation and
    wlroots, where `./install.sh` runs to completion and the broker it starts answers.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts.

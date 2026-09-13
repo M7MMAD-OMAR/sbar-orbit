@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { blockingPrerequisites, onPath, runInstall, stepTitles } from "../src/install";
+import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 
 const project = resolve(import.meta.dir, "..");
@@ -32,7 +32,7 @@ test("a dry run reports every step and changes nothing", async () => {
     expect(report.steps.map(step => step.id)).toEqual(stepTitles.map(step => step.id));
     // The first step only reads, so it runs for real even here. Everything that writes is skipped.
     expect(report.steps.filter(step => step.state === "skipped").map(step => step.id))
-      .toEqual(["dependencies", "launcher", "service", "connector", "verify"]);
+      .toEqual(["dependencies", "native", "launcher", "service", "connector", "verify"]);
     expect(await missing(join(box.prefix, "bin/sbar-orbit"))).toBe(true);
     expect(await missing(join(box.config, "sbar-orbit/mcp.json"))).toBe(true);
   } finally { await box.restore(); }
@@ -148,4 +148,34 @@ test("nothing the installer shows a person claims more than the project has meas
     expect(line.length).toBeLessThan(96);
   }
   expect(offerings.length).toBeGreaterThan(4);
+});
+
+test("the native runtime step builds only when asked, and names the tools it lacks", async () => {
+  // A source with no runtime, so the step has something to build; nothing here compiles anything.
+  const source = await mkdtemp("/tmp/orbit-native-source-");
+  const runtime = join(source, ".runtime/sway");
+  const calls: string[] = [];
+  const fake = async (from: string) => {
+    calls.push(from);
+    await mkdir(join(runtime, "root/usr/bin"), { recursive: true });
+    await writeFile(join(runtime, "root/usr/bin/sway"), "#!/bin/sh\n");
+    await writeFile(join(runtime, "pointer"), "");
+    return { ok: true, output: "sway version 1.11" };
+  };
+  try {
+    const present = () => "/usr/bin/tool";
+    expect(await buildNativeRuntime(source, { dryRun: true, which: present })).toMatchObject({ state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" });
+    const lacking = await buildNativeRuntime(source, { which: tool => tool === "cc" ? null : "/usr/bin/tool" });
+    expect(lacking).toMatchObject({ state: "failed", detail: "cc missing" });
+    expect(lacking.remedies?.[0]).toMatchObject({ id: "no-native-build-tools", needsElevation: true });
+    expect(calls).toEqual([]);
+    const failing = await buildNativeRuntime(source, { which: present, bootstrap: async () => ({ ok: false, output: "dnf: no such package" }) });
+    expect(failing).toMatchObject({ state: "failed", detail: "dnf: no such package" });
+    expect(await buildNativeRuntime(source, { which: present, bootstrap: fake })).toMatchObject({ state: "done", data: { runtime } });
+    expect(calls).toEqual([source]);
+    // Built once, the step is a no-op, and says where the runtime is.
+    expect(await buildNativeRuntime(source, { which: () => null, bootstrap: fake })).toMatchObject({ state: "skipped", detail: `already built in ${runtime}` });
+    expect(calls).toEqual([source]);
+    expect(nativeBuildTools).toContain("wayland-scanner");
+  } finally { await rm(source, { recursive: true, force: true }); }
 });

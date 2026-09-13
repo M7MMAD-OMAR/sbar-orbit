@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
+import { nativeRuntimePaths } from "./runtime-paths";
 import { activateLocal } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
@@ -31,10 +32,14 @@ export type InstallOptions = {
   service?: boolean;
   dryRun?: boolean;
   reinstallDependencies?: boolean;
+  /** Build the private display runtime from the tracked bootstrap. Off by default: browser sessions do not need it. */
+  native?: boolean;
   /** Reporting hook, so the terminal display and the JSON report read the same events. */
   onStep?: (id: string, state: "running" | StepOutcome["state"], record?: StepRecord) => void;
   /** Injected for tests, which must never spawn a package manager. */
   install?: (source: string) => Promise<{ ok: boolean; output: string }>;
+  /** Injected for tests, which must never download packages or compile anything. */
+  bootstrap?: (source: string) => Promise<{ ok: boolean; output: string }>;
 };
 
 const project = resolve(import.meta.dir, "..");
@@ -53,6 +58,41 @@ async function runBunInstall(source: string) {
   return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
 }
 
+async function runBootstrap(source: string) {
+  const child = Bun.spawn(["bash", join(source, "experiments/fedora-display/bootstrap.sh")], { cwd: source, stdout: "pipe", stderr: "pipe" });
+  const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
+}
+
+/** What the bootstrap needs on the machine: the package tools it downloads and unpacks with, and a C toolchain for the pointer helper. */
+export const nativeBuildTools = ["dnf", "rpm2cpio", "cpio", "curl", "wayland-scanner", "cc", "pkg-config"];
+const nativeBuildRemedy: Remedy = { id: "no-native-build-tools", needsElevation: true, agentMayRun: false,
+  command: "sudo dnf install gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl",
+  message: "Building the private display runtime needs a C toolchain, the Wayland and xkbcommon development files, and the tools that download and unpack Fedora packages." };
+
+/**
+ * The private compositor and pointer helper, built from the tracked bootstrap into `.runtime/sway`.
+ * Measured 13 September 2026 on this Fedora 44 host: the script downloads three pinned packages,
+ * unpacks them without installing, checks two protocol files against their digests, compiles the
+ * helper, and reports sway 1.11, 3.3 MB on disk, in under a minute. It has run on no other system,
+ * which is why the step is opt-in and says so.
+ */
+export async function buildNativeRuntime(source: string, options: { dryRun?: boolean; bootstrap?: InstallOptions["bootstrap"]; which?: (tool: string) => string | null } = {}): Promise<StepOutcome> {
+  const runtime = nativeRuntimePaths(source);
+  const present = async (path: string) => Bun.file(path).exists();
+  if (await present(join(runtime.executables, "sway")) && await present(runtime.pointer)) return { state: "skipped", detail: `already built in ${runtime.runtime}` };
+  const which = options.which ?? (tool => Bun.which(tool));
+  const missing = nativeBuildTools.filter(tool => !which(tool));
+  if (missing.length) return { state: "failed", detail: `${missing.join(", ")} missing`, remedies: [nativeBuildRemedy] };
+  if (options.dryRun) return { state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" };
+  const result = await (options.bootstrap ?? runBootstrap)(source);
+  if (!result.ok) return { state: "failed", detail: result.output || "the bootstrap failed",
+    remedies: [{ id: "native-bootstrap-failed", needsElevation: false, agentMayRun: true, command: "bash experiments/fedora-display/bootstrap.sh",
+      message: `The bootstrap failed in ${source}. Run it there and read its own output; it pins Fedora package versions.` }] };
+  if (!(await present(join(runtime.executables, "sway")) && await present(runtime.pointer))) return { state: "failed", detail: "the bootstrap finished and left no runtime behind" };
+  return { state: "done", detail: `sway and the pointer helper in ${runtime.runtime}`, data: { runtime: runtime.runtime } };
+}
+
 /** The checks a dependency install cannot fix, separated from the ones it can. */
 export function blockingPrerequisites<T extends Pick<PrerequisiteCheck, "id" | "group" | "available">>(checks: T[]) {
   const modules = ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"];
@@ -67,6 +107,7 @@ export function onPath(directory: string, path = process.env.PATH ?? "") {
 export const stepTitles: { id: string; title: string }[] = [
   { id: "prerequisites", title: "Check what this machine already has" },
   { id: "dependencies", title: "Prepare project dependencies" },
+  { id: "native", title: "Build the private display runtime" },
   { id: "launcher", title: "Link the sbar-orbit command" },
   { id: "service", title: "Install the broker service and desktop entries" },
   { id: "connector", title: "Write the agent connector configuration" },
@@ -129,6 +170,14 @@ export async function runInstall(options: InstallOptions = {}) {
       remedies: [{ id: "dependencies-missing", needsElevation: false, agentMayRun: true, command: "bun install --frozen-lockfile --ignore-scripts",
         message: `The dependency install failed in ${source}. Run it there and read its own output.` }] };
     return { state: "done", detail: "frozen lockfile, no lifecycle scripts" };
+  });
+
+  await step("native", async () => {
+    // Opt-in, because it downloads packages and compiles, and because it has only ever been run on
+    // Fedora. A machine without it still runs browser sessions, and the prerequisites step already
+    // says how to get it.
+    if (!options.native) return { state: "skipped", detail: "not requested; --native builds it, browser sessions do not need it" };
+    return buildNativeRuntime(source, { dryRun, bootstrap: options.bootstrap });
   });
 
   const linked = await step("launcher", async () => {
