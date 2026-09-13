@@ -101,6 +101,18 @@ real install into a temporary prefix with no service, a refused source that is n
 the separation between prerequisites a dependency install can fix and ones it cannot, PATH membership,
 and the display in both its terminal and non terminal forms. No test spawns a package manager.
 
+## Install from a package registry
+
+The package is shaped for `bun add -g sbar-orbit` as well as for a source checkout: `package.json` names the launcher as its `bin`, lists only the runtime files (`bin`, `src`, `scripts`, `desktop`, `viewer`, `install.sh`, the Markdown docs and the licence notices, 1.24 MB unpacked against 5.72 MB for the whole tree), declares Linux and Bun 1.3 or later, and is no longer marked private. The launcher finds its own source root from its location, so it runs unchanged from `node_modules/sbar-orbit`.
+
+```sh
+bun add -g sbar-orbit
+sbar-orbit install --dry-run
+sbar-orbit install
+```
+
+Measured 13 September 2026 from a tarball built by `bun pm pack`, never from the registry, because nothing has been published: installed into a temporary consumer project with `bun add ./sbar-orbit-0.1.0-alpha.2.tgz`, and globally into a temporary `BUN_INSTALL` home so the person's own global installs were untouched. From both, `sbar-orbit --help`, `preflight`, `doctor --report` and `install --dry-run --json` ran and reported the same steps and the same source root as a checkout does, with `installed: true` on the dry run and the one remedy this host always reports, the untracked native runtime. That is tier `Limited` for the registry path: the package installs and the installer plans from it, on this host, from a local tarball. It does not show that a published version resolves, that a fresh machine's `bun add -g` puts the launcher on `PATH`, or that `install` completes from there; the checkout path in the section above is the one that was run to completion. Publishing is `bun publish` by a maintainer with registry credentials, after the version in `package.json` and the changelog agree.
+
 ## Activate a local source installation
 
 The launcher-link manager arrived after the `0.1.0-alpha.1` archive, which does not carry it, and is part of `0.1.0-alpha.2`. Keep the source in a stable directory, verify the release digest, and prepare dependencies with `bun install --frozen-lockfile --ignore-scripts` first. Use only trusted source: package-name checks recognize Orbit but do not authenticate a release.

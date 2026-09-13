@@ -89,6 +89,10 @@ export class FedoraBackend {
   private children: { child: ChildProcessWithoutNullStreams; group?: number }[] = [];
   private compositorGroup?: number;
   private device?: ChildProcessWithoutNullStreams;
+  // Where the compositor put its socket and display, learned once it is up. Typed as strings
+  // rather than read back out of the environment with an assertion at every use.
+  private swaySocket = "";
+  private waylandDisplay = "";
   private clipboard?: ChildProcessWithoutNullStreams;
   private closing?: Promise<void>;
   private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams, private size: Viewport) {
@@ -106,14 +110,11 @@ export class FedoraBackend {
       delete env[key];
     // Private base directories, so an application cannot restore the person's own previous session
     // or recent documents into the agent's workspace. System XDG_DATA_DIRS still resolve normally.
-    const base: Record<string, string> = {};
-    for (const [key, name] of [["XDG_CONFIG_HOME", "config"], ["XDG_DATA_HOME", "data"], ["XDG_CACHE_HOME", "cache"], ["XDG_STATE_HOME", "state"]] as const) {
-      base[key] = join(directory, name);
-      await mkdir(base[key]!, { recursive: true, mode: 0o700 });
-    }
+    const base = { XDG_CONFIG_HOME: join(directory, "config"), XDG_DATA_HOME: join(directory, "data"), XDG_CACHE_HOME: join(directory, "cache"), XDG_STATE_HOME: join(directory, "state") };
+    for (const path of Object.values(base)) await mkdir(path, { recursive: true, mode: 0o700 });
     // The person's theme, icons, cursor and fonts, so applications look the way they do on the
     // desktop. Documents, history and credentials are not part of it.
-    const appearance = await applyAppearance(base.XDG_CONFIG_HOME!);
+    const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
     Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
@@ -137,7 +138,7 @@ export class FedoraBackend {
         const ipc = files.find(v => /^sway-ipc\..*\.sock$/.test(v));
         const display = files.find(v => /^wayland-\d+$/.test(v));
         if (!ipc || !display) return false;
-        env.SWAYSOCK = join(directory, ipc); env.WAYLAND_DISPLAY = display; return true;
+        backend.swaySocket = env.SWAYSOCK = join(directory, ipc); backend.waylandDisplay = env.WAYLAND_DISPLAY = display; return true;
       });
       // The supervisor reports the compositor it started. Kept because a supervisor killed outright
       // leaves that compositor running, and the display directory is removed out from under it.
@@ -150,7 +151,7 @@ export class FedoraBackend {
         try { const data = JSON.parse(await readFile(handoff, "utf8")); if (!/^:\d+$/.test(data.display)) return false; env.DISPLAY = data.display; return true; }
         catch { return false; }
       });
-      const device = spawn(join(runtime, "pointer"), [join(directory, env.WAYLAND_DISPLAY!)], { env });
+      const device = spawn(join(runtime, "pointer"), [join(directory, backend.waylandDisplay)], { env });
       backend.device = device; device.stderr.resume();
       device.once("exit", () => { void backend.close(); });
       device.on("error", () => { void backend.close(); });
@@ -170,12 +171,17 @@ export class FedoraBackend {
   private async ipc(...args: string[]) {
     this.ensureOpen();
     const tree = args[0] === "-t" && args[1] === "get_tree";
-    const result = await swayRequest(this.env.SWAYSOCK!, tree ? 4 : 0, tree ? "" : args.join(" "));
+    const result = await swayRequest(this.swaySocket, tree ? 4 : 0, tree ? "" : args.join(" "));
     if (Array.isArray(result) && result.some(v => v.success === false)) throw new OrbitError("BACKEND_FAILED", "Private display rejected command");
     return result;
   }
+  /** The pointer helper, which every input action needs and which only exists once the display is up. */
+  private input(): ChildProcessWithoutNullStreams {
+    if (!this.device) throw new OrbitError("BACKEND_FAILED", "Private input helper is not running");
+    return this.device;
+  }
   private reply(expected: string): Promise<void> {
-    const device = this.device!;
+    const device = this.input();
     return new Promise((resolve, reject) => {
       let buffer = "";
       const cleanup = () => { clearTimeout(timer); device.stdout.off("data", data); device.off("exit", fail); device.off("error", fail); };
@@ -204,7 +210,8 @@ export class FedoraBackend {
     }
     if (action.type === "launch") {
       if (this.children.length >= 32) throw new OrbitError("LIMIT_REACHED", "Native session application limit reached");
-      const executable = action.argv[0]!;
+      const [executable] = action.argv;
+      if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(action.selectedFiles ?? []), executable, ...action.argv.slice(1)], { env: { ...this.env, GDK_BACKEND: action.toolkit }, detached: true });
@@ -268,12 +275,12 @@ export class FedoraBackend {
         catch { return false; }
       });
       const acknowledgement = this.reply("ok");
-      this.device!.stdin.write("paste\n");
+      this.input().stdin.write("paste\n");
       await acknowledgement;
       return { applied: true, clipboard: "session", shortcut: "Ctrl+V" };
     }
     const acknowledgement = this.reply("ok");
-    this.device!.stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "scroll" ? `scroll ${action.x} ${action.y} ${action.deltaY}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
+    this.input().stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "scroll" ? `scroll ${action.x} ${action.y} ${action.deltaY}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
     await acknowledgement;
     if (action.type === "pointer" || action.type === "scroll") this.pointer = { x: action.x, y: action.y };
     return { applied: true };

@@ -42,7 +42,7 @@ const project = resolve(import.meta.dir, "..");
 /** The distinct causes behind a set of failed checks, in the order they were checked. */
 function remediesOf(checks: PrerequisiteCheck[]): Remedy[] {
   const found: Remedy[] = [];
-  for (const check of checks) if (check.remedy && !found.some(known => known.id === check.remedy!.id)) found.push(check.remedy);
+  for (const { remedy } of checks) if (remedy && !found.some(known => known.id === remedy.id)) found.push(remedy);
   return found;
 }
 

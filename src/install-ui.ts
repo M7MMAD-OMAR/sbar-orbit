@@ -99,7 +99,7 @@ export class InstallDisplay {
     const width = 28;
     const filled = Math.round((done / Math.max(this.steps.length, 1)) * width);
     const lines = this.steps.map(step => {
-      const icon = step.state === "running" ? spinner[this.frame % spinner.length]! : glyph[step.state];
+      const icon = step.state === "running" ? (spinner[this.frame % spinner.length] ?? "") : glyph[step.state];
       const tint = step.state === "done" ? color.green : step.state === "failed" ? color.red
         : step.state === "skipped" ? color.yellow : step.state === "running" ? color.cyan : color.dim;
       const elapsed = step.elapsedMs ? paint(` ${seconds(step.elapsedMs)}`, color.dim, this.live) : "";

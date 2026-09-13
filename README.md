@@ -67,6 +67,10 @@ manager's job, and the run prints the exact command for each one it finds missin
 a success you would discover was false minutes later. It is not a measurement either: it says what was
 installed, not what was proven to work.
 
+### Or from a package registry
+
+The package is shaped for `bun add -g sbar-orbit`, then `sbar-orbit install`, and that shape was checked from a locally built tarball. Nothing is published yet, so until a release lands the checkout above is the path that has been run to completion. [Packaging](docs/packaging.md) has the details and the limits.
+
 ### Or hand it to an agent
 
 Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:

@@ -83,7 +83,7 @@ export function parseExec(line: string): string[] {
   const parts: string[] = [];
   let current = "", quote = "", started = false;
   for (let index = 0; index < line.length; index++) {
-    const character = line[index]!;
+    const character = line.charAt(index);
     if (quote) {
       if (character === "\\" && index + 1 < line.length) { current += line[++index]; continue; }
       if (character === quote) { quote = ""; continue; }
@@ -148,9 +148,10 @@ export async function listHostBrowsers(env: Record<string, string | undefined> =
       // browser rather than merely reachable by a link.
       if (!(fields.Categories || "").split(";").includes("WebBrowser")) continue;
       const command = parseExec(fields.Exec);
-      if (!command.length) continue;
+      const [executable] = command;
+      if (!executable) continue;
       found.set(name, {
-        id: name.replace(/\.desktop$/, ""), name: fields.Name || basename(command[0]!),
+        id: name.replace(/\.desktop$/, ""), name: fields.Name || basename(executable),
         command, appWindow: family(command, fields.Name || name, text) === "chromium", isDefault: name === preferred,
       });
     }

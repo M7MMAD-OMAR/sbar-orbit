@@ -38,9 +38,9 @@ export function filterKdeGlobals(text: string): string {
   let group = "";
   for (const line of text.split("\n")) {
     const heading = /^\[([^\]]+)\](\[[^\]]+\])?\s*$/.exec(line);
-    if (heading) { group = kdeGroups.test(heading[1]!) ? line.trim() : ""; if (group) kept.push(group); continue; }
+    if (heading) { group = kdeGroups.test(heading[1] ?? "") ? line.trim() : ""; if (group) kept.push(group); continue; }
     if (!group || !line.trim()) continue;
-    const key = line.split("=")[0]!.trim().replace(/\[\$[a-z]\]$/, "");
+    const key = (line.split("=")[0] ?? "").trim().replace(/\[\$[a-z]\]$/, "");
     if (group === "[General]" && !kdeGeneralKeys.test(key)) continue;
     if (/^Recent /.test(key)) continue;
     kept.push(line);
@@ -70,14 +70,16 @@ function readCursor(text: string): { theme: string; size: number } | undefined {
   for (const line of text.split("\n")) {
     const match = settingLine.exec(line);
     if (!match) continue;
-    if (match[1] === "gtk-cursor-theme-name" && /^[A-Za-z0-9._-]+$/.test(match[2]!)) theme = match[2];
-    if (match[1] === "gtk-cursor-theme-size" && /^[1-9]\d{0,2}$/.test(match[2]!)) size = Number(match[2]);
+    const [, name, value = ""] = match;
+    if (name === "gtk-cursor-theme-name" && /^[A-Za-z0-9._-]+$/.test(value)) theme = value;
+    if (name === "gtk-cursor-theme-size" && /^[1-9]\d{0,2}$/.test(value)) size = Number(value);
   }
   return theme ? { theme, size } : undefined;
 }
 
 function escapeXml(value: string): string {
-  return value.replace(/[<>&"']/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c]!);
+  const entities: Record<string, string> = { "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" };
+  return value.replace(/[<>&"']/g, c => entities[c] ?? c);
 }
 
 function prefersDark(text: string): boolean {

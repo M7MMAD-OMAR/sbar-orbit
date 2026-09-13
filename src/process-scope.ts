@@ -9,8 +9,7 @@ export async function auditProcessScope(rootPid = process.pid, procRoot = "/proc
   const pending = [rootPid], visited = new Set<number>();
   const escaped: { pid: number; cgroup: string }[] = [];
   let checked = 0, disappearedProcesses = 0;
-  while (pending.length) {
-    const pid = pending.pop()!;
+  for (let pid = pending.pop(); pid !== undefined; pid = pending.pop()) {
     if (visited.has(pid)) continue;
     visited.add(pid);
     try {
