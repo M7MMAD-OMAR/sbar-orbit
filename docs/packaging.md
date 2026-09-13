@@ -1,6 +1,6 @@
 # Source releases
 
-The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
+The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`, and `0.1.0-alpha.4` followed it the same day with the packaging fixes below; a published version is immutable, so `0.1.0-alpha.3` still carries what it shipped with. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
 
 ## Build
 
