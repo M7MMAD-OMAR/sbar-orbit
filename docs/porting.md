@@ -37,7 +37,7 @@ These are platform independent because they are Orbit's own contract, not a borr
 
 | Layer | Linux today | Windows | macOS |
 |---|---|---|---|
-| Containment and cleanup | `sbarorbit.slice`, `CPUQuota=100%`, `CPUWeight=10`, `memory.max`, plus `src/native/supervise.py` as subreaper | Job Object with `KILL_ON_JOB_CLOSE` and a hard CPU rate cap | One `launchd` job per session in `gui/$UID`, killed by process group on job death |
+| Containment and cleanup | `sbarorbit.slice`, a `CPUQuota` and `memory.max` sized to the machine, `CPUWeight=10`, plus `src/native/supervise.py` as subreaper | Job Object with `KILL_ON_JOB_CLOSE` and a hard CPU rate cap | One `launchd` job per session in `gui/$UID`, killed by process group on job death |
 | Resource accounting | `cpu.stat`, `memory.current`, `memory.events`, `pids.*` read from the cgroup | `QueryInformationJobObject` plus summed `GetProcessMemoryInfo`, plus a completion port for the event counters | No kernel ceiling. A broker side sampler over `proc_pid_rusage`, reported as advisory |
 | Broker transport | `AF_UNIX` at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`, mode 0600 | Named pipe with an explicit DACL, because `AF_UNIX` on Windows carries no peer credentials | `AF_UNIX` under `~/Library/Application Support`, with a 103 byte path ceiling |
 | Browser resolution | Fixed list in `src/runtime-paths.ts` | Registry `App Paths` plus the standard install roots | Bundle identifier to `.app`, verified by `codesign` |

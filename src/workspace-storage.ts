@@ -37,9 +37,17 @@ export async function brokerAnswers(socket: string, timeoutMs = 3000): Promise<b
 }
 
 async function ownerIsAlive(directory: string, probe: (socket: string) => Promise<boolean>): Promise<boolean | undefined> {
-  let owner: { socket?: unknown };
+  let owner: { socket?: unknown; pid?: unknown };
   try { owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")); } catch { return undefined; }
   if (typeof owner.socket !== "string" || !isAbsolute(owner.socket)) return undefined;
+  // The socket answering is necessary and not sufficient. A managed broker binds one fixed path, so
+  // every managed broker there has ever been recorded the same socket, and the one running now
+  // answers for all of them: measured 13 September 2026, 24 such directories and most of 7.2 GB kept
+  // by `clean` as alive. The pid decides between them. A reused pid would keep one directory for
+  // one more sweep, which is the cost of not reading command lines.
+  if (Number.isInteger(owner.pid) && Number(owner.pid) > 0) {
+    try { process.kill(Number(owner.pid), 0); } catch (error) { if ((error as { code?: string }).code === "ESRCH") return false; }
+  }
   return probe(owner.socket);
 }
 
@@ -50,7 +58,7 @@ const recordlessGraceMs = 60 * 60 * 1000;
  * record; it is kept while it is recent, in case an older broker still holds it, and removed
  * otherwise. Nothing here reads a profile's contents.
  */
-export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers, self?: { socket: string; pid: number }) {
+export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers) {
   const removed: string[] = [], kept: string[] = [];
   let entries: string[];
   try { entries = await readdir(root); } catch { return { root, removed, kept }; }
@@ -58,16 +66,7 @@ export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnsw
     const directory = join(root, name);
     const info = await lstat(directory).catch(() => undefined);
     if (!info?.isDirectory() || info.isSymbolicLink()) continue;
-    let alive = await ownerIsAlive(directory, probe);
-    // A managed broker answers on a fixed path, so every earlier managed broker's workspace names the
-    // socket this one now holds and would probe as alive forever. The one that answers is this process;
-    // a record with that socket and another pid was written by a broker that is gone.
-    if (alive && self) {
-      try {
-        const owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")) as { socket?: unknown; pid?: unknown };
-        if (owner.socket === self.socket && owner.pid !== self.pid) alive = false;
-      } catch {}
-    }
+    const alive = await ownerIsAlive(directory, probe);
     const recent = Date.now() - info.mtimeMs < recordlessGraceMs;
     if (alive || (alive === undefined && recent)) { kept.push(name); continue; }
     await rm(directory, { recursive: true, force: true });

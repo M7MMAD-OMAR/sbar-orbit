@@ -32,6 +32,10 @@ test("clean removes workspaces whose broker is gone and keeps live or recent one
   const answering = Bun.serve({ unix: join(sockets, "live.sock"), fetch: () => Response.json({ ok: true, result: {} }) });
   const live = await createWorkspaceDirectory("broker", root);
   await markWorkspaceOwner(live, join(sockets, "live.sock"));
+  // An earlier managed broker: it recorded the fixed socket the live one now answers on, and a pid
+  // that no process has. The socket alone would keep it forever.
+  const predecessor = await createWorkspaceDirectory("broker", root);
+  await markWorkspaceOwner(predecessor, join(sockets, "live.sock"), 4194304 + 7);
   // A dead broker: its socket file is gone, or is there with nothing behind it.
   const dead = await createWorkspaceDirectory("broker", root);
   await markWorkspaceOwner(dead, join(sockets, "dead.sock"));
@@ -54,7 +58,7 @@ test("clean removes workspaces whose broker is gone and keeps live or recent one
     expect(await brokerAnswers(join(sockets, "live.sock"))).toBe(true);
     const result = await cleanWorkspaces(root);
     const name = (path: string) => path.slice(root.length + 1);
-    expect(result.removed).toEqual([name(dead), name(staleSocket), name(reused), name(old)].sort());
+    expect(result.removed).toEqual([name(predecessor), name(dead), name(staleSocket), name(reused), name(old)].sort());
     expect(result.kept).toEqual([name(live), name(recent)].sort());
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect((await lstat(scratch)).isDirectory()).toBe(true);

@@ -36,7 +36,7 @@ try {
     // stopped or killed, because the only thing that reclaimed them was a command nobody ran. A
     // managed broker is the one that outlives them all, so it sweeps when it starts. Only directories
     // whose owner does not answer go; a private broker started by a test keeps its own.
-    const swept = managed ? await (await import("./workspace-storage")).cleanWorkspaces(undefined, undefined, { socket: broker.socket, pid: process.pid }).catch(() => undefined) : undefined;
+    const swept = managed ? await (await import("./workspace-storage")).cleanWorkspaces().catch(() => undefined) : undefined;
     console.log(JSON.stringify({ socket: broker.socket, managed, ...(swept ? { swept: swept.removed.length } : {}) }));
     let stopping = false;
     const stop = async () => {
