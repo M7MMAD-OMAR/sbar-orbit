@@ -1,3 +1,4 @@
+import { usePresentation } from './usePresentation';
 import { LocaleContext, useCopy, type Locale } from './locale';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ArrowUpRight, Check, Copy, Cursor, Eye, GithubLogo, Heart, List, Monitor, Pause, Play, TerminalWindow, X, Browser, ArrowDown, PlugsConnected, ShieldCheck, TreeStructure } from '@phosphor-icons/react';
@@ -37,25 +38,20 @@ function Header() {
 }
 
 function Viewer() {
-  const { locale, t } = useCopy();
-  const [selected, setSelected] = useState(0);
-  const current = viewerStates[selected] ?? viewerStates[0];
-  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const { t } = useCopy();
+  const show = usePresentation(viewerStates.length, 7000);
+  const current = viewerStates[show.step] ?? viewerStates[0];
   if (!current) return null;
-  return <article className="bento-tile bento-viewer" id="in-control" aria-labelledby="viewer-heading">
+  return <article ref={show.element} {...show.interaction} className="bento-tile bento-viewer" id="in-control" aria-labelledby="viewer-heading" aria-roledescription={t("Automatic presentation")} data-running={show.running}>
     <div className="tile-copy"><h3 id="viewer-heading">{t("Watch. Pause. Step in.")}</h3><p>{t("See the work, then take the controls when you need.")}</p></div>
     <img className="viewer-art" src="/images/viewer-control.webp" width="1200" height="850" loading="lazy" alt={t("A person watching the agent’s application windows through the Orbit viewer")} />
-    <div className="viewer-explanation"><div className="viewer-tabs" role="tablist" aria-label={t("Viewer capabilities")}>
-      {viewerStates.map((state,index)=><button key={state.label} ref={element=>{tabs.current[index]=element;}} role="tab" id={`viewer-tab-${index}`} aria-selected={selected===index} aria-controls="viewer-panel" tabIndex={selected===index?0:-1} onClick={()=>setSelected(index)} onKeyDown={event=>{
-        let next=index;
-        if(event.key===(locale==='ar'?'ArrowLeft':'ArrowRight')) next=(index+1)%viewerStates.length;
-        else if(event.key===(locale==='ar'?'ArrowRight':'ArrowLeft')) next=(index+viewerStates.length-1)%viewerStates.length;
-        else if(event.key==='Home') next=0;
-        else if(event.key==='End') next=viewerStates.length-1;
-        else return;
-        event.preventDefault();setSelected(next);tabs.current[next]?.focus();
-      }}><state.icon size={20}/><span>{t(state.label)}</span></button>)}
-    </div><div id="viewer-panel" role="tabpanel" tabIndex={0} aria-labelledby={`viewer-tab-${selected}`}><p>{t(current.text)}</p></div></div>
+    <div className="viewer-story">
+      <div className="story-toolbar"><span>{t("A walkthrough, not a live session")}</span>{!show.reduced && <button className="motion-toggle" onClick={()=>show.setPaused(!show.paused)} aria-pressed={show.paused} aria-label={t(show.paused ? 'Play presentation' : 'Pause presentation')}>{show.paused ? <Play size={16}/> : <Pause size={16}/>}</button>}</div>
+      <div className={show.reduced ? 'story-slides reduced-story' : 'story-slides'} aria-live="off">
+        {viewerStates.map((state,index)=><div key={state.label} className="story-slide" hidden={!show.reduced && index!==show.step} data-slide={index}><div className="story-title"><state.icon size={26}/><h4>{t(state.label)}</h4><span>{String(index+1).padStart(2,'0')} / 04</span></div><p>{t(state.text)}</p></div>)}
+      </div>
+      {!show.reduced && <div className="story-progress" aria-hidden="true">{viewerStates.map((state,index)=><span key={state.label} className={index===show.step?'is-current':index<show.step?'is-complete':''}><i key={index===show.step?show.step:-1}/></span>)}</div>}
+    </div>
   </article>;
 }
 
@@ -79,9 +75,8 @@ function Spaces() {
   const { t } = useCopy();
   return <section className="section solution-section" id="how-it-works" aria-labelledby="solution-heading"><div className="container">
     <div className="bento-heading"><h2 id="solution-heading">{t("Separate spaces.")} {t("Same machine.")}</h2><p>{t("Two ways to work. Neither takes over your desktop.")}</p></div>
-    <div className="workspace-bento">
+    <div className="workspace-bento"><Viewer />
       <article className="bento-tile bento-spaces"><div className="tile-copy"><h3>{t("A workspace of its own.")}</h3><p>{t("A fresh browser for web tasks. A private display for native apps.")}</p></div><img src="/images/private-spaces.webp" width="1518" height="1036" loading="lazy" alt={t("Two hand drawn windows: a private browser and a native application on a private display")} /><div className="space-captions"><span><Browser size={20}/>{t("Private browser")}</span><span><Monitor size={20}/>{t("Private display")}</span></div></article>
-      <Viewer />
       <article className="bento-tile bento-connect"><div className="tile-copy"><h3>{t("Bring your agent.")}</h3><p>{t("Connect a tool-capable agent host through MCP or the CLI.")}</p></div><div className="connect-picture" aria-label={t("MCP and CLI connect your agent to Orbit")}><div><span><PlugsConnected size={24}/>MCP</span><span><TerminalWindow size={24}/>CLI</span></div><ArrowRight className="directional-arrow" size={32}/><div className="connect-orbit"><img src="/favicon.svg" width="36" height="36" alt=""/><strong>Orbit</strong></div></div></article>
     </div>
   </div></section>;
@@ -89,17 +84,18 @@ function Spaces() {
 
 function Architecture() {
   const { t } = useCopy();
+  const flow = usePresentation<HTMLDivElement>(4, 2600);
   return <section className="architecture-section" id="architecture" aria-labelledby="architecture-heading"><div className="container">
     <div className="bento-heading"><h2 id="architecture-heading">{t("One agent. A clear chain of control.")}</h2><p>{t("Your agent gives instructions. Orbit manages the workspace.")}</p></div>
-    <div className="architecture-board">
+    <div ref={flow.element} {...flow.interaction} className="architecture-board" data-step={flow.reduced ? 'static' : flow.step} data-running={flow.running}>
       <div className="hierarchy" aria-label={t("The agent connects to the broker, which manages a private browser or display. The viewer is optional.")}>
         <div className="hierarchy-node agent-node"><TerminalWindow size={28}/><strong>{t("Your agent")}</strong><span>{t("MCP or CLI")}</span></div>
         <ArrowDown className="hierarchy-down" size={24} aria-hidden="true"/>
         <div className="broker-row"><div className="hierarchy-node broker-node"><img src="/favicon.svg" width="32" height="32" alt=""/><strong>{t("Orbit broker")}</strong><span>{t("Local session manager")}</span></div><div className="viewer-branch"><span className="dashed-connector"/><div className="hierarchy-node optional-node"><Eye size={24}/><strong>{t("Viewer")}</strong><span>{t("Optional: watch and control")}</span></div></div></div>
         <div className="workspace-branches"><div className="branch-line" aria-hidden="true"/><div className="hierarchy-node"><Browser size={28}/><strong>{t("Private browser")}</strong><span>{t("Websites and web tools")}</span></div><div className="hierarchy-node"><Monitor size={28}/><strong>{t("Private display")}</strong><span>{t("Native applications")}</span></div></div>
-        <div className="diagram-legend"><span><i/>{t("Agent actions")}</span><span><i className="dashed"/>{t("Optional viewer connection")}</span></div>
+        <div className="flow-caption" aria-live="off">{t(flow.reduced ? 'Instructions go from your agent through Orbit to its workspace.' : ['Your agent sends an instruction.', 'Orbit routes it to the session.', 'The private workspace carries it out.', 'Follow the result in the optional viewer.'][flow.step] ?? 'Your agent sends an instruction.')}</div><div className="diagram-legend"><span><i/>{t("Agent actions")}</span><span><i className="dashed"/>{t("Optional viewer connection")}</span></div>
       </div>
-      <aside className="architecture-aside"><Monitor size={56} weight="thin"/><h3>{t("Your desktop stays separate.")}</h3><p>{t("Your windows, pointer and personal browser are not the agent’s workspace.")}</p><div className="boundary-note"><ShieldCheck size={24}/><p>{t("Separate screens, not a security sandbox. Apps still have your OS user’s permissions.")}</p></div></aside>
+      <aside className="architecture-aside">{!flow.reduced && <button className="flow-toggle text-link" onClick={()=>flow.setPaused(!flow.paused)} aria-pressed={flow.paused}>{flow.paused ? <Play size={16}/> : <Pause size={16}/>} {t(flow.paused ? 'Play animation' : 'Pause animation')}</button>}<Monitor size={56} weight="thin"/><h3>{t("Your desktop stays separate.")}</h3><p>{t("Your windows, pointer and personal browser are not the agent’s workspace.")}</p><div className="boundary-note"><ShieldCheck size={24}/><p>{t("Separate screens, not a security sandbox. Apps still have your OS user’s permissions.")}</p></div></aside>
     </div>
   </div></section>;
 }

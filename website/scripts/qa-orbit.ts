@@ -47,8 +47,11 @@ try {
 
   await act({type:'resize',width:1440,height:1000});
   await act({type:'navigate',url:`${base}?qa=1#in-control`});await wait(900);
-  for(const tab of [1,2,3,0]){await act({type:'click',selector:`#viewer-tab-${tab}`});report[`viewer${tab}`]=await read('#viewer-panel')}
-
+  report.slideBefore=await read('.story-slide:not([hidden]) .story-title h4');
+  await wait(7400);
+  report.slideAfter=await read('.story-slide:not([hidden]) .story-title h4');
+  await act({type:'click',selector:'.motion-toggle'});
+  report.motionPaused=await read('.motion-toggle[aria-pressed="true"]');
   await act({type:'navigate',url:`${base}?qa=1#get-started`});await wait(600);
   await act({type:'click',selector:'.copy-button'});await wait(500);report.copy=await read('.copy-status');
 
@@ -73,6 +76,7 @@ try {
     const metrics=JSON.parse((value as {text:string}).text);
     if(metrics.overflow||metrics.brokenImages.length||metrics.errors.length) failures.push(`${key}: ${JSON.stringify(metrics)}`);
   }
+  if((report.slideBefore as {text:string}).text === (report.slideAfter as {text:string}).text) failures.push('Automatic presentation did not advance');
   if((report.copy as {text:string}).text !== (arabic ? 'تم النسخ' : 'Copied')) failures.push(`Clipboard: ${JSON.stringify(report.copy)}`);
   console.log(JSON.stringify({widths:[1440,768,390,320],failures,copy:report.copy,sessionId,evidence:'evidence/browser-audit.json'},null,2));
   if(failures.length) process.exitCode=1;

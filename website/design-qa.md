@@ -104,3 +104,14 @@ later support screenshot. A final focused Arabic capture was reviewed after the
 image-size adjustment. The final English browser navigation timed out. These are
 partial browser runs, not a complete browser-suite pass. Type checking, production
 build and four locale/static-content tests passed. No diagnostic script is deployed.
+
+## Automatic presentation revision
+
+The viewer is now the large bento tile. Its illustration uses `object-fit: contain`
+and its native aspect ratio at every breakpoint. Four task-selection buttons were
+replaced with a seven-second automatic walkthrough, passive progress segments and
+one pause control. All descriptions remain visible when reduced motion is preferred.
+The architecture highlights agent, broker, workspace and optional viewer in order,
+with an explanatory caption and a separate animation pause control. Motion stops
+while offscreen, backgrounded, hovered or keyboard-focused. Timer cleanup preserves
+the remaining reading time when paused; it does not skip ahead on resume.

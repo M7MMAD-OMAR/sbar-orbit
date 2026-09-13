@@ -74,3 +74,10 @@ The landing page includes an illustrated bento overview, an always-visible
 architecture diagram and a three-step quick guide in both languages. The viewer
 tabs explain session controls; they do not control a live agent. Deeper technical
 reference stays on GitHub. No essential guidance is hidden in disclosures.
+
+The large viewer illustration uses its full aspect ratio. Its walkthrough advances
+every seven seconds, with a pause control and progress indicators. The architecture
+highlights an explanatory stage every 2.6 seconds. Both pause on hover, keyboard
+focus, hidden tabs and offscreen placement. Reduced-motion users receive static
+content, including all four viewer descriptions. These are illustrations, not live
+session state.

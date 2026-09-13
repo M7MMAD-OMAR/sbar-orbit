@@ -37,3 +37,11 @@ test('essential guidance is visible without disclosures or JavaScript', () => {
   expect(html).toContain('sbar-orbit connector-config');
   expect(html).toContain('sbar-orbit preview');
 });
+
+test('presentation has no task-selection buttons and has a static reading mode', () => {
+  const html = renderToString(<App locale="en" />);
+  expect(html).not.toContain('role="tab"');
+  expect(html).toContain('reduced-story');
+  expect(html).toContain('A walkthrough, not a live session');
+  expect(html).toContain('Instructions go from your agent through Orbit to its workspace.');
+});

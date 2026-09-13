@@ -139,7 +139,18 @@ export const arabic: Record<string, string> = {
   "Ask your connected agent to open a private browser with Orbit and carry out a task. Open the viewer whenever you want to follow along.": "اطلب من الوكيل المتصل أن يفتح متصفحًا خاصًا عبر أوربت وينفّذ مهمة. وللمتابعة، هذا الأمر يعطيك رابط نافذة العرض.",
   "Orbit does not collect usage data. Your agent tools and visited websites still make their own network requests.": "أوربت لا يجمع بيانات الاستخدام. أدوات وكيلك والمواقع التي يفتحها تتصل بالإنترنت وفق طريقة عملها.",
   "Developer reference (English)": "مرجع المطوّرين بالإنجليزية",
-  "Full installation reference (English)": "تفاصيل التثبيت بالإنجليزية"
+  "Full installation reference (English)": "تفاصيل التثبيت بالإنجليزية",
+  "Automatic presentation": "عرض تلقائي",
+  "A walkthrough, not a live session": "شرح توضيحي لطريقة المتابعة",
+  "Play presentation": "تشغيل العرض التلقائي",
+  "Pause presentation": "إيقاف العرض التلقائي",
+  "Play animation": "تشغيل الحركة",
+  "Pause animation": "إيقاف الحركة",
+  "Your agent sends an instruction.": "وكيلك يرسل تعليمة.",
+  "Orbit routes it to the session.": "أوربت يوجّهها إلى الجلسة.",
+  "The private workspace carries it out.": "تُنفَّذ داخل مساحة العمل الخاصة.",
+  "Follow the result in the optional viewer.": "وتقدر تتابع النتيجة من نافذة العرض.",
+  "Instructions go from your agent through Orbit to its workspace.": "تنتقل التعليمات من وكيلك، عبر أوربت، إلى مساحة عمله."
 };
 export function useCopy() {
   const locale = useContext(LocaleContext);
