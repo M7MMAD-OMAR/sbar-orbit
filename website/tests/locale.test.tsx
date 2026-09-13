@@ -15,8 +15,8 @@ test('every copy lookup has an Arabic rewrite', async () => {
 
 test('Arabic renders without JavaScript, keeps shell commands intact and offers English', () => {
   const html = renderToString(<App locale="ar" />);
-  expect(html).toContain('خلّي وكيلك يشتغل.');
-  expect(html).toContain('اعزمني على قهوة');
+  expect(html).toContain('مساحة مستقلة لوكيلك.');
+  expect(html).toContain('ادعم المشروع بفنجان قهوة');
   expect(html).toContain('href="/" lang="en"');
   expect(html).toContain('dir="ltr"');
   expect(html).toContain('git clone https://github.com/M7MMAD-OMAR/sbar-orbit');
@@ -44,4 +44,10 @@ test('presentation has no task-selection buttons and has a static reading mode',
   expect(html).toContain('reduced-story');
   expect(html).toContain('A walkthrough, not a live session');
   expect(html).toContain('Instructions go from your agent through Orbit to its workspace.');
+});
+
+
+test('Arabic copy and metadata contain no vocalization marks or long dashes', async () => {
+  const texts = [Object.values(arabic).join(' '), renderToString(<App locale="ar" />), await Bun.file(new URL('../scripts/prerender.tsx', import.meta.url)).text()];
+  for (const text of texts) expect(text).not.toMatch(/[\u064b-\u0652\u0670\u2013\u2014]/u);
 });

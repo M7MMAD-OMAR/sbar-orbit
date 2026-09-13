@@ -7,10 +7,10 @@ const alternates = '<link rel="alternate" hreflang="en" href="https://orbit.sbar
 for (const locale of ['en', 'ar'] as const) {
   let page = template.replace('<html lang="en">', `<html lang="${locale}" dir="${locale === 'ar' ? 'rtl' : 'ltr'}">`).replace('</head>', `${alternates}</head>`);
   if (locale === 'ar') {
-    page = page.replace(/<title>.*?<\/title>/, '<title>سبار أوربت | مساحة لوكيلك، وراحة إلك</title>')
-      .replace(/(<meta name="description" content=")[^"]+/, '$1خلّي وكيل الذكاء الاصطناعي يشتغل في متصفح أو سطح مكتب مستقل على جهازك، وكمّل شغلك بلا مقاطعة. أوربت مجاني ومفتوح المصدر.')
-      .replace(/(<meta property="og:title" content=")[^"]+/, '$1خلّي وكيلك يشتغل. وكمّل شغلك براحتك.')
-      .replace(/(<meta property="og:description" content=")[^"]+/, '$1مساحة مستقلة لوكيلك على نفس الجهاز. راقب شغله وتدخّل وقت ما تحتاج.')
+    page = page.replace(/<title>.*?<\/title>/, '<title>سبار أوربت | مساحة مستقلة لوكيلك</title>')
+      .replace(/(<meta name="description" content=")[^"]+/, '$1وفر لوكيل الذكاء الاصطناعي متصفحا أو سطح مكتب مستقلا على جهازك، وتابع عملك دون مقاطعة. أوربت مجاني ومفتوح المصدر.')
+      .replace(/(<meta property="og:title" content=")[^"]+/, '$1مساحة مستقلة لوكيلك. وعملك يستمر دون مقاطعة.')
+      .replace(/(<meta property="og:description" content=")[^"]+/, '$1مساحة مستقلة لوكيلك على الجهاز نفسه. تابع عمله وتدخل عند الحاجة.')
       .replace('property="og:url" content="https://orbit.sbarah.com/"', 'property="og:url" content="https://orbit.sbarah.com/ar/"')
       .replace('rel="canonical" href="https://orbit.sbarah.com/"', 'rel="canonical" href="https://orbit.sbarah.com/ar/"');
   }
