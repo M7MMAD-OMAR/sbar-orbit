@@ -47,9 +47,12 @@
    `doctor --report` read a Fedora container as this project's measured host class. The third is a
    real gap and is now narrower: the native runtime, the private compositor and the pointer helper,
    lives in an untracked directory, and since 13 September 2026 `./install.sh --native` builds it
-   from the tracked bootstrap, measured on this host into a scratch directory. Whether that build
-   completes on a fresh Fedora machine is still `not measured`; the container has no systemd session
-   and stops before the step runs.
+   from the tracked bootstrap. Measured in the clean Fedora 44 container on the same day, once the
+   `deps` image carried the compiler and the 26 runtime packages the unpacked compositor links
+   against: the bootstrap completes and the sway it built starts and reports its version. That run
+   is what found the packages, since the first attempt built cleanly and could not load
+   `libevdev.so.2`. Opening a native session on that image is still `not measured`; it has no
+   display and no systemd session.
    What still closes this gate is a real machine with a systemd user session, cgroup delegation and
    wlroots, where `./install.sh` runs to completion and the broker it starts answers.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts.
