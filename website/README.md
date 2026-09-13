@@ -44,17 +44,21 @@ The viewer controls explain capabilities, they do not connect to an actual Orbit
 
 The source illustration reference is the user-approved long ivory and navy landing mockup (`exec-84293ea4-fd30-411e-b415-cbda3ec8ea34.png`). The final layout adds the user-requested problem, benefits and support sections. Generated imagery is illustrative, not a product screenshot.
 
-## Automatic deployment
+## Deployment
 
-`.github/workflows/website.yml` builds and deploys website changes pushed to `main`.
-It also supports manual runs from GitHub Actions. Checks must pass before deployment,
-and production deployments run sequentially.
+Deployment is one command from this directory, run by a person:
 
-One-time setup: add `CLOUDFLARE_API_TOKEN` in the repository's Actions secrets.
-Use a persistent Cloudflare API token based on the Edit Cloudflare Workers template,
-restricted to the Sbarah account and the sbarah.com zone. Do not use Wrangler's
-short-lived OAuth token. The workflow is prepared but cannot deploy until this secret
-is configured and a successful Actions run verifies it.
+```sh
+bun run build
+bun run deploy
+```
+
+`wrangler deploy` uses the Wrangler login already on the machine, so nothing in the
+repository holds a credential and no Cloudflare API token is stored as a repository
+secret. `bun run deploy:check` is the same deployment as a dry run.
+
+There is no GitHub Actions workflow for this. A push to `main` deploys nothing, which
+is deliberate: the site goes out when somebody decides it goes out.
 
 The custom domain is managed in `wrangler.jsonc`; canonical metadata, robots and
 sitemap use https://orbit.sbarah.com/.

@@ -4,7 +4,7 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
-Nothing yet.
+- Removed the website's deployment workflow, and with it the reason to keep a Cloudflare API token in the repository's secrets. It had never deployed anything: both of its runs failed on the missing secret, while the site that is live was put there by a person running `wrangler deploy` from a machine that is already logged in. Deployment is now that command and nothing else, so a push to `main` deploys nothing and no credential lives in the repository. The site stays where it is, on Workers with the custom domain declared in `website/wrangler.jsonc`.
 
 ## 0.1.0-alpha.2 - 13 September 2026
 
