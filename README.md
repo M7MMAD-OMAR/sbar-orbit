@@ -74,7 +74,7 @@ bun add -g sbar-orbit
 sbar-orbit install
 ```
 
-`0.1.0-alpha.3` is on the npm registry and was installed back from it and run before this was written. The checkout above is still the path that has been run to completion on a machine; [packaging](docs/packaging.md) says exactly what the registry path has and has not shown.
+`0.1.0-alpha.4` is on the npm registry and was installed back from it and run before this was written. The checkout above is still the path that has been run to completion on a machine; [packaging](docs/packaging.md) says exactly what the registry path has and has not shown.
 
 ### Or hand it to an agent
 
