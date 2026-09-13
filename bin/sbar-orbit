@@ -33,17 +33,36 @@ Sbar Orbit, local agent workspace prototype
                                  Takes effect immediately on a running panel
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
+  sbar-orbit diagnostics         Prepare a private report and a GitHub issue link, also offline
   sbar-orbit preflight           Check prerequisites without starting applications
   sbar-orbit preview             Print the optional viewer link
+  sbar-orbit preview open        Open the viewer in your browser
+  sbar-orbit preview browsers    Which browsers the viewer can open in
   sbar-orbit session create      Create an owned browser session
   sbar-orbit session create fedora
+  sbar-orbit session create browser ACCOUNT
+                                 Start from a saved account snapshot
   sbar-orbit session list
+  sbar-orbit session observe ID  One screenshot and what the session shows
+  sbar-orbit session pause ID    Hand the session to a person in the viewer
+  sbar-orbit session resume ID
+  sbar-orbit session journal ID  Every decision the session made
+  sbar-orbit session restore ID [SEQUENCE]
+                                 Return to a restore point, when allowed
   sbar-orbit session stop ID
+  sbar-orbit account save ID     Snapshot a paused session's login state
   sbar-orbit act ID JSON         Execute a session action
   sbar-orbit connector-config    Print MCP configuration for this broker
   sbar-orbit mcp                 Run the stdio MCP adapter
+  sbar-orbit usage on|off|status [CONVERSATION_ID]
+                                 Control this conversation, not the shared service
+  sbar-orbit session observe ID --metadata
+                                 Tabs/windows and pointer without screenshot capture
+  sbar-orbit session observe ID --output /absolute/new-image.jpg
+                                 Save original image bytes; print metadata, no base64
 
-Set ORBIT_SOCKET to the socket printed by serve for client commands.
+Client commands default to the managed socket; ORBIT_SOCKET selects another broker.
+Set ORBIT_CONVERSATION_ID uniquely per conversation to share CLI/MCP usage state.
 Requires Bun and installed project dependencies. Fedora/Linux prototype.
 HELP
     ;;

@@ -1,3 +1,4 @@
+import { version } from "../package.json";
 import { test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -24,7 +25,7 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
   try {
     const a = await connect();
     const b = await connect();
-    expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version: "0.1.0-alpha.2" });
+    expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version });
     expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop"]);
     const session = payload(await tool(a, "orbit_create")) as { sessionId: string };
     const act = (action: unknown, requestId = crypto.randomUUID()) => tool(a, "orbit_act", { ...session, requestId, action });

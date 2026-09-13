@@ -144,7 +144,7 @@ test("a terminal is required before anything is repainted", () => {
 
 test("nothing the installer shows a person claims more than the project has measured", () => {
   for (const line of offerings) {
-    expect(line).not.toMatch(/[–—]/);
+    expect(line).not.toMatch(/[\u2013\u2014]/);
     expect(line.length).toBeLessThan(96);
   }
   expect(offerings.length).toBeGreaterThan(4);

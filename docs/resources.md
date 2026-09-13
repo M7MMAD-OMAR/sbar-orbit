@@ -4,11 +4,11 @@ Supported Linux launchers share one user cgroup slice, `sbarorbit.slice`.
 
 | Resource | Aggregate limit |
 |---|---|
-| CPU | One logical CPU worth of time |
-| Memory pressure threshold | 1792 MiB |
-| Hard RAM limit | 2 GiB |
+| CPU | A quarter of the logical CPUs, at least one and at most four |
+| Hard RAM limit | A quarter of RAM, at least 2 GiB and at most 8 GiB |
+| Memory pressure threshold | 256 MiB below the hard limit |
 | Added swap | 0 |
-| Tasks, including threads | 512 |
+| Tasks, including threads | 1536 |
 | Scheduling | Reduced CPU/I/O weights and niceness 10 |
 
 ```sh
@@ -16,6 +16,12 @@ bun run serve
 bun run verify
 bun run scripts/limited.ts bun run experiments/viewer-timing.ts 600
 ```
+
+The CPU quota was a fixed one core until 13 September 2026. Measured that day with three browser sessions open for another agent, the slice was throttled in 18,252 of 49,195 scheduling periods, 37%, with `cpu.pressure full avg60` at 26.5%, and every further Chrome start timed out at its 20 second handshake while the 24 thread host sat 60% idle. The quota is a ceiling, not the desktop's protection; `CPUWeight=10` and niceness 10 are, and they are unchanged. Every figure in [validation](validation.md) dated before this was measured at one core.
+
+The memory cap was a fixed 2 GiB until the same day. Measured then on a 31 GiB host with three browser sessions open for another agent, the slice sat pinned at its 1792 MiB pressure threshold with 1,569,927 `memory.high` reclaim events and `memory.pressure full avg60` at 9.4%, and a browser asked for a new page inside that throttling hung, or lost its renderer to `Target crashed`. Reclaim throttling is meant to slow a job that is over its threshold, and it did; the threshold was simply the size of four sessions on a machine with room for far more.
+
+The task count was 512 until 13 September 2026. Measured that day with three browser sessions open for another agent, the slice stood at 453 of 512 tasks, about 150 per settled session, and a fourth session failed inside 407 ms with a refused fork that surfaced as a browser that never published its endpoint; `pids.events max` on the slice went up by ten across one test run. The task cap protects the desktop from nothing the CPU and memory caps do not already cover, so it now sits where memory becomes the limit first: at about 450 MB per browser session, the memory cap is what a fresh session runs into, and the broker refuses with `RESOURCE_EXHAUSTED` naming the free tasks and megabytes rather than letting the kernel refuse a fork. `sbar-orbit doctor` reports the live counters.
 
 Limits cover owned jobs collectively, not unrelated applications or a viewer opened in an existing user application. A limit failure must never trigger an unrestricted retry. Cgroup membership is checked at browser startup and sampled by diagnostics; this is not a security boundary against same-user programs.
 

@@ -1,0 +1,22 @@
+# What a machine without a systemd user session can check. The test suite needs cgroup delegation
+# and a private slice (bun run verify), which a hosted runner does not delegate, so it stays local.
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run typecheck
+      - run: bun run scripts/public-audit.ts
+      - name: no long dashes in tracked text
+        run: |
+          if git ls-files -z | grep -zvE '\.(png|jpg|jpeg|webp|gif|ico|woff2?|lock)$' | xargs -0 grep -nP '[\x{2013}\x{2014}]' -- ; then
+            echo "long dash found"; exit 1; fi

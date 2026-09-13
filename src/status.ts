@@ -66,6 +66,7 @@ if (import.meta.main) {
     try {
       socket = socketFromEnvironment();
       const status = await readStatus(socket);
+      delay = status.working ? 1000 : status.sessions.length ? 2000 : 3000;
       const line = JSON.stringify({ ...status, summary: summarize(status) });
       // Timestamps change every read; compare everything else so a quiet desktop prints nothing.
       const shape = JSON.stringify({ ...status, sampledAt: undefined, summary: summarize(status) });
@@ -74,10 +75,14 @@ if (import.meta.main) {
       const line = JSON.stringify({ socket, reachable: false, summary: "Orbit not running",
         code: error instanceof OrbitError ? error.code : "BROKER_UNAVAILABLE" });
       if (line !== previous) { console.log(line); previous = line; }
+      delay = 5000;
       if (!watch) process.exitCode = 1;
     }
   };
-  // One read at a time: a slow broker must not accumulate overlapping reads.
-  const loop = async () => { await once(); if (watch) setTimeout(loop, 1000); };
+  // One read at a time: a slow broker must not accumulate overlapping reads. The cadence is the
+  // panel's: a second while an agent is acting, slower as there is less to see, so an idle desktop
+  // costs one list call every three seconds rather than one a second.
+  let delay = 1000;
+  const loop = async () => { await once(); if (watch) setTimeout(loop, delay); };
   await loop();
 }

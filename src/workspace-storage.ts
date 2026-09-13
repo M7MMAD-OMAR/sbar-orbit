@@ -50,7 +50,7 @@ const recordlessGraceMs = 60 * 60 * 1000;
  * record; it is kept while it is recent, in case an older broker still holds it, and removed
  * otherwise. Nothing here reads a profile's contents.
  */
-export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers) {
+export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers, self?: { socket: string; pid: number }) {
   const removed: string[] = [], kept: string[] = [];
   let entries: string[];
   try { entries = await readdir(root); } catch { return { root, removed, kept }; }
@@ -58,7 +58,16 @@ export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnsw
     const directory = join(root, name);
     const info = await lstat(directory).catch(() => undefined);
     if (!info?.isDirectory() || info.isSymbolicLink()) continue;
-    const alive = await ownerIsAlive(directory, probe);
+    let alive = await ownerIsAlive(directory, probe);
+    // A managed broker answers on a fixed path, so every earlier managed broker's workspace names the
+    // socket this one now holds and would probe as alive forever. The one that answers is this process;
+    // a record with that socket and another pid was written by a broker that is gone.
+    if (alive && self) {
+      try {
+        const owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")) as { socket?: unknown; pid?: unknown };
+        if (owner.socket === self.socket && owner.pid !== self.pid) alive = false;
+      } catch {}
+    }
     const recent = Date.now() - info.mtimeMs < recordlessGraceMs;
     if (alive || (alive === undefined && recent)) { kept.push(name); continue; }
     await rm(directory, { recursive: true, force: true });

@@ -11,5 +11,5 @@ def require_budget():
     quota, period = (root / 'cpu.max').read_text().split()
     memory = (root / 'memory.max').read_text().strip()
     tasks = (root / 'pids.max').read_text().strip()
-    if quota == 'max' or int(quota) > int(period) or memory == 'max' or int(memory) > 2147483648 or tasks == 'max' or int(tasks) > 512 or (root / 'memory.swap.max').read_text().strip() != '0':
+    if quota == 'max' or int(quota) > 4 * int(period) or memory == 'max' or int(memory) > 8589934592 or tasks == 'max' or int(tasks) > 1536 or (root / 'memory.swap.max').read_text().strip() != '0':
         raise RuntimeError('Orbit resource limits are not enforced')

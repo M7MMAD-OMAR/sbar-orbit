@@ -1,4 +1,4 @@
-import { requireResourceBudget } from "./resource-budget";
+import { requireHeadroom, requireResourceBudget } from "./resource-budget";
 import { chromium, type Browser, type ConnectOverCDPTransport } from "playwright";
 import { readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -52,6 +52,13 @@ export function defaultChromeExecutable(): string | undefined {
 /** Own Chrome separately from its CDP connection, including failed startup. */
 export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
   await requireResourceBudget();
+  // Measured 13 September 2026 by sampling the scope's pids.current every 10 ms through a launch: the
+  // fork burst peaks at 132 tasks, the endpoint is published at 139, and a session settles at 150 on
+  // about:blank and 153 with a page. The check asks for the published figure, since what follows it
+  // grows slowly enough for the memory limit to speak first. The memory figure is reasoned rather than
+  // measured: three settled sessions charged 1364 MB to the slice, about 455 MB each, and a launch
+  // needs less than a settled session.
+  await requireHeadroom({ tasks: 140, memoryBytes: 200 * 1048576 }, "A browser session");
   const executable = options.executable ?? defaultChromeExecutable();
   if (process.platform !== "linux" || !executable) throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher currently requires Linux with Chrome or Chromium");
   if (options.executable && !(Bun.file(options.executable).size > 0)) throw new OrbitError("UNSUPPORTED", "The requested browser executable is not present");
@@ -69,7 +76,22 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     `--user-data-dir=${profile}`, "--headless", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "--no-first-run", "--no-default-browser-check",
     "--disable-background-networking", "--disable-dev-shm-usage", "--no-sandbox", `--password-store=${options.passwordStore ?? "basic"}`,
     ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"],
-    { env, stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    { env, stdin: "pipe", stdout: "ignore", stderr: "pipe" });
+  // The last of what Chrome said, kept for the failure message. Dropping it entirely was how a
+  // refused fork spent a day reported as "did not publish its local endpoint": the cause was on
+  // stderr and stderr went nowhere. Bounded, because a healthy Chrome logs D-Bus complaints forever.
+  let diagnostics = "";
+  void (async () => {
+    try { for await (const chunk of owner.stderr) diagnostics = (diagnostics + new TextDecoder().decode(chunk)).slice(-4096); }
+    catch {}
+  })();
+  const explain = async (message: string) => {
+    let reported = "";
+    try { reported = String(JSON.parse(await readFile(join(profile, "owner.json"), "utf8")).error?.message ?? ""); } catch {}
+    const lines = diagnostics.split("\n").map(line => line.trim()).filter(line => line && !/dbus|D-Bus|CHROME_VERSION_EXTRA/.test(line)).slice(-3);
+    const cause = [reported, ...lines].filter(Boolean).join("; ");
+    return cause ? `${message}: ${cause}` : message;
+  };
   let browser: Browser | undefined;
   let closing: Promise<void> | undefined;
   let closed = false;
@@ -95,7 +117,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       } catch {}
       await Bun.sleep(25);
     }
-    if (!endpoint) throw new OrbitError("BACKEND_FAILED", "Owned Chrome did not publish its local endpoint");
+    if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(owner.exitCode === null ? "Owned Chrome did not publish its local endpoint" : `Owned Chrome exited with code ${owner.exitCode} before publishing its endpoint`));
     socket = new WebSocket(endpoint);
     const connected = socket;
     await new Promise<void>((resolve, reject) => {

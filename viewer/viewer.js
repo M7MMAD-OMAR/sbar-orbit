@@ -259,7 +259,9 @@ async function poll() {
       lastRpc = performance.now() - requested;
       if (!document.hidden && selected === id && !['closed', 'closing'].includes(state)) {
         const decodeStarted = performance.now();
-        const bytes = Uint8Array.from(atob(image.image), character => character.charCodeAt(0));
+        // The engine's own base64 decoder where it exists, rather than a JavaScript callback per byte of
+        // every frame. A data URL through fetch would do the same, and the page's connect-src forbids it.
+        const bytes = typeof Uint8Array.fromBase64 === 'function' ? Uint8Array.fromBase64(image.image) : Uint8Array.from(atob(image.image), character => character.charCodeAt(0));
         const bitmap = await createImageBitmap(new Blob([bytes], { type: image.mimeType }));
         lastDecode = performance.now() - decodeStarted;
         try {
@@ -306,16 +308,19 @@ async function poll() {
   lastGap = Math.max(cadence - lastCost, lastCost, 50);
   setTimeout(poll, lastGap);
 }
+// Text is assigned only when it changes: at four ticks a second, rewriting an unchanged node still
+// invalidates it, and the readout is looked at far less often than it is ticked.
+const setText = (id, text) => { const node = element(id); if (node.textContent !== text) node.textContent = text; };
 setInterval(() => {
   if (document.hidden) return;
   const age = capturedAt ? Date.now() - capturedAt : Infinity;
   const share = lastCost + lastGap > 0 ? Math.round(lastCost / (lastCost + lastGap) * 100) : 0;
-  element('freshness').textContent = capturedAt
+  setText('freshness', capturedAt
     ? age < 1500 ? 'Picture is up to date' : `Picture is ${Math.round(age / 1000)} seconds old`
-    : 'Waiting for the first picture';
-  element('cost').textContent = lastCost
+    : 'Waiting for the first picture');
+  setText('cost', lastCost
     ? `Viewer cycle: ${Math.round(lastCost)} ms of every ${Math.round(lastCost + lastGap)} ms (${share}%) · request ${Math.round(lastRpc)} ms · decode ${Math.round(lastDecode)} ms · draw ${Math.round(lastDraw)} ms`
-    : '';
+    : '');
   const staleAfter = previewMode === 'smooth' ? 1000 : 2000;
   element('freshness').classList.toggle('stale', age > staleAfter);
   // A pointer over a stale frame is dimmed rather than removed. Hiding it meant that at the default one

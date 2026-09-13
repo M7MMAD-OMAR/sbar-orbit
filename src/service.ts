@@ -1,9 +1,33 @@
+import { totalmem } from "node:os";
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 
+/**
+ * How much processor everything Orbit owns may use together, as a hard ceiling. A quarter of the
+ * machine, never less than one logical CPU and never more than four: on a four core laptop that is
+ * the one core it always was, on this 24 thread workstation it is four. The weight and niceness below
+ * are what keep the desktop responsive under contention; the quota only says how far Orbit can go
+ * when nothing else wants the processor.
+ *
+ * Measured 13 September 2026 at the old fixed 100%: with three browser sessions open for another
+ * agent, the slice was throttled in 18,252 of 49,195 scheduling periods, 37%, with 10,476 seconds of
+ * throttled time and `cpu.pressure full avg60` at 26.5%, and every further Chrome start timed out at
+ * its 20 second handshake. One core was the whole ceiling for four agents' browsers on a 24 thread
+ * machine that was otherwise 60% idle.
+ */
+export const cpuCores = Math.max(1, Math.min(4, Math.floor(navigator.hardwareConcurrency / 4)));
+/**
+ * Memory the same way: a quarter of the machine, never under 2 GiB and never over 8 GiB, with the
+ * pressure threshold 256 MiB below the hard cap so reclaim starts before the kill does. Measured
+ * 13 September 2026 at the old fixed 2 GiB on a 31 GiB host: the slice sat pinned at its 1792 MiB
+ * threshold with 1,569,927 `memory.high` reclaim events and `memory.pressure full avg60` at 9.4%,
+ * and a browser asked for a new page inside that throttling hung, or lost its renderer to
+ * `Target crashed`. Reported in whole mebibytes, which is what systemd accepts.
+ */
+export const memoryMiB = Math.max(2048, Math.min(8192, Math.floor(totalmem() / 4 / 1048576)));
 /** The shared budget the broker must run inside, matching what scripts/limited.ts applies at runtime. */
-export const budget = { CPUQuota: "100%", MemoryHigh: "1792M", MemoryMax: "2G", MemorySwapMax: "0", TasksMax: "512", CPUWeight: "10", IOWeight: "10" };
+export const budget = { CPUQuota: `${cpuCores * 100}%`, MemoryHigh: `${memoryMiB - 256}M`, MemoryMax: `${memoryMiB}M`, MemorySwapMax: "0", TasksMax: "1536", CPUWeight: "10", IOWeight: "10" };
 
 /**
  * A fixed socket path for a managed broker. Brokers started by tests and experiments keep their own

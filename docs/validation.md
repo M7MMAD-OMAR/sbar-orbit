@@ -158,6 +158,8 @@ reproducing it on demand means filling the budget that other agents' sessions ar
 
 The suites are sensitive to machine contention rather than flaky in themselves. Running a second `scripts/limited.ts` command alongside a suite splits one shared cgroup budget, and viewer tests that wait for a fresh frame then time out. Six consecutive gate runs failed only in the two runs that overlapped other measured work, including pre-existing browser scroll and CLI tests. Run one bounded command at a time.
 
+Measured again on 13 September 2026, with the budget sized to the machine (see [resources](resources.md)): the full suite ran in 54 seconds, 196 passing, with zero `memory.high` events, zero refused forks and 43 of 544 CPU periods throttled during the run, while another agent held three browser sessions open the whole time. The same suite under the old fixed budget on the same morning took 88 to 104 seconds and lost 12 tests to refused forks in one run and 1 to a crashed renderer in the next. Every figure above this paragraph was measured at the old one core, 2 GiB budget.
+
 This is a confirmed defect with a regression test, not yet a confirmed explanation of the participant's report. Participant-read viewer cost figures remain required before another resource-acceptance claim.
 
 The participant's desktop viewer runs outside Orbit's runtime cgroup. Prior headless-viewer measurements do not prove acceptable cost inside the actual desktop app. Further interactive trials are on hold pending investigation of capture/decode/compositing cost and a participant-controlled low-cost viewing mode. Preserve the failed result when judging release readiness.

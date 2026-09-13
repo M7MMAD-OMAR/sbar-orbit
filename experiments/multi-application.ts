@@ -106,7 +106,7 @@ try {
   report.limitations = [
     "One private display at 1280 by 800 with software rendering, so windows tile in a small space.",
     "Applications are launched with private XDG base directories; that stops session restore, it is not a security boundary.",
-    "The broker allows at most 32 launches per native session and the shared budget caps tasks at 512.",
+    "The broker allows at most 32 launches per native session and the shared budget caps tasks at 1536.",
   ];
 } catch (error) {
   Object.assign(report, { status: "failed", error: error instanceof Error ? error.message : String(error) });
