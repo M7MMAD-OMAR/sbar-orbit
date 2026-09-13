@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { inspectPrerequisites } from "../src/preflight";
 
 const complete = { platform: "linux", file: async () => true, module: () => true, which: () => "/usr/bin/Xwayland",
-  userManager: async () => true };
+  userManager: async () => true, missingLibraries: () => [] as string[] };
 
 test("preflight distinguishes browser, native and common missing prerequisites", async () => {
   const all = await inspectPrerequisites("/fixture", complete);
@@ -22,13 +22,22 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes(".runtime") });
   expect(noNative.browserPrerequisitesFound).toBe(true);
   expect(noNative.nativePrerequisitesFound).toBe(false);
+  // The fresh-machine failure: a compositor that is built and cannot load, which is a package
+  // manager's job and is named as one, library by library.
+  const unloadable = await inspectPrerequisites("/fixture", { ...complete, missingLibraries: () => ["libevdev.so.2", "libinput.so.10"] });
+  expect(unloadable.nativePrerequisitesFound).toBe(false);
+  expect(unloadable.browserPrerequisitesFound).toBe(true);
+  const libraries = unloadable.checks.find(check => check.id === "private-runtime-libraries");
+  expect(libraries?.remedy).toMatchObject({ id: "no-native-libraries", needsElevation: true });
+  expect(libraries?.remedy?.message).toContain("libevdev.so.2, libinput.so.10");
+  expect(libraries?.remedy?.command).toMatch(/^sudo dnf install .*\blibevdev\b/);
   const noModules = await inspectPrerequisites("/fixture", { ...complete, module: () => false });
   expect(noModules.browserPrerequisitesFound).toBe(false);
   expect(noModules.nativePrerequisitesFound).toBe(false);
 });
 
 test("a package remedy follows the package manager that is actually on the machine", async () => {
-  const missing = { platform: "linux", module: () => false, which: () => null, userManager: async () => false };
+  const missing = { platform: "linux", module: () => false, which: () => null, userManager: async () => false, missingLibraries: () => [] as string[] };
   const only = (manager: string) => inspectPrerequisites("/fixture", { ...missing, file: async (path: string) => path === manager });
   const browserOn = async (manager: string) =>
     (await only(manager)).checks.find(check => check.id === "chrome-or-chromium")?.remedy;

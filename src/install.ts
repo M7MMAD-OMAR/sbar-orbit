@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
-import { nativeRuntimePaths } from "./runtime-paths";
+import { nativeRuntimePackages, nativeRuntimePaths } from "./runtime-paths";
 import { activateLocal } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
@@ -67,8 +67,8 @@ async function runBootstrap(source: string) {
 /** What the bootstrap needs on the machine: the package tools it downloads and unpacks with, and a C toolchain for the pointer helper. */
 export const nativeBuildTools = ["dnf", "rpm2cpio", "cpio", "curl", "wayland-scanner", "cc", "pkg-config"];
 const nativeBuildRemedy: Remedy = { id: "no-native-build-tools", needsElevation: true, agentMayRun: false,
-  command: "sudo dnf install gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl",
-  message: "Building the private display runtime needs a C toolchain, the Wayland and xkbcommon development files, and the tools that download and unpack Fedora packages." };
+  command: `sudo dnf install gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl ${nativeRuntimePackages}`,
+  message: "Building the private display runtime needs a C toolchain, the Wayland and xkbcommon development files, the tools that download and unpack Fedora packages, and the libraries the compositor links against." };
 
 /**
  * The private compositor and pointer helper, built from the tracked bootstrap into `.runtime/sway`.

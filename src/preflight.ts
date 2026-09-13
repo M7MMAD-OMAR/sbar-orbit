@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { chromeExecutables, nativeRuntimePaths } from "./runtime-paths";
+import { chromeExecutables, nativeRuntimePackages, nativeRuntimePaths } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -10,6 +10,8 @@ type Probe = {
   which(name: string): string | null;
   /** Whether a systemd user manager is actually running for this account, not whether the tool exists. */
   userManager(): Promise<boolean>;
+  /** The shared libraries these executables cannot load, by soname, as the dynamic loader would see them. */
+  missingLibraries(executables: string[], libraryPath: string): string[];
 };
 const systemProbe: Probe = {
   platform: process.platform,
@@ -18,6 +20,10 @@ const systemProbe: Probe = {
     catch { return false; }
   },
   module(name, project) { try { Bun.resolveSync(name, project); return true; } catch { return false; } },
+  missingLibraries(executables, libraryPath) {
+    const ldd = Bun.spawnSync(["ldd", ...executables], { env: { ...process.env, LD_LIBRARY_PATH: libraryPath } });
+    return [...new Set(String(ldd.stdout).split("\n").filter(line => line.includes("not found")).map(line => line.trim().split(" ")[0] ?? ""))].filter(Boolean);
+  },
   which: name => Bun.which(name),
   // The private socket a running user manager keeps in the runtime directory. A container image can
   // carry systemctl with nothing behind it, which read as available here while the install that needs
@@ -106,6 +112,17 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
       // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
       { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
         message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
+  // A runtime that is present and cannot load is the fresh-machine failure the container found: the
+  // bootstrap unpacks packages and the libraries they need are the machine's own. ldd is the same
+  // question the dynamic loader will ask, asked before a session does.
+  const sway = join(native.executables, "sway");
+  if (await probe.file(sway, true)) {
+    const missing = probe.missingLibraries([sway, native.pointer], join(native.runtime, "root/usr/lib64"));
+    add("private-runtime-libraries", "native", !missing.length,
+      { id: "no-native-libraries", needsElevation: true, agentMayRun: false,
+        command: `sudo dnf install ${nativeRuntimePackages}`,
+        message: `The private compositor is built and cannot load${missing.length ? ` ${missing.join(", ")}` : ""}. Those are Fedora packages the bootstrap does not install.` });
+  }
   for (const name of ["grim", "wl-copy", "wl-paste"])
     add(name, "native", await probe.file(`/usr/bin/${name}`, true),
       await systemPackages(probe, "no-capture-tools",

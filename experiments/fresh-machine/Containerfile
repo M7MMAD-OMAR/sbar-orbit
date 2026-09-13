@@ -7,6 +7,8 @@
 # What it cannot show: anything that needs a systemd user session, cgroup delegation, a
 # wlroots compositor or a browser. The broker service, autostart, the native display and
 # the shared resource budget are all out of reach here by construction, not by accident.
+# Building the native runtime is within reach, and the WITH_DEPS variant does it: the
+# bootstrap downloads pinned packages and compiles the pointer helper, which needs no display.
 
 FROM docker.io/library/fedora:44
 
@@ -24,6 +26,8 @@ ARG WITH_DEPS=0
 RUN if [ "$WITH_DEPS" = "1" ]; then \
       dnf -y install --setopt=install_weak_deps=False \
         chromium python3 systemd grim wl-clipboard xorg-x11-server-Xwayland \
+        gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl \
+        cairo gdk-pixbuf2 glib2 json-c lcms2 libdisplay-info libdrm libevdev libglvnd-egl libglvnd-gles libinput libseat libwayland-client libwayland-cursor libwayland-server libxcb libxkbcommon mesa-libgbm pango pcre2 pixman systemd-libs vulkan-loader xcb-util-errors xcb-util-renderutil xcb-util-wm \
       && dnf clean all; \
     fi
 

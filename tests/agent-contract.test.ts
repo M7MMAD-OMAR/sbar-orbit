@@ -52,6 +52,7 @@ test("every remedy the prerequisite check can emit is documented", async () => {
   // A machine with nothing on it, so every remedy is produced at once.
   const bare = await inspectPrerequisites("/fixture", {
     platform: "linux", file: async () => false, module: () => false, which: () => null, userManager: async () => false,
+    missingLibraries: () => [],
   });
   const ids = [...new Set(bare.checks.map(check => check.remedy?.id).filter(Boolean))];
   expect(ids.length).toBeGreaterThan(6);

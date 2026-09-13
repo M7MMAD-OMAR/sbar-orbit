@@ -45,6 +45,12 @@ step launcher-executable test -x ./bin/sbar-orbit
 
 step bun-install bun install --frozen-lockfile --ignore-scripts
 step preflight ./bin/sbar-orbit preflight
+# The native runtime, built from tracked source. Expected non-zero in the minimal image, which has
+# no compiler; in the deps image it downloads three pinned packages and compiles the helper, and the
+# check after it runs the compositor it built for its version string, which needs no display.
+step native-bootstrap bash experiments/fedora-display/bootstrap.sh
+step native-runtime-runs env LD_LIBRARY_PATH="$PWD/.runtime/sway/root/usr/lib64" "$PWD/.runtime/sway/root/usr/bin/sway" --version
+step native-helper-built test -x .runtime/sway/pointer
 # The one command install, in the form that writes nothing first. Both forms are run because a
 # refusal that only appears on a dry run would say nothing about the real one.
 step install-sh-dry-run ./install.sh --dry-run
