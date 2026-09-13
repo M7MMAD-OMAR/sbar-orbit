@@ -9,6 +9,10 @@ import { buildNativeRuntime } from "../src/install";
  * the git index, so nothing untracked can reach it; the npm tarball is built by `bun pm pack` from the
  * working tree against the `files` list in `package.json`, which is a second path with its own rules.
  * Nothing tested it, and `0.1.0-alpha.3` shipped six `__pycache__` files because of that.
+ *
+ * This packs with bun, which is the only packer this project uses. `npm pack --dry-run` was checked by
+ * hand on 13 September 2026 and agrees with it on both the exclusion and the lockfile, since a negation
+ * entry in `files` is resolved by whichever tool the publisher runs and the two need not agree.
  */
 const project = resolve(import.meta.dir, "..");
 
@@ -33,10 +37,10 @@ test("the registry tarball carries tracked source and nothing the working tree h
     // Build products are the ones that arrive by accident: a `.pyc` is gitignored, so seeing one here
     // means the pack read the working tree rather than the index.
     expect(shipped.filter(entry => entry.includes("__pycache__"))).toEqual([]);
-    // npm adds these itself whatever `files` says, so they are shipped without being listed.
-    const added = new Set(["package.json", "README.md", "LICENSE"]);
-    const untracked = shipped.filter(entry => !tracked.has(entry) && !added.has(entry));
-    expect(untracked).toEqual([]);
+    expect(shipped.filter(entry => !tracked.has(entry))).toEqual([]);
+    // The three a packer adds whatever `files` says. They are tracked, so they need no exemption above,
+    // and requiring them here catches a packer that stops adding them rather than excusing one that does.
+    for (const required of ["package.json", "README.md", "LICENSE"]) expect(shipped).toContain(required);
     // The lockfile is what `--reinstall-deps` resolves against, so a package without it cannot honour
     // a flag its own help prints.
     expect(shipped).toContain("bun.lock");
