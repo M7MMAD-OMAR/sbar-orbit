@@ -79,7 +79,7 @@ One geometry, four surfaces. Nothing keeps a second copy of it.
 
 | Surface | How it gets the mark |
 |---|---|
-| Desktop panel | `Glyph` in `desktop/panel.py` paints the path in Cairo, tinted by session state. It is the default shape; `--style bar\|dot\|count` still gives the older ones |
+| Desktop panel | `Glyph` in `desktop/panel_draw.py` paints the path in Cairo, tinted by session state. It is the default shape; `--style bar\|dot\|count` still gives the older ones |
 | Quickshell bar | `desktop/quickshell/OrbitIndicator.qml` draws the same path as a `Shape`, tinted from `Appearance.colors` |
 | Viewer | `viewer/index.html` carries it inline beside the eyebrow, in `currentColor`, and links `/favicon.svg` |
 | Viewer favicon | `src/preview.ts` serves `brand/favicon.svg` directly, so the file is not copied into `viewer/` |
