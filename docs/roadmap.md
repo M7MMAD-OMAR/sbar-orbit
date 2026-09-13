@@ -36,7 +36,28 @@
    name this session. Five checks in `tests/owned-group.test.ts` and one end to end native check cover
    it, and the end to end check was run first against the unfixed code, where it failed. Still open in
    this gate: account coverage, and applications beyond the four launched so far.
-3. Verify full local installation on a fresh machine, including native dependencies. Launcher
+3. **Closed on 13 September 2026, on a container that is a machine rather than a filesystem.**
+   `experiments/fresh-machine/systemd-session.sh` gives a clean Fedora 44 image the half the other
+   container cannot have: systemd as PID 1, a lingering unprivileged account whose user manager owns
+   delegated `cpu`, `memory` and `pids` controllers, and therefore a real `sbarorbit.slice`. On that
+   machine, from tracked source and the frozen lockfile: the dependency install completes, `preflight`
+   passes, the bootstrap builds the private compositor and the pointer helper, `./install.sh` runs to
+   completion with `installed: true` and every step `done`, the broker service comes up and answers
+   `doctor`, a browser session opens, and a native session launches an X11 application, accepts typed
+   text and returns a 1280 by 800 JPEG of it. The whole session sequence cost 1549 ms of processor
+   inside a budget of 4 seconds of CPU per second, 7946 MiB and 1536 tasks, with zero refused forks,
+   and the captured frame is kept beside the log in `output/fresh-machine/`.
+   Two limits are printed beside that, and neither is hardware this run had: there is no GPU, no real
+   compositor and no screen, so this says nothing about a machine with a display, and the container
+   reads the host's processor and memory totals, so the budget it sized is a quarter of the host
+   rather than a quarter of the container. Tier `Limited` under [support tiers](support-tiers.md),
+   with those limits, rather than `Measured`.
+   That run is also what found the two defects in `31a4827`: without `btrfs-progs` every
+   `session.create` threw rather than losing restore points, and the exception that said so was
+   discarded in four places at once. The same script against the commit before the fix reproduces both.
+
+   The original gate, for the record:
+   Verify full local installation on a fresh machine, including native dependencies. Launcher
    activation, upgrade, rollback and link-only uninstall pass filesystem tests without touching
    workspaces or accounts. The unprivileged half now also runs in a clean Fedora 44 container, at
    tier `Limited` with the limit printed: tracked source is enough to install from, the frozen

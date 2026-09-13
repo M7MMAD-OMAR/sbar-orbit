@@ -44,3 +44,33 @@ test("publication path policy keeps private directories excluded even for exampl
   for (const path of [".env.example", "examples/.env.example", "README.md", ".github/workflows/checks.yml"])
     expect(isPublicSourcePath(path)).toBe(true);
 });
+
+test("a systemd template unit is not read as an address, and a real one still is", async () => {
+  const root = await mkdtemp("/tmp/orbit-audit-units-");
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
+    return { code: await child.exited, output: await new Response(child.stdout).text() };
+  };
+  await run(["git", "init", "-q"]);
+  const command = [process.execPath, resolve("scripts/public-audit.ts")];
+  // The unit this project's own installer starts. A rule that cannot write it down stops the
+  // documentation rather than a leak, which is what it did when the fresh-machine experiment landed.
+  await writeFile(join(root, "units.md"), [
+    "systemctl --user status user@1000.service",
+    "The template is user@.service and the instance is user@1000.service.",
+    "sbarorbit.slice is a slice, and orbit@1.timer is a timer.",
+  ].join("\n"));
+  await run(["git", "add", "units.md"]);
+  const units = await run(command);
+  expect(units.code).toBe(0);
+  expect(units.output).not.toContain("email-needs-publication-review");
+  // An address that is one is still a finding, in a file that also holds a unit name. Assembled
+  // rather than written, the way the home path above is, so this file does not carry one itself.
+  const address = ["somebody", "somewhere.test"].join("@");
+  await writeFile(join(root, "units.md"), `user@1000.service, and ${address}`);
+  await run(["git", "add", "units.md"]);
+  const mixed = await run(command);
+  expect(mixed.code).toBe(1);
+  expect(mixed.output).toContain("email-needs-publication-review");
+  expect(mixed.output).not.toContain(address);
+});

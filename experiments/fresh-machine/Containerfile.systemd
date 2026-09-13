@@ -1,0 +1,46 @@
+# A Fedora 44 machine with a systemd user session, which is what the container in
+# experiments/fresh-machine cannot be. systemd runs as PID 1, the unprivileged account lingers so its
+# user manager starts without a login, and the cgroup controllers the shared budget needs are
+# delegated down to it. That is the whole difference: everything else here is the same fresh machine.
+FROM docker.io/library/fedora:44
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+      systemd unzip tar procps-ng \
+      chromium python3 grim wl-clipboard xorg-x11-server-Xwayland \
+      gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl \
+      xterm \
+      cairo gdk-pixbuf2 glib2 json-c lcms2 libdisplay-info libdrm libevdev libglvnd-egl libglvnd-gles \
+      libinput libseat libwayland-client libwayland-cursor libwayland-server libxcb libxkbcommon \
+      mesa-libgbm pango pcre2 pixman systemd-libs vulkan-loader xcb-util-errors xcb-util-renderutil \
+      xcb-util-wm \
+ && dnf clean all
+
+ARG BUN_VERSION=1.3.14
+ARG BUN_SHA256=951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f
+RUN curl -fsSL -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
+ && echo "${BUN_SHA256}  /tmp/bun.zip" | sha256sum -c - \
+ && unzip -q /tmp/bun.zip -d /tmp \
+ && install -m 0755 /tmp/bun-linux-x64/bun /usr/local/bin/bun \
+ && rm -rf /tmp/bun.zip /tmp/bun-linux-x64
+
+# The account that installs, with a user manager of its own: lingering is what starts user@UID.service
+# without anybody logging in, and that service is where sbarorbit.slice will be created.
+RUN useradd --create-home --uid 1000 orbit \
+ && mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/orbit
+
+# Nothing in the image needs the graphical or multi-user extras, and a container that tries to start
+# them spends its first minute failing at them.
+# logind stays: it is what starts user@UID.service for a lingering account. The rest is noise in a
+# container and only slows the boot.
+RUN systemctl mask systemd-oomd.service systemd-resolved.service systemd-networkd.service \
+      getty.target 2>/dev/null; true
+
+# On a real machine pam_systemd makes the runtime directory and exports XDG_RUNTIME_DIR at login.
+# Nobody logs in here, and a user manager without that variable refuses to start, so the directory is
+# declared to tmpfiles and the variable is handed to the manager directly.
+RUN printf 'd /run/user/1000 0700 orbit orbit -\n' > /usr/lib/tmpfiles.d/orbit-runtime.conf \
+ && mkdir -p /etc/systemd/system/user@1000.service.d \
+ && printf '[Service]\nEnvironment=XDG_RUNTIME_DIR=/run/user/1000\n' > /etc/systemd/system/user@1000.service.d/runtime.conf
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

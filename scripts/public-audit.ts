@@ -59,6 +59,10 @@ for (const file of files) {
   ];
   for (const [rule, pattern] of rules) if (pattern.test(content)) findings.push({ file, rule });
   for (const email of content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? []) {
+    // A systemd template unit has the shape of an address and is not one. `user@1000.service` is the
+    // thing this project's own installer starts, so a rule that cannot write it down is a rule that
+    // stops the documentation rather than a leak.
+    if (/^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]*\.(?:service|socket|slice|target|timer|mount|automount|path|scope|swap|device)$/.test(email)) continue;
     if (!/@(?:example\.(?:com|org|invalid)|users\.noreply\.github\.com)$/.test(email)) findings.push({ file, rule: "email-needs-publication-review" });
   }
 }
