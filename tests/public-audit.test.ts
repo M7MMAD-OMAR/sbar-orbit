@@ -64,9 +64,11 @@ test("a systemd template unit is not read as an address, and a real one still is
   const units = await run(command);
   expect(units.code).toBe(0);
   expect(units.output).not.toContain("email-needs-publication-review");
-  // An address that is one is still a finding, in a file that also holds a unit name. Assembled
-  // rather than written, the way the home path above is, so this file does not carry one itself.
-  const address = ["somebody", "somewhere.test"].join("@");
+  // The case the skip list is built around, and the reason every suffix in it is singular: `.services`
+  // is a real top level domain and `.service` is not, so an address at a `.services` domain has to
+  // stay a finding. Assembled rather than written, the way the home path above is, so this file does
+  // not carry an address itself.
+  const address = ["sales", "acme.services"].join("@");
   await writeFile(join(root, "units.md"), `user@1000.service, and ${address}`);
   await run(["git", "add", "units.md"]);
   const mixed = await run(command);

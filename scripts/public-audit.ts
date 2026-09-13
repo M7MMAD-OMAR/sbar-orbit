@@ -62,6 +62,18 @@ for (const file of files) {
     // A systemd template unit has the shape of an address and is not one. `user@1000.service` is the
     // thing this project's own installer starts, so a rule that cannot write it down is a rule that
     // stops the documentation rather than a leak.
+    //
+    // Every suffix here is singular, and that is the whole safety of this skip rather than a style
+    // choice: none of these eleven words is a registered top level domain, so nothing that is really
+    // an address can end in one. `.services` IS a real gTLD, so adding it, or pluralising the list to
+    // tidy it, would blind this audit to every address at a `.services` domain. Add a suffix only
+    // after checking it against the TLD list.
+    //
+    // The local part below is narrower than the one the match above accepts, which leaves `+` and `%`
+    // outside the skip, so a name carrying either is still reported even with a unit suffix. That
+    // asymmetry is deliberate. It errs toward reporting, and a unit instance name does not carry
+    // those characters anyway. The example is not written out here, because writing it would be a
+    // finding in this very file, which is the rule working.
     if (/^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]*\.(?:service|socket|slice|target|timer|mount|automount|path|scope|swap|device)$/.test(email)) continue;
     if (!/@(?:example\.(?:com|org|invalid)|users\.noreply\.github\.com)$/.test(email)) findings.push({ file, rule: "email-needs-publication-review" });
   }
