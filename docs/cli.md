@@ -1,6 +1,15 @@
 # Local broker and CLI
 
-Implemented prototype: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; no system service or global executable is installed.
+Implemented prototype: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; the installer can register the executable and user service.
+
+## Conversation usage
+
+`usage on|off|status [ID]` controls one explicit conversation, without contacting
+or stopping the broker. Set `ORBIT_CONVERSATION_ID` to that same unique ID on
+later commands. Missing IDs on usage commands are refused. See
+[agent interface](agent-interface.md) for MCP scope, reconnect behavior, the
+portable skill and host limitations. Client RPC commands default to the managed
+socket; `ORBIT_SOCKET` selects a different broker.
 
 ## Install
 
@@ -44,7 +53,7 @@ bun run src/cli.ts session resume "$ORBIT_SESSION_ID"
 bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
 ```
 
-`session observe ID` returns a JPEG as base64 JSON, with the format named in the `mimeType` field. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
+`session observe ID` retains JPEG base64 JSON for existing scripts. Prefer `session observe ID --output /absolute/new-image.jpg` for an agent: it returns metadata and a file path without base64 text. Use `session observe ID --metadata` for tab/window and pointer information without capturing. The `mimeType` field names the actual image encoding. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
 
 Watching a session is the viewer's job:
 
@@ -170,6 +179,10 @@ removes the workspaces no running broker owns. Each workspace records the socket
 
 ## Contract
 
+`sbar-orbit diagnostics` prepares a metadata-only support report and a prefilled GitHub issue link,
+including offline recovery when the broker cannot answer. Nothing is sent automatically. See
+[diagnostic reports](diagnostics.md) for privacy, storage bounds and coverage.
+
 The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:true,result}` or `{ok:false,error:{code,message}}`. The TypeScript client is `call(socket, method, params)` in `src/ipc.ts`.
 
 | Method | Parameters |
@@ -218,3 +231,9 @@ Browser workspace files are created in fresh private directories under `$XDG_CAC
 Both adapters accept `{"type":"scroll","x":400,"y":300,"deltaY":3}`. Positive steps scroll down, negative steps up. Browser sessions move their owned pointer to the viewport point and send 100 CSS pixels per step through Playwright wheel input. Native sessions send wheel steps through the private Wayland pointer. Applications can consume or change the resulting movement, so acknowledgement does not prove a specific final offset. Nested scrollable elements are selected by the target point.
 
 The same input is available through `session.control` only while paused and through the viewer's wheel gesture. The browser integration test uses a local fixture's scroll-event readback to verify agent down/up, input validation, paused viewer down/up and no viewer control after resume.
+
+## Conversation and project names
+
+Session creation accepts `conversationName` and `projectName` as optional display labels, each 1 to 80 printable characters. The viewer uses them on conversation buttons and its browser title. A missing conversation name falls back to `taskName`; a missing project is shown as not provided.
+
+CLI callers can supply `ORBIT_CONVERSATION_NAME` and `ORBIT_PROJECT_NAME`, alongside `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. These labels identify the work visually and do not attach Orbit to a host conversation. Existing sessions keep the labels they were created with.

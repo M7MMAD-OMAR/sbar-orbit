@@ -26,7 +26,8 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     const a = await connect();
     const b = await connect();
     expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version });
-    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop"]);
+    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_diagnostics", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop", "orbit_usage"]);
+    expect(payload(await tool(a, "orbit_diagnostics"))).toMatchObject({ schemaVersion: 1 });
     const session = payload(await tool(a, "orbit_create")) as { sessionId: string };
     const act = (action: unknown, requestId = crypto.randomUUID()) => tool(a, "orbit_act", { ...session, requestId, action });
     expect((await act({ type: "navigate", url: `http://127.0.0.2:${fixture.port}` })).isError).not.toBe(true);

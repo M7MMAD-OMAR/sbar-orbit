@@ -1,6 +1,24 @@
 # Agent connectors
 
-Orbit exposes ten MCP tools over stdio. `orbit_create` takes `browser` or `system`, and `fedora` is still accepted for the same private display; the alias is vocabulary, not a wider platform claim, and every reply says `fedora`. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
+`orbit_diagnostics` prepares a local metadata-only report and a prefilled GitHub issue link. Failed
+operations return a `diagnosticId` matching the report's trace ID. It sends nothing. See
+[diagnostic reports](diagnostics.md) for collection scope and privacy.
+
+Orbit exposes twelve MCP tools over stdio, including `orbit_usage` for conversation preference and `orbit_diagnostics` for local reports. `orbit_create` takes `browser` or `system`, and `fedora` is still accepted for the same private display; the alias is vocabulary, not a wider platform claim, and every reply says `fedora`. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
+
+## Conversation choice and compact observations
+
+`orbit_usage` accepts `mode: "on"`, `"off"` or `"status"`. Explicit user opt-out
+blocks subsequent calls in this adapter. With `ORBIT_CONVERSATION_ID` it persists
+and is shared with CLI calls carrying the same ID; without it the state lasts
+only for this connection. It leaves sessions and schemas intact. See the
+[scope contract and portable skill](agent-interface.md).
+
+`orbit_observe` now returns both the native image block and metadata, fixing the
+previous loss of page title, tabs/windows and dimensions. Set `mode: "metadata"`
+to read presence without screenshot capture. Hosts should consume one copy of
+metadata from text or structuredContent and render the image through their image
+channel. [Research and Hermes bridge evidence](agent-interface.md#reproduce-the-evidence).
 
 ## Setup
 
@@ -43,3 +61,5 @@ The trial used a copy of the host configuration in a throwaway home directory, s
 The protocol test covers negotiation, independent sessions, actions, image observations, pause/resume and disconnect survival. Opt-in model-host experiments additionally completed browser tasks and native editor saves with Claude Code and Codex. [Validation scope](validation.md).
 
 Model-host experiments use an already authenticated host and may consume service usage. They are not part of `bun test`. Put `codex` on PATH or set `ORBIT_CODEX_BIN` to the intended executable. Do not commit the generated host configuration, authentication state or raw output.
+
+`orbit_create` also accepts optional `conversationName` and `projectName` display labels. Pass the actual host conversation title and project when available. Orbit cannot infer either from an MCP connection, and does not inspect personal host history to fill them in. These labels are shown in the viewer and excluded from diagnostic reports.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orbit Usage"
+  short_description: "off / on / status for this conversation"
+  default_prompt: "$orbit-usage status"

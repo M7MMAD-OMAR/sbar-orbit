@@ -1,12 +1,27 @@
 import { startBroker, call } from "./ipc";
 import { serviceSocketPath } from "./service";
 import { OrbitError } from "./errors";
+import { ConversationUsage } from "./conversation-usage";
+import { observationOptions, saveObservation } from "./observation-output";
 
 // The fourth word means whatever the verb needs: an account name to create with, a restore point to
 // return to. Named for its position rather than for one of its meanings.
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
-  if (command === "status") {
+  const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
+  if (command !== "usage" && command !== "serve") await usage.assertEnabled();
+  if (command === "usage") {
+    if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");
+    if (!["on", "off", "status"].includes(verb ?? "") || fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use usage on|off|status [ID]");
+    console.log(JSON.stringify({ ok: true, result: verb === "status" ? await usage.status() : await usage.set(verb as "on" | "off") }));
+  } else if (command === "diagnostics") {
+    const { Diagnostics, diagnosticRoot } = await import("./diagnostics");
+    const socket = process.env.ORBIT_SOCKET ?? serviceSocketPath();
+    let report: unknown;
+    try { report = await call(socket, "diagnostics.report"); }
+    catch { report = await new Diagnostics(diagnosticRoot()).report(); }
+    console.log(JSON.stringify(report, null, 2));
+  } else if (command === "status") {
     // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
     const status = await readStatus(socketFromEnvironment());
@@ -47,8 +62,8 @@ try {
     };
     process.on("SIGINT", stop); process.on("SIGTERM", stop);
   } else {
-    const socket = process.env.ORBIT_SOCKET;
-    if (!socket) throw new OrbitError("CONFIG_REQUIRED", "Set ORBIT_SOCKET to the socket printed by serve");
+    const socket = process.env.ORBIT_SOCKET ?? serviceSocketPath();
+    const observation = command === "session" && verb === "observe" ? observationOptions(process.argv.slice(5)) : undefined;
     let method: string;
     let params: unknown = {};
     if (command === "doctor") method = "doctor";
@@ -58,20 +73,22 @@ try {
     else if (command === "preview") { method = "preview.open"; params = { launch: verb === "open", browser: arg }; }
     else if (command === "account" && verb === "save") { method = "session.account.save"; params = { sessionId: arg }; }
     else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
-      method = `session.${verb}`;
+      method = observation?.mode === "metadata" ? "session.presence" : `session.${verb}`;
       // The journal is how an autonomous run is reviewed after it finishes, and a restore is how one is
       // put back, so both belong on the command line a person uses rather than in the agent API alone.
-      params = verb === "create" ? { backend: arg ?? "browser", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME }
+      params = verb === "create" ? { backend: arg ?? "browser", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME, conversationName: process.env.ORBIT_CONVERSATION_NAME, projectName: process.env.ORBIT_PROJECT_NAME }
         : verb === "restore" && fourth !== undefined ? { sessionId: arg, sequence: Number(fourth) }
         : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };
     } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON");
-    console.log(JSON.stringify({ ok: true, result: await call(socket, method, params) }));
+    const result = await call(socket, method, params);
+    console.log(JSON.stringify({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result }));
   }
 } catch (error) {
   console.error(JSON.stringify({ ok: false, error: { code: error instanceof OrbitError ? error.code : "CLI_ERROR",
+    diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined,
     message: error instanceof OrbitError ? error.message : "Command failed" } }));
   process.exitCode = 1;
 }
