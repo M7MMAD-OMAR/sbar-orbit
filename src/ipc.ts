@@ -53,7 +53,14 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       catch (error) {
         const code = error instanceof OrbitError ? error.code : error instanceof SyntaxError ? "INVALID_REQUEST" : "BACKEND_ERROR";
         const message = error instanceof OrbitError ? error.message : "Request failed";
-        // The private metadata journal holds the correlation ID. Raw exceptions can contain secrets.
+        // The private metadata journal holds the correlation ID. Raw exceptions can contain secrets,
+        // so the client gets a fixed message, and the cause goes to the broker's own stderr, which is
+        // the operator's journal rather than anything an agent or a page can read. Without that line a
+        // BACKEND_ERROR is unattributable: the journal records that a method failed and not why, and
+        // the exception is gone. Measured 13 September 2026 on a fresh machine, where every session
+        // creation failed with nothing anywhere saying what had thrown.
+        if (!(error instanceof OrbitError))
+          console.error(JSON.stringify({ unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }));
         return Response.json({ ok: false, error: { code, message, diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined } });
       }
     },

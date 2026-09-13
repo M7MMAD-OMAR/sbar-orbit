@@ -69,6 +69,15 @@ export class Diagnostics {
     } catch (error) {
       const code = error instanceof OrbitError && codes.has(error.code) ? error.code : 'BACKEND_ERROR';
       await this.record({ ...event, at: new Date().toISOString(), outcome: 'error', code, durationMs: Math.round(performance.now() - start) });
+      // The journal is metadata by design, and an exception that is not Orbit's own says nothing here
+      // except that something threw. Its own words go to the broker's stderr, which is the operator's
+      // journal rather than anything an agent or a page can read, carried beside the trace ID so the
+      // two can be put together. Measured 13 September 2026 on a fresh machine: every session
+      // creation failed as BACKEND_ERROR with the cause discarded at this line, in the journal, in the
+      // report and on stderr all at once, which left nothing to debug from.
+      if (!(error instanceof OrbitError))
+        console.error(JSON.stringify({ traceId: event.traceId, method: event.method,
+          unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }));
       throw new OrbitError(error instanceof OrbitError ? error.code : 'BACKEND_ERROR', error instanceof OrbitError ? error.message : 'Request failed', event.traceId);
     }
   }

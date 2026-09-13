@@ -221,3 +221,22 @@ test("a filesystem that cannot snapshot leaves the profile exactly as it was", a
     await expect(stat(`${profile}.replaced`)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("a machine with no btrfs loses restore points, not sessions", async () => {
+  const { btrfs, createSubvolume } = await import("../src/restore");
+  // What Bun does when the binary is not there: it throws rather than returning a failing exit code,
+  // which is why this was an exception through every caller instead of a false. Found on a fresh
+  // Fedora machine with no btrfs-progs, where it took down session creation on both backends.
+  const absent = () => { throw new Error("ENOENT: no such file or directory, posix_spawn '/usr/bin/btrfs'"); };
+  const asked = await btrfs(["subvolume", "create", "/tmp/orbit-no-btrfs"], absent);
+  expect(asked.ok).toBe(false);
+  expect(asked.output).toContain("posix_spawn");
+  // And the directory the caller handed over is still there, which is the rule this path already had.
+  const scratch = await mkdtemp("/tmp/orbit-no-btrfs-");
+  try {
+    await writeFile(join(scratch, "keep"), "profile content");
+    // The real tool, on a filesystem that is not btrfs, takes the same branch a missing one does.
+    expect(typeof await createSubvolume(scratch)).toBe("boolean");
+    expect(await Bun.file(join(scratch, "keep")).text()).toBe("profile content");
+  } finally { await rm(scratch, { recursive: true, force: true }); }
+});

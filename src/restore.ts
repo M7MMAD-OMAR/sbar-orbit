@@ -66,8 +66,23 @@ export type RestorePoint = {
   milliseconds: number;
 };
 
-async function btrfs(args: string[]): Promise<{ ok: boolean; output: string }> {
-  const child = Bun.spawn(["/usr/bin/btrfs", ...args], { stdout: "pipe", stderr: "pipe" });
+/**
+ * Ask btrfs for something, and treat a machine that has no btrfs as a machine that cannot do it.
+ *
+ * `Bun.spawn` throws on a binary that is not there rather than returning a failing exit code, so the
+ * absence of `btrfs-progs` was not a false from this function, it was an exception through every
+ * caller. Measured 13 September 2026 on a fresh Fedora machine with no btrfs-progs installed: every
+ * `session.create` failed with `ENOENT: posix_spawn '/usr/bin/btrfs'`, browser and native alike, on a
+ * filesystem that was never going to hold a restore point anyway. Restore points are the feature that
+ * needs this tool; sessions are not.
+ */
+type BtrfsChild = { stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>; exited: Promise<number> };
+export async function btrfs(args: string[],
+  spawn: (command: string[]) => BtrfsChild = command => Bun.spawn(command, { stdout: "pipe", stderr: "pipe" }) as unknown as BtrfsChild,
+): Promise<{ ok: boolean; output: string }> {
+  let child: BtrfsChild;
+  try { child = spawn(["/usr/bin/btrfs", ...args]); }
+  catch (error) { return { ok: false, output: error instanceof Error ? error.message : "btrfs is not installed" }; }
   const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
   return { ok: await child.exited === 0, output: `${out}${err}`.trim() };
 }
