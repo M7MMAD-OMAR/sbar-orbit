@@ -161,3 +161,34 @@ test("the tab number open-tab returns is the tab observation reports", async () 
     expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Page /slow" });
   } finally { await broker.close(); fixture.stop(true); }
 }, 45000);
+
+/**
+ * A control that closes its own tab did what it was asked, so it must not read as a backend failure.
+ * The tab here goes while the click is still waiting for its target to become clickable, which is the
+ * same moment the race produces and is the only way to reach it every time rather than once in seven.
+ */
+test("a click whose tab closes under it is applied rather than failed", async () => {
+  const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    return new Response(path === "/popup"
+      ? '<!doctype html><title>Popup</title><button id="go" style="visibility:hidden">Close</button>'
+        + '<script>setTimeout(() => window.close(), 150)</script>'
+      : '<!doctype html><title>Main</title><h1 id="who">Main page</h1><button id="open" onclick="window.open(\'/popup\')">Open</button>',
+      { headers: { "Content-Type": "text/html" } });
+  } });
+  const broker = await startBroker();
+  try {
+    const session = await call(broker.socket, "session.create", { backend: "browser" }) as { sessionId: string };
+    const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const observe = () => call(broker.socket, "session.observe", session) as Promise<{ presence: { title: string; pageCount: number } }>;
+    await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/` });
+    await act({ type: "click", selector: "#open" });
+    for (let i = 0; i < 100 && (await observe()).presence.pageCount < 2; i++) await Bun.sleep(30);
+    // closed says the tab went away during the gesture, which is the part Orbit can see. applied has
+    // always meant the gesture was delivered rather than that the page acted on it.
+    expect(await act({ type: "click", selector: "#go" })).toEqual({ applied: true, closed: true });
+    for (let i = 0; i < 100 && (await observe()).presence.pageCount > 1; i++) await Bun.sleep(30);
+    // The survivor is followed, so the very next action lands on it without a select-tab.
+    expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Main page" });
+  } finally { await broker.close(); fixture.stop(true); }
+}, 30000);

@@ -139,6 +139,29 @@ export class BrowserBackend {
     }
     return this.active;
   }
+  /**
+   * Clicking a control that closes its own tab is an ordinary thing to do: a popup's Close button, a
+   * link with window.close() behind it. Playwright rejects the gesture that caused it, because the
+   * target it was driving went away mid click, so an agent saw a backend error for an action that did
+   * exactly what it was asked. Measured before this existed, on a popup whose button closes it: three
+   * rejections in twenty clicks, which is a race rather than a rule, and which is why the failure was
+   * read for a day as a flaky test.
+   *
+   * Two conditions, not one. The page must be gone, and the session must still have a tab to go back
+   * to: closing the session closes every page as well, and forgiving that would report a cancelled
+   * action as a successful one, which the concurrency test caught. Every other click failure is still
+   * raised, because a selector that matches nothing must not read as success. applied has always meant
+   * the gesture was delivered rather than that the page acted on it, and closed is the part Orbit can
+   * actually see, since whether the tab survived the click is not something it can ask afterwards.
+   */
+  private async clickThrough(page: Page, selector: string) {
+    try { await page.locator(selector).click(); }
+    catch (error) {
+      if (!page.isClosed() || !this.context.pages().length) throw error;
+      return { applied: true, closed: true };
+    }
+    return { applied: true };
+  }
   private select(tab: number): Page {
     const pages = this.context.pages();
     const page = pages[tab - 1];
@@ -152,7 +175,7 @@ export class BrowserBackend {
       case "scroll": return this.control(action);
       case "navigate": await page.goto(action.url); return { url: page.url() };
       case "fill": await page.locator(action.selector).fill(action.text); return { applied: true };
-      case "click": await page.locator(action.selector).click(); return { applied: true };
+      case "click": return this.clickThrough(page, action.selector);
       case "read": return { text: await page.locator(action.selector).innerText() };
       case "open-tab": {
         // The same ceiling select-tab and close-tab address by number.
