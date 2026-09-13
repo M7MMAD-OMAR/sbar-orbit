@@ -164,6 +164,9 @@ test("the native runtime step builds only when asked, and names the tools it lac
   };
   try {
     const present = () => "/usr/bin/tool";
+    // A source tree that carries the bootstrap, which is what a clone is and a registry install is not.
+    await mkdir(join(source, "experiments/fedora-display"), { recursive: true });
+    await writeFile(join(source, "experiments/fedora-display/bootstrap.sh"), "#!/bin/sh\n");
     expect(await buildNativeRuntime(source, { dryRun: true, which: present })).toMatchObject({ state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" });
     const lacking = await buildNativeRuntime(source, { which: tool => tool === "cc" ? null : "/usr/bin/tool" });
     expect(lacking).toMatchObject({ state: "failed", detail: "cc missing" });

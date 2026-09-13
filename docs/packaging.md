@@ -103,7 +103,23 @@ and the display in both its terminal and non terminal forms. No test spawns a pa
 
 ## Install from a package registry
 
-The package is shaped for `bun add -g sbar-orbit` as well as for a source checkout: `package.json` names the launcher as its `bin`, lists only the runtime files (`bin`, `src`, `scripts`, `desktop`, `viewer`, `install.sh`, the Markdown docs and the licence notices, 1.24 MB unpacked against 5.72 MB for the whole tree), declares Linux and Bun 1.3 or later, and is no longer marked private. The launcher finds its own source root from its location, so it runs unchanged from `node_modules/sbar-orbit`.
+Two things the registry path had wrong until 13 September 2026, both found by packing rather than by
+reading. `bun pm pack` builds from the working tree, not from the git index the source archive uses, so
+a listed directory shipped whatever was sitting in it: `0.1.0-alpha.3` carries six `__pycache__` files
+nobody meant to publish. The `files` list now excludes them, and `tests/packaging.test.ts` fails if the
+tarball ever carries a path git does not track. The same test requires `bun.lock`, which was absent, so
+`install --reinstall-deps` could not resolve against the frozen lockfile it names. With the lockfile
+shipped, `bun install --frozen-lockfile --ignore-scripts` inside an extracted tarball installs the 100
+packages in 319 ms, measured on this host on 13 September 2026.
+
+`install --native` cannot work from the registry package, and now says so instead of failing at a path.
+The package ships source, not `experiments/`, so the bootstrap the step spawns is not there. Measured
+from an extracted tarball on the same day, `install --native --dry-run --json` reports the native step
+`failed` with `this copy of Orbit carries no native bootstrap` and the remedy `native-bootstrap-absent`,
+which points at the repository rather than at a command an agent may run. Browser sessions from a
+registry install need none of it.
+
+The package is shaped for `bun add -g sbar-orbit` as well as for a source checkout: `package.json` names the launcher as its `bin`, lists only the runtime files (`bin`, `src`, `scripts`, `desktop`, `viewer`, `bun.lock`, `install.sh`, the Markdown docs and the licence notices, 1.1 MB unpacked against 5.72 MB for the whole tree), declares Linux and Bun 1.3 or later, and is no longer marked private. The launcher finds its own source root from its location, so it runs unchanged from `node_modules/sbar-orbit`.
 
 ```sh
 bun add -g sbar-orbit

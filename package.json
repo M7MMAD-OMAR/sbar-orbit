@@ -13,6 +13,8 @@
     "scripts",
     "desktop",
     "viewer",
+    "!**/__pycache__",
+    "bun.lock",
     "install.sh",
     "docs/*.md",
     "AGENTS.md",

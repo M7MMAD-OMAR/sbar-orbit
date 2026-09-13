@@ -84,6 +84,14 @@ export async function buildNativeRuntime(source: string, options: { dryRun?: boo
   const which = options.which ?? (tool => Bun.which(tool));
   const missing = nativeBuildTools.filter(tool => !which(tool));
   if (missing.length) return { state: "failed", detail: `${missing.join(", ")} missing`, remedies: [nativeBuildRemedy] };
+  // The registry package carries no `experiments/`, so this is the ordinary shape of a `--native` run
+  // after `bun add -g sbar-orbit`. Saying which file bash could not open explains nothing; saying that
+  // this copy of Orbit does not carry the bootstrap names the actual cause and the way around it.
+  if (!options.bootstrap && !(await present(join(source, "experiments/fedora-display/bootstrap.sh"))))
+    return { state: "failed", detail: "this copy of Orbit carries no native bootstrap; the registry package ships source, not experiments",
+      remedies: [{ id: "native-bootstrap-absent", needsElevation: false, agentMayRun: false,
+        command: "git clone https://github.com/M7MMAD-OMAR/sbar-orbit",
+        message: "Native sessions need the private display runtime, which is built from experiments/fedora-display/bootstrap.sh in the repository. Clone it and run ./install.sh --native there. Browser sessions need none of this." }] };
   if (options.dryRun) return { state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" };
   const result = await (options.bootstrap ?? runBootstrap)(source);
   if (!result.ok) return { state: "failed", detail: result.output || "the bootstrap failed",
