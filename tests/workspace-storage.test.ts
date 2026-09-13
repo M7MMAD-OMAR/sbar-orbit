@@ -62,6 +62,28 @@ test("clean removes workspaces whose broker is gone and keeps live or recent one
     expect(result.kept).toEqual([name(live), name(recent)].sort());
     expect((await lstat(link)).isSymbolicLink()).toBe(true);
     expect((await lstat(scratch)).isDirectory()).toBe(true);
-    expect(await cleanWorkspaces(join(scratch, "missing"))).toMatchObject({ removed: [], kept: [] });
+    expect(await cleanWorkspaces(join(scratch, "missing"))).toMatchObject({ removed: [], kept: [], refused: [] });
   } finally { answering.stop(true); foreign.stop(true); }
+});
+
+test("one workspace that will not go does not end the sweep", async () => {
+  const { cleanWorkspaces, markWorkspaceOwner, createWorkspaceDirectory } = await import("../src/workspace-storage");
+  const { chmod, rm } = await import("node:fs/promises");
+  const scratch = await mkdtemp(resolve("output/storage-refused-"));
+  const root = join(scratch, "workspaces");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  // Two dead workspaces. The first one alphabetically holds a record nothing may unlink, which is
+  // what a read-only path looks like from here, so its removal fails and the second one's must not.
+  const stuck = await createWorkspaceDirectory("aaa-stuck", root);
+  const ordinary = await createWorkspaceDirectory("zzz-ordinary", root);
+  for (const directory of [stuck, ordinary]) await markWorkspaceOwner(directory, "/nowhere/broker.sock", 4194304 + 11);
+  await chmod(stuck, 0o500);
+  try {
+    const result = await cleanWorkspaces(root, async () => false);
+    const name = (path: string) => path.slice(root.length + 1);
+    // The sweep reached the second one, and named the first rather than dying on it.
+    expect(result.refused.map(entry => entry.name)).toEqual([name(stuck)]);
+    expect(result.refused[0]?.reason).toBeTruthy();
+    expect(result.removed).toEqual([name(ordinary)]);
+  } finally { await chmod(stuck, 0o700); await rm(scratch, { recursive: true, force: true }); }
 });

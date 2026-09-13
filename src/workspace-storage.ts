@@ -57,11 +57,16 @@ const recordlessGraceMs = 60 * 60 * 1000;
  * Remove the workspaces no running broker owns. A directory with no owner record predates the
  * record; it is kept while it is recent, in case an older broker still holds it, and removed
  * otherwise. Nothing here reads a profile's contents.
+ *
+ * One directory that will not go does not end the sweep. Measured 13 September 2026: a single
+ * workspace under a read-only path threw out of the loop, so a run with 214 directories and 7.4 GB
+ * to reclaim removed none of them and reported only "Command failed". Each refusal is now carried
+ * in its own list with the reason, and the rest of the sweep continues.
  */
 export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnswers) {
-  const removed: string[] = [], kept: string[] = [];
+  const removed: string[] = [], kept: string[] = [], refused: { name: string; reason: string }[] = [];
   let entries: string[];
-  try { entries = await readdir(root); } catch { return { root, removed, kept }; }
+  try { entries = await readdir(root); } catch { return { root, removed, kept, refused }; }
   for (const name of entries.sort()) {
     const directory = join(root, name);
     const info = await lstat(directory).catch(() => undefined);
@@ -69,8 +74,8 @@ export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnsw
     const alive = await ownerIsAlive(directory, probe);
     const recent = Date.now() - info.mtimeMs < recordlessGraceMs;
     if (alive || (alive === undefined && recent)) { kept.push(name); continue; }
-    await rm(directory, { recursive: true, force: true });
-    removed.push(name);
+    try { await rm(directory, { recursive: true, force: true }); removed.push(name); }
+    catch (error) { refused.push({ name, reason: error instanceof Error ? error.message : "could not be removed" }); }
   }
-  return { root, removed, kept };
+  return { root, removed, kept, refused };
 }
