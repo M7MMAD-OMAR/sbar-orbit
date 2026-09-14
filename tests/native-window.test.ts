@@ -56,3 +56,32 @@ import { expectDeclaredImage, jpegSize } from "./frame-format";
     await expect(act({ type: "resize", width: 3840, height: 2160 })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
   } finally { await broker.close(); }
 }, 120000);
+
+/**
+ * The window can belong to a descendant of the process the supervisor started, not to that process:
+ * /usr/bin/libreoffice is a script whose oosplash forks soffice.bin, and Writer's window is
+ * soffice.bin's. Measured 14 September 2026 in experiments/application-coverage.ts: Writer mapped
+ * and the launch still timed out at 30 seconds, because no window carried the supervised pid. The
+ * shell here forks the fixture the same way, `& wait`, so the window's pid is a grandchild's.
+ */
+(process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("a window mapped by a descendant of the launched process counts as mapped", async () => {
+  const root = await mkdtemp("/tmp/orbit-descendant-");
+  const broker = await startBroker();
+  try {
+    const session = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };
+    const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const fixture = resolve("experiments/fedora-display/fixture.py");
+    const launched = await act({ type: "launch", toolkit: "wayland",
+      argv: ["/bin/sh", "-c", `/usr/bin/python3 "$1" "$2" & wait`, "orbit-descendant", fixture, join(root, "grandchild.json")] }) as { pid: number; applied: boolean };
+    expect(launched.applied).toBe(true);
+    const presence = await call(broker.socket, "session.presence", session) as { pageCount: number; tabs: { active: boolean }[] };
+    expect(presence.pageCount).toBe(1);
+    expect(presence.tabs[0]?.active).toBe(true);
+    // A window of another session on the same display is not this launch's. The second launch is
+    // the plain fixture, and it must map on its own pid rather than on the first one's.
+    const second = await act({ type: "launch", toolkit: "wayland", argv: ["/usr/bin/python3", fixture, join(root, "second.json")] }) as { pid: number };
+    expect(second.pid).not.toBe(launched.pid);
+    expect((await call(broker.socket, "session.presence", session) as { pageCount: number }).pageCount).toBe(2);
+    await call(broker.socket, "session.stop", session);
+  } finally { await broker.close(); }
+});

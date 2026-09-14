@@ -78,6 +78,20 @@ async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> 
     return Buffer.from(out);
   } finally { clearTimeout(timeout); }
 }
+/**
+ * The session id a process runs in, read from /proc, or undefined for a process that is gone. The
+ * fields after the command name are state, parent, group, session; the command itself can hold
+ * spaces and parentheses, which is why they are read after the last ")".
+ */
+async function sessionOf(pid: number): Promise<number | undefined> {
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const session = Number(fields[3]);
+    return Number.isInteger(session) ? session : undefined;
+  } catch { return undefined; }
+}
+
 export class FedoraBackend {
   parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
@@ -220,6 +234,7 @@ export class FedoraBackend {
       this.children.push(supervised);
       let applicationPid: number | undefined;
       let selectedFiles: string[] = [];
+      let mapped: number | undefined;
       try {
       await this.wait(async () => {
         let report: { pid?: number; selectedFiles?: string[]; error?: { code: string; message: string } } | undefined;
@@ -229,15 +244,29 @@ export class FedoraBackend {
         if (!report?.pid) return false;
         applicationPid = report.pid; selectedFiles = report.selectedFiles ?? [];
         const tree = await this.ipc("-t", "get_tree");
-        const find = (node: any): boolean => (node.pid === applicationPid && node.visible) || [...(node.nodes ?? []), ...(node.floating_nodes ?? [])].some(find);
-        return find(tree);
+        // The window can belong to a descendant rather than to the process the supervisor started:
+        // /usr/bin/libreoffice is a script whose oosplash forks soffice.bin, and the window is
+        // soffice.bin's. Measured 14 September 2026: Writer mapped in a few seconds and this wait
+        // still ran out at 30, because no window carried the supervised pid. The supervisor starts
+        // the application in a new session, so every descendant shares its session id, and that is
+        // what a window is matched on. A window of some other session on this display is nobody's.
+        const candidates: { pid: number; id: number }[] = [];
+        const collect = (node: any) => {
+          if (node.pid && node.visible) candidates.push({ pid: node.pid, id: node.id });
+          for (const next of [...(node.nodes ?? []), ...(node.floating_nodes ?? [])]) collect(next);
+        };
+        collect(tree);
+        for (const candidate of candidates) {
+          if (candidate.pid === applicationPid || await sessionOf(candidate.pid) === applicationPid) { mapped = candidate.id; return true; }
+        }
+        return false;
       // Electron applications on a software-rendered display take well over ten seconds to map.
       }, 30000);
       supervised.group = applicationPid;
       // A supervisor can die on its own, without the broker and without the display. Nothing else
       // notices, because the application it owned is not a child of this process and keeps running.
       child.once("exit", () => { void this.reap(supervised); });
-      await this.ipc(`[pid=${applicationPid}]`, "focus");
+      await this.ipc(`[con_id=${mapped}]`, "focus");
       await sleep(500);
       return { pid: applicationPid, applied: true, selectedFiles };
       } catch (error) {
