@@ -44,7 +44,9 @@
    more, one at a time, across GTK4, GTK3, LibreOffice's VCL, Qt 6 with KDE Frameworks, an OpenGL
    terminal and Xwayland, and all fifteen map, in 714 ms to 2597 ms; the first run of it found and
    fixed a launch that timed out on a window owned by a grandchild of the launched process. See
-   [validation](validation.md). Still open in this gate: account coverage.
+   [validation](validation.md). Still open in this gate: account coverage, for which
+   `experiments/real-account.ts` now measures everything after the person signs in through the
+   viewer, see [accounts](accounts.md); the signing in is the person's step and has not happened yet.
 3. **Closed on 13 September 2026, on a container that is a machine rather than a filesystem.**
    `experiments/fresh-machine/systemd-session.sh` gives a clean Fedora 44 image the half the other
    container cannot have: systemd as PID 1, a lingering unprivileged account whose user manager owns
