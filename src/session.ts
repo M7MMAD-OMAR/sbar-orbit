@@ -149,6 +149,12 @@ export class Sessions {
       if (input.cloneOf !== undefined && input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Cloning a profile requires the browser backend");
       if (input.cloneOf !== undefined && account) throw new OrbitError("INVALID_REQUEST", "A session takes either a saved account or a cloned profile, not both");
       const clone = input.cloneOf === undefined ? undefined : await cloneProfile(text(input.cloneOf, "cloneOf"), profile, policy);
+      // The person's extensions travel with the clone by default. `cloneExtensions: false` leaves them
+      // dormant, for a caller that wants the logins and not the add-ons: measured 14 September 2026, a
+      // proxy extension in the person's profile set its own proxy inside the confined clone, where the
+      // only route out is the lease's proxy, and every origin then failed as disconnected. Failing closed
+      // is the lease working; a session that wanted the account still needs a way past the add-on.
+      if (clone && input.cloneExtensions === false) clone.launch.extensions = false;
       // Requests the PAGE made and the lease refused. The agent never asked for these, so they are
       // recorded separately from its own denied actions.
       const blockedOrigins: string[] = [];
