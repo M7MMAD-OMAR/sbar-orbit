@@ -8,7 +8,8 @@ to run it there. Those are different reports and they go to different forms.
 
 **Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.** There is no
 macOS, Windows or non Fedora Linux machine in this project's reach. Every row below that names another
-platform is reasoning about vendor documentation, not a test.
+platform is reasoning about vendor documentation, not a test, except the Linux rows marked `Limited`,
+which since 14 September 2026 come from containers of those families run on the measured host.
 
 Run `sbar-orbit doctor --report` before reading further. It is local, it needs no broker, and the
 `tier.assigned` it prints is the row that applies to you. It is safe to paste into a public issue, and

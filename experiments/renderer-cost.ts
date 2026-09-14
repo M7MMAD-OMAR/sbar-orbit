@@ -32,21 +32,10 @@ async function integratedRenderNode() {
   return null;
 }
 async function processTicks(pid: number) {
-  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
+  // No catch: a process that vanished mid run is a failed measurement, not zero ticks.
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8");
   const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
   return (Number(fields[11] ?? 0) + Number(fields[12] ?? 0));
-}
-async function compositorPid() {
-  const candidates: { pid: number; mtime: number }[] = [];
-  for (const entry of await readdir("/tmp")) {
-    if (!entry.startsWith("orbit-native-")) continue;
-    try {
-      const file = Bun.file(join("/tmp", entry, "compositor.json"));
-      const data = JSON.parse(await file.text());
-      candidates.push({ pid: data.pid, mtime: file.lastModified });
-    } catch {}
-  }
-  return candidates.sort((a, b) => b.mtime - a.mtime)[0]?.pid;
 }
 const desktopPid = Number((await Bun.$`pidof Hyprland`.text().catch(() => "")).trim().split(" ")[0]) || undefined;
 const integrated = await integratedRenderNode();
@@ -72,11 +61,11 @@ try {
     for (const size of sizes) {
       const broker = await startBroker();
       try {
-        const session = await call(broker.socket, "session.create", { backend: "fedora", viewport: size, taskName: `Renderer ${renderer.label} ${size.width}x${size.height}` }) as { sessionId: string; renderer?: { asked: string; bound: string; device?: string } };
+        const session = await call(broker.socket, "session.create", { backend: "fedora", viewport: size, taskName: `Renderer ${renderer.label} ${size.width}x${size.height}` }) as { sessionId: string; renderer?: { asked: string; bound: string; device?: string }; compositorPid?: number };
         const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
         await act({ type: "launch", toolkit: "wayland", argv: ["/usr/bin/python3", resolve("experiments/fedora-display/fixture.py"), join(directory, `fixture-${renderer.label.split(" ")[0]}-${size.width}.json`)] });
         await Bun.sleep(1500);
-        const sway = await compositorPid();
+        const sway = session.compositorPid;
         await call(broker.socket, "session.observe", session);
         const durations: number[] = [];
         const before = await readCpuSample();

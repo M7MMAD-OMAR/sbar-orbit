@@ -7,7 +7,9 @@ import { OrbitError } from "./errors";
  * and it is refused without a pinned render node: unpinned, wlroots autopicks a device, and on a
  * hybrid laptop that was the discrete one, the one that costs the person power. The environment is
  * the switch because it is per broker and per experiment, and never per session request: an agent
- * cannot ask for the person's GPU.
+ * cannot ask for the person's GPU. A managed broker reads it from the unit's EnvironmentFile,
+ * `~/.config/sbar-orbit/broker.env`. Errors are CONFIG_REQUIRED, the operator's to fix, and the
+ * broker checks them once as it starts rather than on every session an agent asks for.
  */
 export type NativeRenderer = { renderer: "pixman" | "gles2" | "vulkan"; device?: string; env: Record<string, string> };
 
@@ -17,15 +19,15 @@ export function nativeRendererFromEnv(env: NodeJS.ProcessEnv = process.env, exis
   const renderer = (env.ORBIT_NATIVE_RENDERER ?? "pixman").trim().toLowerCase();
   const device = env.ORBIT_NATIVE_RENDER_DEVICE?.trim();
   if (renderer === "pixman") {
-    if (device) throw new OrbitError("INVALID_REQUEST", "ORBIT_NATIVE_RENDER_DEVICE only applies to a GPU renderer; unset it or set ORBIT_NATIVE_RENDERER to gles2 or vulkan");
+    if (device) throw new OrbitError("CONFIG_REQUIRED", "ORBIT_NATIVE_RENDER_DEVICE only applies to a GPU renderer; unset it or set ORBIT_NATIVE_RENDERER to gles2 or vulkan");
     return { renderer, env: { WLR_RENDERER: "pixman" } };
   }
   if (renderer !== "gles2" && renderer !== "vulkan")
-    throw new OrbitError("INVALID_REQUEST", `ORBIT_NATIVE_RENDERER must be pixman, gles2 or vulkan, not "${renderer}"`);
+    throw new OrbitError("CONFIG_REQUIRED", `ORBIT_NATIVE_RENDERER must be pixman, gles2 or vulkan, not "${renderer}"`);
   if (!device)
-    throw new OrbitError("UNSUPPORTED", `A GPU renderer needs a pinned render node: set ORBIT_NATIVE_RENDER_DEVICE to one of /dev/dri/renderD*; an unpinned pick can land on the person's discrete GPU`);
-  if (!renderNodePattern.test(device)) throw new OrbitError("INVALID_REQUEST", `ORBIT_NATIVE_RENDER_DEVICE must be a /dev/dri/renderD* node, not "${device}"`);
-  if (!exists(device)) throw new OrbitError("UNSUPPORTED", `Render node ${device} is not a character device on this machine`);
+    throw new OrbitError("CONFIG_REQUIRED", `A GPU renderer needs a pinned render node: set ORBIT_NATIVE_RENDER_DEVICE to one of /dev/dri/renderD*; an unpinned pick can land on the person's discrete GPU`);
+  if (!renderNodePattern.test(device)) throw new OrbitError("CONFIG_REQUIRED", `ORBIT_NATIVE_RENDER_DEVICE must be a /dev/dri/renderD* node, not "${device}"`);
+  if (!exists(device)) throw new OrbitError("CONFIG_REQUIRED", `Render node ${device} is not a character device on this machine`);
   return { renderer, device, env: { WLR_RENDERER: renderer, WLR_RENDER_DRM_DEVICE: device } };
 }
 

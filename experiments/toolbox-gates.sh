@@ -42,10 +42,11 @@ py=/usr/bin/python3
     --x11 xterm --wayland foot --hold 40 --label toolbox > "$work/inside.jsonl" 2>"$work/inside.err" &
   inside=$!
   held=""
-  for _ in $(seq 1 400); do
+  # smoke.py can spend up to 70 seconds on its own waits before it prints the hold line.
+  for _ in $(seq 1 900); do
     held=$(grep -m1 '"holding"' "$work/inside.jsonl" 2>/dev/null); [ -n "$held" ] && break; $py -c 'import time; time.sleep(0.1)'
   done
-  if [ -z "$held" ]; then echo "the compositor inside never reached its hold:"; cat "$work/inside.err" | tail -5; tail -c 600 "$work/inside.jsonl"; wait $inside; exit 1; fi
+  if [ -z "$held" ]; then echo "the compositor inside never reached its hold:"; cat "$work/inside.err" | tail -5; tail -c 600 "$work/inside.jsonl"; wait $inside; touch "$work/failed"; exit 1; fi
   wayland=$($py -c 'import json,sys; print(json.loads(sys.argv[1])["holding"]["wayland"])' "$held")
   display=$($py -c 'import json,sys; print(json.loads(sys.argv[1])["holding"]["display"] or "")' "$held")
   cpid=$($py -c 'import json,sys; print(json.loads(sys.argv[1])["compositorPid"])' "$held")
@@ -94,7 +95,12 @@ except OSError as e: print('refused:', e)")"
   toolbox run --container "$container" systemd-run --user --scope --slice=sbarorbit.slice --unit="$unit" -- sleep 15 > "$work/g7.out" 2>&1 &
   runner=$!
   spid=""
-  for _ in $(seq 1 100); do spid=$(pgrep -n -x sleep); [ -n "$spid" ] && grep -q sbarorbit /proc/$spid/cgroup 2>/dev/null && break; spid=""; $py -c 'import time; time.sleep(0.1)'; done
+  # The process is found through the unit it was started in, never by guessing at the newest sleep.
+  for _ in $(seq 1 100); do
+    cg=$(systemctl --user show "$unit.scope" -p ControlGroup --value 2>/dev/null)
+    [ -n "$cg" ] && spid=$(head -1 "/sys/fs/cgroup$cg/cgroup.procs" 2>/dev/null); [ -n "$spid" ] && break
+    $py -c 'import time; time.sleep(0.1)'
+  done
   echo "host user manager: $(systemctl --user show "$unit.scope" -p ActiveState -p ControlGroup -p Slice 2>&1 | tr '\n' ' ')"
   if [ -n "$spid" ]; then
     echo "the process, from the host: pid $spid cgroup $(cat /proc/$spid/cgroup)"
@@ -110,3 +116,6 @@ except OSError as e: print('refused:', e)")"
   echo "systemd-run exit: $? output: $(cat "$work/g7.out" | tr '\n' ' ')"
 } 2>&1 | tee "$log"
 echo; echo "log: $log"
+# The brace group runs in a subshell feeding tee, so its exit is carried out through a marker.
+[ -e "$work/failed" ] && exit 1
+exit 0

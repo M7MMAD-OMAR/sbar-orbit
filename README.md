@@ -68,7 +68,8 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 
 Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation. There is no macOS,
 Windows or non Fedora Linux machine in this project's reach, so every statement about those platforms is
-reasoning about vendor documentation and not a test. `sbar-orbit doctor --report` prints which row of the
+reasoning about vendor documentation and not a test, apart from what containers of Debian, Ubuntu, Arch
+and openSUSE on that one host could show, which the tier table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
 [support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
 paste into an issue.
 

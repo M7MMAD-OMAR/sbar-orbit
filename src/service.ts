@@ -58,6 +58,8 @@ export function sliceUnit() {
 export function serviceUnit(launcher: string) {
   return ["[Unit]", "Description=Sbar Orbit local broker", "", "[Service]", "Type=simple",
     `ExecStart=${launcher} serve --managed-socket`, "Slice=sbarorbit.slice",
+    // Operator switches such as ORBIT_NATIVE_RENDERER live in a file the installer never rewrites.
+    "EnvironmentFile=-%h/.config/sbar-orbit/broker.env",
     "Restart=on-failure", "RestartSec=2", "Nice=10",
     // The broker owns browsers and private displays, so give it time to close them.
     "TimeoutStopSec=30", "KillMode=mixed", "", "[Install]", "WantedBy=default.target", ""].join("\n");

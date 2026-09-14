@@ -106,7 +106,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...("renderer" in session.backend ? { renderer: session.backend.renderer } : {}) }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid } : {}) }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);

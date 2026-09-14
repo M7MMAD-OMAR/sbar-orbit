@@ -1,3 +1,4 @@
+import { nativeRendererFromEnv } from "./native-renderer";
 import { requireResourceBudget } from "./resource-budget";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +14,9 @@ import { Diagnostics, diagnosticRoot } from "./diagnostics";
 
 export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
   await requireResourceBudget();
+  // A broker whose renderer switch is misconfigured refuses to start, here, rather than refusing
+  // every native session later with an error the agent cannot act on.
+  nativeRendererFromEnv();
   // A managed broker binds one fixed path so host configuration survives restarts. Every other
   // broker keeps a private directory, so tests and experiments cannot collide with each other.
   let socket = options.socketPath;

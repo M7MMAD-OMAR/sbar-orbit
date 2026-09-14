@@ -223,8 +223,8 @@ three apart.
 | Host | What the tier is expected to be | Why it is not asserted |
 |---|---|---|
 | Fedora 44, this host | `namespace`. Measured | Measured, `confinedEgress: true`, and the wired lease measured end to end |
-| Debian, Ubuntu, Arch, openSUSE | Probably `namespace`, subject to G29 | `kernel.unprivileged_userns_clone` and AppArmor's `userns` restrictions differ by distribution and release, and `socat` is not installed everywhere |
-| A rootless container | Unknown | Nesting a user namespace inside one is where this most plausibly fails, and it is untested |
+| Debian, Ubuntu, Arch, openSUSE | `namespace`, Limited: measured in containers on 14 September 2026, G29 | `bwrap` and `socat` are packaged on all four and the network namespace confined a fetch in each; a real host's AppArmor `userns` policy is the half a container cannot answer |
+| A rootless container | Limited: a user namespace nested inside rootless podman on all four families, and confined the network; podman refused the `--proc /proc` half of Orbit's shape | The pid half is the container's limit, measured the same day, G29 |
 | Windows | `in-browser`, with no equivalent designed | There is no `--unshare-net`. What exists is a Windows Filtering Platform filter or a network compartment, both of which are a different design and one of which needs a driver. G28 |
 | macOS | `in-browser`, with no equivalent designed | No network namespaces. `pf` is system wide and root only, and a per process filter means a Network Extension, which means an entitlement and a signed installer. G30 |
 
@@ -714,7 +714,8 @@ The refusal goes above the feature list, because the feature attracts the wrong 
 
 Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.
 There is no macOS, Windows or non Fedora Linux machine in this project's reach. Every
-statement about those platforms below is reasoning about vendor documentation, not a test.
+statement about those platforms below is reasoning about vendor documentation, not a test,
+except where a gate row says it was measured in a container on this host, at tier Limited.
 ```
 
 Then the section 2 matrix, then two sentences: `Reasoned` means installing produces a test report,

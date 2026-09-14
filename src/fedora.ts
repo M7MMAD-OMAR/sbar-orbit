@@ -102,6 +102,8 @@ export class FedoraBackend {
   // reaping still leaves the group identifier that has to be swept.
   private children: { child: ChildProcessWithoutNullStreams; group?: number }[] = [];
   private compositorGroup?: number;
+  /** The compositor's process, for whoever measures it; the supervisor reports it once the display is up. */
+  get compositorPid() { return this.compositorGroup; }
   private device?: ChildProcessWithoutNullStreams;
   // Where the compositor put its socket and display, learned once it is up. Typed as strings
   // rather than read back out of the environment with an assertion at every use.
@@ -123,8 +125,14 @@ export class FedoraBackend {
     const { runtime, executables, source: runtimeSource } = await usableNativeRuntime(project);
     if (runtimeSource === "none")
       throw new OrbitError("UNSUPPORTED", "Run the documented Fedora native bootstrap first");
+    // Pixman unless the broker's environment opts into a pinned GPU renderer; see native-renderer.ts.
+    // Read before anything is created on disk, so a misconfigured broker leaves nothing behind.
+    const renderer = nativeRendererFromEnv();
     const directory = await mkdtemp("/tmp/orbit-native-");
+    // Until the backend exists, its close() cannot run, so the directory is removed here on any throw.
+    let compositor: ChildProcessWithoutNullStreams, log: ReturnType<typeof createWriteStream>, head = "";
     const env = { ...process.env };
+    try {
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
       delete env[key];
     // Private base directories, so an application cannot restore the person's own previous session
@@ -134,20 +142,18 @@ export class FedoraBackend {
     // The person's theme, icons, cursor and fonts, so applications look the way they do on the
     // desktop. Documents, history and credentials are not part of it.
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
-    // Pixman unless the broker's environment opts into a pinned GPU renderer; see native-renderer.ts.
-    const renderer = nativeRendererFromEnv();
     Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
     const cursor = appearance.cursor ? `seat seat0 xcursor_theme ${appearance.cursor.theme} ${appearance.cursor.size}\n` : "";
     await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
-    const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), ...(renderer.renderer === "pixman" ? [] : ["-V"]), "-c", config], { env, detached: true });
+    compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), ...(renderer.renderer === "pixman" ? [] : ["-V"]), "-c", config], { env, detached: true });
     // The compositor's own output is the only evidence when a display fails to start, so keep it
     // beside the session rather than discarding it. Bounded, because sway can log per frame.
-    const log = createWriteStream(join(directory, "compositor.log"), { mode: 0o600 });
+    log = createWriteStream(join(directory, "compositor.log"), { mode: 0o600 });
     log.on("error", () => {});
-    let logged = 0, head = "";
+    let logged = 0;
     const keep = (chunk: Buffer) => {
       if (logged < 262144 && !log.writableEnded) { logged += chunk.length; log.write(chunk); }
       // The opening of the log stays in memory too: the renderer check below reads it before the
@@ -157,6 +163,7 @@ export class FedoraBackend {
     compositor.stdout.on("data", keep); compositor.stderr.on("data", keep);
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
+    } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
     const backend = new FedoraBackend(directory, env, compositor, size);
     try {
       await backend.wait(async () => {

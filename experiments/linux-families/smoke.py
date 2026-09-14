@@ -135,7 +135,8 @@ try:
     # loaded, headless or not, and says so on its first line. That is a fact about the family's
     # package worth recording, so the retry is taken once, with the flag it asks for, and reported.
     if not found and "Proprietary Nvidia" in compositor_log_tail():
-        log.seek(0); log.truncate()
+        # The refusal is the finding; it stays in the log and in the report whatever the retry does.
+        report["firstAttempt"] = {"args": [], "exit": sway.poll(), "logTail": compositor_log_tail()}
         sway = start(["--unsupported-gpu"])
         found = wait_for(sockets)
     elapsed("sockets")
