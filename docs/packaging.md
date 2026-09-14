@@ -103,6 +103,8 @@ and the display in both its terminal and non terminal forms. No test spawns a pa
 
 ## Install from a package registry
 
+How a machine that already has Orbit would get the next version is a separate question, studied in [automatic updates](updates.md) and not built.
+
 Two things the registry path had wrong until 13 September 2026, both found by packing rather than by
 reading. `bun pm pack` builds from the working tree, not from the git index the source archive uses, so
 a listed directory shipped whatever was sitting in it: `0.1.0-alpha.3` carries six `__pycache__` files
