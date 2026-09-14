@@ -134,6 +134,12 @@ The command `preview open` spawns, as the broker builds it, opened inside an Orb
 
 Measured 14 September 2026: the window mapped in 1345 ms with the title `Viewer window trial | Orbit`, `display-mode: standalone` true, 1280 by 800 of page and nothing else, no tab strip and no address bar, and the profile directory held 38 entries afterwards, none of them the person's. Read from the viewer's own `#cost` element every five seconds for a minute at the default cadence, watching one browser session on a blank page: `Viewer cycle: 24 to 56 ms of every 1000 ms (2 to 6%)`, of which the request took 18 to 50 ms, the decode 2 to 3 ms and the draw 0 ms. That is the viewer's own report of its work per frame on this host; the participant's reading of the same element on their own desktop, which is what roadmap gate 1 asks for, is theirs to take from the same window, and a native session or a busy page costs more per frame than a blank one.
 
+### The viewer's cost, read on the person's desktop
+
+The same `#cost` line, from the viewer window Orbit opens on the person's own desktop: Hyprland, the desktop's default Google Chrome in Orbit's own profile, `display-mode: standalone`, a 1265 by 1389 page at device pixel ratio 1.5 on a 2560 by 1440 output. Reproduce with `bun run experiments/viewer-cost-desktop.ts`; it opens the window for the length of the reading and closes it.
+
+Measured 14 September 2026, one browser session on a blank page at the default cadence, sampled every five seconds for a minute: `Viewer cycle: 75 to 129 ms of every 1000 ms (7 to 13%)`, request 59 to 110 ms, decode 6 to 9 ms, draw 0 ms; the window was ready 2139 ms after the command. That is two to three times the 24 to 56 ms the same viewer reported inside a private display, and the difference is in the request, the broker's capture and the trip to the page, not in the decode or the draw. It was read through DevTools from the element the person reads by eye, in the window on their screen, which is what gate 1 asked for; a native session or a busy page costs more per frame.
+
 ### Fifteen more applications, one at a time
 
 Applications beyond those four, each launched through the broker into one private display, its first window recorded with title and launch time, one frame kept, and the window closed through the session's own command before the next. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/application-coverage.ts`; frames and `report.json` land in `output/application-coverage-<date>/`.
