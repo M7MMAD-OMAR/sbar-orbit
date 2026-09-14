@@ -61,7 +61,8 @@ async function pipeServe() {
     const server = createServer(() => {});
     server.listen(held, async () => {
       // pwsh rather than Windows PowerShell: on the runner the latter could not load its Security module.
-      const { out, err } = await run(["pwsh", "-NoProfile", "-Command", `(Get-Acl -Path '${held}').Sddl`], { allowFailure: true, timeoutMs: 30000 });
+      // Get-Acl cannot open a pipe (error 87); a client stream can, and reads the ACL off its handle.
+      const { out, err } = await run(["pwsh", "-NoProfile", "-Command", `$c = [System.IO.Pipes.NamedPipeClientStream]::new('.', '${held.replace("\\\\.\\pipe\\", "")}', 'InOut'); $c.Connect(3000); $c.GetAccessControl().GetSecurityDescriptorSddlForm('All'); $c.Dispose()`], { allowFailure: true, timeoutMs: 30000 });
       server.close(); resolve(out || `unreadable: ${err.slice(0, 160)}`);
     });
     server.on("error", error => resolve(`listen failed: ${error.message}`));
@@ -204,13 +205,15 @@ export const probes = {
       const profile = mkdtempSync(join(tmpdir(), "orbit-wfp-"));
       const results: Record<string, unknown> = {};
       for (const [what, url] of [["loopback", page.url], ["internet", "https://example.com/"]] as const) {
-        const shot = join(profile, `${what}.png`);
-        const child = Bun.spawn([chrome, "--headless=new", "--no-first-run", "--disable-gpu", `--user-data-dir=${profile}-${what}`, "--window-size=800,600", `--screenshot=${shot}`, "--timeout=15000", url], { stdout: "ignore", stderr: "pipe" });
+        // The DOM rather than a screenshot: an error page and the real page are both a PNG, and only
+        // the text says which one Chrome got.
+        const child = Bun.spawn([chrome, "--headless=new", "--no-first-run", "--disable-gpu", `--user-data-dir=${profile}-${what}`, "--dump-dom", "--timeout=15000", url], { stdout: "pipe", stderr: "pipe" });
         const started = performance.now();
         await Promise.race([child.exited, Bun.sleep(40000)]);
         if (child.exitCode === null) child.kill();
-        const err = (await new Response(child.stderr).text()).trim();
-        results[what] = { exit: child.exitCode, ms: Math.round(performance.now() - started), bytes: existsSync(shot) ? statSync(shot).size : 0, stderrTail: err.slice(-160) };
+        const [dom, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+        const expected = what === "loopback" ? "Orbit probe" : "Example Domain";
+        results[what] = { exit: child.exitCode, ms: Math.round(performance.now() - started), reached: dom.includes(expected), domBytes: dom.length, title: /<title>([^<]*)<\/title>/.exec(dom)?.[1] ?? null, stderrTail: err.trim().slice(-120) };
       }
       return { label, ...results };
     };

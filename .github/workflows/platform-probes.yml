@@ -40,13 +40,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts && (cd website && bun install --frozen-lockfile --ignore-scripts)
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat grim wl-clipboard > /dev/null
       - run: |
           mkdir -p output/verify
           (bun run typecheck; echo "typecheck exit $?") 2>&1 | tee output/verify/typecheck.log
           (./install.sh --dry-run --json; echo "install dry-run exit $?") 2>&1 | tee output/verify/install-dry-run.log
           (bun run verify; echo "verify exit $?") 2>&1 | tee output/verify/verify.log
+          cp -r "$HOME/.local/state/sbar-orbit/diagnostics" output/verify/diagnostics 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:

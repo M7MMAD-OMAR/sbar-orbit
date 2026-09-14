@@ -7,7 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // This is a feasibility experiment, not the Orbit service or its API.
-test("independent background browsers preserve their state and stop independently", async () => {
+// The desktop sampler is hyprctl, so the check runs where Hyprland is; a machine without it (a runner,
+// measured 14 September 2026) has no desktop to keep the browsers out of, and nothing to sample.
+(Bun.which("hyprctl") ? test : test.skip)("independent background browsers preserve their state and stop independently", async () => {
   const output = join(import.meta.dir, "../output/playwright");
   await mkdir(output, { recursive: true });
   const root = await createWorkspaceDirectory("browser-experiment");

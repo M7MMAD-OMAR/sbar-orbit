@@ -313,7 +313,12 @@ test("a run on a source checkout prepares nothing, whatever the switch says", as
   const { root, close } = await fixture();
   try {
     await setAutomaticUpdates(true, root, async () => ({ ok: true, output: "" }));
-    const outcome = await runUpdate("0.1.0-alpha.4", { root, ...feed({ "0.1.0-alpha.9": { publishedAt: "2026-09-01T00:00:00Z" } }) });
+    // A launcher of the fixture's own, linked into a checkout rather than a managed version directory,
+    // so the answer does not depend on what this machine has under ~/.local/bin.
+    await mkdir(join(root, "checkout/bin"), { recursive: true });
+    await writeFile(join(root, "checkout/bin/sbar-orbit"), "#!/bin/sh\n", { mode: 0o755 });
+    await symlink(join(root, "checkout/bin/sbar-orbit"), join(root, "launcher"));
+    const outcome = await runUpdate("0.1.0-alpha.4", { root, launcher: join(root, "launcher"), ...feed({ "0.1.0-alpha.9": { publishedAt: "2026-09-01T00:00:00Z" } }) });
     expect(outcome.ran).toBe(false);
     expect(String(outcome.reason)).toContain("git");
   } finally { await close(); }

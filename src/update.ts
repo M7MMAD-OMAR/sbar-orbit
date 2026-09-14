@@ -353,6 +353,8 @@ export type RunEnvironment = ActivationEnvironment & Feed & {
   install?: (directory: string) => Promise<{ ok: boolean; output: string }>;
   /** Whether this run may point the link at what it prepared, rather than leaving it waiting. */
   mayActivate?: boolean;
+  /** The launcher link to judge, for tests; the real one is the person's ~/.local/bin/sbar-orbit. */
+  launcher?: string;
 };
 
 /**
@@ -365,7 +367,7 @@ export type RunEnvironment = ActivationEnvironment & Feed & {
 export async function runUpdate(current: string, environment: RunEnvironment = {}): Promise<Record<string, unknown>> {
   const root = environment.root ?? updateRoot();
   if (!await automaticUpdates(root)) return { ran: false, reason: "automatic updates are off on this machine" };
-  const install = await updatableInstall(root);
+  const install = await updatableInstall(root, environment.launcher);
   if (!install.updatable) return { ran: false, reason: install.reason };
   const found = await checkForUpdate(current, environment);
   if (!found.eligible) return { ran: true, prepared: null, reason: found.reason, latest: found.latest };
