@@ -63,7 +63,27 @@ export function serviceUnit(launcher: string) {
     "TimeoutStopSec=30", "KillMode=mixed", "", "[Install]", "WantedBy=default.target", ""].join("\n");
 }
 
-const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit } as const;
+/**
+ * The automatic update pair, written by every install and enabled by none of it. `update on` is the only
+ * thing that starts the timer, and `update off` is the kill switch, which has to work with no network
+ * and no broker because that is the case it exists for.
+ *
+ * Daily with a randomized delay, so a release does not reach every machine in the same minute, and
+ * `Persistent=true` so a machine that was asleep at the hour still checks once when it wakes.
+ */
+export function updateTimerUnit() {
+  return ["[Unit]", "Description=Sbar Orbit update check", "", "[Timer]",
+    "OnCalendar=daily", "RandomizedDelaySec=4h", "Persistent=true", "", "[Install]", "WantedBy=timers.target", ""].join("\n");
+}
+
+export function updateServiceUnit(launcher: string) {
+  return ["[Unit]", "Description=Sbar Orbit update check", "", "[Service]", "Type=oneshot",
+    // Preparing a version downloads and unpacks, which is work like any other and belongs in the budget.
+    `ExecStart=${launcher} update run`, "Slice=sbarorbit.slice", "Nice=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
+}
+
+const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit,
+  "sbar-orbit-update.service": updateServiceUnit, "sbar-orbit-update.timer": updateTimerUnit } as const;
 
 /** Write the units atomically. Enabling is a separate function, and `service install` calls it by default. */
 export async function installService(launcher: string, unitDirectory: string) {

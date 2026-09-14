@@ -29,8 +29,19 @@ try {
   } else if (command === "update") {
     // Local: which version is current, which are prepared, and pointing the link at one of them. It
     // never fetches anything, and it refuses while a session is open rather than ending it.
-    const { activateVersion, updateStatus, pruneVersions } = await import("./update");
-    if (verb === undefined || verb === "status") console.log(JSON.stringify(await updateStatus(), null, 2));
+    const { activateVersion, updateStatus, pruneVersions, checkForUpdate, prepareVersion, runUpdate, setAutomaticUpdates, automaticUpdates } = await import("./update");
+    const running = (await import("../package.json")).version;
+    if (verb === undefined || verb === "status") console.log(JSON.stringify({ ...await updateStatus(), automatic: await automaticUpdates() }, null, 2));
+    else if (verb === "on" || verb === "off") console.log(JSON.stringify(await setAutomaticUpdates(verb === "on"), null, 2));
+    else if (verb === "run") console.log(JSON.stringify(await runUpdate(running), null, 2));
+    else if (verb === "check") console.log(JSON.stringify(await checkForUpdate(running), null, 2));
+    else if (verb === "stage") {
+      // Reaches the feed and the network, and stops there. Preparing is the half that is safe to do
+      // while a session is open, because nothing points at what it prepares.
+      const found = await checkForUpdate(running);
+      if (!found.eligible) { console.log(JSON.stringify(found, null, 2)); process.exitCode = 1; }
+      else console.log(JSON.stringify({ ...found, ...await prepareVersion(found.eligible) }, null, 2));
+    }
     else if (verb === "activate") {
       if (!arg) throw new OrbitError("INVALID_REQUEST", "Use update activate VERSION");
       const outcome = await activateVersion(arg);
@@ -38,7 +49,7 @@ try {
       if (!outcome.activated) process.exitCode = 1;
     }
     else if (verb === "prune") console.log(JSON.stringify(await pruneVersions(), null, 2));
-    else throw new OrbitError("INVALID_REQUEST", "Use update status|activate VERSION|prune");
+    else throw new OrbitError("INVALID_REQUEST", "Use update status|on|off|check|stage|run|activate VERSION|prune");
   } else if (command === "clean") {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.
     const { cleanWorkspaces } = await import("./workspace-storage");

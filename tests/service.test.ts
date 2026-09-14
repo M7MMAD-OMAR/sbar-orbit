@@ -14,8 +14,20 @@ async function prefix() {
 test("installing writes a slice carrying the budget and a service bound to it", async () => {
   const { units, launcher } = await prefix();
   const result = await installService(launcher, units);
-  expect(result.written.map(path => path.split("/").at(-1)).sort()).toEqual(["sbar-orbit.service", "sbarorbit.slice"]);
+  expect(result.written.map(path => path.split("/").at(-1)).sort())
+    .toEqual(["sbar-orbit-update.service", "sbar-orbit-update.timer", "sbar-orbit.service", "sbarorbit.slice"]);
   expect(result).toMatchObject({ enabled: false, started: false });
+
+  // The update pair is written by every install and enabled by none of it: `update on` is the only
+  // thing that starts the timer. A machine that has never been told anything never updates itself.
+  const timer = await readFile(join(units, "sbar-orbit-update.timer"), "utf8");
+  expect(timer).toContain("OnCalendar=daily");
+  // A release must not reach every machine in the same minute, and a machine that was asleep still checks.
+  expect(timer).toContain("RandomizedDelaySec=4h");
+  expect(timer).toContain("Persistent=true");
+  const check = await readFile(join(units, "sbar-orbit-update.service"), "utf8");
+  expect(check).toContain(`ExecStart=${launcher} update run`);
+  expect(check).toContain("Slice=sbarorbit.slice");
 
   // The broker looks for sbarorbit.slice in its own cgroup path, so the budget must live there.
   const slice = await readFile(join(units, "sbarorbit.slice"), "utf8");

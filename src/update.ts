@@ -164,3 +164,197 @@ export async function pruneVersions(root = updateRoot(), keep = 2) {
   }
   return { removed, kept: [...protectedNames, ...removable.filter(version => !removed.includes(version))] };
 }
+
+/**
+ * Finding and preparing a version, which is the half that is allowed to happen on its own.
+ *
+ * Nothing here activates anything. The worst a run can do is leave a directory nobody points at, which
+ * is why this is the automatic half and the swap is not.
+ */
+
+/** Order two versions the way the registry does, prerelease identifiers included. */
+export function compareVersions(left: string, right: string) {
+  const parse = (version: string) => {
+    const [core = "", pre] = version.split("-", 2);
+    return { numbers: core.split(".").map(Number), pre: pre ? pre.split(".") : [] };
+  };
+  const a = parse(left), b = parse(right);
+  for (let index = 0; index < 3; index++) {
+    const difference = (a.numbers[index] ?? 0) - (b.numbers[index] ?? 0);
+    if (difference) return Math.sign(difference);
+  }
+  // A version with a prerelease tag is below the same version without one.
+  if (!a.pre.length !== !b.pre.length) return a.pre.length ? -1 : 1;
+  for (let index = 0; index < Math.max(a.pre.length, b.pre.length); index++) {
+    const one = a.pre[index], two = b.pre[index];
+    if (one === undefined) return -1;
+    if (two === undefined) return 1;
+    const numeric = /^\d+$/.test(one) && /^\d+$/.test(two);
+    if (one !== two) return numeric ? Math.sign(Number(one) - Number(two)) : one < two ? -1 : 1;
+  }
+  return 0;
+}
+
+/** The 0.x rule: with a zero major, the minor is what a major would be anywhere else. */
+export function sameLine(left: string, right: string) {
+  const [leftMajor = "0", leftMinor = "0"] = left.split("-")[0]?.split(".") ?? [];
+  const [rightMajor = "0", rightMinor = "0"] = right.split("-")[0]?.split(".") ?? [];
+  return leftMajor === rightMajor && (leftMajor !== "0" || leftMinor === rightMinor);
+}
+
+/**
+ * How long a published version waits before this machine will take it. The number is the whole control:
+ * a compromised publishing account put a malicious package on a registry for under 40 minutes and about
+ * 6,000 machines took it through auto update, and a signature would have verified every one of them,
+ * because the attacker held the credentials. Days cost a fix nothing that matters.
+ */
+export const maturationHours = 72;
+
+export type Feed = {
+  /** The registry document for this package. Injected in tests, which never reach the network. */
+  metadata?: () => Promise<{ versions: Record<string, { dist?: { tarball?: string; integrity?: string } }>; time?: Record<string, string> }>;
+  download?: (url: string) => Promise<ArrayBuffer>;
+  now?: () => number;
+  maturationHours?: number;
+};
+
+const registryDocument = async () => {
+  const response = await fetch("https://registry.npmjs.org/sbar-orbit", { headers: { accept: "application/json" } });
+  if (!response.ok) throw new Error(`the registry answered ${response.status}`);
+  return await response.json() as Awaited<ReturnType<NonNullable<Feed["metadata"]>>>;
+};
+
+export type Candidate = { version: string; tarball: string; integrity: string; publishedAt: string };
+export type CheckResult = { current: string | null; latest: string | null; eligible: Candidate | null; reason: string };
+
+/** What the feed offers, and the reason whatever it offers is or is not something to take. */
+export async function checkForUpdate(current: string, feed: Feed = {}): Promise<CheckResult> {
+  const document = await (feed.metadata ?? registryDocument)();
+  const now = (feed.now ?? Date.now)();
+  const hours = feed.maturationHours ?? maturationHours;
+  const published = document.time ?? {};
+  const newer = Object.keys(document.versions ?? {})
+    .filter(version => compareVersions(version, current) > 0)
+    .sort(compareVersions);
+  const latest = newer.at(-1) ?? null;
+  if (!latest) return { current, latest: null, eligible: null, reason: "this is the newest version the feed has" };
+  const withinLine = newer.filter(version => sameLine(version, current));
+  if (!withinLine.length)
+    return { current, latest, eligible: null, reason: `${latest} is a different release line; crossing it is a decision, not a fix` };
+  const candidate = withinLine.at(-1) as string;
+  const at = published[candidate];
+  if (!at) return { current, latest, eligible: null, reason: `the feed does not say when ${candidate} was published` };
+  const ageHours = (now - Date.parse(at)) / 3_600_000;
+  if (!(ageHours >= hours))
+    return { current, latest, eligible: null, reason: `${candidate} is ${Math.max(0, Math.floor(ageHours))} hours old and this machine waits ${hours}` };
+  const distribution = document.versions?.[candidate]?.dist;
+  if (!distribution?.tarball || !distribution.integrity)
+    return { current, latest, eligible: null, reason: `the feed offers no verifiable archive for ${candidate}` };
+  return { current, latest, eligible: { version: candidate, tarball: distribution.tarball, integrity: distribution.integrity, publishedAt: at }, reason: `${candidate} is eligible` };
+}
+
+async function integrityOf(bytes: ArrayBuffer) {
+  return `sha512-${Buffer.from(await crypto.subtle.digest("SHA-512", bytes)).toString("base64")}`;
+}
+
+export type Preparation = { prepared: false; reason: string } | { prepared: true; version: string; directory: string; files: number };
+
+/**
+ * Unpack a candidate into its own version directory and make it ready to be activated, with nothing
+ * written into the tree the running broker executes from.
+ *
+ * The digest check is against the digest the same document carried, so it proves the bytes arrived
+ * whole and nothing about who published them. That is what the maturation delay above is for, and
+ * saying so here is more use than a check that reads stronger than it is.
+ */
+export async function prepareVersion(candidate: Candidate, feed: Feed = {}, environment: { root?: string; install?: (directory: string) => Promise<{ ok: boolean; output: string }> } = {}): Promise<Preparation> {
+  const paths = layout(environment.root);
+  const directory = join(paths.versions, candidate.version);
+  if (await Bun.file(join(directory, "bin/sbar-orbit")).exists())
+    return { prepared: true, version: candidate.version, directory, files: 0 };
+  const bytes = await (feed.download ?? (async (url: string) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`the archive answered ${response.status}`);
+    return await response.arrayBuffer();
+  }))(candidate.tarball);
+  const digest = await integrityOf(bytes);
+  if (digest !== candidate.integrity) return { prepared: false, reason: "the archive does not match the digest the feed published for it" };
+  const staging = join(paths.versions, `.${candidate.version}.incoming`);
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  try {
+    const archive = join(staging, "package.tgz");
+    await Bun.write(archive, bytes);
+    // Unpacked with the system tar, which keeps symlinks as symlinks: a library copy that rewrites them
+    // into absolute paths is how the shared runtime broke once already.
+    const unpack = Bun.spawn(["tar", "xzf", archive, "-C", staging, "--strip-components=1"], { stdout: "pipe", stderr: "pipe" });
+    const problem = (await new Response(unpack.stderr).text()).trim();
+    if (await unpack.exited !== 0) return { prepared: false, reason: problem.split("\n").at(-1)?.slice(0, 200) || "the archive could not be unpacked" };
+    await rm(archive, { force: true });
+    if (!await Bun.file(join(staging, "bin/sbar-orbit")).exists())
+      return { prepared: false, reason: "the archive carries no launcher, so it is not an Orbit release" };
+    const installed = await (environment.install ?? (async (target: string) => {
+      const child = Bun.spawn(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
+      const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
+    }))(staging);
+    if (!installed.ok) return { prepared: false, reason: `preparing dependencies failed: ${installed.output}` };
+    await rm(directory, { recursive: true, force: true });
+    await rename(staging, directory);
+    return { prepared: true, version: candidate.version, directory, files: (await readdir(directory)).length };
+  } finally { await rm(staging, { recursive: true, force: true }); }
+}
+
+/**
+ * The switch, and the one command the timer runs.
+ *
+ * Off is the default and absence means off, so a machine that has never been told anything never
+ * updates itself. The switch is a file this process reads before anything else, so `update off` stops a
+ * run even when the timer is still enabled and even with no network and no broker, which is the state
+ * the switch exists for.
+ */
+const switchPath = (root = updateRoot()) => join(root, "automatic");
+
+export async function automaticUpdates(root = updateRoot()) {
+  return (await Bun.file(switchPath(root)).text().catch(() => "off")).trim() === "on";
+}
+
+export async function setAutomaticUpdates(on: boolean, root = updateRoot(), timer: (on: boolean) => Promise<{ ok: boolean; output: string }> = systemdTimer) {
+  await mkdir(root, { recursive: true });
+  await Bun.write(switchPath(root), on ? "on\n" : "off\n");
+  const unit = await timer(on);
+  return { automatic: on, timer: unit.ok ? (on ? "enabled" : "disabled") : `unchanged: ${unit.output}` };
+}
+
+async function systemdTimer(on: boolean) {
+  const child = Bun.spawn(["systemctl", "--user", on ? "enable" : "disable", "--now", "sbar-orbit-update.timer"], { stdout: "pipe", stderr: "pipe" });
+  const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-1).join(" ").slice(0, 200) };
+}
+
+export type RunEnvironment = ActivationEnvironment & Feed & {
+  install?: (directory: string) => Promise<{ ok: boolean; output: string }>;
+  /** Whether this run may point the link at what it prepared, rather than leaving it waiting. */
+  mayActivate?: boolean;
+};
+
+/**
+ * One pass: read the switch, ask the feed, prepare what is eligible, and activate only at a boundary.
+ *
+ * Activation from here is silent by design, and it can afford to be: it restarts the broker and touches
+ * nothing the person is looking at. The desktop mark is a separate process that keeps running its own
+ * version until it is restarted, which `updateStatus` reports rather than hiding.
+ */
+export async function runUpdate(current: string, environment: RunEnvironment = {}): Promise<Record<string, unknown>> {
+  const root = environment.root ?? updateRoot();
+  if (!await automaticUpdates(root)) return { ran: false, reason: "automatic updates are off on this machine" };
+  const install = await updatableInstall(root);
+  if (!install.updatable) return { ran: false, reason: install.reason };
+  const found = await checkForUpdate(current, environment);
+  if (!found.eligible) return { ran: true, prepared: null, reason: found.reason, latest: found.latest };
+  const prepared = await prepareVersion(found.eligible, environment, { root, install: environment.install });
+  if (!prepared.prepared) return { ran: true, prepared: null, reason: prepared.reason, latest: found.latest };
+  if (environment.mayActivate === false) return { ran: true, prepared: prepared.version, activated: false, reason: "prepared only, activation was not asked for" };
+  const activation = await activateVersion(prepared.version, environment);
+  return { ran: true, prepared: prepared.version, ...activation };
+}

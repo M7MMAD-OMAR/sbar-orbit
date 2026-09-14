@@ -33,6 +33,10 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit config set KEY VALUE
                                  Takes effect immediately on a running panel
   sbar-orbit update status       Which version is running, and which are prepared
+  sbar-orbit update on           Check daily, prepare, and activate when no session is open
+  sbar-orbit update off          Stop updating by itself, with no network and no broker needed
+  sbar-orbit update check        Ask the registry what is newer, and whether it is eligible yet
+  sbar-orbit update stage        Prepare the eligible version beside the running one, activate nothing
   sbar-orbit update activate VERSION
                                  Point the launcher at a prepared version and restart
                                  (refused while a session is open, rolls back if it will not start)

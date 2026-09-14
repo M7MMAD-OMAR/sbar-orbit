@@ -215,9 +215,32 @@ Each step is usable on its own, and each has a gate that has to pass before the 
    `tests/update.test.ts`, and the three that matter were run against the code with the session guard
    and the rollback removed, where they failed.
 4. **`sbar-orbit update check` and `stage`**, network, verification, maturation delay, no activation.
-   Gate: a tampered archive is refused, and a version younger than the delay is reported as not eligible.
-5. **The timer**, plus `update on|off|status`, plus the pending state in `status` and on the panel.
-   Gate: a machine left alone with a session open stays on its version and shows the pending one.
+   Done on 14 September 2026. `check` reads the registry document, orders versions the way the registry
+   does, refuses a different release line by name, and reports a young version with its age in hours.
+   `stage` downloads, checks the archive against the digest the same document published, unpacks with
+   the system `tar` and prepares dependencies from the frozen lockfile, into a directory nothing points
+   at. Six checks against a fake feed, since a test that reached the registry would be measuring the
+   network and one that downloaded a real archive would be installing software as a side effect. `check`
+   was also run against the real registry from this checkout, where it answered that this is the newest
+   version the feed has.
+5. **The timer**, plus `update on|off|run`, plus the pending state in `status`. Done the same day. The
+   units are written by every install and enabled by none of it: `update on` is the only thing that
+   starts the timer, absence of the switch means off, and the switch is read before the feed, the
+   install shape and everything else, so `update off` stops a run with no network and no broker. Daily
+   with `RandomizedDelaySec=4h`, so one release does not reach every machine in the same minute, and
+   `Persistent=true` so a machine that was asleep still checks once. `sbar-orbit status` and its one line
+   summary carry a waiting version, so a machine that never reaches a boundary is explainable rather
+   than just out of date.
+
+## What the panel does across a swap, which the first draft of decision 1 had wrong
+
+Decision 1 said activation restarts the desktop panel, and it does not. The panel is a separate process
+the person's session started, and nothing in activation touches it: the broker restarts, the panel
+reconnects to the same socket, and it keeps running the Python of whichever version it was started from
+until the person's next login restarts it. So activation does not reach the person's screen at all, and
+the condition about the panel being visible is unnecessary: a boundary is zero open sessions, and that
+is the whole of it. What remains true is that a panel and a broker can be from different versions for a
+while, which `status` reports rather than hides.
 
 Nothing in this file is measured except the three source findings and the layout of this host. The rest is
 a design, and it stays `not measured` until it runs.

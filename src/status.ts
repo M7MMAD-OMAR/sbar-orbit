@@ -21,10 +21,21 @@ export interface SessionStatus {
 export interface Status {
   socket: string; sampledAt: string; running: number; paused: number; working: number;
   tabs: number; windows: number; sessions: SessionStatus[];
+  /** A version prepared and waiting for a boundary, so a person can see one is waiting rather than wonder. */
+  pendingVersion?: string;
 }
 
 export function socketFromEnvironment(env = process.env): string {
   return env.ORBIT_SOCKET || serviceSocketPath(env.XDG_RUNTIME_DIR);
+}
+
+/** Read locally, never from the broker: a version waiting is a fact about the disk, not about a session. */
+async function pendingVersion() {
+  try {
+    const { updateStatus } = await import("./update");
+    const update = await updateStatus({ openSessions: async () => null });
+    return update.pending.length ? { pendingVersion: update.pending.at(-1) } : {};
+  } catch { return {}; }
 }
 
 export async function readStatus(socket: string): Promise<Status> {
@@ -43,13 +54,14 @@ export async function readStatus(socket: string): Promise<Status> {
     paused: sessions.filter(s => s.state === "paused").length,
     working: sessions.filter(s => s.activity?.state === "working").length,
     tabs: count("browser"), windows: count("fedora"), sessions,
+    ...(await pendingVersion()),
   };
 }
 
 /** A short line for a bar: nothing, or counts. */
 export function summarize(status: Status): string {
   const total = status.sessions.length;
-  if (!total) return "Orbit idle";
+  if (!total) return status.pendingVersion ? `Orbit idle, ${status.pendingVersion} waiting` : "Orbit idle";
   const parts = [`${total} session${total === 1 ? "" : "s"}`];
   if (status.working) parts.push(`${status.working} working`);
   if (status.paused) parts.push(`${status.paused} paused`);
