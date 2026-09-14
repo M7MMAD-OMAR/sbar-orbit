@@ -25,7 +25,7 @@ export const arabic: Record<string, string> = {
   "While paused, use the viewer to interact with the private workspace yourself.": "أثناء الإيقاف المؤقت، يمكنك العمل بنفسك داخل مساحة الوكيل من نافذة المتابعة.",
   "Hand it back.": "أعد المهمة إلى الوكيل.",
   "Resume the session when you are ready for the agent to continue.": "عندما تنتهي من المراجعة أو التدخل، استأنف الجلسة ليعود الوكيل إلى العمل.",
-  "Sbar Orbit home": "صفحة سبار أوربت الرئيسية",
+  "Sbar Orbit home": "صفحة صبار أوربت الرئيسية",
   "Close navigation": "إغلاق القائمة",
   "Open navigation": "فتح القائمة",
   "Main navigation": "التنقل الرئيسي",

@@ -7,7 +7,7 @@ const alternates = '<link rel="alternate" hreflang="en" href="https://orbit.sbar
 for (const locale of ['en', 'ar'] as const) {
   let page = template.replace('<html lang="en">', `<html lang="${locale}" dir="${locale === 'ar' ? 'rtl' : 'ltr'}">`).replace('</head>', `${alternates}</head>`);
   if (locale === 'ar') {
-    page = page.replace(/<title>.*?<\/title>/, '<title>سبار أوربت | مساحة مستقلة لوكيلك</title>')
+    page = page.replace(/<title>.*?<\/title>/, '<title>صبار أوربت | مساحة مستقلة لوكيلك</title>')
       .replace(/(<meta name="description" content=")[^"]+/, '$1وفر لوكيل الذكاء الاصطناعي متصفحا أو سطح مكتب مستقلا على جهازك، وتابع عملك دون مقاطعة. أوربت مجاني ومفتوح المصدر.')
       .replace(/(<meta property="og:title" content=")[^"]+/, '$1مساحة مستقلة لوكيلك. وعملك يستمر دون مقاطعة.')
       .replace(/(<meta property="og:description" content=")[^"]+/, '$1مساحة مستقلة لوكيلك على الجهاز نفسه. تابع عمله وتدخل عند الحاجة.')
