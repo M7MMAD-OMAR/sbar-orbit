@@ -60,7 +60,8 @@ async function pipeServe() {
   result.defaultDacl = await new Promise<string>(resolve => {
     const server = createServer(() => {});
     server.listen(held, async () => {
-      const { out, err } = await run(["powershell", "-NoProfile", "-Command", `(Get-Acl -Path '${held}').Sddl`], { allowFailure: true, timeoutMs: 20000 });
+      // pwsh rather than Windows PowerShell: on the runner the latter could not load its Security module.
+      const { out, err } = await run(["pwsh", "-NoProfile", "-Command", `(Get-Acl -Path '${held}').Sddl`], { allowFailure: true, timeoutMs: 30000 });
       server.close(); resolve(out || `unreadable: ${err.slice(0, 160)}`);
     });
     server.on("error", error => resolve(`listen failed: ${error.message}`));
@@ -191,6 +192,37 @@ export const probes = {
   "G16.chrome.in.job": () => chromeInJob({}),
   "G17.chrome.under.limits": () => chromeInJob({ commitCeiling: 2 * 1024 ** 3, cpuRatePercent: 25, screenshot: true }),
   "G17.chrome.unlimited.reference": () => chromeInJob({ screenshot: true }),
+  // G28: the driverless half of the Windows egress question. A Windows Filtering Platform rule scoped
+  // to a program path, made through the firewall, needs no driver; whether it holds a headless Chrome
+  // is measured by fetching loopback and the internet from inside with the rule on, then off.
+  "G28.wfp.program.rule": async () => {
+    const { chrome } = await browserPath();
+    if (!chrome) throw new Error("no chrome.exe on this machine");
+    const page = fixture();
+    const name = `orbit-probe-${crypto.randomUUID().slice(0, 8)}`;
+    const attempt = async (label: string) => {
+      const profile = mkdtempSync(join(tmpdir(), "orbit-wfp-"));
+      const results: Record<string, unknown> = {};
+      for (const [what, url] of [["loopback", page.url], ["internet", "https://example.com/"]] as const) {
+        const shot = join(profile, `${what}.png`);
+        const child = Bun.spawn([chrome, "--headless=new", "--no-first-run", "--disable-gpu", `--user-data-dir=${profile}-${what}`, "--window-size=800,600", `--screenshot=${shot}`, "--timeout=15000", url], { stdout: "ignore", stderr: "pipe" });
+        const started = performance.now();
+        await Promise.race([child.exited, Bun.sleep(40000)]);
+        if (child.exitCode === null) child.kill();
+        const err = (await new Response(child.stderr).text()).trim();
+        results[what] = { exit: child.exitCode, ms: Math.round(performance.now() - started), bytes: existsSync(shot) ? statSync(shot).size : 0, stderrTail: err.slice(-160) };
+      }
+      return { label, ...results };
+    };
+    const before = await attempt("no rule");
+    const made = await run(["pwsh", "-NoProfile", "-Command", `New-NetFirewallRule -DisplayName '${name}' -Direction Outbound -Program '${chrome}' -Action Block -Profile Any | Out-Null; (Get-NetFirewallRule -DisplayName '${name}').Enabled`], { allowFailure: true, timeoutMs: 60000 });
+    const during = made.code === 0 ? await attempt("program rule blocking outbound") : { label: "rule not created", error: made.err.slice(-200) };
+    await run(["pwsh", "-NoProfile", "-Command", `Remove-NetFirewallRule -DisplayName '${name}'`], { allowFailure: true, timeoutMs: 60000 });
+    const after = await attempt("rule removed");
+    page.stop();
+    return { ruleCreated: made.code === 0 ? made.out : `refused: ${made.err.slice(-160)}`, before, during, after,
+      note: "A firewall rule keyed to a program path is not keyed to a job: every chrome.exe on the machine is inside it, which is the design gap the gate names" };
+  },
   "w.mint.registered": async () => {
     const found: Record<string, string> = {};
     for (const hive of ["HKLM", "HKCU"]) for (const browser of ["Google\\Chrome", "Microsoft\\Edge"]) {

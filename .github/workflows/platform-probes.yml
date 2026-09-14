@@ -29,3 +29,26 @@ jobs:
         with:
           name: platform-probe-${{ matrix.os }}
           path: output/platform-probe/
+  # The suite itself, on a real Ubuntu host: the runner's user manager delegates cpu, memory and pids,
+  # so scripts/limited.ts may be able to make the slice it needs. Allowed to fail; the log is the result.
+  verify-ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap socat grim wl-clipboard > /dev/null
+      - run: |
+          mkdir -p output/verify
+          (bun run typecheck; echo "typecheck exit $?") 2>&1 | tee output/verify/typecheck.log
+          (./install.sh --dry-run --json; echo "install dry-run exit $?") 2>&1 | tee output/verify/install-dry-run.log
+          (bun run verify; echo "verify exit $?") 2>&1 | tee output/verify/verify.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-ubuntu-24.04
+          path: output/verify/
