@@ -68,7 +68,7 @@ Following the desktop's generated colour scheme is a switch in the rail rather t
 
 The viewer follows the browser's own languages: English unless one of them is Arabic, and a switch in the rail moves it either way and is remembered per browser. The layout mirrors through logical properties; the picture itself never mirrors, because the pointer is placed in image coordinates. See [viewer design](viewer-design.md).
 
-There is one list of sessions, in the rail, ordered by what happened most recently, each card carrying the time of the last activity. The conversation strip that repeated that list above the picture is gone. Everything secondary is in one **Settings and tools** sheet, and the typing controls appear only while a person holds the controls, which is the only time they work. A finished session can be removed from the list with `session.forget`, which asks once in the card and leaves the session's journal on disk.
+There is one list of sessions, in the rail, ordered by what happened most recently, each card carrying the time of the last activity. The conversation strip that repeated that list above the picture is gone. Everything secondary is in one **Session tools** sheet, and the typing controls appear only while a person holds the controls, which is the only time they work. Orbit's own settings are a view of this page, behind one button at the foot of the rail, and the mark's right click opens it; `sbar-orbit config` still changes every one of them from a terminal. A finished session can be removed from the list with `session.forget`, which asks once in the card and leaves the session's journal on disk.
 
 ## Boundaries
 

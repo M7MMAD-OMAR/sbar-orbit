@@ -2,7 +2,9 @@
 
 A study, not a change. Nothing here is built yet.
 
-The panel is the mark on the edge of the screen, the card list it opens, and the settings window behind a right click. This document is about the settings window and the interaction around it, because that is the part a person is asked to operate, and it currently asks them for eighteen decisions in seven groups.
+Status, 14 September 2026: the settings window this document is about is gone. Its questions moved to the settings view of the viewer, which is described in [viewer design](viewer-design.md); what follows is the reasoning that shaped those questions, and it still applies to the rows the page now draws.
+
+The panel is the mark on the edge of the screen, the card list it opens, and the settings behind a right click. This document is about the settings window and the interaction around it, because that is the part a person is asked to operate, and it currently asks them for eighteen decisions in seven groups.
 
 ## What it asks for today
 

@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { Sessions } from "./session";
+import { settingsRequest } from "./desktop-settings";
 import { OrbitError, record } from "./errors";
 import { loadTheme } from "./theme";
 
 export function startPreview(sessions: Sessions) {
   const token = crypto.randomUUID() + crypto.randomUUID();
-  const files: Record<string, string> = { "/": "index.html", "/viewer.js": "viewer.js", "/diagnostics.js": "diagnostics.js", "/style.css": "style.css" };
+  const files: Record<string, string> = { "/": "index.html", "/viewer.js": "viewer.js", "/settings.js": "settings.js", "/diagnostics.js": "diagnostics.js", "/style.css": "style.css" };
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0, maxRequestBodySize: 65536, idleTimeout: 60,
     async fetch(request) {
@@ -30,6 +31,14 @@ export function startPreview(sessions: Sessions) {
         return new Response("Forbidden", { status: 403, headers });
       try {
         const body = record(await request.json());
+        /*
+         * The desktop's settings, answered here rather than through the session dispatcher, which is
+         * about sessions. The viewer is the settings window now: the panel keeps only what a mark on
+         * a desktop can do, and the one program that validates a setting stays the Python schema the
+         * command line already uses, so a value typed here is judged exactly as one typed there.
+         */
+        if (["settings.list", "settings.write"].includes(String(body.method)))
+          return Response.json({ ok: true, result: await settingsRequest(body) }, { headers });
         if (!["diagnostics.status", "diagnostics.report", "session.list", "session.observe", "session.presence", "session.pause", "session.resume", "session.stop", "session.forget", "session.control", "session.account.save"].includes(String(body.method))) throw new OrbitError("UNSUPPORTED", "Method unavailable in viewer");
         return Response.json({ ok: true, result: await sessions.dispatch(body) }, { headers });
       } catch (error) {

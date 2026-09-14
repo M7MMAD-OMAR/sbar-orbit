@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { OrbitError } from "./errors";
 import { version } from "../package.json";
 
-const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers']);
+const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write']);
 const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'select-tab', 'close-tab', 'launch', 'scroll', 'pointer', 'resize', 'window', 'text', 'paste', 'key']);
 const codes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'SESSION_LIMIT', 'RESOURCE_LIMIT', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};

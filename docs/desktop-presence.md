@@ -35,7 +35,7 @@ sbar-orbit panel                  # the project mark on the largest screen, righ
 sbar-orbit panel --edge left --monitor HDMI-A-5 --style count
 sbar-orbit panel --edge top --position 0.2   # a fifth of the way along the top edge
 sbar-orbit panel --no-motion      # arrive at the open shape without the morph
-sbar-orbit panel --settings       # open the settings window at once
+sbar-orbit panel --settings       # open the settings at once
 ```
 
 A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that speaks the protocol, and it never becomes one of the person's windows. By default it is the project mark from `brand/orbit-mark-small.svg`, sixteen pixels wide, drawn rather than styled because it is a shape and not a rectangle. A capsule, a bare dot and a dot with a count remain as alternatives. Whichever is chosen says the current state by colour: grey when nothing runs, the working colour while an agent works, amber when a session is paused, dim when the broker is off. There is no number on it and nothing else on the screen. It blinks once when a session starts or an application or tab appears. Measured on the person's main screen with the capsule chosen, the surface is 29 by 53 pixels, of which the capsule is 5 by 29 and the rest is transparent padding, so the pointer has something to hit without aiming at the very edge of the glass. The mark is wider than that, so its surface is larger, but the padding around it is the same.
@@ -61,14 +61,18 @@ a stale path, so the send fails rather than disappearing.
 `sbar-orbit autostart status` reports both paths and says what it cannot see, which is a compositor that
 starts the panel from its own configuration.
 
-### The settings window, and its search
+### The settings, and their search
 
-A right click on the mark opens it, so does `sbar-orbit settings`, and so does the launcher entry that
+A right click on the mark opens them, so does `sbar-orbit settings`, and so does the launcher entry that
 `autostart enable` installs, which is how a person who has never opened a terminal finds Orbit at all.
+All three now open the settings view of the viewer rather than a GTK window of their own: the mark keeps
+what only a mark can do, and one interface is designed, translated and tested instead of two. The schema
+below is unchanged, and so is the file it writes, so nothing about starting with the desktop depends on a
+browser being open.
 
 Every setting is described once, in `desktop/orbit_settings.py`: its default, its range, its group, a
 sentence of description, and the words a person might search for. The panel validates with it, the
-settings window builds its rows from it, `sbar-orbit config` reads and writes through it, and the search
+the settings view builds its rows from it, `sbar-orbit config` reads and writes through it, and the search
 box filters on it. Before that, the panel held the validation inline and the window repeated the names in
 its labels, which was fine while clicking was the only way to change a setting and stops being fine the
 moment a command line exists: a value accepted at a terminal and silently clamped on screen is worse than

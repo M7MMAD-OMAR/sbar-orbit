@@ -169,6 +169,34 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1
 @keyframes card-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
 @keyframes pulse { 0%,100% { box-shadow:0 0 0 3px var(--level-4); } 50% { box-shadow:0 0 0 5px var(--level-2); } }
 
+
+/* --- The filter row ------------------------------------------------------ */
+/* Four questions a person actually asks of a list of agents, with the count
+   beside each so an empty answer is visible before it is chosen. */
+.filters { display:flex; flex-wrap:wrap; gap:4px; padding:0 8px; }
+.filters[hidden] { display:none; }
+.filter { padding:5px 10px; font-size:10.5px; font-weight:550; background:var(--level-1); color:var(--ink-dim); border-radius:var(--r-pill); }
+.filter:hover:not(:disabled) { background:var(--level-2); color:var(--ink); }
+.filter[aria-pressed="true"] { background:var(--loud); color:var(--on-loud); }
+.filter:disabled { opacity:.35; }
+
+/* --- What a card says about its state ------------------------------------ */
+/* Brightness and motion, never hue: a bar along the reading edge of the card,
+   lit while an agent is working, steady while the session is open, gone when
+   it has finished. The word is beside it for anyone the bar does not reach. */
+.session::before { content:""; position:absolute; inset-block:10px; inset-inline-start:0; width:2px; border-radius:var(--r-pill);
+  background:var(--ink-faint); opacity:0; transition:opacity .2s var(--ease); }
+.session[data-state="running"]::before,.session[data-state="paused"]::before { opacity:.5; }
+.session[data-working="true"]::before { background:var(--ink); opacity:1; animation:working-bar 1.6s var(--ease) infinite; }
+.session[data-state="closed"]::before { opacity:0; }
+@keyframes working-bar { 0%,100% { transform:scaleY(.55); } 50% { transform:scaleY(1); } }
+.session-foot { display:flex; align-items:center; gap:8px; padding-inline-start:15px; min-width:0; }
+.session-state { flex:none; font-size:10px; font-weight:600; padding:2px 7px; border-radius:var(--r-pill); background:var(--level-2); color:var(--ink-dim); }
+.session[data-working="true"] .session-state { background:var(--loud); color:var(--on-loud); }
+.session[data-state="paused"] .session-state { background:var(--level-4); color:var(--ink); }
+.session[data-state="closed"] .session-state { background:transparent; padding-inline:0; }
+.session-when { flex:1; padding-inline-start:0; }
+
 /* --- The work column ----------------------------------------------------- */
 .work { min-width:0; padding:14px 16px 16px; display:flex; flex-direction:column; gap:12px; overflow:auto; background:var(--level-1);
   border-start-start-radius:var(--r-xl); border-end-start-radius:var(--r-xl); }
@@ -305,3 +333,95 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 #agent-pointer.human{color:#167653}
 #agent-pointer.human #pointer-label{background:#167653}
 #agent-pointer.near-right #pointer-label{left:auto;right:4px}
+
+/* ===========================================================================
+   The settings view
+
+   The desktop's settings live here now, so this is the part of the viewer that
+   has to look least like a web page and most like the application the mark
+   belongs to. It follows the same surfaces and the same spacing scale as
+   everything above, and it draws its own switch, its own segmented choice and
+   its own slider: a checkbox, a select and a range carry whatever the
+   operating system thinks those look like, and a settings window that changes
+   shape with the desktop it is opened on is the thing this replaced.
+   =========================================================================== */
+
+/* The settings live behind one button, pinned to the foot of the rail where a control panel keeps
+   its own door, rather than as one of a pair of tabs competing with the list above it. */
+.rail-action { display:flex; align-items:center; gap:9px; width:100%; padding:10px 12px; font-size:12px; font-weight:550;
+  background:var(--level-1); color:var(--ink-dim); border-radius:var(--r-md); }
+.rail-action svg { flex:none; transition:transform .5s var(--ease); }
+.rail-action:hover:not(:disabled) { background:var(--level-2); color:var(--ink); }
+.rail-action:hover svg { transform:rotate(45deg); }
+.rail-action[aria-pressed="true"] { background:var(--level-3); color:var(--ink); }
+/* The list of sessions belongs to the sessions view. Its heading and its filters go with it. */
+.shell[data-view="settings"] .session-list,.shell[data-view="settings"] #session-count,
+.shell[data-view="settings"] .filters { display:none; }
+.shell[data-view="settings"] .stage-card,.shell[data-view="settings"] .panels,
+.shell[data-view="settings"] .head-identity,.shell[data-view="settings"] .head-status { display:none; }
+
+.settings { display:flex; flex-direction:column; gap:12px; min-width:0; flex:1; animation:card-in .28s var(--ease) both; }
+.settings-head { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.settings-head h2 { font-size:19px; }
+.search { display:inline-flex; align-items:center; gap:8px; padding:0 12px; background:var(--level-0); border-radius:var(--r-pill); color:var(--ink-dim); min-width:0; }
+.search input { background:transparent; padding:9px 0; min-width:180px; }
+.search input:focus-visible { outline:none; }
+.search:focus-within { background:var(--level-2); color:var(--ink); }
+.settings-groups { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.settings-group { background:var(--level-0); border-radius:var(--r-lg); padding:6px 4px; box-shadow:var(--shadow-1); }
+.settings-group h3 { font-size:10px; font-weight:650; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-dim); padding:12px 16px 8px; }
+:root:lang(ar) .settings-group h3 { letter-spacing:0; font-size:11.5px; text-transform:none; }
+.setting { display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 16px; border-radius:var(--r-md); }
+.setting:hover { background:var(--level-1); }
+.setting-text { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.setting-label { font-size:13px; font-weight:550; }
+.setting-about { font-size:11.5px; color:var(--ink-dim); line-height:1.65; margin:0; max-width:62ch; }
+.setting-control { display:flex; align-items:center; gap:10px; flex:none; flex-wrap:wrap; justify-content:flex-end; }
+.settings-foot { display:flex; align-items:center; gap:12px; padding:4px 2px 8px; }
+#settings-reset { background:var(--level-0); color:var(--ink-dim); }
+#settings-reset[data-confirm="true"] { background:var(--loud); color:var(--on-loud); font-weight:600; }
+#settings-status { font-size:11px; color:var(--ink-dim); }
+#settings-status[data-error="true"] { color:var(--ink); }
+.settings-note { color:var(--ink-dim); font-size:12px; padding:16px 4px; }
+
+/* The switch. Two states, told apart by where the knob is and how bright the
+   track is, so it survives being read without colour. */
+.toggle { width:40px; height:23px; padding:0; border-radius:var(--r-pill); background:var(--level-3); position:relative; flex:none;
+  transition:background .18s var(--ease); }
+.toggle span { position:absolute; inset-block:3px; inset-inline-start:3px; width:17px; border-radius:50%; background:var(--ink-dim);
+  transition:inset-inline-start .2s var(--ease-rail), background .18s var(--ease); }
+.toggle[aria-checked="true"] { background:var(--loud); }
+.toggle[aria-checked="true"] span { inset-inline-start:20px; background:var(--on-loud); }
+.toggle:hover:not(:disabled) { background:var(--level-4); }
+.toggle[aria-checked="true"]:hover:not(:disabled) { background:var(--ink); }
+
+.segmented { display:inline-flex; gap:2px; padding:2px; background:var(--level-2); border-radius:var(--r-sm); }
+.segment { padding:6px 11px; font-size:11.5px; background:transparent; color:var(--ink-dim); border-radius:calc(var(--r-sm) - 2px); }
+.segment[aria-checked="true"] { background:var(--loud); color:var(--on-loud); font-weight:600; }
+.segment:hover:not([aria-checked="true"]) { background:var(--level-3); color:var(--ink); }
+
+.slider { display:inline-flex; align-items:center; gap:10px; }
+.slider input { appearance:none; -webkit-appearance:none; width:170px; height:22px; padding:0; background:transparent; }
+.slider input::-webkit-slider-runnable-track { height:4px; border-radius:var(--r-pill); background:var(--level-3); }
+.slider input::-moz-range-track { height:4px; border-radius:var(--r-pill); background:var(--level-3); }
+.slider input::-webkit-slider-thumb { appearance:none; -webkit-appearance:none; width:15px; height:15px; margin-top:-5.5px; border-radius:50%; background:var(--loud); }
+.slider input::-moz-range-thumb { width:15px; height:15px; border:0; border-radius:50%; background:var(--loud); }
+.slider input:hover::-webkit-slider-thumb { background:var(--ink); }
+.slider-value { font-size:11px; color:var(--ink-dim); font-variant-numeric:tabular-nums; min-width:36px; text-align:end; }
+
+.swatch { appearance:none; -webkit-appearance:none; width:26px; height:26px; padding:0; border-radius:var(--r-sm); background:transparent; cursor:pointer; }
+.swatch::-webkit-color-swatch-wrapper { padding:0; }
+.swatch::-webkit-color-swatch { border:0; border-radius:var(--r-sm); }
+.swatch::-moz-color-swatch { border:0; border-radius:var(--r-sm); }
+.swatch-pair { display:inline-flex; align-items:center; gap:6px; }
+.swatch-name { font-size:10.5px; color:var(--ink-dim); }
+
+.picker-control,.setting-input { appearance:none; -webkit-appearance:none; background:var(--level-2); color:var(--ink); padding:8px 12px; border-radius:var(--r-sm); max-width:230px; }
+.picker-control:hover,.setting-input:hover { background:var(--level-3); }
+
+@media(max-width:900px) {
+  .setting { flex-direction:column; align-items:flex-start; gap:10px; }
+  .setting-control { justify-content:flex-start; }
+  .search input { min-width:0; width:100%; }
+  .search { flex:1; }
+}

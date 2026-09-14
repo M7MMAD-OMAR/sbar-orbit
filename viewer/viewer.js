@@ -15,6 +15,9 @@ const arabic = {
   'Watch what your assistants are doing. Your own screen stays yours.': 'تابع ما يفعله مساعدوك. شاشتك تبقى لك وحدك.',
   'Assistants': 'المساعدون',
   'Assistants · {n}': 'المساعدون · {n}',
+  'All': 'الكل',
+  'Show': 'اعرض',
+  'Nothing here is {filter}': 'لا شيء هنا ضمن: {filter}',
   'No sessions yet. Create one from your agent or the CLI.': 'لا توجد جلسات بعد. ابدأ واحدة من وكيلك أو من سطر الأوامر.',
   'Connecting': 'جارٍ الاتصال',
   'Connected': 'متصل',
@@ -89,7 +92,9 @@ const arabic = {
   'This session signs in as {name}. Take over, then save it so the next session starts already signed in.': 'هذه الجلسة مسجلة الدخول باسم {name}. تولَّ التحكم ثم احفظها لتبدأ الجلسة التالية وهي مسجلة الدخول.',
   'Remember this sign in': 'احفظ تسجيل الدخول',
   ' Account state saved.': ' تم حفظ حالة الحساب.',
-  'Settings and tools': 'الإعدادات والأدوات',
+  // Named for what it holds, now that the desktop's settings are a view of their own: what this
+  // sheet carries is about the session on screen and about this viewer, not about Orbit.
+  'Session tools': 'أدوات الجلسة',
   'Updates': 'تحديث الصورة',
   'Every second': 'كل ثانية',
   'Only when I ask': 'عند الطلب فقط',
@@ -299,17 +304,26 @@ function renderSessions(list) {
   // every action takes the hover, the focus ring and a half finished removal off the card under the
   // person's hand. The printed minute is what a card actually says, so it is what is compared.
   const line = entry => JSON.stringify([entry.sessionId, entry.state, entry.agentName, entry.taskName, entry.conversationName, entry.projectName, entry.activity?.state, when(recency(entry)), entry.sessionId === selected]);
-  const signature = [language, ...list.map(line)].join('|');
+  const signature = [language, filter, ...list.map(line)].join('|');
   element('session-count').textContent = list.length ? t('Assistants · {n}', { n: list.length }) : t('Assistants');
   if (signature === railSignature) return;
   railSignature = signature;
+  renderFilters(list);
+  const shown = filtered(list);
+  if (list.length && !shown.length) {
+    const note = document.createElement('p');
+    note.className = 'rail-note';
+    note.textContent = t('Nothing here is {filter}', { filter: t(FILTERS.find(one => one.id === filter)?.label ?? 'All') });
+    sessions.replaceChildren(note);
+    return;
+  }
   if (!list.length) {
     const note = document.createElement('p');
     note.className = 'rail-note'; note.textContent = t('No sessions yet. Create one from your agent or the CLI.');
     sessions.replaceChildren(note);
     return;
   }
-  sessions.replaceChildren(...list.map(entry => {
+  sessions.replaceChildren(...shown.map(entry => {
     const card = document.createElement('div');
     card.className = 'session';
     card.dataset.state = entry.state || '';
@@ -333,12 +347,17 @@ function renderSessions(list) {
     const twin = list.filter(other => (other.agentName || '') === (entry.agentName || '')
       && (other.taskName || '') === (entry.taskName || '')).length > 1;
     const busyHere = entry.activity?.state === 'working' && entry.state === 'running';
-    meta.textContent = `${entry.agentName || 'SbarOrbit'} · ${words(entry.state, busyHere)}`
-      + (twin ? ` · ${String(entry.sessionId).slice(0, 4)}` : '');
+    meta.textContent = `${entry.agentName || 'SbarOrbit'}${twin ? ` · ${String(entry.sessionId).slice(0, 4)}` : ''}`;
+    // The state, on its own, rather than buried in a line of dot separated words. A person scanning
+    // the rail is asking which of these is working, and that question should be answered by a shape.
+    const foot = document.createElement('span'); foot.className = 'session-foot';
+    const state = document.createElement('span'); state.className = 'session-state';
+    state.textContent = words(entry.state, busyHere);
     const stamp = document.createElement('span'); stamp.className = 'session-when';
     const moment = when(recency(entry));
     stamp.textContent = moment ? t('Last activity {when}', { when: moment }) : '';
-    open.append(top, task, meta, stamp);
+    foot.append(state, stamp);
+    open.append(top, task, meta, foot);
     open.onclick = () => selectSession(entry.sessionId);
     card.append(open);
     /*
@@ -362,6 +381,42 @@ function renderSessions(list) {
       card.append(forget);
     }
     return card;
+  }));
+}
+/*
+ * Which sessions the rail shows. Four answers rather than a search box: a person running several
+ * agents asks which of them is working and which is still open, and those are states the session
+ * already reports. The choice is remembered per browser, because it is a way of working rather than
+ * something to set up again every morning.
+ */
+const FILTERS = [
+  { id: 'all', label: 'All', keep: () => true },
+  { id: 'working', label: 'Working', keep: entry => entry.activity?.state === 'working' && entry.state === 'running' },
+  { id: 'open', label: 'Open', keep: entry => !['closed', 'closing'].includes(entry.state) },
+  { id: 'finished', label: 'Finished', keep: entry => entry.state === 'closed' },
+];
+let filter = 'all';
+try { if (FILTERS.some(one => one.id === localStorage.getItem('orbit-filter'))) filter = localStorage.getItem('orbit-filter'); } catch { filter = 'all'; }
+const filtered = list => list.filter(FILTERS.find(one => one.id === filter)?.keep ?? (() => true));
+function renderFilters(list) {
+  const row = element('session-filters');
+  row.hidden = list.length < 2;
+  row.replaceChildren(...FILTERS.map(one => {
+    const count = list.filter(one.keep).length;
+    const chip = document.createElement('button');
+    chip.type = 'button'; chip.className = 'filter';
+    chip.dataset.filter = one.id;
+    chip.setAttribute('aria-pressed', String(filter === one.id));
+    // The count is beside the word, so an answer with nothing behind it is visible before it is asked.
+    chip.textContent = count ? `${t(one.label)} ${count}` : t(one.label);
+    chip.disabled = !count && one.id !== 'all' && filter !== one.id;
+    chip.onclick = () => {
+      filter = one.id;
+      try { localStorage.setItem('orbit-filter', filter); } catch { /* not remembered */ }
+      railSignature = '';
+      renderSessions(listed);
+    };
+    return chip;
   }));
 }
 /** How recently anything happened in a session, which is the order the rail is read in. */
@@ -504,7 +559,9 @@ async function poll() {
     element('connection').textContent = t('Connected');
     element('connection').dataset.connected = 'true';
     const id = selected;
-    if (!document.hidden && id && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
+    // No picture while the settings are on screen: nothing is showing it, and a frame a second is the
+    // most expensive thing this page does.
+    if (!document.hidden && id && shell.dataset.view !== 'settings' && !['closed', 'closing'].includes(state) && (previewMode !== 'manual' || captureQueued)) {
       captureQueued = false;
       const requested = performance.now();
       const image = await rpc('session.observe', { sessionId: id });

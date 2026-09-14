@@ -297,12 +297,19 @@ def autostart_value():
 
 def describe(entry, settings):
     if not entry["stored"]:
-        return {"key": entry["key"], "group": entry["group"], "label": entry["label"],
+        return {"key": entry["key"], "group": entry["group"], "label": entry["label"], "kind": entry["kind"],
                 "description": entry["description"], "value": autostart_value(), "default": entry["default"],
+                "terms": list(entry["terms"]) + [GROUP_TERMS.get(entry["group"], "")],
                 "storedIn": "systemd and an autostart entry, not the settings file"}
     value = settings.get(entry["key"], entry["default"])
-    described = {"key": entry["key"], "group": entry["group"], "label": entry["label"],
-                 "description": entry["description"], "value": value, "default": entry["default"]}
+    # The kind travels with the setting. A reader that draws a control has to know whether a string is
+    # a colour, a browser or a monitor, and guessing that from the value is how a colour picker ends up
+    # on a browser name.
+    described = {"key": entry["key"], "group": entry["group"], "label": entry["label"], "kind": entry["kind"],
+                 "description": entry["description"], "value": value, "default": entry["default"],
+                 # The search terms travel too, so a settings box in the viewer answers the same Arabic
+                 # word `sbar-orbit config search` answers rather than only the label it can see.
+                 "terms": list(entry["terms"]) + [GROUP_TERMS.get(entry["group"], "")]}
     if entry["choices"]:
         described["choices"] = list(entry["choices"])
     if entry["bounds"]:

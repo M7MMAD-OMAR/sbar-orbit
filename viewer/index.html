@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"><script src="/viewer.js" defer></script><script src="/diagnostics.js" defer></script></head>
+<html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"><script src="/viewer.js" defer></script><script src="/settings.js" defer></script><script src="/diagnostics.js" defer></script></head>
 <body><div class="shell" id="shell">
 
 <aside class="rail" id="sidebar" data-i18n-label="Sessions" aria-label="Sessions">
@@ -7,8 +7,10 @@
 <div class="brand"><svg class="brand-mark" viewBox="0 0 24 24" width="18" height="17" fill="none" aria-hidden="true"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg><span class="wordmark" dir="ltr"><span>sbar</span><strong>orbit</strong></span></div>
 <p class="rail-note" data-i18n="Watch what your assistants are doing. Your own screen stays yours.">Watch what your assistants are doing. Your own screen stays yours.</p>
 <p class="rail-heading" id="session-count">Assistants</p>
+<div id="session-filters" class="filters" role="group" data-i18n-label="Show" aria-label="Show"></div>
 <div id="sessions" class="session-list" data-i18n-label="Open sessions" aria-label="Open sessions"></div>
 <div class="rail-foot">
+<button id="view-settings" class="rail-action" type="button" aria-pressed="false"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.6a7.6 7.6 0 0 0 0-3.2l1.9-1.4-1.9-3.3-2.2.9a7.7 7.7 0 0 0-2.8-1.6L14 2h-4l-.4 2.4a7.7 7.7 0 0 0-2.8 1.6l-2.2-.9-1.9 3.3 1.9 1.4a7.6 7.6 0 0 0 0 3.2l-1.9 1.4 1.9 3.3 2.2-.9a7.7 7.7 0 0 0 2.8 1.6L10 22h4l.4-2.4a7.7 7.7 0 0 0 2.8-1.6l2.2.9 1.9-3.3z"/></svg><span data-i18n="Settings">Settings</span></button>
 <span id="connection" class="link-state" role="status" data-i18n="Connecting">Connecting</span>
 <div class="rail-switches">
 <button id="palette" class="quiet" type="button" data-i18n="Match my desktop colours">Match my desktop colours</button>
@@ -54,13 +56,22 @@
 </div>
 </section>
 
+<section id="settings-view" class="settings" hidden data-i18n-label="Settings" aria-label="Settings">
+<div class="settings-head">
+<h2 data-i18n="Settings">Settings</h2>
+<span class="search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><label class="sr-only" for="settings-search" data-i18n="Search the settings">Search the settings</label><input id="settings-search" type="search" data-i18n-placeholder="Search the settings" placeholder="Search the settings"></span>
+</div>
+<div id="settings-groups" class="settings-groups"></div>
+<div class="settings-foot"><button id="settings-reset" type="button" data-i18n="Put everything back the way it came">Put everything back the way it came</button><span id="settings-status" role="status"></span></div>
+</section>
+
 <div class="panels">
 <section id="manual" class="card" hidden aria-label="Typing for your assistant"><h2 data-i18n="Typing for your assistant">Typing for your assistant</h2>
 <p id="input-hint" data-i18n="Choose Take over first. Then click the picture above to pick a box, and type here.">Choose Take over first. Then click the picture above to pick a box, and type here.</p>
 <div class="input-row"><label class="sr-only" for="text" data-i18n="Text to send">Text to send</label><input id="text" data-i18n-placeholder="What should go in the box" placeholder="What should go in the box" disabled><button id="send" class="primary" data-i18n="Send text" disabled>Send text</button><label class="sr-only" for="key" data-i18n="Key to send">Key to send</label><span class="picker"><select id="key" disabled><option>Enter</option><option>Tab</option><option>Backspace</option><option>Escape</option><option>ArrowUp</option><option>ArrowDown</option></select></span><button id="press" data-i18n="Press it" disabled>Press it</button></div>
 </section>
 <section id="account-controls" class="card" hidden aria-label="Account persistence"><h2 data-i18n="Staying signed in">Staying signed in</h2><p id="account-label" class="muted"></p><div class="input-row"><button id="save-account" data-i18n="Remember this sign in" disabled>Remember this sign in</button><span id="account-result" class="result" role="status"></span></div></section>
-<details class="card" id="tools"><summary data-i18n="Settings and tools">Settings and tools</summary><div class="disclosure-body">
+<details class="card" id="tools"><summary data-i18n="Session tools">Session tools</summary><div class="disclosure-body">
 <div class="view-settings"><span class="field"><label for="preview-mode" data-i18n="Updates">Updates</label><span class="picker"><select id="preview-mode"><option value="balanced" data-i18n="Every second" selected>Every second</option><option value="manual" data-i18n="Only when I ask">Only when I ask</option><option value="smooth" data-i18n="As smooth as possible">As smooth as possible</option></select></span></span>
 <span class="field"><label for="surface" data-i18n="Screen size">Screen size</label><span class="picker"><select id="surface" disabled></select></span><span id="size-note" class="note"></span></span>
 <button id="fullscreen" class="quiet" data-i18n="Fill the screen" hidden disabled>Fill the screen</button><button id="restore" class="quiet" data-i18n="Back to normal" hidden disabled>Back to normal</button></div>

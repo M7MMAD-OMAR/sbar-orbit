@@ -135,7 +135,7 @@ window and the command line all read. A value the command line accepts is theref
 keeps, rather than one it silently clamps afterwards.
 
 ```sh
-sbar-orbit settings              # the window, searchable, on a running panel or a new one
+sbar-orbit settings              # the settings, searchable, in the viewer, through a running panel or a new one
 sbar-orbit config list           # every setting, its value and its default
 sbar-orbit config search glow    # or search توهج, or boot, or transparent
 sbar-orbit config get size

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { Sessions } from "./session";
 import { OrbitError } from "./errors";
 import { startPreview } from "./preview";
+import { settingsRequest } from "./desktop-settings";
 import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
@@ -37,16 +38,21 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
         // The viewer's own browser is a host concern, not a session one, so it is answered here rather
         // than in the session dispatcher the agent API shares.
         if (body?.method === "viewer.browsers") return Response.json({ ok: true, result: { browsers: await listHostBrowsers(), ...await viewerPreference() } });
+        // The desktop's own settings, which are a host concern for the same reason the browser list is.
+        if (body?.method === "settings.list" || body?.method === "settings.write") return Response.json({ ok: true, result: await settingsRequest(body) });
         if (body?.method === "preview.open") {
           preview ??= startPreview(sessions);
-          const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean };
+          const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean; view?: string };
+          // Which part of the viewer to land on. A named view rather than a free URL, so the only
+          // thing a caller can ask for is a page this project ships.
+          const url = params.view === "settings" ? preview.url.replace("/#", "/?view=settings#") : preview.url;
           // The link carries an access token, so opening it here keeps it out of any caller that only
           // wanted a window. A caller that asks for the URL alone still gets the URL alone.
-          if (!params.launch) return Response.json({ ok: true, result: { url: preview.url } });
+          if (!params.launch) return Response.json({ ok: true, result: { url } });
           const preference = await viewerPreference();
-          const opened = await openViewer(preview.url, params.browser ?? preference.browser,
+          const opened = await openViewer(url, params.browser ?? preference.browser,
             params.appWindow ?? preference.appWindow);
-          return Response.json({ ok: true, result: { url: preview.url, ...opened } });
+          return Response.json({ ok: true, result: { url, ...opened } });
         }
         return Response.json({ ok: true, result: await sessions.dispatch(body) });
       }

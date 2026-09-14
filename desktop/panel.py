@@ -28,6 +28,7 @@ process and runs outside Orbit's shared budget on purpose.
 
 Run with /usr/bin/python3: the system interpreter has the GTK bindings, a virtualenv usually does not.
 """
+import json
 import os
 import sys
 import threading
@@ -250,7 +251,6 @@ class Panel(Gtk.Application):
         self.close_source = None
         self.blink_source = None
         self.save_source = None
-        self.settings_window = None
         self.window = None
         self.dynamic_provider = None
         self.surface_provider = None
@@ -311,6 +311,7 @@ class Panel(Gtk.Application):
 
         self.listen_for_commands()
         self.watch_settings_file()
+        self.publish_monitors()
 
         self.shell = Liquid(self)
         self.shell.add_css_class("orbit-shell")
@@ -385,7 +386,7 @@ class Panel(Gtk.Application):
     def footer(self):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         row.add_css_class("orbit-foot")
-        viewer = Gtk.Button(label="Viewer")
+        viewer = Gtk.Button(label="Open the viewer")
         viewer.add_css_class("flat")
         viewer.connect("clicked", lambda *_: self.open_viewer())
         settings = Gtk.Button(label="Settings")
@@ -1052,11 +1053,11 @@ class Panel(Gtk.Application):
 
     # --- Actions ---------------------------------------------------------------------------------
 
-    def open_viewer(self):
+    def open_viewer(self, view=None):
         # The viewer link carries an access token, so it is requested now and handed straight to the
         # browser rather than written anywhere. Which session to show is selected in the viewer.
         try:
-            answer = rpc(self.path, "preview.open", {"launch": True,
+            answer = rpc(self.path, "preview.open", {"launch": True, "view": view or "sessions",
                                                      "browser": self.settings["viewerBrowser"],
                                                      "appWindow": self.settings["viewerAppWindow"]})
         except Exception as error:
@@ -1102,6 +1103,38 @@ class Panel(Gtk.Application):
         adder = getattr(GLibUnix, "fd_add_full", None) if GLibUnix is not None else None
         (adder or GLib.unix_fd_add_full)(GLib.PRIORITY_DEFAULT, self.listener.fileno(), GLib.IOCondition.IN, ready)
 
+    def publish_monitors(self):
+        """Say which monitors exist, for the settings page in the viewer.
+
+        Only a client of the compositor can answer this, and the viewer is a web page. So the mark,
+        which is already such a client, writes the list where the broker can read it, and rewrites it
+        when a screen is plugged in or unplugged. It lives in the runtime directory because it
+        describes this login session and should not survive it: a stale list of yesterday's monitors is
+        worse than no list, which the page renders as the monitor's name in a plain box.
+        """
+        monitors = self.display.get_monitors()
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+        path = os.path.join(runtime, "sbar-orbit", "monitors.json")
+
+        def publish(*_):
+            listed = []
+            for index in range(monitors.get_n_items()):
+                monitor = monitors.get_item(index)
+                geometry = monitor.get_geometry()
+                listed.append({"connector": monitor.get_connector() or str(index),
+                               "width": geometry.width, "height": geometry.height})
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                temporary = f"{path}.{os.getpid()}"
+                with open(temporary, "w", encoding="utf-8") as handle:
+                    json.dump(listed, handle)
+                os.replace(temporary, path)
+            except OSError as error:
+                print(f"panel: could not publish the monitor list ({error}); the settings page will ask for a name instead", file=sys.stderr)
+
+        monitors.connect("items-changed", publish)
+        publish()
+
     def watch_settings_file(self):
         """Apply a change made anywhere else, so `sbar-orbit config set` is visible on screen at once.
 
@@ -1130,11 +1163,6 @@ class Panel(Gtk.Application):
             self.relocate()
         self.apply_style()
         self.sync_frame(force=True)
-        if self.settings_window is not None:
-            # Its controls now show values nothing set, so it is rebuilt rather than left disagreeing
-            # with the panel beside it.
-            self.settings_window.close()
-            self.open_settings()
 
     def open_own_session(self):
         """A private browser the person drives themselves, from a button rather than a terminal.
@@ -1177,338 +1205,15 @@ class Panel(Gtk.Application):
         save_settings(self.settings)
         return False
 
-    def reset(self):
-        self.settings = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULT_SETTINGS.items()}
-        self.schedule_save()
-        self.relocate()
-        self.apply_style()
-        self.sync_frame(force=True)
-        if self.settings_window is not None:
-            self.settings_window.close()
-            self.open_settings()
-
     def open_settings(self):
-        if self.settings_window is not None:
-            self.settings_window.present()
-            return
-        self.settings_window = SettingsWindow(self)
-        self.settings_window.connect("close-request", self.on_settings_closed)
-        self.settings_window.present()
+        """Settings live in the viewer, which is where the rest of Orbit's interface already lives.
 
-    def on_settings_closed(self, *_):
-        self.settings_window = None
-        return False
-
-
-class SettingsWindow(Gtk.Window):
-    """A plain top-level window, not a layer surface, so the compositor gives it focus and a title bar.
-    Every control writes straight into the panel's settings, saves and applies, so there is no OK to
-    press and nothing to lose."""
-
-    def __init__(self, panel):
-        super().__init__(title="Orbit settings")
-        self.panel = panel
-        self.set_default_size(420, 700)
-        self.query = ""
-        self.row_terms = {}
-        self.groups = []
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18, margin_top=18, margin_bottom=18, margin_start=18, margin_end=18)
-
-        # There are twenty odd settings across six groups, which is past the number a person scans. The
-        # search answers the description and the Arabic terms as well as the label, so the word someone
-        # actually has in mind finds the switch even when the label uses another one.
-        search = Gtk.SearchEntry()
-        search.set_placeholder_text("Search settings")
-        search.connect("search-changed", self.on_search)
-        # Focused on open, so the window can be used by typing what you came for. A preferences window
-        # whose search has to be clicked first is a list with a search box next to it.
-        GLib.idle_add(search.grab_focus)
-        self.nothing_found = self.note("Nothing matches that. Try the word for what it does: glow, startup, colour, motion.")
-        self.nothing_found.set_visible(False)
-
-        outer.append(self.group("Startup", [
-            self.autostart_row(),
-        ]))
-        outer.append(self.group("Placement", [
-            self.dropdown_row("Screen edge", [EDGE_LABELS[e] for e in EDGES], EDGE_LABELS[panel.settings["edge"]],
-                              lambda v: panel.change("edge", next(e for e in EDGES if EDGE_LABELS[e] == v)), "edge"),
-            self.monitor_row(),
-            self.scale_row("Distance from the edge", 0, 64, panel.settings["margin"], lambda v: panel.change("margin", v), "margin"),
-            self.scale_row("Place along the edge", 0, 100, round(panel.settings["position"] * 100),
-                           lambda v: panel.change("position", v / 100.0), "position"),
-        ]))
-        outer.append(self.group("The mark", [
-            self.dropdown_row("Shape", SHAPE_LABELS, SHAPE_LABELS[STYLES.index(panel.settings["style"])],
-                              lambda v: panel.change("style", STYLES[SHAPE_LABELS.index(v)]), "style"),
-            self.scale_row("Size", 8, 22, panel.settings["size"], lambda v: panel.change("size", v), "size"),
-            self.switch_row("Hide it while nothing runs", panel.settings["hideWhenIdle"], lambda v: panel.change("hideWhenIdle", v), "hideWhenIdle"),
-            self.color_row("Working colour", "working"),
-            self.color_row("Paused colour", "paused"),
-            self.color_row("Idle colour", "idle"),
-            self.color_row("Colour when Orbit is off", "offline"),
-        ]))
-        outer.append(self.group("The viewer", [
-            self.browser_row(),
-            self.switch_row("Open it as its own window", panel.settings["viewerAppWindow"],
-                            lambda v: panel.change("viewerAppWindow", v, restyle=False), "viewerAppWindow"),
-        ]))
-        outer.append(self.group("Working glow", [
-            self.switch_row("Glow the screen edges while working", panel.settings["frame"], lambda v: panel.change("frame", v), "frame"),
-            # Following the theme is the default, so the glow moves with the desktop instead of being
-            # pinned to whatever the accent happened to be on the day it was chosen. Turning it off
-            # keeps the colour currently on screen, rather than jumping to an unrelated one.
-            self.switch_row("Breathe while working", panel.settings["framePulse"], lambda v: panel.change("framePulse", v), "framePulse"),
-            self.switch_row("Follow the theme accent", panel.settings["frameColor"] == "accent",
-                            lambda v: panel.change("frameColor", "accent" if v else self.resolved_accent()), "frameColor"),
-            self.row("Glow colour", self.color_button(panel.settings["frameColor"], lambda hexv: panel.change("frameColor", hexv)), "frameColor"),
-        ]))
-        outer.append(self.group("Motion and blending", [
-            self.switch_row("Liquid motion", panel.settings["motion"], lambda v: panel.change("motion", v), "motion"),
-            self.scale_row("How solid the card is", 30, 100, panel.settings["blend"], lambda v: panel.change("blend", v), "blend"),
-        ]))
-        outer.append(self.group("Notifications", [
-            self.switch_row("Desktop notifications", panel.settings["notifications"], lambda v: panel.change("notifications", v, restyle=False), "notifications"),
-            self.switch_row("Blink when something happens", panel.settings["blink"], lambda v: panel.change("blink", v, restyle=False), "blink"),
-        ]))
-
-        outer.append(self.nothing_found)
-
-        # A browser of the person's own, for the complaint that Orbit is a thing agents use and they never
-        # see. It is created paused, because a paused session is the one they can drive themselves in the
-        # viewer, and it is named for them rather than for an agent so the mark does not imply that
-        # somebody else is working.
-        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        session = Gtk.Button(label="Open a browser of my own")
-        session.set_hexpand(True)
-        session.connect("clicked", lambda *_: panel.open_own_session())
-        viewer = Gtk.Button(label="Open the viewer")
-        viewer.set_hexpand(True)
-        viewer.connect("clicked", lambda *_: panel.open_viewer())
-        reset = Gtk.Button(label="Reset to defaults")
-        reset.connect("clicked", lambda *_: panel.reset())
-        buttons.append(session)
-        buttons.append(viewer)
-        buttons.append(reset)
-        outer.append(buttons)
-        outer.append(self.note(f"Saved in {SETTINGS_PATH}"))
-        outer.append(self.note("A right click on the mark opens this window, a left click opens the viewer, and resting the pointer on it lists the sessions. Dragging it carries it to another edge: the nearest landing strip lights up, and where the mark is released along that edge is where it stays."))
-
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_child(outer)
-        scroller.set_vexpand(True)
-        # The search stays put while the settings scroll under it.
-        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin_top=12, margin_start=18, margin_end=18)
-        frame.append(search)
-        frame.append(scroller)
-        self.set_child(frame)
-
-        # Escape closes a preferences window everywhere else on this desktop.
-        escape = Gtk.ShortcutController()
-        escape.add_shortcut(Gtk.Shortcut.new(Gtk.ShortcutTrigger.parse_string("Escape"),
-                                             Gtk.CallbackAction.new(lambda *_: (self.close(), True)[1])))
-        self.add_controller(escape)
-
-    def autostart_row(self):
-        """Whether Orbit comes back on its own, which is the one setting that is not in the settings file.
-
-        It is systemd and an autostart entry, so the switch asks the launcher rather than writing a value,
-        and it does that on a thread: enabling runs systemctl twice and a person clicking a switch should
-        not watch the window stop repainting while it does.
+        The mark keeps what only a mark can do, and one interface is designed, translated and tested
+        instead of two. Nothing about the settings themselves moved: the file is still the source of
+        truth, the Python schema still validates every value, and `sbar-orbit config` still works over
+        ssh, inside a service, and while no browser is running at all.
         """
-        self.autostart_switch = Gtk.Switch(active=False)
-        self.autostart_switch.set_sensitive(False)
-        self.autostart_switch.connect("state-set", self.on_autostart_toggled)
-        row, terms = self.row(orbit_settings.BY_KEY["autostart"]["label"], self.autostart_switch, "autostart")
-        threading.Thread(target=self.read_autostart, daemon=True).start()
-        return row, terms
-
-    def read_autostart(self):
-        state = launcher_json(["autostart", "status"])
-        def apply():
-            if state is None:
-                self.autostart_switch.set_sensitive(False)
-                return False
-            self.autostart_switch.set_sensitive(True)
-            self.autostart_switch.handler_block_by_func(self.on_autostart_toggled)
-            self.autostart_switch.set_active(bool(state.get("startsWithTheDesktop")))
-            self.autostart_switch.handler_unblock_by_func(self.on_autostart_toggled)
-            return False
-        GLib.idle_add(apply)
-
-    def on_autostart_toggled(self, switch, wanted):
-        switch.set_sensitive(False)
-        def run():
-            launcher_json(["autostart", "enable" if wanted else "disable"])
-            self.read_autostart()
-            GLib.idle_add(lambda: (switch.set_sensitive(True), False)[1])
-        threading.Thread(target=run, daemon=True).start()
-        return False
-
-    @staticmethod
-    def note(text):
-        """A line of explanation, which wraps rather than being cut short the way a row label is."""
-        wrapped = Gtk.Label(label=text)
-        wrapped.set_halign(Gtk.Align.START)
-        wrapped.set_xalign(0)
-        wrapped.set_wrap(True)
-        wrapped.set_max_width_chars(44)
-        wrapped.add_css_class("orbit-dim")
-        return wrapped
-
-    def group(self, title, rows):
-        """A titled list of rows, and the half of the search that has to be built with them.
-
-        Each row arrives as (widget, the words it answers to). A filter on the words alone would find
-        only what the label already says, so the words come from the schema: its description and its
-        English and Arabic terms, which is how "boot" finds the startup switch and "توهج" finds the glow.
-        """
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        box.append(label(title, "heading"))
-        listbox = Gtk.ListBox()
-        listbox.add_css_class("boxed-list")
-        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        held = []
-        for index, entry in enumerate(rows):
-            widget, terms = entry if isinstance(entry, tuple) else (entry, "")
-            listbox.append(widget)
-            line = listbox.get_row_at_index(index)
-            if line is not None:
-                self.row_terms[line] = f"{title} {orbit_settings.GROUP_TERMS.get(title, '')} {terms}".casefold()
-                held.append(line)
-        listbox.set_filter_func(self.row_visible)
-        box.append(listbox)
-        self.groups.append((box, listbox, held))
-        return box
-
-    def row_visible(self, line):
-        if not self.query:
-            return True
-        text = self.row_terms.get(line, "")
-        return all(word in text for word in self.query.split())
-
-    def on_search(self, entry):
-        self.query = entry.get_text().strip().casefold()
-        for box, listbox, rows in self.groups:
-            listbox.invalidate_filter()
-            # A heading with nothing under it reads as a group that has no matches rather than as one
-            # that was filtered out, so the whole group goes.
-            box.set_visible(any(self.row_visible(line) for line in rows))
-        self.nothing_found.set_visible(bool(self.query) and not any(box.get_visible() for box, _, _ in self.groups))
-
-    @staticmethod
-    def terms(key, extra=""):
-        """Everything a person might type to mean this setting, from the one place it is described."""
-        entry = orbit_settings.BY_KEY.get(key)
-        if entry is None:
-            return extra
-        return " ".join([entry["key"], entry["label"], entry["description"], *entry["terms"], extra])
-
-    def row(self, text, control, key=None, extra=""):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_top=8, margin_bottom=8, margin_start=12, margin_end=12)
-        name = label(text)
-        name.set_hexpand(True)
-        row.append(name)
-        control.set_valign(Gtk.Align.CENTER)
-        # Without this a screen reader announces "switch" and "slider" with no idea what they change.
-        # The label is copied onto the control rather than related to it, because the relation form
-        # that takes a list of accessibles does not marshal correctly through PyGObject.
-        control.update_property([Gtk.AccessibleProperty.LABEL], [text])
-        row.append(control)
-        return row, f"{text} {self.terms(key, extra)}".casefold()
-
-    def switch_row(self, text, value, on_change, key=None, extra=""):
-        switch = Gtk.Switch(active=bool(value))
-        switch.connect("state-set", lambda _s, state: (on_change(state), False)[1])
-        return self.row(text, switch, key, extra)
-
-    def dropdown_row(self, text, options, current, on_change, key=None):
-        model = Gtk.StringList()
-        for option in options:
-            model.append(option)
-        drop = Gtk.DropDown(model=model)
-        drop.set_selected(options.index(current) if current in options else 0)
-        drop.connect("notify::selected", lambda d, _: on_change(options[d.get_selected()]))
-        return self.row(text, drop, key)
-
-    def scale_row(self, text, low, high, value, on_change, key=None):
-        scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, low, high, 1)
-        scale.set_value(value)
-        scale.set_size_request(160, -1)
-        scale.set_draw_value(True)
-        scale.connect("value-changed", lambda s: on_change(int(s.get_value())))
-        return self.row(text, scale, key)
-
-    def monitor_row(self):
-        """Every monitor by its connector name, which is what the person reads on their own screen
-        layout, with the value stored being that same name so the choice survives a restart."""
-        names, values = ["Largest screen"], [None]
-        window = self.panel.window
-        if window is not None:
-            monitors = window.get_display().get_monitors()
-            for index in range(monitors.get_n_items()):
-                monitor = monitors.get_item(index)
-                connector = monitor.get_connector() or str(index)
-                geometry = monitor.get_geometry()
-                names.append(f"{connector} ({geometry.width} by {geometry.height})")
-                values.append(connector)
-        current = self.panel.settings["monitor"]
-        current = str(current) if current is not None else None
-        chosen = names[values.index(current)] if current in values else names[0]
-        return self.dropdown_row("Monitor", names, chosen, lambda v: self.panel.change("monitor", values[names.index(v)]), "monitor")
-
-    def browser_row(self):
-        """Every browser installed on this desktop, asked of the broker rather than guessed here: the
-        broker already reads the desktop entries, and a second list in Python would drift from it. With
-        no broker running the row still appears, carrying the automatic choice alone, because settings
-        are not a thing a person should have to start a service to change."""
-        names, values = ["Automatic"], [""]
-        try:
-            answer = rpc(self.panel.path, "viewer.browsers")
-            for entry in answer.get("browsers", []):
-                # The row says which browsers cannot drop their tab strip, so the window switch above it
-                # reads as a setting that does nothing rather than as a setting that is broken.
-                suffix = "" if entry.get("appWindow") else " (opens a tab)"
-                names.append(f"{entry.get('name') or entry.get('id')}{suffix}")
-                values.append(entry.get("id", ""))
-        except Exception:
-            pass
-        current = self.panel.settings["viewerBrowser"]
-        chosen = names[values.index(current)] if current in values else names[0]
-        return self.dropdown_row("Open the viewer in", names, chosen,
-                                 lambda v: self.panel.change("viewerBrowser", values[names.index(v)], restyle=False),
-                                 "viewerBrowser")
-
-    def color_row(self, text, key):
-        return self.row(text, self.color_button(self.panel.settings["colors"][key], lambda hexv: self.set_color(key, hexv)),
-                        "colors", extra=key)
-
-    def resolved_accent(self):
-        """The accent this desktop is using right now, as a hex the settings can store. Used when the
-        person stops following the theme, so the glow keeps the colour it already had."""
-        found, rgba = self.get_style_context().lookup_color("accent_bg_color")
-        return rgba_to_hex(rgba) if found else "#808080"
-
-    def color_button(self, current, on_change):
-        rgba = Gdk.RGBA()
-        # "accent" is a name, not a value, so the button shows what that name currently resolves to.
-        if not rgba.parse(self.resolved_accent() if current == "accent" else current):
-            rgba.parse("#808080")
-        dialog = Gtk.ColorDialog()
-        dialog.set_with_alpha(False)
-        button = Gtk.ColorDialogButton(dialog=dialog)
-        button.set_rgba(rgba)
-        button.connect("notify::rgba", lambda b, _: on_change(rgba_to_hex(b.get_rgba())))
-        return button
-
-    def set_color(self, key, hex_value):
-        colors = dict(self.panel.settings["colors"])
-        colors[key] = hex_value
-        self.panel.change("colors", colors)
-
-
-def rgba_to_hex(rgba):
-    return "#%02x%02x%02x" % (round(rgba.red * 255), round(rgba.green * 255), round(rgba.blue * 255))
+        self.open_viewer(view="settings")
 
 
 def main():
@@ -1546,7 +1251,7 @@ def main():
             print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style mark|bar|dot|count]")
             print("                        [--position 0..1] [--frame|--no-frame] [--no-pulse] [--frame-color CSS] [--no-motion]")
             print("                        [--no-notifications] [--settings]")
-            print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens the settings window")
+            print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens them in the viewer")
             return 0
     # Before anything is drawn: if a panel already owns the mark, this invocation's job is to ask it and
     # leave. That is how `sbar-orbit settings` reaches a running panel, and how two autostart paths

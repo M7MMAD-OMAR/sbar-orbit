@@ -67,6 +67,12 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     expect(await page.title()).toBe('Polish the workspace · Sbar Orbit | Orbit');
     // The same moment, for the session on the stage rather than in the list.
     expect(await page.locator('#last-activity').textContent()).toContain('اليوم');
+    // The state a card is in is said in a shape as well as in a word, and the rail can be narrowed
+    // to one state at a time.
+    expect(await page.locator('.session .session-state').first().textContent()).toBe('مفتوحة');
+    expect(await page.locator('.filter').count()).toBe(4);
+    // Nothing has finished yet, so that answer is offered as empty rather than as a dead end.
+    expect(await page.locator('.filter[data-filter="finished"]').isDisabled()).toBe(true);
     /*
      * The rail survives an idle poll. It is rebuilt from a signature of what its cards say, so a
      * signature carrying a raw timestamp instead of the printed minute would rebuild every card on
@@ -139,6 +145,16 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     // A finished session can be removed from the list, and asks once first.
     await call(broker.socket,'session.stop',b);
     await page.waitForFunction(()=>document.querySelectorAll('.session[data-state="closed"]').length===1);
+    // Narrowing the rail to one state, now that there is one of each.
+    await page.locator('.filter[data-filter="finished"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.session').length === 1);
+    expect(await page.locator('.session-state').first().textContent()).toBe('انتهت');
+    // The open one is still open, and nothing is acting, so that answer is empty and says so.
+    expect(await page.locator('.filter[data-filter="open"]').textContent()).toBe('مفتوحة 1');
+    expect(await page.locator('.filter[data-filter="working"]').isDisabled()).toBe(true);
+    await page.locator('.filter[data-filter="all"]').click();
+    await page.waitForFunction(() => document.querySelectorAll('.session').length === 2);
+
     const closed = page.locator('.session[data-state="closed"]');
     await closed.hover();
     await closed.locator('.session-forget').click();
