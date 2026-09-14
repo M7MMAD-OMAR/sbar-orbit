@@ -4,6 +4,10 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- Removed the GitHub Actions workflow again, at the owner's decision. It ran the typecheck, the publication audit and the long dash check, all of which take seconds locally and are already required before every commit, and none of which is the suite: that needs cgroup delegation and a private slice, which a hosted runner does not give. A check that cannot run the gate but reports green anyway is worth less than no check. `CONTRIBUTING.md` records both attempts and the reason, so the next person does not add a third.
+
+## Unreleased
+
 - The mark in the panel drew at the screen edge and answered neither a hover nor a click, which is how the person found it: two sessions running, a blue bar on the edge, and nothing behind it. Two faults in a row, both about the input region that keeps a collapsed mark from swallowing clicks in the whole card-sized rectangle it keeps laid out beside it. `hideWhenIdle` hides the mark while nothing runs, and the settle that ran while it was hidden wrote an empty region and re-armed nothing, so when work started the mark came back drawn and deaf: the cards only open on a hover, and the hover was what the empty region ate. `render()` now settles again when the mark's visibility changes. That alone was not enough, and the private display is what showed it: the region is written into GDK and reaches the compositor with the next frame the surface commits, and a mark that is not animating commits none, so the corrected region sat unsent until something else happened to repaint. Writing a region now queues a redraw with it. Measured in an Orbit `fedora` session against the person's own settings, edge right, bar style, size 8, `hideWhenIdle` on: before the fix a mark restored from hidden took no pointer at any point across its width, with the region logged at the right rectangle the whole time; after it, hovering the same pixel pulls the card out. Suite 212 passing.
 
 ## 0.1.0-alpha.4 - 13 September 2026
