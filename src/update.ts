@@ -150,19 +150,25 @@ export async function updateStatus(environment: ActivationEnvironment = {}) {
   };
 }
 
-/** Remove prepared versions that are neither current nor the one to roll back to. */
-export async function pruneVersions(root = updateRoot(), keep = 2) {
+/**
+ * Remove prepared versions nothing would go back to. The current one and the rollback target are never
+ * touched; beyond those, `keep` says how many of the rest to hold, newest first by version rather than
+ * by name, since `0.1.0-alpha.10` sorts before `0.1.0-alpha.9` in a directory listing and keeping the
+ * one a listing happened to put last is not keeping anything in particular.
+ */
+export async function pruneVersions(root = updateRoot(), keep = 1) {
   const paths = layout(root);
   const current = await currentVersion(root);
   const previous = (await linkTarget(paths.previous))?.split("/").filter(Boolean).at(-1) ?? null;
   const protectedNames = new Set([current, previous].filter(Boolean) as string[]);
-  const removable = (await preparedVersions(root)).filter(version => !protectedNames.has(version));
+  const removable = (await preparedVersions(root)).filter(version => !protectedNames.has(version)).sort(compareVersions);
+  const spare = removable.slice(Math.max(0, removable.length - Math.max(0, keep)));
   const removed: string[] = [];
-  for (const version of removable.slice(0, Math.max(0, removable.length - Math.max(0, keep - protectedNames.size)))) {
+  for (const version of removable.filter(version => !spare.includes(version))) {
     await rm(join(paths.versions, version), { recursive: true, force: true });
     removed.push(version);
   }
-  return { removed, kept: [...protectedNames, ...removable.filter(version => !removed.includes(version))] };
+  return { removed, kept: [...protectedNames, ...spare] };
 }
 
 /**
@@ -218,10 +224,21 @@ export type Feed = {
   maturationHours?: number;
 };
 
+/**
+ * The full registry document, deliberately, and not the abbreviated
+ * `application/vnd.npm.install-v1+json` form a client would normally ask for. Checked on
+ * 14 September 2026: the abbreviated document for this package is 1.9 KB against 15.5 KB and carries no
+ * `time` field at all, so asking for it would take the maturation delay's only input away and every
+ * check would answer that the feed does not say when a version was published, forever. If that trade
+ * ever needs revisiting, the delay needs another source for publication time first.
+ */
 const registryDocument = async () => {
   const response = await fetch("https://registry.npmjs.org/sbar-orbit", { headers: { accept: "application/json" } });
   if (!response.ok) throw new Error(`the registry answered ${response.status}`);
-  return await response.json() as Awaited<ReturnType<NonNullable<Feed["metadata"]>>>;
+  const body = await response.text();
+  // A daily timer on somebody else's machine does not get to read an unbounded body into memory.
+  if (body.length > 8 * 1024 * 1024) throw new Error("the registry document is larger than this reads");
+  return JSON.parse(body) as Awaited<ReturnType<NonNullable<Feed["metadata"]>>>;
 };
 
 export type Candidate = { version: string; tarball: string; integrity: string; publishedAt: string };

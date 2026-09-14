@@ -141,6 +141,19 @@ test("status separates what is waiting from what could be activated right now", 
   } finally { await close(); }
 });
 
+test("pruning after a first activation keeps the newest spare by version, not by name", async () => {
+  const { root, close } = await fixture();
+  try {
+    // The state a machine spends most of its life in: something current, nothing to roll back to yet.
+    for (const version of ["0.1.0-alpha.2", "0.1.0-alpha.9", "0.1.0-alpha.10", "0.1.0-alpha.11"]) await prepared(root, version);
+    await activateVersion("0.1.0-alpha.11", { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true });
+    const pruned = await pruneVersions(root);
+    // alpha.10 sorts before alpha.9 in a directory listing, and it is the newer of the two.
+    expect(pruned.removed.sort()).toEqual(["0.1.0-alpha.2", "0.1.0-alpha.9"]);
+    expect((await preparedVersions(root)).sort()).toEqual(["0.1.0-alpha.10", "0.1.0-alpha.11"]);
+  } finally { await close(); }
+});
+
 test("pruning keeps the current version and the one a rollback would need", async () => {
   const { root, close } = await fixture();
   try {
@@ -149,7 +162,7 @@ test("pruning keeps the current version and the one a rollback would need", asyn
     await activateVersion("0.3.0", environment);
     await activateVersion("0.4.0", environment);
     expect(await readlink(layout(root).previous)).toContain("0.3.0");
-    const pruned = await pruneVersions(root);
+    const pruned = await pruneVersions(root, 0);
     expect(pruned.removed.sort()).toEqual(["0.1.0", "0.2.0"]);
     expect((await preparedVersions(root)).sort()).toEqual(["0.3.0", "0.4.0"]);
   } finally { await close(); }
