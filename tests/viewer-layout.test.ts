@@ -38,10 +38,13 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
        what is left, so anything measuring the picture waits for the movement to finish first. */
     const settled = () => page.evaluate(() => new Promise<void>(done => setTimeout(() => requestAnimationFrame(() => done()), 500)));
     await page.setViewportSize({width:1440,height:1000});
+    // The viewer follows the languages the browser asks for. This one asks for Arabic; the English
+    // default is checked at the end of the test, from the same page with nothing remembered.
+    await page.addInitScript(()=>Object.defineProperty(navigator,'languages',{get:()=>['ar-SY','ar'],configurable:true}));
     await page.goto(preview.url,{waitUntil:'domcontentloaded'});
     await page.locator('#frame').waitFor({state:'visible'});
 
-    // Arabic, right to left, out of the box, and the picture itself never mirrors.
+    // Arabic, right to left, for a reader whose browser asks for it, and the picture never mirrors.
     expect(await page.evaluate(()=>document.documentElement.dir)).toBe('rtl');
     expect(await page.evaluate(()=>document.documentElement.lang)).toBe('ar');
     expect(await page.locator('#stage').evaluate(node=>getComputedStyle(node).direction)).toBe('ltr');
@@ -124,10 +127,12 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     expect(await page.locator('#frame').evaluate(element => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true);
     await page.screenshot({path:join(shots,'desktop.png'),fullPage:true});
 
-    // English on request, and remembered.
+    // English on request, and a chosen language outranks the browser's own.
     await page.locator('#language').click();
     await page.waitForFunction(()=>document.documentElement.dir==='ltr');
     expect(await page.locator('.rail-note').textContent()).toContain('assistants');
+    await page.reload({waitUntil:'domcontentloaded'});
+    expect(await page.evaluate(()=>document.documentElement.dir)).toBe('ltr');
     await page.locator('#language').click();
     await page.waitForFunction(()=>document.documentElement.dir==='rtl');
 
@@ -144,6 +149,14 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     expect(remaining.map(s=>s.sessionId)).toEqual([a.sessionId]);
     // An id the broker has already forgotten is not an error on screen.
     expect(await call(broker.socket,'session.forget',b)).toMatchObject({forgotten:false});
+
+    // A browser that asks for nothing Arabic, and nothing remembered: English, left to right.
+    await page.addInitScript(()=>Object.defineProperty(navigator,'languages',{get:()=>['en-US','en'],configurable:true}));
+    await page.evaluate(()=>localStorage.removeItem('orbit-language'));
+    await page.reload({waitUntil:'domcontentloaded'});
+    expect(await page.evaluate(()=>document.documentElement.dir)).toBe('ltr');
+    expect(await page.evaluate(()=>document.documentElement.lang)).toBe('en');
+    await page.locator('#frame').waitFor({state:'visible'});
 
     await page.setViewportSize({width:390,height:844});
     await page.locator('#sidebar').waitFor({state:'hidden'});

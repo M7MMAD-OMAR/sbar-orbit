@@ -6,8 +6,8 @@ let previewMode = 'balanced', captureQueued = false, pollFailures = 0;
 let lastCost = 0, lastGap = 0, lastRpc = 0, lastDecode = 0, lastDraw = 0;
 /*
  * Language. Every string a person reads is written here in English and looked up in the table below,
- * the same way the website carries its Arabic. Arabic is what the viewer opens in, because this is
- * the interface its owner reads; the switch in the rail moves the whole page to English and is
+ * the same way the website carries its Arabic. Which one a person gets is the browser's own answer:
+ * English unless the reader has asked for Arabic, and the switch in the rail overrides that and is
  * remembered per browser. Nothing an agent or a test keys off moves: ids, `data-state`, `data-working`
  * and the session states themselves stay in English.
  */
@@ -125,8 +125,17 @@ const arabic = {
   'Today': 'اليوم',
   'Yesterday': 'أمس',
 };
-let language = 'ar';
-try { language = localStorage.getItem('orbit-language') === 'en' ? 'en' : 'ar'; } catch { language = 'ar'; }
+/*
+ * Which language the page opens in. The browser is asked first: English unless one of the languages
+ * the reader has asked for is Arabic. A choice made with the switch outranks that, and is remembered
+ * per browser; a browser that tells us nothing, or storage that is blocked, leaves English.
+ */
+let language = 'en';
+try {
+  const asked = navigator.languages?.length ? navigator.languages : [navigator.language];
+  if (asked.some(tag => String(tag).toLowerCase().startsWith('ar'))) language = 'ar';
+} catch { language = 'en'; }
+try { const chosen = localStorage.getItem('orbit-language'); if (chosen === 'ar' || chosen === 'en') language = chosen; } catch { /* not remembered */ }
 /** One string, in the reader's language, with `{name}` placeholders filled from `values`. */
 function t(source, values) {
   const line = language === 'ar' ? arabic[source] ?? source : source;
