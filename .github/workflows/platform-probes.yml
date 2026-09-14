@@ -48,6 +48,18 @@ jobs:
           (./install.sh --dry-run --json; echo "install dry-run exit $?") 2>&1 | tee output/verify/install-dry-run.log
           (bun run verify; echo "verify exit $?") 2>&1 | tee output/verify/verify.log
           cp -r "$HOME/.local/state/sbar-orbit/diagnostics" output/verify/diagnostics 2>/dev/null || true
+      # The other half of gate 3 for the browser path: a real systemd user session that is not this
+      # workstation. The one command install, the service it starts, doctor, and one browser session.
+      - run: |
+          (./install.sh --json; echo "install exit $?") 2>&1 | tee output/verify/install.log
+          (systemctl --user is-active sbar-orbit.service; echo "service $?") 2>&1 | tee output/verify/service.log
+          export ORBIT_SOCKET="$XDG_RUNTIME_DIR/sbar-orbit/broker.sock"
+          (bun run src/cli.ts doctor; echo "doctor exit $?") 2>&1 | tee output/verify/doctor.log
+          export ORBIT_AGENT_NAME=runner ORBIT_TASK_NAME="gate 3 on a runner"
+          (ID=$(bun run src/cli.ts session create browser | tee output/verify/session-create.log | sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' | head -1); echo "session $ID"; \
+            bun run src/cli.ts act "$ID" '{"type":"navigate","url":"https://example.com/"}'; bun run src/cli.ts act "$ID" '{"type":"read","selector":"h1"}'; \
+            bun run src/cli.ts session observe "$ID" --output "$PWD/output/verify/frame.jpg"; bun run src/cli.ts session stop "$ID"; echo "session exit $?") 2>&1 | tee output/verify/session.log
+          (bun run src/cli.ts status; echo "status exit $?") 2>&1 | tee output/verify/status.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
