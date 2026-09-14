@@ -26,6 +26,19 @@ try {
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
     const status = await readStatus(socketFromEnvironment());
     console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
+  } else if (command === "update") {
+    // Local: which version is current, which are prepared, and pointing the link at one of them. It
+    // never fetches anything, and it refuses while a session is open rather than ending it.
+    const { activateVersion, updateStatus, pruneVersions } = await import("./update");
+    if (verb === undefined || verb === "status") console.log(JSON.stringify(await updateStatus(), null, 2));
+    else if (verb === "activate") {
+      if (!arg) throw new OrbitError("INVALID_REQUEST", "Use update activate VERSION");
+      const outcome = await activateVersion(arg);
+      console.log(JSON.stringify(outcome, null, 2));
+      if (!outcome.activated) process.exitCode = 1;
+    }
+    else if (verb === "prune") console.log(JSON.stringify(await pruneVersions(), null, 2));
+    else throw new OrbitError("INVALID_REQUEST", "Use update status|activate VERSION|prune");
   } else if (command === "clean") {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.
     const { cleanWorkspaces } = await import("./workspace-storage");

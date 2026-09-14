@@ -32,6 +32,11 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit config get KEY
   sbar-orbit config set KEY VALUE
                                  Takes effect immediately on a running panel
+  sbar-orbit update status       Which version is running, and which are prepared
+  sbar-orbit update activate VERSION
+                                 Point the launcher at a prepared version and restart
+                                 (refused while a session is open, rolls back if it will not start)
+  sbar-orbit update prune        Remove prepared versions nothing would roll back to
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
   sbar-orbit diagnostics         Prepare a private report and a GitHub issue link, also offline

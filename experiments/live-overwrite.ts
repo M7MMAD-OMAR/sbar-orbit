@@ -54,7 +54,7 @@ try {
 
   broker = Bun.spawn(["bun", "run", join(stage, "src/cli.ts"), "serve"],
     { cwd: stage, stdout: "pipe", stderr: "pipe", env: { ...process.env, ORBIT_SOCKET: "" } });
-  const reader = broker.stdout.getReader();
+  const reader = (broker.stdout as ReadableStream<Uint8Array>).getReader();
   const first = new TextDecoder().decode((await reader.read()).value ?? new Uint8Array());
   const socket = JSON.parse(first.split("\n")[0] ?? "{}").socket as string;
   if (!socket) throw new Error(`the staged broker printed no socket: ${first.slice(0, 200)}`);

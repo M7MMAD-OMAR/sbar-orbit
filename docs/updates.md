@@ -205,9 +205,15 @@ Each step is usable on its own, and each has a gate that has to pass before the 
    exists to prevent.
 2. **Move the native runtime out of the source tree**, shared across versions and keyed by the pinned
    package versions. Gate: a native session works from a tree that never built one.
-3. **Versioned layout and `sbar-orbit update activate`**, manual, no timer, no network. Gate: activate,
-   `doctor` answers, roll back, `doctor` answers again, and a session open at the time is refused with a
-   reason rather than ended.
+3. **Versioned layout and `sbar-orbit update activate`**, manual, no timer, no network. Done on
+   14 September 2026 in [src/update.ts](../src/update.ts). `versions/<version>` side by side, `current`
+   and `previous` repointed by rename so no reader sees the name missing, activation refused while any
+   session is open with no way to waive it, and a broker that does not answer `doctor` after its
+   restart puts the old link back and restarts again. The failed version is kept rather than deleted,
+   because it is the evidence. An install whose launcher does not go through a managed version
+   directory is refused by name: a source checkout's updater is git. Seven checks in
+   `tests/update.test.ts`, and the three that matter were run against the code with the session guard
+   and the rollback removed, where they failed.
 4. **`sbar-orbit update check` and `stage`**, network, verification, maturation delay, no activation.
    Gate: a tampered archive is refused, and a version younger than the delay is reported as not eligible.
 5. **The timer**, plus `update on|off|status`, plus the pending state in `status` and on the panel.
