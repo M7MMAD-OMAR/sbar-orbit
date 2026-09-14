@@ -28,6 +28,7 @@ parser.add_argument("--wayland", default="foot", help="a Wayland fixture, the sa
 parser.add_argument("--grim", default="grim")
 parser.add_argument("--label", default="")
 parser.add_argument("--renderer", default="pixman", help="pixman, or gles2 with --device")
+parser.add_argument("--hold", type=float, default=0, help="seconds to keep the display up after the checks, for a probe from outside; the report line is printed first")
 parser.add_argument("--device", default="", help="a /dev/dri/renderD* node for a GPU renderer")
 args = parser.parse_args()
 
@@ -234,6 +235,11 @@ try:
     else:
         step("frame", False, detail="grim is not installed")
     elapsed("frame")
+    if args.hold > 0:
+        # Printed now, so whoever is holding the display open from outside can read where it is.
+        report["holding"] = {"seconds": args.hold, "wayland": os.path.join(directory, env["WAYLAND_DISPLAY"]), "display": display or None, "swaysock": env["SWAYSOCK"]}
+        print(json.dumps(report), flush=True)
+        time.sleep(args.hold)
 except SystemExit:
     pass
 except Exception as error:

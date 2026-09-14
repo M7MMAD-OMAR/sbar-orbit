@@ -73,7 +73,7 @@ rest stay `Reasoned`.
 | Compositor with no logind session | Limited: started in 51 ms on all four with nothing open under `/run/systemd`, `/run/seatd`, `/run/user` or `/run/dbus` | Same run | G1 |
 | Real sessions, profile clone | Reasoned, and only where reflink and a secret service both answer | The reflink probe and the keyring item check, both of which `doctor --report` already prints | |
 | Origin lease below the browser | Limited: `bwrap` and `socat` packaged on all four, the probe passes, and the network namespace confined a fetch to the socat relay alone. The pid half of Orbit's shape is a container limit, and a real host's AppArmor `userns` policy is unmeasured | Same run; then the `confinedEgress` probe and `experiments/confined-egress.ts` on a real host | G29 |
-| Everything inside a rootless container | Reasoned | Whether a user namespace nests, and whether `systemd-run --user --scope` registers on the host manager | G6, G7 |
+| Everything inside a rootless container | Limited, on a Toolbx container of the measured host: the compositor inside publishes a Wayland socket the host's helper binds, Xwayland refuses to start inside on the ownership of the shared `/tmp/.X11-unix` so X11 is refused with no display number ever allocated, and `systemd-run --user --scope` from inside lands in `sbarorbit.slice` with `cpu.stat` readable | `experiments/toolbox-gates.sh`, 14 September 2026 | G6, G7 |
 
 ## Linux, musl, or no desktop stack
 

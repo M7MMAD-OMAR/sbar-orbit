@@ -118,6 +118,9 @@
    soname on Debian and Ubuntu, the family's own sway starts from a private prefix on all four, no
    family's compositor needs a logind session, and unprivileged user namespaces confine a network
    namespace on all four. Every row is tier `Limited`; what closes more is a real machine of each
-   family with a screen. See [support tiers](support-tiers.md) and [porting](porting.md).
+   family with a screen. The container variant for atomic hosts was measured the same day on a
+   Toolbx container, G6 and G7: the Wayland socket crosses to the host, X11 is refused inside before
+   a display number exists, and a scope started from inside lands in the slice. See
+   [support tiers](support-tiers.md) and [porting](porting.md).
 
 Use [acceptance cases](acceptance.md) as release criteria. Alpha versions do not imply these gates are complete.
