@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listHostBrowsers, parseExec, viewerCommand, viewerPreference } from "../src/host-browsers";
+import { listHostBrowsers, parseExec, viewerCommand, viewerPreference, viewerProfileDirectory } from "../src/host-browsers";
 
 /**
  * Detection reads desktop entries, so it is exercised against real ones written to a temporary tree.
@@ -71,6 +71,26 @@ test("a Chromium browser gets a window of its own and a Firefox fork gets a tab"
   expect(viewerCommand(zen, url)).toEqual(["/usr/bin/zen", url]);
 });
 
+test("the viewer runs in a profile of its own, never the person's, whichever family opens it", () => {
+  const chromium = { id: "google-chrome", name: "Google Chrome", command: ["/opt/google/chrome/chrome"], appWindow: true, isDefault: true };
+  const zen = { id: "app.zen_browser.zen", name: "Zen Browser", command: ["/usr/bin/flatpak", "run", "app.zen_browser.zen"], appWindow: false, isDefault: false };
+  const other = { id: "odd", name: "Odd", command: ["/usr/bin/odd"], appWindow: false, isDefault: false };
+  const url = "http://127.0.0.1:1234/#token";
+  // The Chromium family: its own user data directory, no first-run greeting, and a window class the
+  // compositor can tell apart from the person's browser. The URL stays last and stays whole.
+  expect(viewerCommand(chromium, url, true, "/state/viewer/google-chrome")).toEqual([
+    "/opt/google/chrome/chrome", "--user-data-dir=/state/viewer/google-chrome", "--no-first-run", "--no-default-browser-check", "--class=sbar-orbit-viewer", `--app=${url}`]);
+  expect(viewerCommand(chromium, url, false, "/state/viewer/google-chrome")).toEqual([
+    "/opt/google/chrome/chrome", "--user-data-dir=/state/viewer/google-chrome", "--no-first-run", "--no-default-browser-check", "--class=sbar-orbit-viewer", url]);
+  // The Firefox family: its own profile and a new window in it, no app mode because none exists.
+  expect(viewerCommand(zen, url, true, "/state/viewer/zen")).toEqual(["/usr/bin/flatpak", "run", "app.zen_browser.zen", "--profile", "/state/viewer/zen", "--new-window", url]);
+  // A family nothing recognised gets no flag it might not know.
+  expect(viewerCommand(other, url, true, "/state/viewer/odd")).toEqual(["/usr/bin/odd", url]);
+  // One directory per browser id, under the state directory, with anything odd in the id made safe.
+  expect(viewerProfileDirectory(chromium, { HOME: "/h/p" })).toBe("/h/p/.local/state/sbar-orbit/viewer/google-chrome");
+  expect(viewerProfileDirectory({ id: "a/b c" }, { HOME: "/h/p", XDG_STATE_HOME: "/st" })).toBe("/st/sbar-orbit/viewer/a_b_c");
+});
+
 test("the stored choice is read from the panel's settings, and its absence is the default", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-preference-"));
   expect(await viewerPreference({ HOME: root, XDG_CONFIG_HOME: root })).toEqual({ browser: "", appWindow: true });
@@ -110,8 +130,14 @@ test("a browser that refuses its arguments is not reported as opened", async () 
     .toEqual({ opened: false, browser: "chromium-refuses", appWindow: false });
   // Exiting at once with zero is the forwarded second invocation, and it is how the window opens.
   await entry("chromium-forwards.desktop", "/usr/bin/true");
-  expect(await openViewer("http://127.0.0.1:1/#t", "chromium-forwards", true, env))
+  const open = { ...env, XDG_STATE_HOME: join(root, "state") };
+  expect(await openViewer("http://127.0.0.1:1/#t", "chromium-forwards", true, open))
     .toEqual({ opened: true, browser: "chromium-forwards", appWindow: true });
+  // The viewer's own profile directory was made before the browser was asked to use it, and privately.
+  const { stat } = await import("node:fs/promises");
+  const profile = await stat(join(root, "state", "sbar-orbit", "viewer", "chromium-forwards"));
+  expect(profile.isDirectory()).toBe(true);
+  expect(profile.mode & 0o777).toBe(0o700);
   await rm(root, { recursive: true, force: true });
 });
 

@@ -128,6 +128,12 @@ The binding constraint is the shared budget, not the number of applications. `CP
 
 System Monitor inside the session reported the host's real memory and CPU. Private display separation does not hide the machine from an application, which is the documented position, not a defect.
 
+### The viewer in a window of its own
+
+The command `preview open` spawns, as the broker builds it, opened inside an Orbit private display: system Chromium 151 on a scratch profile that is Orbit's, `--class=sbar-orbit-viewer`, `--app=` on the viewer link. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/viewer-window.ts`; the frame and `report.json` land in `output/viewer-window-<date>/`.
+
+Measured 14 September 2026: the window mapped in 1345 ms with the title `Viewer window trial | Orbit`, `display-mode: standalone` true, 1280 by 800 of page and nothing else, no tab strip and no address bar, and the profile directory held 38 entries afterwards, none of them the person's. Read from the viewer's own `#cost` element every five seconds for a minute at the default cadence, watching one browser session on a blank page: `Viewer cycle: 24 to 56 ms of every 1000 ms (2 to 6%)`, of which the request took 18 to 50 ms, the decode 2 to 3 ms and the draw 0 ms. That is the viewer's own report of its work per frame on this host; the participant's reading of the same element on their own desktop, which is what roadmap gate 1 asks for, is theirs to take from the same window, and a native session or a busy page costs more per frame than a blank one.
+
 ### Fifteen more applications, one at a time
 
 Applications beyond those four, each launched through the broker into one private display, its first window recorded with title and launch time, one frame kept, and the window closed through the session's own command before the next. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/application-coverage.ts`; frames and `report.json` land in `output/application-coverage-<date>/`.

@@ -63,7 +63,7 @@ bun run src/cli.ts preview open      # open it in the chosen browser, in a windo
 bun run src/cli.ts preview browsers  # the browsers this desktop has, and which can do that
 ```
 
-The link carries an access token in its fragment, so `preview open` hands it straight to the browser rather than through anything that only wanted a window. Which browser, and whether it gets a window of its own, are settings; see [preview](preview.md).
+The link carries an access token in its fragment, so `preview open` hands it straight to the browser rather than through anything that only wanted a window. The browser runs the viewer in a profile of Orbit's own under `~/.local/state/sbar-orbit/viewer/`, never in the person's profile. Which browser, and whether it gets a window of its own, are settings; see [preview](preview.md).
 
 Two commands are for reading a run back rather than driving one:
 

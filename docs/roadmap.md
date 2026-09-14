@@ -28,6 +28,11 @@
    [validation.md](validation.md) already records, one shared cgroup budget split between concurrent
    runs, which is why gate runs are taken one bounded command at a time. It says nothing about the
    participant's own cost, which still has to be read on their machine.
+   Since 14 September 2026 the viewer opens in a browser window that is Orbit's own rather than a
+   tab or window of the person's browser, and the same window inside a private display reports
+   `Viewer cycle: 24 to 56 ms of every 1000 ms (2 to 6%)` at the default cadence on a blank
+   session; see [validation](validation.md). The participant reads the same `#cost` line in that
+   window on their desktop, and that reading is the one this gate still waits for.
 2. Broaden failure and native application/account coverage. Three repeated recovery runs pass.
    Independent supervisor death is now covered rather than open: a supervisor killed outright runs
    none of its own reaping, so its application survived it and outlived the runtime directory it was

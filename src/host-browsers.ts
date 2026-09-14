@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
@@ -168,8 +168,43 @@ export async function listHostBrowsers(env: Record<string, string | undefined> =
  * in the fragment. An installed progressive web app is scoped to an origin, port included, and would be
  * launched at `/` with no token, so it is a larger change than the window the person actually asked for.
  */
-export function viewerCommand(browser: HostBrowser, url: string, appWindow = true): string[] {
-  return browser.appWindow && appWindow ? [...browser.command, `--app=${url}`] : [...browser.command, url];
+export function viewerCommand(browser: HostBrowser, url: string, appWindow = true, profile?: string): string[] {
+  const own = profile ? ownProfileArguments(browser, profile) : [];
+  return browser.appWindow && appWindow ? [...browser.command, ...own, `--app=${url}`] : [...browser.command, ...own, url];
+}
+
+/**
+ * Where the viewer's own browser state lives: a profile that is Orbit's, never the person's. Without
+ * this the viewer opened inside the person's browser, with their extensions, cookies, history and
+ * sign-ins around it, and a viewer window in a browser the person is also using is a tab strip away
+ * from becoming a tab. One directory per browser id, because a profile is only readable by the build
+ * that wrote it, under the state directory, since it is worth keeping between runs: window size, zoom
+ * and the like, and nothing else, because the viewer keeps no state of its own in it.
+ */
+export function viewerProfileDirectory(browser: Pick<HostBrowser, "id">, env: Record<string, string | undefined> = process.env): string {
+  const home = env.HOME || homedir();
+  return join(env.XDG_STATE_HOME || join(home, ".local/state"), "sbar-orbit", "viewer", browser.id.replace(/[^A-Za-z0-9._-]/g, "_"));
+}
+
+/**
+ * The flags that keep the viewer in its own profile. The Chromium family takes `--user-data-dir`, and
+ * a second invocation with the same directory is forwarded to the instance already running on it, so
+ * the viewer keeps one browser process rather than one per click, and the person's own browser, on
+ * its own directory, is not that instance. `--class` names the window for the compositor, so it is
+ * grouped, matched and remembered as Orbit's viewer rather than as another browser window. The two
+ * first-run flags stop a fresh profile greeting the person with a welcome tour and a default browser
+ * question, neither of which the viewer is.
+ *
+ * The Firefox family takes `--profile`, and remoting there is keyed by the profile since Firefox 67,
+ * so `--new-window` lands in the instance on this directory and not in the person's. Not measured:
+ * no Firefox build is installed on the development host. A family nothing recognised gets no flags,
+ * because a flag a browser does not know is a browser that exits, and the fallback caller sees that.
+ */
+function ownProfileArguments(browser: HostBrowser, profile: string): string[] {
+  const family = browser.appWindow ? "chromium" : FIREFOX_TOKENS.some(token => `${browser.command.join(" ")} ${browser.name}`.toLowerCase().includes(token)) ? "firefox" : "unknown";
+  if (family === "chromium") return [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--class=sbar-orbit-viewer"];
+  if (family === "firefox") return ["--profile", profile, "--new-window"];
+  return [];
 }
 
 /** The last resort: whatever the platform opens a link with, when no entry was found or the choice is gone. */
@@ -217,8 +252,15 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   env: Record<string, string | undefined> = process.env): Promise<ViewerOpen> {
   const browsers = await listHostBrowsers(env);
   const browser = pickBrowser(browsers, choice, appWindow);
-  const command = browser ? viewerCommand(browser, url, appWindow) : fallbackCommand(url);
   const failure = { opened: false, browser: browser?.id ?? "", appWindow: false };
+  let profile: string | undefined;
+  if (browser) {
+    profile = viewerProfileDirectory(browser, env);
+    // A directory the browser cannot create is a browser that exits with a profile error, so it is
+    // made here, private, and a failure to make it is reported as the viewer not opening.
+    try { await mkdir(profile, { recursive: true, mode: 0o700 }); } catch { return failure; }
+  }
+  const command = browser ? viewerCommand(browser, url, appWindow, profile) : fallbackCommand(url);
   let child;
   try {
     // Streams discarded: a pipe nobody reads is a browser that blocks once it has printed enough to
