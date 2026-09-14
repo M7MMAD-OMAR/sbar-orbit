@@ -30,7 +30,7 @@ export function startPreview(sessions: Sessions) {
         return new Response("Forbidden", { status: 403, headers });
       try {
         const body = record(await request.json());
-        if (!["diagnostics.status", "diagnostics.report", "session.list", "session.observe", "session.presence", "session.pause", "session.resume", "session.stop", "session.control", "session.account.save"].includes(String(body.method))) throw new OrbitError("UNSUPPORTED", "Method unavailable in viewer");
+        if (!["diagnostics.status", "diagnostics.report", "session.list", "session.observe", "session.presence", "session.pause", "session.resume", "session.stop", "session.forget", "session.control", "session.account.save"].includes(String(body.method))) throw new OrbitError("UNSUPPORTED", "Method unavailable in viewer");
         return Response.json({ ok: true, result: await sessions.dispatch(body) }, { headers });
       } catch (error) {
         return Response.json({ ok: false, error: { code: error instanceof OrbitError ? error.code : "PREVIEW_ERROR",

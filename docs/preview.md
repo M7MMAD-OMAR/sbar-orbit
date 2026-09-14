@@ -64,9 +64,15 @@ The viewer paints from Orbit's own design system: one fixed dark palette with no
 
 Following the desktop's generated colour scheme is a switch in the rail rather than the default, so the page looks the same on every machine until somebody asks for otherwise. See [theming](theming.md).
 
+## Language, and what the viewer asks of a person
+
+The viewer opens in Arabic, right to left, with an English switch in the rail that is remembered per browser. The layout mirrors through logical properties; the picture itself never mirrors, because the pointer is placed in image coordinates. See [viewer design](viewer-design.md).
+
+There is one list of sessions, in the rail, ordered by what happened most recently, each card carrying the time of the last activity. The conversation strip that repeated that list above the picture is gone. Everything secondary is in one **Settings and tools** sheet, and the typing controls appear only while a person holds the controls, which is the only time they work. A finished session can be removed from the list with `session.forget`, which asks once in the card and leaves the session's journal on disk.
+
 ## Boundaries
 
-API requests require both the per-broker token and the exact loopback origin. The viewer exposes only listing, observation, pause/resume/stop, manual control and explicit account snapshot saving. Session creation and arbitrary agent actions are not exposed through its HTTP route. Responses are not cached; the page disallows external scripts and framing.
+API requests require both the per-broker token and the exact loopback origin. The viewer exposes only listing, observation, pause/resume/stop, removing a finished session from the list, manual control and explicit account snapshot saving. Session creation and arbitrary agent actions are not exposed through its HTTP route. Responses are not cached; the page disallows external scripts and framing.
 
 The token is for the local viewer, not a per-agent security boundary. Programs running as the same OS user can already reach the local broker. Manual input is accepted only after pause acknowledgement and shares the same action queue. It is not exposed as an MCP tool.
 

@@ -51,6 +51,8 @@ test("viewer authenticates, renders live frames and controls only paused session
     expect(await page.locator("#frame").getAttribute("data-captured-at")).toBeNull();
     expect(await page.locator("#frame").isVisible()).toBe(false);
     await page.evaluate(() => (window as any).__releaseOrbitDecode());
+    // The broker names an unnamed session "Agent workspace"; that is data from the session, not a
+    // string the viewer writes, so it reads the same in either language.
     expect(await page.title()).toBe("Agent workspace | Orbit");
     await page.locator("#frame").waitFor({ state: "visible" });
     expect(await page.evaluate(() => (window as any).__orbitBitmaps.maximumLive)).toBe(1);
@@ -58,21 +60,21 @@ test("viewer authenticates, renders live frames and controls only paused session
       const canvas = document.querySelector<HTMLCanvasElement>('#frame')!;
       return Array.from(canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data);
     })).toEqual([246, 247, 249, 255]);
-    await page.getByRole("button", { name: "Take over", exact: true }).click();
+    await page.locator("#pause").click();
     await page.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'paused');
     await expect(call(broker.socket, "session.act", { ...session, requestId: "paused", action: { type: "click", selector: "button" } })).rejects.toMatchObject({ code: "PAUSED" });
     const box = await page.locator("#frame").boundingBox();
     if (!box) throw new Error("Preview image missing");
     await page.locator("#frame").click({ position: { x: box.width * 100 / 1280, y: box.height * 180 / 800 } });
-    await page.getByLabel("Text to send", { exact: true }).fill("Manual control works");
-    await page.getByRole("button", { name: "Send text", exact: true }).click();
+    await page.locator("#text").fill("Manual control works");
+    await page.locator("#send").click();
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
     await page.locator("#frame").click({ position: { x: box.width * 530 / 1280, y: box.height * 180 / 800 } });
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
     await page.locator("#save-account").click();
-    await page.waitForFunction(() => document.querySelector("#account-result")?.textContent?.includes("saved"));
+    await page.waitForFunction(() => (document.querySelector("#account-result")?.textContent ?? "").length > 0);
     expect(await Bun.file(join(accountRoot, "viewer-fixture/state.json")).exists()).toBe(true);
-    await page.getByRole("button", { name: "Hand back", exact: true }).click();
+    await page.locator("#resume").click();
     await page.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'running');
     expect(await call(broker.socket, "session.act", { ...session, requestId: "read", action: { type: "read", selector: "output" } })).toEqual({ text: "Manual control works" });
     const afterInput = Date.now();
@@ -83,9 +85,11 @@ test("viewer authenticates, renders live frames and controls only paused session
     expect(bitmaps.created - bitmaps.closed).toBeLessThanOrEqual(1);
     // The cost readout is the only instrument for viewer cost, because the desktop viewer
     // runs outside Orbit's cgroup. An empty or malformed line would otherwise go unnoticed.
-    await page.waitForFunction(() => /^Viewer cycle: \d+ ms of every \d+ ms \(\d+%\)/.test(document.querySelector("#cost")?.textContent ?? ""));
+    // Matched on its numbers rather than on its words: the sentence around them is written in the
+    // reader's language, and the instrument is the numbers.
+    await page.waitForFunction(() => /\d+ ms .* \d+ ms \(\d+%\)/.test(document.querySelector("#cost")?.textContent ?? ""));
     const cost = await page.locator("#cost").textContent();
-    expect(cost).toMatch(/request \d+ ms · decode \d+ ms · draw \d+ ms$/);
+    expect(cost).toMatch(/\d+ ms · .+ \d+ ms · .+ \d+ ms$/);
     expect(await page.evaluate(() => {
       const caption = document.querySelector("#cost")?.parentElement as HTMLElement;
       return caption.scrollWidth <= caption.clientWidth + 1;
@@ -102,10 +106,12 @@ test("viewer authenticates, renders live frames and controls only paused session
     const again = await browser.newPage();
     await again.goto(url);
     await again.locator("#frame").waitFor({ state: "visible" });
-    await again.getByText("Session actions", { exact: true }).click();
-    await again.getByRole("button", { name: "End session", exact: true }).click();
+    // Opened directly: a problem report prepared in the background opens this same sheet, so a click
+    // on the summary is as likely to close it as to open it.
+    await again.locator("#tools").evaluate(node => { (node as HTMLDetailsElement).open = true; });
+    await again.locator("#stop").click();
     await again.waitForFunction(() => document.querySelector<HTMLElement>('#state')?.dataset.state === 'closed');
-    expect(await again.locator("#empty").textContent()).toBe("This session has finished.");
+    expect(await again.locator("#empty").getAttribute("data-reason")).toBe("closed");
   } finally { await ownedViewer.close(); await broker.close(); fixture.stop(true); }
 }, 60000);
 

@@ -20,6 +20,13 @@ import { Diagnostics } from "./diagnostics";
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
   agentName: string; taskName: string; conversationName?: string; projectName?: string; activity?: { type: string; actor: string; state: string; sequence: number };
+  /**
+   * When the session opened and when something last happened in it, as epoch milliseconds. The
+   * viewer sorts and dates its cards from these: without them a person running several agents reads
+   * a list in creation order with nothing saying which one moved a minute ago and which one has been
+   * finished since the morning.
+   */
+  createdAt: number; lastActivityAt: number;
   id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string; profile: string;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
@@ -99,7 +106,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
@@ -203,6 +210,7 @@ export class Sessions {
       await mkdir(journals, { recursive: true, mode: 0o700 });
       const journalPath = join(journals, `${id}.jsonl`);
       const session: Session = { id, agentName, taskName, conversationName, projectName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
+        createdAt: Date.now(), lastActivityAt: Date.now(),
         egress: egress ?? { tier: "in-browser", launch: { executable: "", args: [] }, endpointPort: 0, refused: () => [], close: async () => {} },
         restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [], tainted: false };
       // The first line says what was agreed to, so a reader knows what the rest of the file was
@@ -230,7 +238,9 @@ export class Sessions {
             throw new OrbitError("BACKEND_ERROR", "Backend exited outside a stop request");
           }).catch(() => {});
         }
-        session.state = "closed"; this.leases.delete(lease);
+        // Stamped here as well as in `stop`, because this is the other way a session ends: a backend
+        // that exited on its own would otherwise be dated to its last action rather than to its end.
+        session.state = "closed"; session.lastActivityAt = Date.now(); this.leases.delete(lease);
         // Restore points go before the profile does. Each is a copy of the person's live cookies, and
         // a read only snapshot inside the profile would stop the profile itself being removed.
         session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).then(() => session.egress.close())
@@ -422,8 +432,13 @@ export class Sessions {
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
     session.activity = activity;
+    // Stamped at both ends. The activity object is mutated in place when the work settles, so a
+    // single stamp at the start would leave "last activity" frozen at the moment a long action
+    // began, which is the one reading a person would call wrong.
+    session.lastActivityAt = Date.now();
     try { const result = await work(); activity.state = "done"; return result; }
     catch (error) { activity.state = "failed"; throw error; }
+    finally { session.lastActivityAt = Date.now(); }
   }
   async stop(session: Session) {
     if (session.closing) return session.closing;
@@ -436,6 +451,7 @@ export class Sessions {
       // Belt and braces for a backend whose close never reported itself.
       await rm(session.profile, { recursive: true, force: true }).catch(() => {});
       session.state = "closed";
+      session.lastActivityAt = Date.now();
       return this.info(session);
     })();
     return session.closing;
@@ -458,6 +474,20 @@ export class Sessions {
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
+    /*
+     * Removing a finished session from the list, which is the only thing a person can still do to
+     * one. It drops the entry and nothing else: the journal file stays where it is, because that
+     * record is what a run is reviewed from afterwards and a person tidying their list is not
+     * asking to lose it. An id nobody knows succeeds quietly, so a second click on a card that has
+     * already gone is not an error on screen.
+     */
+    if (request.method === "session.forget") {
+      const id = text(params.sessionId, "sessionId");
+      const known = this.sessions.get(id);
+      if (known && known.state !== "closed") throw new OrbitError("SESSION_OPEN", "End the session before removing it from the list");
+      if (known) this.sessions.delete(id);
+      return { sessionId: id, forgotten: known !== undefined };
+    }
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow", "session.restore"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.

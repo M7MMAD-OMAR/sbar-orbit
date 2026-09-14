@@ -24,7 +24,7 @@ test('private Orbit viewer prepares, downloads and links a report without publis
     page.on('request', request => { if (!request.url().startsWith(new URL(preview.url).origin)) external.push(new URL(request.url()).origin); });
     await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
     await page.locator('#report-actions').waitFor({ state: 'visible' });
-    expect(await page.locator('#report-status').textContent()).toContain('1 recorded errors');
+    expect(await page.locator('#report-status').getAttribute('data-errors')).toBe('1');
     const href = await page.locator('#report-github').getAttribute('href');
     expect(href).toStartWith('https://github.com/M7MMAD-OMAR/sbar-orbit/issues/new?');
     expect(href?.length ?? 99999).toBeLessThanOrEqual(7000);

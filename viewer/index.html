@@ -1,75 +1,77 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"><script src="/viewer.js" defer></script><script src="/diagnostics.js" defer></script></head>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Orbit workspace</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/theme.css"><script src="/viewer.js" defer></script><script src="/diagnostics.js" defer></script></head>
 <body><div class="shell" id="shell">
 
-<aside class="rail" id="sidebar" aria-label="Sessions">
-<div class="brand"><svg class="brand-mark" viewBox="0 0 24 24" width="18" height="17" fill="none" aria-hidden="true"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg><span class="wordmark"><span>sbar</span><strong>orbit</strong></span></div>
-<p class="rail-note">Watch what your assistants are doing. Your own screen stays yours.</p>
+<aside class="rail" id="sidebar" data-i18n-label="Sessions" aria-label="Sessions">
+<div class="rail-inner">
+<div class="brand"><svg class="brand-mark" viewBox="0 0 24 24" width="18" height="17" fill="none" aria-hidden="true"><path d="M9.15 6.24V5.57a1.58 1.58 0 0 1 1.58-1.58h8.59a1.58 1.58 0 0 1 1.58 1.58v8.59a1.58 1.58 0 0 1-1.58 1.58h-2.46" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="8.94" width="12.16" height="12.16" rx="2.6" fill="currentColor"/></svg><span class="wordmark" dir="ltr"><span>sbar</span><strong>orbit</strong></span></div>
+<p class="rail-note" data-i18n="Watch what your assistants are doing. Your own screen stays yours.">Watch what your assistants are doing. Your own screen stays yours.</p>
 <p class="rail-heading" id="session-count">Assistants</p>
-<div id="sessions" class="session-list" aria-label="Open sessions"></div>
+<div id="sessions" class="session-list" data-i18n-label="Open sessions" aria-label="Open sessions"></div>
 <div class="rail-foot">
-<span id="connection" class="link-state" role="status">Connecting</span>
-<button id="palette" class="quiet" type="button">Match my desktop colours</button>
+<span id="connection" class="link-state" role="status" data-i18n="Connecting">Connecting</span>
+<div class="rail-switches">
+<button id="palette" class="quiet" type="button" data-i18n="Match my desktop colours">Match my desktop colours</button>
+<button id="language" class="quiet" type="button" lang="en" dir="ltr">English</button>
+</div>
+</div>
 </div>
 </aside>
 
 <main class="work">
 <header class="head">
-<button id="sidebar-toggle" class="icon-button" type="button" aria-label="Hide sidebar" aria-controls="sidebar" aria-expanded="true" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
+<button id="sidebar-toggle" class="icon-button" type="button" aria-label="Hide sidebar" aria-controls="sidebar" aria-expanded="true" data-i18n-title="Toggle sidebar" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button>
 <div class="head-identity">
 <span class="agent-badge" id="agent-badge"><span class="dot" aria-hidden="true"></span><span id="agent-name">SbarOrbit</span></span>
-<span id="project-name" class="project-name">Project not provided</span>
-<h1 id="task-name">Agent workspace</h1>
-
+<span id="project-name" class="project-name" data-i18n="Project not provided">Project not provided</span>
+<h1 id="task-name" data-i18n="Agent workspace">Agent workspace</h1>
 </div>
 <div class="head-status">
-<span id="state" class="chip">Nothing selected yet</span>
-
-<div class="actions"><button id="pause" class="primary" disabled>Take over</button><button id="resume" disabled>Hand back</button></div>
+<span id="state" class="chip" data-i18n="Nothing selected yet">Nothing selected yet</span>
+<div class="actions"><button id="pause" class="primary" data-i18n="Take over" disabled>Take over</button><button id="resume" data-i18n="Hand back" disabled>Hand back</button></div>
 </div>
 </header>
 
-<nav id="conversation-tabs" class="conversation-tabs" aria-label="Conversations"></nav>
 <div id="error" role="alert" hidden></div>
 
 <section class="stage-card" aria-label="Session preview">
 <div class="stage-bar">
-<div class="page-identity"><span class="live-dot" aria-hidden="true"></span><p id="page-title">Waiting for a page or application</p><p id="page-location"></p></div>
-<div class="stage-actions"><button id="refresh-frame" class="quiet" title="Refresh the picture">Refresh</button><button id="expand" type="button" aria-pressed="false" class="quiet">Focus view</button><button id="viewer-fullscreen" class="icon-button" type="button" aria-label="Enter fullscreen" title="Fullscreen"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
+<div class="page-identity"><span class="live-dot" aria-hidden="true"></span><p id="page-title" data-i18n="Waiting for a page or application">Waiting for a page or application</p><p id="page-location"></p></div>
+<div class="stage-actions"><button id="refresh-frame" class="icon-button" type="button" data-i18n-label="Refresh the picture" aria-label="Refresh the picture" data-i18n-title="Refresh the picture" title="Refresh the picture"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v4h-4"/></svg></button><button id="expand" type="button" aria-pressed="false" class="quiet" data-i18n="Focus view">Focus view</button><button id="viewer-fullscreen" class="icon-button" type="button" aria-label="Enter fullscreen" data-i18n-title="Fullscreen" title="Fullscreen"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button></div>
 </div>
-<div class="tab-row"><div id="tabs" class="tabs" role="tablist" aria-label="Session tabs" hidden></div><span id="tab-hint" class="note"></span></div>
+<div class="tab-row"><div id="tabs" class="tabs" role="tablist" data-i18n-label="Session tabs" aria-label="Session tabs" hidden></div><span id="tab-hint" class="note"></span></div>
 <div class="stage" id="stage">
 <div class="working-bar" aria-hidden="true"></div>
 <div class="surface">
-<div id="empty">Nothing here yet. Ask one of your assistants to start a session.</div>
-<canvas id="frame" role="img" aria-label="Live image of the selected Orbit session" hidden></canvas>
+<div id="empty" data-i18n="Nothing here yet. Ask one of your assistants to start a session.">Nothing here yet. Ask one of your assistants to start a session.</div>
+<canvas id="frame" role="img" data-i18n-label="Live image of the selected Orbit session" aria-label="Live image of the selected Orbit session" hidden></canvas>
 <div id="agent-pointer" hidden aria-hidden="true"><svg viewBox="0 0 24 28" width="24" height="28"><path d="M2 2 L3 23 L9 17 L14 26 L18 24 L13 15 L22 14 Z" fill="currentColor" stroke="white" stroke-width="2"/></svg><span id="pointer-label">SbarOrbit</span></div>
 </div>
 </div>
 <div class="caption">
-<span id="freshness">Waiting for the first picture</span>
-<span id="activity" role="status">Nothing has happened yet</span>
+<span id="freshness" data-i18n="Waiting for the first picture">Waiting for the first picture</span><span id="last-activity"></span>
+<span id="activity" role="status" data-i18n="Nothing has happened yet">Nothing has happened yet</span>
 </div>
-
 </section>
 
 <div class="panels">
-<details class="card options"><summary>Display settings</summary><div class="disclosure-body">
-<div class="view-settings"><span class="field"><label for="preview-mode">Updates</label><span class="picker"><select id="preview-mode"><option value="balanced" selected>Every second</option><option value="manual">Only when I ask</option><option value="smooth">As smooth as possible</option></select></span></span>
-<span class="field"><label for="surface">Screen size</label><span class="picker"><select id="surface" disabled></select></span><span id="size-note" class="note"></span></span>
-<button id="fullscreen" class="quiet" hidden disabled>Fill the screen</button><button id="restore" class="quiet" hidden disabled>Back to normal</button></div>
-<p id="preview-note">Focus view and fullscreen enlarge your view. Screen size changes the agent's workspace and requires taking over first.</p>
-<details class="tech"><summary>Technical details</summary><p id="cost"></p></details></div></details>
-<details class="card" id="report-panel"><summary>Report a problem</summary><div class="disclosure-body"><p>Orbit prepares the technical details for you. No page content, typed text or screenshots are included. GitHub reports are public and require a GitHub account.</p>
-<button id="prepare-report" type="button">Prepare problem report</button>
-<p id="report-status" role="status">Reports stay on this device until you choose to share them.</p>
-<div id="report-actions" hidden><a id="report-github" target="_blank" rel="noopener noreferrer">Continue to GitHub</a> <button id="download-report" type="button">Download report</button><p>Review the prepared issue, then choose Submit new issue on GitHub. Opening GitHub shares the diagnostic summary with GitHub.</p></div>
+<section id="manual" class="card" hidden aria-label="Typing for your assistant"><h2 data-i18n="Typing for your assistant">Typing for your assistant</h2>
+<p id="input-hint" data-i18n="Choose Take over first. Then click the picture above to pick a box, and type here.">Choose Take over first. Then click the picture above to pick a box, and type here.</p>
+<div class="input-row"><label class="sr-only" for="text" data-i18n="Text to send">Text to send</label><input id="text" data-i18n-placeholder="What should go in the box" placeholder="What should go in the box" disabled><button id="send" class="primary" data-i18n="Send text" disabled>Send text</button><label class="sr-only" for="key" data-i18n="Key to send">Key to send</label><span class="picker"><select id="key" disabled><option>Enter</option><option>Tab</option><option>Backspace</option><option>Escape</option><option>ArrowUp</option><option>ArrowDown</option></select></span><button id="press" data-i18n="Press it" disabled>Press it</button></div>
+</section>
+<section id="account-controls" class="card" hidden aria-label="Account persistence"><h2 data-i18n="Staying signed in">Staying signed in</h2><p id="account-label" class="muted"></p><div class="input-row"><button id="save-account" data-i18n="Remember this sign in" disabled>Remember this sign in</button><span id="account-result" class="result" role="status"></span></div></section>
+<details class="card" id="tools"><summary data-i18n="Settings and tools">Settings and tools</summary><div class="disclosure-body">
+<div class="view-settings"><span class="field"><label for="preview-mode" data-i18n="Updates">Updates</label><span class="picker"><select id="preview-mode"><option value="balanced" data-i18n="Every second" selected>Every second</option><option value="manual" data-i18n="Only when I ask">Only when I ask</option><option value="smooth" data-i18n="As smooth as possible">As smooth as possible</option></select></span></span>
+<span class="field"><label for="surface" data-i18n="Screen size">Screen size</label><span class="picker"><select id="surface" disabled></select></span><span id="size-note" class="note"></span></span>
+<button id="fullscreen" class="quiet" data-i18n="Fill the screen" hidden disabled>Fill the screen</button><button id="restore" class="quiet" data-i18n="Back to normal" hidden disabled>Back to normal</button></div>
+<p id="preview-note" data-i18n="Focus view and fullscreen enlarge your view. Screen size changes the agent's workspace and requires taking over first.">Focus view and fullscreen enlarge your view. Screen size changes the agent's workspace and requires taking over first.</p>
+<div class="tool-block" id="report-panel"><h3 data-i18n="Report a problem">Report a problem</h3><p data-i18n="Orbit prepares the technical details for you. No page content, typed text or screenshots are included. GitHub reports are public and require a GitHub account.">Orbit prepares the technical details for you. No page content, typed text or screenshots are included. GitHub reports are public and require a GitHub account.</p>
+<button id="prepare-report" type="button" data-i18n="Prepare problem report">Prepare problem report</button>
+<p id="report-status" role="status" data-i18n="Reports stay on this device until you choose to share them.">Reports stay on this device until you choose to share them.</p>
+<div id="report-actions" hidden><a id="report-github" target="_blank" rel="noopener noreferrer" data-i18n="Continue to GitHub">Continue to GitHub</a> <button id="download-report" type="button" data-i18n="Download report">Download report</button><p data-i18n="Review the prepared issue, then choose Submit new issue on GitHub. Opening GitHub shares the diagnostic summary with GitHub.">Review the prepared issue, then choose Submit new issue on GitHub. Opening GitHub shares the diagnostic summary with GitHub.</p></div></div>
+<div class="tool-block"><h3 data-i18n="Session actions">Session actions</h3><p data-i18n="End this workspace when the work is done.">End this workspace when the work is done.</p><button id="stop" data-i18n="End session" disabled>End session</button></div>
+<details class="tech"><summary data-i18n="Technical details">Technical details</summary><p id="cost" dir="ltr"></p></details>
 </div></details>
-<details id="manual" class="card"><summary>Typing for your assistant</summary><div class="disclosure-body"><p id="input-hint">Choose Take over first. Then click the picture above to pick a box, and type here.</p>
-<div class="input-row"><label class="sr-only" for="text">Text to send</label><input id="text" placeholder="What should go in the box" disabled><button id="send" class="primary" disabled>Send text</button><label class="sr-only" for="key">Key to send</label><span class="picker"><select id="key" disabled><option>Enter</option><option>Tab</option><option>Backspace</option><option>Escape</option><option>ArrowUp</option><option>ArrowDown</option></select></span><button id="press" disabled>Press it</button></div>
-</div></details>
-<section id="account-controls" class="card" hidden aria-label="Account persistence"><h2>Staying signed in</h2><p id="account-label" class="muted"></p><div class="input-row"><button id="save-account" disabled>Remember this sign in</button><span id="account-result" class="result" role="status"></span></div></section>
-<details class="card"><summary>Session actions</summary><div class="disclosure-body"><p>End this workspace when the work is done.</p><button id="stop" disabled>End session</button></div></details>
 </div>
 
 </main>

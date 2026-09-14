@@ -225,10 +225,13 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 | `session.account.save` | `{sessionId}`, paused named browser session only |
 | `session.act` | `{sessionId, requestId, action}` |
 | `session.observe`, `session.pause`, `session.resume`, `session.stop`, `session.journal` | `{sessionId}` |
+| `session.forget` | `{sessionId}`, a finished session only: drops the broker's list entry and keeps its journal file. An id the broker does not know succeeds with `forgotten:false`; a session that has not finished is refused with `SESSION_OPEN` |
 | `session.narrow` | `{sessionId, origins?:string[], allow?:ActionClass[]}`, tightening only |
 | `session.restore` | `{sessionId, sequence?}`, paused browser session only |
 | `preview.open` | `{launch?:boolean, browser?:string, appWindow?:boolean}`; without `launch` it returns the link and opens nothing |
 | `viewer.browsers` | `{}`, the browsers installed on this desktop and the stored choice |
+
+`session.list` reports each session's `createdAt` and `lastActivityAt` as epoch milliseconds, the second stamped at the start and the settle of every action, so a long action does not leave a session looking untouched while it runs. The viewer orders its list by the later of the two; `session.list` itself still answers in creation order, which is what its other readers expect.
 
 Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The private display backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Ask for it as `system` or as `fedora`: `system` exists because a caller should not have to name a distribution to ask for a private desktop, and it is an alias rather than a wider claim, since the backend still needs the wlroots runtime this project builds and has run on one host class. Everything reported back, in `session.list`, observation and the journal, says `fedora`, so one thing keeps one name; `doctor` lists the aliases. Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
 

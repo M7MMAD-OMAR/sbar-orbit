@@ -1,7 +1,7 @@
 /* ===========================================================================
    Orbit viewer design system
 
-   Two rules shape everything below.
+   Three rules shape everything below.
 
    No lines. Nothing in this file draws a border, and nothing draws a hairline
    ring with a shadow either, because that is a border wearing another
@@ -16,6 +16,15 @@
    survives being read by somebody who cannot separate red from green. The one
    thing that keeps its colour is the agent pointer, for the same reason its
    stroke is white.
+
+   One frame. The window holds a single rounded shell, and the rail is inside
+   it rather than beside it: the list and the picture are one object, so
+   collapsing the rail widens the picture instead of leaving a seam behind.
+
+   Every offset is logical (inline-start, margin-inline), so the whole layout
+   mirrors with the document direction and Arabic needs no rules of its own.
+   The stage is the one deliberate exception and is pinned to ltr: the agent
+   pointer is placed in image coordinates, and image coordinates never mirror.
 
    The palette ships in the fallback position of the Material 3 role each token
    reads, so one declaration serves both this design and a desktop palette the
@@ -58,8 +67,16 @@
   --shadow-2: 0 10px 26px -12px rgb(0 0 0 / .8);
   --shadow-3: 0 28px 70px -30px rgb(0 0 0 / .95);
   --ease: cubic-bezier(.2, .7, .3, 1);
+  /* One curve for anything that opens or closes: a little overshoot at the end
+     so the rail arrives rather than stops. */
+  --ease-rail: cubic-bezier(.32, .9, .24, 1.02);
+  --rail-width: 264px;
 
-  font-family: var(--font-main, system-ui, sans-serif);
+  /* The Latin stack first, then Arabic. A generated desktop font is almost
+     always Latin only, so the Arabic faces sit after it rather than under it:
+     without them the page falls back glyph by glyph, which is what makes an
+     Arabic interface look broken while every string in it is correct. */
+  font-family: var(--font-main, system-ui, sans-serif), "Noto Sans Arabic", "Noto Kufi Arabic", "Segoe UI", Tahoma, sans-serif;
   font-synthesis: none;
   color: var(--ink);
   background: var(--ground);
@@ -67,29 +84,96 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--ground); line-height: 1.5; }
-h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.25; }
+/* Arabic sits taller than Latin at the same size, and its diacritics need the
+   room; one extra step of leading covers both scripts. */
+:root:lang(ar) body { line-height: 1.65; }
+/*
+ * Text that comes from somewhere else: a page title, a URL, the names an agent supplies. Its own
+ * direction is detected from its first strong character, so a Latin string inside an Arabic page
+ * reads left to right, while the box it sits in stays aligned with the page. `dir="auto"` would do
+ * the first half and lose the second: it also decides the alignment, which is how an English title
+ * ends up stranded at the far end of an Arabic header. `match-parent` hands the alignment back to
+ * the layout and leaves only the reading direction to the text.
+ */
+#task-name, #project-name, #agent-name, #page-title, #page-location,
+.session-agent, .session-task, .session-meta, .tab, #pointer-label { unicode-bidi: plaintext; }
+:root:lang(ar) #task-name, :root:lang(ar) #project-name, :root:lang(ar) #agent-name, :root:lang(ar) #page-title,
+:root:lang(ar) #page-location, :root:lang(ar) .session-agent, :root:lang(ar) .session-task,
+:root:lang(ar) .session-meta, :root:lang(ar) .tab { text-align: right; }
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+:root:lang(ar) h1, :root:lang(ar) h2, :root:lang(ar) h3 { letter-spacing: 0; }
 
-/* Screen-first layout. The stage keeps the image's exact aspect ratio. */
-.shell { display:grid; grid-template-columns:248px minmax(0,1fr); min-height:100dvh; }
-.rail { position:sticky; top:0; height:100dvh; display:flex; flex-direction:column; gap:20px; padding:28px 16px 18px; background:var(--level-0); min-width:0; }
+/* --- The frame ----------------------------------------------------------- */
+/* One rounded object holds the rail and the work. The window's own ground is
+   the margin around it, which is what makes the picture read as content inside
+   an application rather than as the application. */
+.shell {
+  display:grid; grid-template-columns:var(--rail-width) minmax(0,1fr);
+  /* The margin is part of the height, or the window scrolls by exactly that much. */
+  height:calc(100dvh - 20px); margin:10px; background:var(--level-0);
+  border-radius:var(--r-xl); overflow:hidden; box-shadow:var(--shadow-3);
+}
+/*
+ * Movement is switched on one frame after the first paint. A viewer that opens with the rail already
+ * closed should find it closed, not watch it close; and a delayed `visibility` on that first frame
+ * would leave a collapsed rail reachable for a third of a second after every reload.
+ */
+.shell.animated { transition:grid-template-columns .36s var(--ease-rail); }
+.shell.animated .rail { transition:opacity .22s var(--ease) .06s, visibility 0s linear 0s; }
+.shell.animated .rail-inner { transition:transform .36s var(--ease-rail); }
+.shell.animated .work { transition:border-radius .36s var(--ease-rail); }
+.rail { min-width:0; overflow:hidden; display:flex; opacity:1; }
+/* The inner column keeps its width while the grid track closes, so the text
+   inside slides out of view instead of reflowing narrower on every frame. */
+.rail-inner { width:var(--rail-width); flex:none; display:flex; flex-direction:column; gap:18px; padding:24px 14px 16px; min-height:0; }
+.shell.sidebar-collapsed { grid-template-columns:0 minmax(0,1fr); }
+.shell.sidebar-collapsed .rail { opacity:0; visibility:hidden; }
+.shell.animated.sidebar-collapsed .rail { transition:opacity .18s var(--ease), visibility 0s linear .36s; }
+.shell.sidebar-collapsed .rail-inner { transform:translateX(-8%) scale(.98); }
 .brand { display:flex; align-items:center; gap:8px; padding:0 8px; }
 .wordmark { font-size:16px; letter-spacing:-.4px; }
 .rail-note { font-size:12px; color:var(--ink-dim); margin:0 8px; }
-.rail-heading { font-size:10px; font-weight:650; letter-spacing:.13em; text-transform:uppercase; margin:8px 8px 0; color:var(--ink-dim); }
-.session-list { display:flex; flex-direction:column; gap:6px; overflow:auto; flex:1; min-height:0; }
-.rail-foot { display:flex; flex-direction:column; gap:12px; padding:0 8px; }
+.rail-heading { font-size:10px; font-weight:650; letter-spacing:.13em; text-transform:uppercase; margin:4px 8px 0; color:var(--ink-dim); }
+:root:lang(ar) .rail-heading { letter-spacing:0; font-size:11px; }
+.session-list { display:flex; flex-direction:column; gap:6px; overflow:auto; flex:1; min-height:0; scrollbar-width:thin; padding-bottom:4px; }
+.rail-foot { display:flex; flex-direction:column; gap:8px; padding:0 8px; }
+.rail-switches { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .link-state { font-size:11px; color:var(--ink-dim); }
-.session { width:100%; text-align:start; padding:13px 12px; background:transparent; border-radius:12px; }
+
+/* --- Session cards ------------------------------------------------------- */
+.session { position:relative; border-radius:var(--r-md); background:transparent; display:flex; align-items:stretch;
+  transition:background .18s var(--ease); }
+.session:hover { background:var(--level-1); }
 .session[aria-current="true"] { background:var(--level-3); }
-.session-top { display:flex; align-items:center; gap:9px; }
-.session-agent { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12px; }
-.session-task { font-size:12px; margin:6px 0 0 18px; color:var(--ink-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.session-meta { margin:7px 0 0 18px; font-size:10px; color:var(--ink-dim); }
+/* The whole card is the target; the button carries the label and stretches
+   over it, which leaves room for a second control without nesting buttons. */
+.session-open { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; text-align:start; padding:12px; background:transparent; }
+.session-open::after { content:""; position:absolute; inset:0; border-radius:var(--r-md); }
+.session-open:hover:not(:disabled) { background:transparent; }
+.session-top { display:flex; align-items:center; gap:9px; min-width:0; }
+.session-agent { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; font-size:12.5px; }
+.session-task,.session-meta,.session-when { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-inline-start:15px; }
+.session-task { font-size:11.5px; color:var(--ink-dim); }
+.session-meta,.session-when { font-size:10.5px; color:var(--ink-faint); }
 .dot,.live-dot { width:6px; height:6px; border-radius:50%; background:var(--ink-dim); flex:none; }
-.session[data-working="true"] .dot,.agent-badge[data-working="true"] .dot { background:var(--ink); box-shadow:0 0 0 3px var(--level-4); }
-.session[data-state="closed"] { opacity:.5; }
-.work { min-width:0; padding:16px 20px; display:flex; flex-direction:column; gap:12px; }
-.head { display:flex; align-items:center; gap:12px; min-height:46px; }
+.session[data-working="true"] .dot,.agent-badge[data-working="true"] .dot { background:var(--ink); box-shadow:0 0 0 3px var(--level-4); animation:pulse 1.8s var(--ease) infinite; }
+.session[data-state="closed"] { opacity:.55; }
+.session[data-state="closed"]:hover,.session[data-state="closed"][aria-current="true"] { opacity:1; }
+/* Removing a finished session is the only thing left to do to one, so it shows
+   up when the card does and asks once before it happens. */
+.session-forget { position:relative; z-index:1; align-self:center; margin-inline-end:6px; width:28px; height:28px; padding:0;
+  display:none; align-items:center; justify-content:center; background:var(--level-2); color:var(--ink-dim); border-radius:var(--r-sm); }
+.session:hover .session-forget,.session:focus-within .session-forget { display:inline-flex; }
+.session-forget:hover:not(:disabled) { background:var(--level-4); color:var(--ink); }
+.session[data-confirm="true"] .session-forget { display:inline-flex; width:auto; padding:0 10px; font-size:10.5px; background:var(--loud); color:var(--on-loud); font-weight:600; }
+@keyframes card-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes pulse { 0%,100% { box-shadow:0 0 0 3px var(--level-4); } 50% { box-shadow:0 0 0 5px var(--level-2); } }
+
+/* --- The work column ----------------------------------------------------- */
+.work { min-width:0; padding:14px 16px 16px; display:flex; flex-direction:column; gap:12px; overflow:auto; background:var(--level-1);
+  border-start-start-radius:var(--r-xl); border-end-start-radius:var(--r-xl); }
+.shell.sidebar-collapsed .work,.shell.bigger .work { border-radius:0; }
+.head { display:flex; align-items:center; gap:12px; min-height:46px; flex:none; }
 .head-identity { flex:1; min-width:0; display:grid; grid-template-columns:auto 1fr; gap:2px 10px; align-items:center; }
 .agent-badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; color:var(--ink-dim); }
 .project-name { color:var(--ink-dim); font-size:11px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -97,23 +181,25 @@ h1, h2 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1.25;
 .head-status,.actions { display:flex; align-items:center; gap:8px; }
 .chip { font-size:11px; color:var(--ink-dim); white-space:nowrap; }
 .chip[data-working="true"] { color:var(--ink); }
-button,input,select { font:inherit; font-size:12px; border:0; border-radius:8px; padding:9px 12px; background:var(--level-2); color:var(--ink); }
-button { cursor:pointer; }
+button,input,select { font:inherit; font-size:12px; border:0; border-radius:var(--r-sm); padding:9px 12px; background:var(--level-2); color:var(--ink); }
+button { cursor:pointer; transition:background .16s var(--ease), color .16s var(--ease); }
 button:hover:not(:disabled) { background:var(--level-3); }
 button:disabled,input:disabled,select:disabled { opacity:.38; cursor:default; }
 button.primary { background:var(--loud); color:var(--on-loud); font-weight:600; }
 button.primary:hover:not(:disabled) { background:var(--ink); }
 button.quiet { background:transparent; color:var(--ink-dim); }
+button.quiet:hover:not(:disabled) { background:var(--level-2); color:var(--ink); }
 button.quiet[aria-pressed="true"] { color:var(--ink); background:var(--level-3); }
-button.icon-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; padding:8px; background:var(--level-1); flex:none; }
+button.icon-button { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; padding:8px; background:transparent; color:var(--ink-dim); flex:none; }
+button.icon-button:hover:not(:disabled) { background:var(--level-2); color:var(--ink); }
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:2px solid var(--ink); outline-offset:3px; }
-.conversation-tabs { display:flex; gap:6px; overflow-x:auto; scrollbar-width:thin; min-height:48px; padding:2px 0; }
-.conversation-tab { display:flex; flex-direction:column; text-align:start; gap:3px; flex:0 0 auto; min-width:150px; max-width:240px; padding:9px 14px; background:var(--level-0); color:var(--ink-dim); }
-.conversation-tab[aria-current="true"] { background:var(--level-3); color:var(--ink); }
-.conversation-tab strong,.conversation-tab span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.conversation-tab strong { font-size:12px; font-weight:550; }
-.conversation-tab span { font-size:10px; color:var(--ink-dim); }
-.stage-card { min-width:0; background:var(--level-1); border-radius:16px; padding:8px; display:flex; flex-direction:column; gap:6px; }
+/* The stretched hit area is what a pointer finds; the ring has to land on the
+   card, not on the text inside it. */
+.session-open:focus-visible { outline:none; }
+.session:has(.session-open:focus-visible) { outline:2px solid var(--ink); outline-offset:2px; }
+
+/* --- The stage ----------------------------------------------------------- */
+.stage-card { min-width:0; background:var(--level-0); border-radius:var(--r-lg); padding:8px; display:flex; flex-direction:column; gap:6px; box-shadow:var(--shadow-2); }
 .stage-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:2px 4px; min-width:0; }
 .stage-actions { display:flex; align-items:center; gap:2px; flex:none; }
 .page-identity { display:flex; align-items:center; gap:8px; overflow:hidden; padding-inline-start:8px; min-width:0; }
@@ -126,52 +212,72 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .tab { padding:6px 11px; font-size:11px; color:var(--ink-dim); background:transparent; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:none; }
 .tab[aria-selected="true"] { background:var(--level-3); color:var(--ink); }
 #tab-hint { font-size:10px; white-space:nowrap; }
-.stage { --available-height:calc(100dvh - 240px); position:relative; min-width:0; min-height:180px; display:flex; align-items:center; justify-content:center; padding:4px; background:var(--sunken); border-radius:10px; overflow:hidden; }
-.surface { position:relative; line-height:0; border-radius:8px; overflow:hidden; width:min(100%,calc(var(--available-height) * var(--shot-width,1280) / var(--shot-height,800))); margin-inline:auto; }
+/* Pinned to ltr on purpose: the pointer is positioned in image coordinates and
+   clicks are measured from the frame's left edge. Neither mirrors. */
+.stage { --available-height:calc(100dvh - 240px); direction:ltr; position:relative; min-width:0; min-height:180px; display:flex; align-items:center; justify-content:center; padding:4px; background:var(--sunken); border-radius:var(--r-md); overflow:hidden; }
+.surface { position:relative; line-height:0; border-radius:10px; overflow:hidden; width:min(100%,calc(var(--available-height) * var(--shot-width,1280) / var(--shot-height,800))); margin-inline:auto; }
 #frame { display:block; width:100%; height:auto; }
 #frame[hidden] { display:none; }
 #frame.controllable { cursor:crosshair; }
-#empty { min-height:48vh; display:flex; align-items:center; justify-content:center; padding:32px; text-align:center; line-height:1.6; color:var(--ink-dim); font-size:13px; }
+#empty { direction:inherit; min-height:46vh; display:flex; align-items:center; justify-content:center; padding:32px; text-align:center; line-height:1.7; color:var(--ink-dim); font-size:13px; }
+:root:lang(ar) #empty { direction:rtl; }
 #empty[hidden] { display:none; }
-.working-bar { position:absolute; top:0; inset-inline:0; height:2px; background:var(--ink); opacity:0; z-index:3; }
+.working-bar { position:absolute; top:0; inset-inline:0; height:2px; background:var(--ink); opacity:0; z-index:3; transition:opacity .2s var(--ease); }
 .shell[data-working="true"] .working-bar { opacity:.55; }
 .caption { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:4px 8px; font-size:10px; color:var(--ink-dim); }
 #activity { margin:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-#freshness { white-space:nowrap; font-variant-numeric:tabular-nums; }
-.panels { display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap; }
-.card { border-radius:12px; background:var(--level-1); min-width:0; }
-.card[open] { flex-basis:100%; order:1; }
-.card summary { cursor:pointer; padding:11px 14px; font-size:11px; font-weight:500; color:var(--ink-dim); }
+#freshness,#last-activity { white-space:nowrap; font-variant-numeric:tabular-nums; }
+#last-activity:empty { display:none; }
+
+/* --- The panels below ---------------------------------------------------- */
+.panels { display:flex; flex-direction:column; align-items:stretch; gap:8px; flex:none; }
+.card { border-radius:var(--r-md); background:var(--level-0); min-width:0; }
+.card summary { cursor:pointer; padding:11px 14px; font-size:11px; font-weight:500; color:var(--ink-dim); list-style-position:inside; }
 .card[open] summary { color:var(--ink); }
-.disclosure-body { padding:4px 16px 16px; }
-.card p { color:var(--ink-dim); font-size:12px; line-height:1.6; margin:6px 0 12px; }
-.card h2 { font-size:13px; }
-#account-controls:not([hidden]) { padding:14px; flex-basis:100%; }
+.disclosure-body { padding:4px 16px 16px; display:flex; flex-direction:column; gap:14px; }
+.card p { color:var(--ink-dim); font-size:12px; line-height:1.7; margin:6px 0 10px; }
+.card h2 { font-size:13px; padding:12px 14px 0; }
+.card h3 { font-size:12px; color:var(--ink); }
+#manual:not([hidden]),#account-controls:not([hidden]) { padding-bottom:14px; animation:card-in .3s var(--ease) both; }
+#manual p,#account-controls p { padding-inline:14px; }
+#manual .input-row,#account-controls .input-row { padding-inline:14px; }
+.tool-block { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
 .input-row,.view-settings { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.input-row input { flex:1; min-width:120px; background:var(--level-0); }
+.input-row input { flex:1; min-width:120px; background:var(--level-2); }
 .field { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .field label,.note { font-size:11px; color:var(--ink-dim); }
 .picker { display:inline-flex; min-width:0; }
 .picker select { max-width:100%; }
-.tech summary { padding:8px 0; }
+.tech summary { padding:8px 0; font-size:11px; color:var(--ink-dim); cursor:pointer; }
 .tech p { font-size:11px; overflow-wrap:anywhere; }
 #report-github { color:var(--ink); font-size:12px; margin-inline-end:12px; }
-#error { background:var(--loud); color:var(--on-loud); border-radius:10px; padding:10px 14px; font-size:12px; }
+#error { background:var(--loud); color:var(--on-loud); border-radius:var(--r-md); padding:10px 14px; font-size:12px; animation:card-in .26s var(--ease) both; }
 [hidden] { display:none!important; }
 .sr-only { position:absolute; clip:rect(0,0,0,0); width:1px; height:1px; overflow:hidden; }
-.shell.sidebar-collapsed,.shell.bigger { grid-template-columns:minmax(0,1fr); }
-.shell.sidebar-collapsed .rail,.shell.bigger .rail { display:none; }
-.shell.bigger .panels,.shell.bigger .conversation-tabs,.shell.bigger .head-status { display:none; }
+
+/* --- Focus view ---------------------------------------------------------- */
+.shell.bigger { grid-template-columns:0 minmax(0,1fr); margin:0; border-radius:0; }
+.shell.bigger .rail { opacity:0; visibility:hidden; }
+.shell.bigger .panels,.shell.bigger .head-status { display:none; }
 .shell.bigger .work { padding:10px; gap:8px; }
-.shell.bigger .stage { --available-height:calc(100dvh - 160px); }
+.shell.bigger .stage { --available-height:calc(100dvh - 150px); }
 .shell.bigger .head { min-height:36px; }
 .shell.bigger #task-name { font-size:13px; }
-.shell.bigger .head-identity { display:flex; }
+.shell.bigger .head-identity { display:flex; align-items:baseline; gap:10px; }
 .shell.bigger #sidebar-toggle { display:none; }
+
 @media(max-width:900px) {
-  .shell { grid-template-columns:minmax(0,1fr); }
-  .rail { position:fixed; inset:68px 12px 12px; width:min(300px,calc(100vw - 24px)); height:auto; border-radius:16px; z-index:10; box-shadow:var(--shadow-3); }
-  .work { padding:12px; gap:10px; }
+  .shell { grid-template-columns:minmax(0,1fr); margin:0; border-radius:0; height:100dvh; }
+  .shell.sidebar-collapsed,.shell.bigger { grid-template-columns:minmax(0,1fr); }
+  /* On a narrow window the rail is a sheet over the work rather than a column
+     beside it, so it slides in from the reading edge and dims nothing behind. */
+  .rail { position:fixed; inset-block:64px 12px; inset-inline:12px auto; width:min(300px,calc(100vw - 24px)); height:auto;
+    background:var(--level-0); border-radius:var(--r-lg); z-index:10; box-shadow:var(--shadow-3); transform:none; }
+  .shell.animated .rail { transition:transform .32s var(--ease-rail), opacity .2s var(--ease), visibility 0s linear 0s; }
+  .rail-inner { width:100%; }
+  .shell.sidebar-collapsed .rail { transform:translateY(10px) scale(.97); }
+  .shell.sidebar-collapsed .rail-inner { transform:none; }
+  .work { padding:12px; gap:10px; border-radius:0; }
   .head { gap:8px; flex-wrap:wrap; }
   .head-identity { min-width:150px; }
   .head-status { width:100%; justify-content:space-between; }
@@ -185,6 +291,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
   .tab-row { flex-direction:column; align-items:flex-start; }
   .tabs { max-width:100%; }
   .card summary { padding:12px; }
+  .session-forget { display:inline-flex; }
   .shell.bigger .head-identity { flex-wrap:wrap; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; } }
