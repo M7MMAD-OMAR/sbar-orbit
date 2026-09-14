@@ -80,13 +80,18 @@
 5. Publish capabilities from evidence; unsupported closed tools remain explicit. The tier table,
    the local `doctor --report` and the issue forms now exist; what they need is a host this project
    does not have. See [support tiers](support-tiers.md).
-6. The browser extension that mints scoped state for a separate Orbit browser. Now written, in
-   `extension/`, and not loaded, not run and not verified. Its pure decision path is unit tested:
-   origin scoping, grant expiry, the request and response envelope, the refusal codes and the native
-   messaging framing. Its three gates, G12 to G14, stay open and cannot be closed here: each needs the
-   extension loaded in a real browser, and this project's rules keep agents out of the person's own
-   browser entirely. Whether `chrome.cookies.getAll` returns `HttpOnly` cookies, whether partition keys
-   survive, whether a stopped service worker has a clean wake path and how long a native port keeps it
-   alive are all still `not measured`.
+6. The browser extension that mints scoped state for a separate Orbit browser. Written in
+   `extension/`, and since 14 September 2026 loaded and run, in an Orbit owned headless Chromium
+   rather than in the person's browser, which is the one place this project's rules keep agents out
+   of. `experiments/extension-gates.ts` builds the shipped manifest unchanged, loads it, and the
+   worker registers its click listener with `cookies`, `storage` and `runtime` bound. Two of its
+   three gates closed on that run: G12, `chrome.cookies.getAll` returns `HttpOnly` cookies and a
+   partition key survives the round trip into a second browser; and G14, the idle worker stops at
+   30 seconds and an open native messaging port to the real host keeps it running past 150. G13
+   stays open, because it asks what a wake path puts on the person's screen and a headless browser
+   has none; the design keeps its person initiated answer. Two facts the run found are now in
+   [packaging](packaging.md): branded Google Chrome ignores `--load-extension`, so a person loads it
+   unpacked through `chrome://extensions`, and on Linux the native messaging host manifest belongs
+   under the browser's user data directory.
 
 Use [acceptance cases](acceptance.md) as release criteria. Alpha versions do not imply these gates are complete.

@@ -1,24 +1,25 @@
 /**
  * The only part of this extension that touches a browser, and it decides nothing.
  *
- * WRITTEN, NOT LOADED, NOT VERIFIED. Nothing in this file has been run. Gates G12, G13 and G14 in
- * `docs/porting.md` each need this extension loaded in a real browser, and this project's rules
- * keep agents out of the person's own browser entirely, so all three stay open.
+ * Loaded and run on 14 September 2026 in an Orbit owned headless Chromium, never in the person's
+ * browser: this file registers, the click listener is present and the APIs it calls are bound.
+ * Gates G12 and G14 in `docs/porting.md` closed on that run; G13 stays open because it is about
+ * what a wake puts on the person's screen, and the owned browser has none.
  *
  * The shape is the one decided in `docs/separate-workspace-review.md`: the extension never drives
  * anything. It runs in the person's browser, and on request it mints narrow, short lived, origin
  * scoped state and hands it to a separate Orbit browser through a native messaging host. There is
  * no content script, no tab automation and no navigation here, and there should never be.
  *
- * Person initiated, because gate G13 is open and untested: nobody has attempted the wake paths into
- * a stopped MV3 service worker, so the design takes the fallback that gate names in advance. The
+ * Person initiated, because gate G13 is open: nobody has attempted the wake paths into a stopped
+ * MV3 service worker on a screen, so the design takes the fallback that gate names in advance. The
  * sequence starts with a click on the toolbar action, which is both the gesture
  * `chrome.permissions.request` needs and the wake the worker needs, and a request arriving with
  * nobody present is refused.
  *
- * How long the worker survives an open native port is gate G14 and is NOT MEASURED. If it is
- * shorter than a mint takes, this file is where that will show, and the port is opened as late as
- * possible for that reason.
+ * How long the worker survives an open native port is gate G14, measured: idle, it stops after 30
+ * seconds; with the port open to the real host it was still running at 150. The port is opened as
+ * late as possible anyway, because a pipe that is open is a host process that is running.
  *
  * `activeTab` is in the manifest for one reason: Chrome documents `tabs.Tab.url` as omitted unless
  * the extension holds `tabs`, `activeTab` or a host permission for that tab, and `activeTab` is the

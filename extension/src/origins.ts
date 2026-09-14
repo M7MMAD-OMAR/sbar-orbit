@@ -19,10 +19,9 @@ export type MintedCookie = {
   path: string;
   secure: boolean;
   /**
-   * Carried because the broker side needs it, and marked here because whether
-   * `chrome.cookies.getAll` returns HttpOnly cookies at all is gate G12 in `docs/porting.md` and
-   * is NOT MEASURED. Session cookies are HttpOnly, so if the answer is no, everything downstream
-   * of this field mints nothing worth having.
+   * Carried because the broker side needs it. Whether `chrome.cookies.getAll` returns HttpOnly
+   * cookies at all was gate G12 in `docs/porting.md`, closed 14 September 2026: it does, with this
+   * flag set, so session cookies are mintable and this field is what says which ones were.
    */
   httpOnly: boolean;
   sameSite?: "Strict" | "Lax" | "None";

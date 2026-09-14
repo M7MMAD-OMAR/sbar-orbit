@@ -1,6 +1,6 @@
 # Sbar Orbit mint extension
 
-**Written, not loaded, not verified.** No part of this directory has been loaded into a browser, started, or observed running, on this machine or any other. Everything below describes what the code is written to do, not what it was measured doing.
+**Loaded and measured on 14 September 2026**, in an Orbit owned headless Chromium 151 with a private profile, never in the person's browser: `experiments/extension-gates.ts` builds the shipped manifest unchanged, loads it, and the worker registers its click listener with `cookies`, `storage` and `runtime` bound. Two of the three gates below closed on that run and one stays open. What the person's own browser does with it is still unobserved, by rule.
 
 ## What it is
 
@@ -19,17 +19,19 @@ An MV3 extension cannot answer requests on a unix socket. That is why `host/mint
 - **It never asks the browser for anything the person has not granted.** There is no static `host_permissions` block, and no `tabs` permission. Host access is requested one origin at a time, under the user gesture the click provides, and only after the allowlist has already said yes.
 - **The host never writes a grant to disk**, never reads a profile, cookie store or keyring, and never sends anything back into the browser beyond an acknowledgement with no cookies in it.
 
-## What is open, and stays open
+## What was measured, and what stays open
 
-Three gates in [porting](../docs/porting.md) need this extension loaded in a real browser. This project's rules keep agents out of the person's own browser entirely, so no agent closes them.
+Three gates in [porting](../docs/porting.md) need this extension loaded in a browser. An Orbit owned headless browser is a browser, and it is not the person's, so two of them were closed there; the third is about the person's screen and cannot be.
 
-- **G12.** Whether `chrome.cookies.getAll` returns `HttpOnly` cookies, and whether partition keys survive the round trip. **Not measured.** Session cookies are `HttpOnly`, so if the answer is no, this whole path mints nothing worth having. The `httpOnly` and `partitionKey` fields are carried through in the shape CDP wants, on that unverified assumption.
-- **G13.** How a queued mint reaches a stopped MV3 service worker without putting something on the person's screen. **Not measured.** The design takes the answer the review already wrote down for this case: person initiated mint, and the code says so.
-- **G14.** Whether an open native messaging port keeps the service worker alive, and for how long. **Not measured.** The port is opened as late as possible for that reason.
+- **G12. Closed.** `chrome.cookies.getAll` returned the `HttpOnly` session cookie beside the plain one, with `httpOnly: true`, the same two names the browser's own `Network.getCookies` listed. A cookie set with `{topLevelSite, hasCrossSiteAncestor}` came back with that exact `partitionKey`, was invisible to a `getAll` without one, and the returned key was accepted by `Network.setCookie` in a second browser and read back there. The `httpOnly` and `partitionKey` fields carried in `MintedCookie` are therefore the fields Chrome fills and accepts, no longer an assumption.
+- **G13. Open.** How a queued mint reaches a stopped MV3 service worker without putting something on the person's screen. A headless browser has no screen, so the run says nothing about it; the one wake it used, `ServiceWorker.startWorker` from a debugger, is not a path a person has. The design keeps the answer the review wrote down: person initiated mint, and the code says so.
+- **G14. Closed.** With nothing attached to it the worker stopped 30.07 seconds after its last work. With a `connectNative` port open to the real `host/mint_host.py`, which blocks on its stdin, it was still running at the 150 second cap, five times the idle interval, and the host process was alive throughout. The port is still opened as late as possible, because a pipe that is open is a process that is running.
 
-Also not measured: whether `activeTab`'s temporary host access would satisfy `chrome.cookies.getAll`. Rather than assume it does, the extension asks for a per origin optional host permission for the cookie read. `activeTab` is in the manifest for a different and narrower job, which is that Chrome documents `tabs.Tab.url` as omitted unless the extension holds `tabs`, `activeTab` or a host permission for that tab.
+Still not measured: whether `activeTab`'s temporary host access would satisfy `chrome.cookies.getAll`. The probe that closed G12 held a static host permission for its two test origins, because a headless run has no click to request one under. The extension keeps asking for a per origin optional host permission for the cookie read. `activeTab` is in the manifest for a different and narrower job, which is that Chrome documents `tabs.Tab.url` as omitted unless the extension holds `tabs`, `activeTab` or a host permission for that tab.
 
 And not measured: whether the user gesture from the action click survives the storage read that precedes the permission request. The allowlist is still read first, because an origin the person never allowed has to be refused before anything is asked of the browser on its behalf.
+
+Two facts from the run that a person loading this needs: branded Google Chrome ignores `--load-extension`, so the unpacked load goes through `chrome://extensions`; and on Linux the native messaging host manifest is read from `NativeMessagingHosts` under the browser's user data directory, which is what `~/.config/chromium` is.
 
 ## Layout
 
@@ -49,7 +51,7 @@ And not measured: whether the user gesture from the action click survives the st
 
 ## Testing
 
-`tests/extension.test.ts` covers the pure modules only: envelope parsing both ways, origin and cookie scoping, lifetimes and expiry, refusal codes, and framing. No browser API is faked anywhere in it, and `service-worker.ts` is deliberately not imported. Passing those tests says nothing about whether the extension loads.
+`tests/extension.test.ts` covers the pure modules only: envelope parsing both ways, origin and cookie scoping, lifetimes and expiry, refusal codes, and framing. No browser API is faked anywhere in it, and `service-worker.ts` is deliberately not imported. Passing those tests says nothing about whether the extension loads; `experiments/extension-gates.ts` is what says that, by loading it.
 
 ```sh
 bun test tests/extension.test.ts
@@ -58,4 +60,4 @@ bun run typecheck
 
 ## Loading it
 
-A person loads this themselves. The steps, also untested, are in [packaging](../docs/packaging.md) under "Load the mint extension by hand".
+A person loads this themselves. The steps are in [packaging](../docs/packaging.md) under "Load the mint extension by hand". To load it into an owned browser the way the gate run does: `bun run scripts/limited.ts bun run experiments/extension-gates.ts`.

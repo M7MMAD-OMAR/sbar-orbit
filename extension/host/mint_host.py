@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 """The native messaging host for the Sbar Orbit mint extension.
 
-WRITTEN, NOT LOADED, NOT VERIFIED. This program has never been started by a browser, because gates
-G12, G13 and G14 need the extension loaded in a real browser and this project's rules keep agents
-out of the person's own browser entirely.
+Started by a browser for the first time on 14 September 2026, an Orbit owned headless Chromium
+rather than the person's: the extension opened a native messaging port to this program, it ran
+for the 150 seconds the port was held, and no message crossed. That closed gate G14. It has still
+never handled a real mint, because the broker side of session.mint is not built.
 
 Why it exists at all: an MV3 extension cannot answer requests on a unix socket. That is the refuter
 result recorded in docs/separate-workspace-review.md, and it is the whole reason for this file. The

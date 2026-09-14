@@ -176,21 +176,25 @@ Browser candidates currently match the owned launcher: `/opt/google/chrome/chrom
 
 On the development workstation the read-only command found both prerequisite groups. Three focused tests cover missing browser/native/common inputs, unsupported OS, executable-check semantics and standalone invocation without ORBIT_SOCKET. No live trial was restarted for this check.
 
-## Load the mint extension by hand (untested instructions)
+## Load the mint extension by hand
 
-`extension/` holds the browser extension that mints narrow, short lived, origin scoped state for a separate Orbit browser, as decided in [the separate workspace review](separate-workspace-review.md). It is **written, not loaded, not verified**. Nobody has run any of the steps below, on this machine or any other, and the steps are written from Chrome's documented behaviour rather than from a run. Gates G12, G13 and G14 in [porting](porting.md) stay open, and they stay open precisely because closing them means loading this in a real browser: a person does that themselves, at a moment they choose, and no agent on this workstation does it for them.
-
-The whole sequence is the person's, not an agent's, for the same reason.
+`extension/` holds the browser extension that mints narrow, short lived, origin scoped state for a separate Orbit browser, as decided in [the separate workspace review](separate-workspace-review.md). Since 14 September 2026 it has been built, loaded and run, in an Orbit owned headless Chromium 151 with a private profile: `experiments/extension-gates.ts` runs the build line below, loads the shipped manifest unchanged, and records that the worker registers with its click listener and the `cookies`, `storage` and `runtime` APIs bound, in 113 ms. Gates G12 and G14 in [porting](porting.md) closed on that run; G13 stays open because it is about the person's screen. Loading it into the person's own browser is still the person's step, at a moment they choose, and no agent on this workstation does it for them.
 
 ```sh
 # 1. Build the service worker. The manifest points at dist/, which the repository does not carry,
-#    so an unpacked load before this step fails outright. This command has never been run here.
+#    so an unpacked load before this step fails outright.
 bun build extension/src/service-worker.ts --target=browser --format=esm --outdir=extension/dist
 
 # 2. Load it: chrome://extensions, turn on Developer mode, "Load unpacked", pick the extension
 #    directory. Chrome assigns an extension ID at this point, and it does not exist before it.
+#    Branded Google Chrome has ignored --load-extension since 137, measured here on the way to
+#    closing G12: the worker never registered. Unpacked through the page is the only way in there;
+#    Chromium still honours the flag.
 
 # 3. Fill in the native messaging host manifest with that ID and an absolute path, then install it.
+#    On Linux the browser looks under its user data directory, which is why these are the usual
+#    paths; a browser started with --user-data-dir reads <that directory>/NativeMessagingHosts
+#    instead, and a manifest under $XDG_CONFIG_HOME alone is "not found". Measured.
 install -Dm644 extension/host/com.sbarorbit.mint.json \
   ~/.config/google-chrome/NativeMessagingHosts/com.sbarorbit.mint.json
 # Chromium reads its own directory instead:
