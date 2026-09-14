@@ -11,7 +11,7 @@ bun run verify
 
 The hook path is per clone and is not carried in the repository, so a fresh clone runs no pre-commit hook until you set it. Without it neither the publication audit nor the secret scan runs on your staged changes. The hook needs `gitleaks` on PATH, or `GITLEAKS_BIN` pointing at it.
 
-There is no hosted continuous integration. `bun run verify` needs the shared budget, which a hosted runner does not have, and the workflow that ran only the pure unit tests was removed rather than kept as a partial gate. A second attempt on 14 September 2026, running the typecheck, the publication audit and the long dash check on a hosted runner, was removed for the same reason: those three take seconds locally and are already run before every commit, so the workflow added a green badge for work that was done anyway and said nothing about the suite. Every gate runs locally: the typecheck, the full suite, the publication audit and the Gitleaks scan, in that order, before a commit.
+There is no hosted continuous integration: `bun run verify` needs the shared budget, which a hosted runner does not have, and a workflow that ran only the cheap checks was a green badge for work already done before every commit. Every gate runs locally, in this order, before a commit: the typecheck, the full suite, the publication audit and the Gitleaks scan.
 
 Native tests additionally require the Fedora runtime and `ORBIT_TEST_NATIVE=1`. Model-host experiments are opt-in and can use the host's existing authentication or paid model service.
 

@@ -306,5 +306,6 @@ says a container is not the measured class whatever distribution it carries. The
 No browser was launched, no broker started, no session created, no frame captured and no unit
 installed. The CPU and memory figures elsewhere in this file were taken under a budget that did not
 exist here, so nothing in this section speaks to cost. A second container is not a second host: both
-images ran on the same kernel as the workstation, so shared library compatibility on another
-distribution is still untested. Gate 3 needs a machine.
+images ran on the same kernel as the workstation. Shared library compatibility on other distributions
+was measured later in `experiments/linux-families/`, see [porting](porting.md) G2 and G5, and is
+still a container result. Gate 3 needs a machine.

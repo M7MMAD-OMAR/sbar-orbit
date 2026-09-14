@@ -9,7 +9,10 @@ or stopping the broker. Set `ORBIT_CONVERSATION_ID` to that same unique ID on
 later commands. Missing IDs on usage commands are refused. See
 [agent interface](agent-interface.md) for MCP scope, reconnect behavior, the
 portable skill and host limitations. Client RPC commands default to the managed
-socket; `ORBIT_SOCKET` selects a different broker.
+socket; `ORBIT_SOCKET` selects a different broker. `ORBIT_NATIVE_RENDERER` and
+`ORBIT_NATIVE_RENDER_DEVICE` opt the private display into a pinned GPU renderer, read once when the
+broker starts; a managed broker takes them from `~/.config/sbar-orbit/broker.env`. Pixman is the
+default and the measured choice, see [fedora results](fedora-results.md).
 
 ## Install
 
