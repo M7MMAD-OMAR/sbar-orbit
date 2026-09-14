@@ -48,5 +48,11 @@ export function startPreview(sessions: Sessions) {
       }
     },
   });
-  return { url: `http://127.0.0.1:${server.port}/#${token}`, close: () => server.stop(true) };
+  /*
+   * The link, and the link to one part of the viewer. The shape belongs here, with the server that
+   * answers it: a caller that wanted the settings used to rebuild this string by replacing a piece of
+   * it, which is a silent no-op the day the shape changes.
+   */
+  const link = (view?: string) => `http://127.0.0.1:${server.port}/${view ? `?view=${encodeURIComponent(view)}` : ""}#${token}`;
+  return { url: link(), link, close: () => server.stop(true) };
 }

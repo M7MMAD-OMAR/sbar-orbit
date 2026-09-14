@@ -5,17 +5,17 @@ runs, the working colour while an agent works, amber when a session is paused, d
 is off. The mark can be traded for a plain capsule, a dot or a dot with a count. It
 blinks once when a session or an application appears. Resting the pointer on it draws a card out of
 the capsule, one row per session, joined to it by a neck that thins as the two separate; clicking a
-card opens the viewer. A left click on the mark opens the viewer, a right click opens a settings
-window, and dragging the mark carries it to another screen edge, with a landing strip on each edge
-and the drop reaching for the nearest one. Everything is adjustable and persists in the person's
-config.
+card opens the viewer. A left click on the mark opens the viewer, a right click opens Orbit's
+settings in the viewer, and dragging the mark carries it to another screen edge, with a landing strip
+on each edge and the drop reaching for the nearest one. Everything is adjustable and persists in the
+person's config.
 
 The body is one Cairo outline rather than a background on each widget, which is what lets the capsule
 and the card read as one thing being pulled apart, and also what keeps a theme from painting an
 opaque rectangle behind the surface. See `body_path` and `metaball` in `panel_draw`.
 
-This file is the application: the window, where it sits, what it does when the person touches it, and
-the settings window. Two neighbours carry the rest. `panel_broker` is everything that speaks to Orbit,
+This file is the application: the window, where it sits, and what it does when the person touches it.
+Two neighbours carry the rest. `panel_broker` is everything that speaks to Orbit,
 with no GTK in it, which is what lets `tests/panel-broker.test.ts` reach it without a display.
 `panel_draw` is the geometry and the paint, and the two widgets that carry them.
 
@@ -106,10 +106,8 @@ DRAG_THRESHOLD = 6.0
 GRIP_SLACK = 9.0
 DROP_TARGET = 78.0
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
-EDGE_LABELS = {"left": "Left", "right": "Right", "top": "Top", "bottom": "Bottom"}
-SHAPE_LABELS = ["logo", "capsule", "dot", "dot with count"]
 # Defaults, ranges, validation and the words a person might search for all live in one module, which the
-# settings window, `sbar-orbit config` and this file all read. A setting described in only one of the
+# settings view in the viewer, `sbar-orbit config` and this file all read. A setting described in only one of the
 # three is a setting one of them silently disagrees about.
 STYLES = orbit_settings.STYLES
 STATE_KEYS = orbit_settings.STATE_KEYS
@@ -389,10 +387,14 @@ class Panel(Gtk.Application):
         viewer = Gtk.Button(label="Open the viewer")
         viewer.add_css_class("flat")
         viewer.connect("clicked", lambda *_: self.open_viewer())
+        mine = Gtk.Button(label="A browser of my own")
+        mine.add_css_class("flat")
+        mine.connect("clicked", lambda *_: self.open_own_session())
         settings = Gtk.Button(label="Settings")
         settings.add_css_class("flat")
         settings.connect("clicked", lambda *_: self.open_settings())
         row.append(viewer)
+        row.append(mine)
         row.append(settings)
         return row
 
@@ -1183,15 +1185,6 @@ class Panel(Gtk.Application):
                 return
             GLib.idle_add(self.open_viewer)
         threading.Thread(target=run, daemon=True).start()
-
-    def change(self, key, value, restyle=True):
-        self.settings[key] = value
-        self.schedule_save()
-        if key in ("edge", "monitor", "margin", "size", "position"):
-            self.relocate()
-        if restyle:
-            self.apply_style()
-        self.sync_frame(force=True)
 
     def schedule_save(self):
         """A drag along the size slider fires on every pixel. Writing the file once when the hand

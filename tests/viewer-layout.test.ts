@@ -2,9 +2,7 @@ import { test, expect } from 'bun:test';
 import { mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBroker, call } from '../src/ipc';
-import { Sessions } from '../src/session';
-import { BrowserBackend } from '../src/browser';
-import { createWorkspaceDirectory } from '../src/workspace-storage';
+import { openViewerPage } from './viewer-page';
 
 const fixture = `<!doctype html><html><head><title>Workspace library</title><style>*{box-sizing:border-box}body{margin:0;background:#f5f6f8;color:#20282f;font:16px system-ui}header{padding:26px 40px;background:white;display:flex;justify-content:space-between}main{padding:45px 60px}small{color:#71818e}h1{font-size:34px;letter-spacing:-1px;margin:8px 0}p{color:#687684}.cards{display:flex;gap:18px;margin:32px 0}.card{background:white;border-radius:16px;padding:24px;flex:1}strong{font-size:32px;display:block;margin-top:16px}table{width:100%;background:white;border-radius:16px;padding:20px;text-align:left}th,td{padding:18px;font-size:14px}th{color:#79838f;font-weight:500}.tag{background:#e7f4ec;border-radius:20px;padding:6px 12px;color:#377354}</style></head><body><header><b>Studio / Workspace</b><small>Product team</small></header><main><small>PROJECT OVERVIEW</small><h1>Workspace library</h1><p>A clear view of the work in progress.</p><div class="cards"><div class="card"><small>Active projects</small><strong>12</strong></div><div class="card"><small>In review</small><strong>4</strong></div><div class="card"><small>Completed this week</small><strong>8</strong></div></div><table><tr><th>Project</th><th>Owner</th><th>Status</th></tr><tr><td>Workspace navigation</td><td>Design team</td><td><span class="tag">In review</span></td></tr><tr><td>Account settings</td><td>Product team</td><td>In progress</td></tr><tr><td>Diagnostic reports</td><td>Engineering</td><td>Ready</td></tr></table></main></body></html>`;
 
@@ -15,8 +13,10 @@ const fixture = `<!doctype html><html><head><title>Workspace library</title><sty
  */
 test('the rail is the only session list, newest first, and mirrors for Arabic', async () => {
   const broker = await startBroker();
-  const root = await createWorkspaceDirectory('viewer-layout-qa');
-  const viewing = new Sessions(root);
+  // The viewer follows the browser's languages; this one asks for Arabic. The English default is
+  // checked at the end of the test, from the same page with nothing remembered.
+  const viewer = await openViewerPage('Viewer design QA', { language: 'ar-SY', viewport: { width: 1440, height: 1000 } });
+  const { page, errors } = viewer;
   const server = Bun.serve({hostname:'127.0.0.1',port:0,fetch:() => new Response(fixture,{headers:{'Content-Type':'text/html'}})});
   const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-viewer-layout';
   try {
@@ -29,18 +29,9 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await call(broker.socket,'session.act',{...a,requestId:'navigate',action:{type:'navigate',url:`http://127.0.0.1:${server.port}`}});
     await call(broker.socket,'session.act',{...a,requestId:'tab',action:{type:'open-tab',url:`http://127.0.0.1:${server.port}/settings`}});
     const preview = await call(broker.socket,'preview.open') as {url:string};
-    const own = await viewing.dispatch({method:'session.create',params:{backend:'browser',agentName:'Codex',taskName:'Viewer design QA'}}) as {sessionId:string};
-    const backend = (viewing as unknown as {sessions:Map<string,{backend:BrowserBackend}>}).sessions.get(own.sessionId)?.backend;
-    const page = backend?.context.pages()[0];
-    if (!page) throw new Error('Private Orbit page missing');
-    const errors:string[]=[]; page.on('pageerror',e=>errors.push(e.message));
     /* The rail opens and closes over about a third of a second now, and the picture is sized from
        what is left, so anything measuring the picture waits for the movement to finish first. */
     const settled = () => page.evaluate(() => new Promise<void>(done => setTimeout(() => requestAnimationFrame(() => done()), 500)));
-    await page.setViewportSize({width:1440,height:1000});
-    // The viewer follows the languages the browser asks for. This one asks for Arabic; the English
-    // default is checked at the end of the test, from the same page with nothing remembered.
-    await page.addInitScript(()=>Object.defineProperty(navigator,'languages',{get:()=>['ar-SY','ar'],configurable:true}));
     await page.goto(preview.url,{waitUntil:'domcontentloaded'});
     await page.locator('#frame').waitFor({state:'visible'});
 
@@ -184,5 +175,5 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.keyboard.press('Escape');
     await page.locator('#sidebar').waitFor({state:'hidden'});
     expect(errors).toEqual([]);
-  } finally {await viewing.close();await broker.close();server.stop(true);await rm(root,{recursive:true,force:true});}
+  } finally {await viewer.close();await broker.close();server.stop(true);}
 },60000);

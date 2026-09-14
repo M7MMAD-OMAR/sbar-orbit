@@ -44,8 +44,8 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
           preview ??= startPreview(sessions);
           const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean; view?: string };
           // Which part of the viewer to land on. A named view rather than a free URL, so the only
-          // thing a caller can ask for is a page this project ships.
-          const url = params.view === "settings" ? preview.url.replace("/#", "/?view=settings#") : preview.url;
+          // thing a caller can ask for is a page this project ships, and the preview server builds it.
+          const url = params.view === "settings" ? preview.link("settings") : preview.url;
           // The link carries an access token, so opening it here keeps it out of any caller that only
           // wanted a window. A caller that asks for the URL alone still gets the URL alone.
           if (!params.launch) return Response.json({ ok: true, result: { url } });

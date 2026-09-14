@@ -3,9 +3,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startBroker, call } from '../src/ipc';
-import { Sessions } from '../src/session';
-import { BrowserBackend } from '../src/browser';
-import { createWorkspaceDirectory } from '../src/workspace-storage';
+import { openViewerPage } from './viewer-page';
 
 /*
  * The settings are the desktop's, so this test gives the run its own XDG_CONFIG_HOME and
@@ -22,8 +20,8 @@ test('the viewer reads, writes and resets the desktop settings through the one s
   await mkdir(join(runtime, 'sbar-orbit'), { recursive: true });
   await writeFile(join(runtime, 'sbar-orbit', 'monitors.json'), JSON.stringify([{ connector: 'DP-3', width: 3840, height: 2160 }]));
   const broker = await startBroker();
-  const root = await createWorkspaceDirectory('viewer-settings-qa');
-  const viewing = new Sessions(root);
+  const viewer = await openViewerPage('Viewer settings QA', { language: 'ar-SY', viewport: { width: 1280, height: 900 } });
+  const { page, errors } = viewer;
   try {
     const listed = await call(broker.socket, 'settings.list') as { settings: { key: string; kind: string; value: unknown }[]; monitors: unknown[] };
     expect(listed.settings.find(entry => entry.key === 'blink')).toMatchObject({ kind: 'switch', value: true });
@@ -32,18 +30,9 @@ test('the viewer reads, writes and resets the desktop settings through the one s
     await expect(call(broker.socket, 'settings.write', { key: 'edge', value: 'sideways' })).rejects.toMatchObject({ code: 'SETTINGS_REFUSED' });
     await expect(call(broker.socket, 'settings.write', { key: 'invented', value: 'x' })).rejects.toMatchObject({ code: 'SETTINGS_REFUSED' });
 
-    const preview = await call(broker.socket, 'preview.open') as { url: string };
     // The panel asks for this link when a person right clicks the mark.
     const settingsLink = await call(broker.socket, 'preview.open', { view: 'settings' }) as { url: string };
     expect(settingsLink.url).toContain('?view=settings#');
-    const own = await viewing.dispatch({ method: 'session.create', params: { backend: 'browser', agentName: 'Codex', taskName: 'Viewer settings QA' } }) as { sessionId: string };
-    const backend = (viewing as unknown as { sessions: Map<string, { backend: BrowserBackend }> }).sessions.get(own.sessionId)?.backend;
-    const page = backend?.context.pages()[0];
-    if (!page) throw new Error('Private Orbit page missing');
-    const errors: string[] = [];
-    page.on('pageerror', error => errors.push(error.message));
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await page.addInitScript(() => Object.defineProperty(navigator, 'languages', { get: () => ['ar-SY', 'ar'], configurable: true }));
     await page.goto(settingsLink.url, { waitUntil: 'domcontentloaded' });
 
     // The link lands on the settings, not on the pictures.
@@ -111,8 +100,7 @@ test('the viewer reads, writes and resets the desktop settings through the one s
     expect(await page.locator('.stage-card').isVisible()).toBe(true);
     expect(errors).toEqual([]);
   } finally {
-    await viewing.close(); await broker.close();
-    await rm(root, { recursive: true, force: true });
+    await viewer.close(); await broker.close();
     await rm(config, { recursive: true, force: true });
     await rm(runtime, { recursive: true, force: true });
     if (previousConfig === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previousConfig;

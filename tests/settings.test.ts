@@ -174,3 +174,20 @@ test("a settings file that cannot be read leaves it alone rather than overwritin
     expect(await readFile(path, "utf8")).toBe("{ this is not json");
   } finally { await rm(home, { recursive: true, force: true }); }
 });
+
+test("every word the schema owns is carried in both languages", async () => {
+  // The viewer renders these rather than keeping its own copy, so a label or a description added
+  // without its Arabic would go quietly back to English for an Arabic reader, and nothing would fail.
+  expect(await python(`
+import json, orbit_settings as o
+print(json.dumps([[e["key"], field] for e in o.SCHEMA for field in ("group", "label", "description") if e[field] not in o.ARABIC]))`)).toEqual([]);
+  expect(await python(`
+import json, orbit_settings as o
+owned = {e[field] for e in o.SCHEMA for field in ("group", "label", "description")}
+print(json.dumps([k for k in o.ARABIC if k not in owned]))`)).toEqual([]);
+  // And each described setting carries the translation beside the English, which is what the page reads.
+  const described = await python(`
+import json, orbit_settings as o
+print(json.dumps(o.describe(o.BY_KEY["edge"], o.defaults()), ensure_ascii=False))`) as { arabic: Record<string, string> };
+  expect(described.arabic).toMatchObject({ label: "حافة الشاشة" });
+});

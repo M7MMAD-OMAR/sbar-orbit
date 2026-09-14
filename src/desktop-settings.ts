@@ -49,13 +49,18 @@ export async function listSettings(): Promise<DesktopSetting[]> {
  */
 export async function writeSetting(params: Record<string, unknown>) {
   // Every setting at once. The schema's own reset does it, so the defaults are not written down here.
-  if (params.all === true) { await config(["reset"]); return { settings: await listSettings() }; }
-  const key = text(params.key, "key");
-  if (params.reset === true) { await config(["reset", key]); return { settings: await listSettings() }; }
-  if (params.value === undefined) throw new OrbitError("INVALID_REQUEST", "A change needs a value, or reset");
-  const value = typeof params.value === "string" ? params.value : JSON.stringify(params.value);
-  await config(["set", key, value]);
-  return { settings: await listSettings() };
+  if (params.all === true) await config(["reset"]);
+  else {
+    const key = text(params.key, "key");
+    if (params.reset === true) await config(["reset", key]);
+    else {
+      if (params.value === undefined) throw new OrbitError("INVALID_REQUEST", "A change needs a value, or reset");
+      await config(["set", key, typeof params.value === "string" ? params.value : JSON.stringify(params.value)]);
+    }
+  }
+  // Reading the whole list back is a second run of the program, so a caller that is not about to
+  // repaint anything, a slider still under a finger, can say it does not need one.
+  return params.list === false ? { settings: [] } : { settings: await listSettings() };
 }
 
 /**
@@ -65,7 +70,9 @@ export async function writeSetting(params: Record<string, unknown>) {
  * than pretending to know what is plugged in.
  */
 export async function listMonitors(env: Record<string, string | undefined> = process.env) {
-  const runtime = env.XDG_RUNTIME_DIR;
+  // The same fallback the panel uses when it writes the file, or the two would disagree about where
+  // it is on a session that never set the variable.
+  const runtime = env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? ""}`;
   if (!runtime) return [];
   try {
     const listed = JSON.parse(await readFile(join(runtime, "sbar-orbit", "monitors.json"), "utf8")) as unknown;

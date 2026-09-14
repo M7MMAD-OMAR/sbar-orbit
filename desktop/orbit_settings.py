@@ -51,6 +51,57 @@ def setting(key, group, label, default, kind, description, terms, choices=None, 
             "stored": stored}
 
 
+# The Arabic of every word this file owns, keyed by the English it translates. It lives here rather
+# than in the page that draws the rows, because a description edited here and translated there goes
+# quietly back to English the moment the two stop matching character for character, and nothing fails.
+# The search terms above are already carried in both languages for the same reason.
+ARABIC = {
+    "Startup": "بدء التشغيل",
+    "Placement": "الموضع",
+    "The mark": "العلامة",
+    "The viewer": "نافذة المتابعة",
+    "Working glow": "توهج العمل",
+    "Motion and blending": "الحركة والمزج",
+    "Notifications": "الإشعارات",
+    "Start Orbit with my desktop": "ابدأ أوربت مع سطح المكتب",
+    "Whether the broker and the mark come back on their own. Installed by default; this is systemd and an autostart entry rather than a value in the settings file.": "هل يعود الوسيط والعلامة وحدهما بعد إعادة التشغيل. مفعل عند التثبيت، وهو قيد في systemd ومدخل بدء تلقائي، لا قيمة في ملف الإعدادات.",
+    "Screen edge": "حافة الشاشة",
+    "Which edge of the screen the mark is docked to.": "الحافة التي ترسو عليها العلامة.",
+    "Monitor": "الشاشة",
+    "Which monitor it appears on. Unset means whichever the compositor calls first.": "الشاشة التي تظهر عليها العلامة. تركها فارغة يعني أول شاشة يسميها مدير النوافذ.",
+    "Distance from the edge": "المسافة عن الحافة",
+    "Pixels between the mark and the edge of the screen.": "عدد البكسلات بين العلامة وحافة الشاشة.",
+    "Place along the edge": "الموضع على طول الحافة",
+    "Where along its edge the mark sits, from the start of the edge to the end. Dragging the mark sets this.": "أين تجلس العلامة على حافتها، من أولها إلى آخرها. سحب العلامة بيدك يضبط هذه القيمة.",
+    "Shape": "الشكل",
+    "What the mark looks like: the logo, a plain capsule, a dot, or a dot carrying a count.": "شكل العلامة: الشعار، أو كبسولة بسيطة، أو نقطة، أو نقطة تحمل عددا.",
+    "Size": "الحجم",
+    "How large the mark is, in pixels.": "حجم العلامة بالبكسل.",
+    "Hide it while nothing runs": "أخفها ما لم يكن هناك عمل",
+    "Show the mark only while a session exists, instead of always.": "أظهر العلامة فقط عند وجود جلسة، بدل إظهارها دائما.",
+    "State colours": "ألوان الحالات",
+    "One colour per state: idle, working, paused, and Orbit not running. Working is Orbit's blue, the same colour as the screen edge glow and the agent pointer, so one colour means an agent is acting wherever it appears.": "لون لكل حالة: ساكن، يعمل، متوقف مؤقتا، وأوربت غير مشغل. لون العمل هو أزرق أوربت نفسه الذي يضيء حواف الشاشة ويرسم مؤشر الوكيل، فلون واحد يعني أن وكيلا يتصرف أينما ظهر.",
+    "Open the viewer in": "افتح نافذة المتابعة في",
+    "Which installed browser the viewer opens in. Unset picks the desktop's own browser when it can open a window of its own, and otherwise the first installed browser that can.": "أي متصفح مثبت تفتح فيه نافذة المتابعة. تركه تلقائيا يختار متصفح سطح المكتب إن كان يفتح نافذة مستقلة، وإلا أول متصفح مثبت يستطيع ذلك.",
+    "Open it as its own window": "افتحها كنافذة مستقلة",
+    "A window with no tab strip and no address bar, the way an installed web application opens. Browsers in the Firefox family have no such mode and open a tab whatever this says.": "نافذة بلا شريط تبويبات ولا شريط عنوان، كما يفتح تطبيق ويب مثبت. متصفحات عائلة فايرفوكس لا تملك هذا الوضع وتفتح تبويبا مهما كان هذا الإعداد.",
+    "Glow the screen edges while working": "أضئ حواف الشاشة أثناء العمل",
+    "A soft glow inside the edges of the screen while an agent is working, with no border and nothing to click through.": "توهج خفيف داخل حواف الشاشة أثناء عمل الوكيل، بلا إطار ولا شيء يعترض النقر.",
+    "Breathe while working": "تنفس أثناء العمل",
+    "The glow rises and falls while work is in flight. Separable from the glow itself, because motion is the part that costs.": "يعلو التوهج ويخفت ما دام هناك عمل جار. منفصل عن التوهج نفسه لأن الحركة هي الجزء المكلف.",
+    "Glow colour": "لون التوهج",
+    "Orbit's blue by default, the colour the agent pointer is drawn in. The word accent follows the desktop theme instead, light and dark, and any colour here overrides both.": "أزرق أوربت افتراضيا، وهو لون مؤشر الوكيل. كلمة accent تتبع لون سطح المكتب في الوضعين الفاتح والداكن، وأي لون تختاره هنا يتقدم عليهما.",
+    "Liquid motion": "حركة سائلة",
+    "The card is pulled out of the capsule rather than appearing. Turning it off removes the animation, not the card.": "تسحب البطاقة من الكبسولة بدل أن تظهر فجأة. إيقافها يزيل الحركة لا البطاقة.",
+    "How solid the card is": "مدى صلابة البطاقة",
+    "How much of the wallpaper shows through the glass, from mostly transparent to solid.": "كم تظهر خلفية سطح المكتب عبر الزجاج، من شبه شفاف إلى صلب.",
+    "Desktop notifications": "إشعارات سطح المكتب",
+    "A notification through the person's own daemon when a session or an application appears.": "إشعار عبر خدمة الإشعارات في جهازك عند ظهور جلسة أو تطبيق.",
+    "Blink when something happens": "اومض عند حدوث شيء",
+    "The mark blinks once when a session or an application appears.": "تومض العلامة مرة واحدة عند ظهور جلسة أو تطبيق.",
+}
+
+
 SCHEMA = (
     setting("autostart", "Startup", "Start Orbit with my desktop", True, "switch",
             "Whether the broker and the mark come back on their own. Installed by default; this is systemd and an autostart entry rather than a value in the settings file.",
@@ -114,7 +165,10 @@ SCHEMA = (
     setting("frameColor", "Working glow", "Glow colour", "#255fce", "accent_color",
             "Orbit's blue by default, the colour the agent pointer is drawn in. The word accent follows the desktop theme instead, light and dark, and any colour here overrides both.",
             ["accent", "theme", "colour", "color", "blue", "glow", "match", "desktop", "matugen",
-             "لون", "أزرق", "تمييز", "ثيم", "سمة", "توهج", "سطح المكتب"]),
+             "لون", "أزرق", "تمييز", "ثيم", "سمة", "توهج", "سطح المكتب"],
+            # The word this colour also accepts, said here rather than known only by `coerce`: a reader
+            # that draws the control cannot offer a value the schema never mentions.
+            choices=("accent",)),
     setting("motion", "Motion and blending", "Liquid motion", True, "switch",
             "The card is pulled out of the capsule rather than appearing. Turning it off removes the animation, not the card.",
             ["motion", "animation", "liquid", "morph", "smooth", "still", "performance", "cost",
@@ -295,18 +349,23 @@ def autostart_value():
     return bool(state.get("startsWithTheDesktop"))
 
 
+def wording(entry):
+    """What a setting is called, in both languages. A reader that draws these picks one; a reader that
+    prints them at a terminal uses the English and never sees the rest."""
+    return {"key": entry["key"], "group": entry["group"], "label": entry["label"], "description": entry["description"],
+            "arabic": {field: ARABIC[entry[field]] for field in ("group", "label", "description") if entry[field] in ARABIC}}
+
+
 def describe(entry, settings):
     if not entry["stored"]:
-        return {"key": entry["key"], "group": entry["group"], "label": entry["label"], "kind": entry["kind"],
-                "description": entry["description"], "value": autostart_value(), "default": entry["default"],
+        return {**wording(entry), "kind": entry["kind"], "value": autostart_value(), "default": entry["default"],
                 "terms": list(entry["terms"]) + [GROUP_TERMS.get(entry["group"], "")],
                 "storedIn": "systemd and an autostart entry, not the settings file"}
     value = settings.get(entry["key"], entry["default"])
     # The kind travels with the setting. A reader that draws a control has to know whether a string is
     # a colour, a browser or a monitor, and guessing that from the value is how a colour picker ends up
     # on a browser name.
-    described = {"key": entry["key"], "group": entry["group"], "label": entry["label"], "kind": entry["kind"],
-                 "description": entry["description"], "value": value, "default": entry["default"],
+    described = {**wording(entry), "kind": entry["kind"], "value": value, "default": entry["default"],
                  # The search terms travel too, so a settings box in the viewer answers the same Arabic
                  # word `sbar-orbit config search` answers rather than only the label it can see.
                  "terms": list(entry["terms"]) + [GROUP_TERMS.get(entry["group"], "")]}

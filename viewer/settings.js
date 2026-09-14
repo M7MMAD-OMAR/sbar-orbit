@@ -13,78 +13,35 @@
  * a terminal, which is what makes this a way in rather than the way in.
  */
 (() => {
-  Object.assign(arabic, {
-    'Sessions': 'الجلسات',
+  // Only this page's own words. Everything a setting is called comes from the schema, in both
+  // languages, because a description translated in two files goes silently back to English the day
+  // the two stop matching character for character.
+  registerStrings({
     'Settings': 'الإعدادات',
-    'Views': 'الأقسام',
     'Search the settings': 'ابحث في الإعدادات',
     'Put everything back the way it came': 'أعد كل شيء إلى أصله',
     'Nothing matches {query}': 'لا شيء يطابق {query}',
     'Saved': 'حفظ',
     'Could not save: {reason}': 'تعذر الحفظ: {reason}',
     'Settings are unavailable. Orbit is not answering.': 'الإعدادات غير متاحة. أوربت لا يستجيب.',
-    'Default': 'الأصل',
-    'Back to default': 'عد إلى الأصل',
     'Automatic': 'تلقائي',
     'Largest screen': 'أكبر شاشة',
+    'Follow the desktop theme': 'اتبع لون سطح المكتب',
     'opens a tab': 'يفتح تبويبا',
-    'Name of the monitor': 'اسم الشاشة',
-    // The groups.
-    'Startup': 'بدء التشغيل',
-    'Placement': 'الموضع',
-    'The mark': 'العلامة',
-    'The viewer': 'نافذة المتابعة',
-    'Working glow': 'توهج العمل',
-    'Motion and blending': 'الحركة والمزج',
-    'Notifications': 'الإشعارات',
-    // The settings, label and explanation, in the words of the schema.
-    'Start Orbit with my desktop': 'ابدأ أوربت مع سطح المكتب',
-    'Whether the broker and the mark come back on their own. Installed by default; this is systemd and an autostart entry rather than a value in the settings file.': 'هل يعود الوسيط والعلامة وحدهما بعد إعادة التشغيل. مفعل عند التثبيت، وهو قيد في systemd ومدخل بدء تلقائي، لا قيمة في ملف الإعدادات.',
-    'Screen edge': 'حافة الشاشة',
-    'Which edge of the screen the mark is docked to.': 'الحافة التي ترسو عليها العلامة.',
-    'Monitor': 'الشاشة',
-    'Which monitor it appears on. Unset means whichever the compositor calls first.': 'الشاشة التي تظهر عليها العلامة. تركها فارغة يعني أول شاشة يسميها مدير النوافذ.',
-    'Distance from the edge': 'المسافة عن الحافة',
-    'Pixels between the mark and the edge of the screen.': 'عدد البكسلات بين العلامة وحافة الشاشة.',
-    'Place along the edge': 'الموضع على طول الحافة',
-    'Where along its edge the mark sits, from the start of the edge to the end. Dragging the mark sets this.': 'أين تجلس العلامة على حافتها، من أولها إلى آخرها. سحب العلامة بيدك يضبط هذه القيمة.',
-    'Shape': 'الشكل',
-    'What the mark looks like: the logo, a plain capsule, a dot, or a dot carrying a count.': 'شكل العلامة: الشعار، أو كبسولة بسيطة، أو نقطة، أو نقطة تحمل عددا.',
-    'Size': 'الحجم',
-    'How large the mark is, in pixels.': 'حجم العلامة بالبكسل.',
-    'Hide it while nothing runs': 'أخفها ما لم يكن هناك عمل',
-    'Show the mark only while a session exists, instead of always.': 'أظهر العلامة فقط عند وجود جلسة، بدل إظهارها دائما.',
-    'State colours': 'ألوان الحالات',
-    "One colour per state: idle, working, paused, and Orbit not running. Working is Orbit's blue, the same colour as the screen edge glow and the agent pointer, so one colour means an agent is acting wherever it appears.": 'لون لكل حالة: ساكن، يعمل، متوقف مؤقتا، وأوربت غير مشغل. لون العمل هو أزرق أوربت نفسه الذي يضيء حواف الشاشة ويرسم مؤشر الوكيل، فلون واحد يعني أن وكيلا يتصرف أينما ظهر.',
-    'Open the viewer in': 'افتح نافذة المتابعة في',
-    "Which installed browser the viewer opens in. Unset picks the desktop's own browser when it can open a window of its own, and otherwise the first installed browser that can.": 'أي متصفح مثبت تفتح فيه نافذة المتابعة. تركه تلقائيا يختار متصفح سطح المكتب إن كان يفتح نافذة مستقلة، وإلا أول متصفح مثبت يستطيع ذلك.',
-    'Open it as its own window': 'افتحها كنافذة مستقلة',
-    'A window with no tab strip and no address bar, the way an installed web application opens. Browsers in the Firefox family have no such mode and open a tab whatever this says.': 'نافذة بلا شريط تبويبات ولا شريط عنوان، كما يفتح تطبيق ويب مثبت. متصفحات عائلة فايرفوكس لا تملك هذا الوضع وتفتح تبويبا مهما كان هذا الإعداد.',
-    'Glow the screen edges while working': 'أضئ حواف الشاشة أثناء العمل',
-    'A soft glow inside the edges of the screen while an agent is working, with no border and nothing to click through.': 'توهج خفيف داخل حواف الشاشة أثناء عمل الوكيل، بلا إطار ولا شيء يعترض النقر.',
-    'Breathe while working': 'تنفس أثناء العمل',
-    'The glow rises and falls while work is in flight. Separable from the glow itself, because motion is the part that costs.': 'يعلو التوهج ويخفت ما دام هناك عمل جار. منفصل عن التوهج نفسه لأن الحركة هي الجزء المكلف.',
-    'Glow colour': 'لون التوهج',
-    "Orbit's blue by default, the colour the agent pointer is drawn in. The word accent follows the desktop theme instead, light and dark, and any colour here overrides both.": 'أزرق أوربت افتراضيا، وهو لون مؤشر الوكيل. كلمة accent تتبع لون سطح المكتب في الوضعين الفاتح والداكن، وأي لون تختاره هنا يتقدم عليهما.',
-    'Liquid motion': 'حركة سائلة',
-    'The card is pulled out of the capsule rather than appearing. Turning it off removes the animation, not the card.': 'تسحب البطاقة من الكبسولة بدل أن تظهر فجأة. إيقافها يزيل الحركة لا البطاقة.',
-    'How solid the card is': 'مدى صلابة البطاقة',
-    'How much of the wallpaper shows through the glass, from mostly transparent to solid.': 'كم تظهر خلفية سطح المكتب عبر الزجاج، من شبه شفاف إلى صلب.',
-    'Desktop notifications': 'إشعارات سطح المكتب',
-    "A notification through the person's own daemon when a session or an application appears.": 'إشعار عبر خدمة الإشعارات في جهازك عند ظهور جلسة أو تطبيق.',
-    'Blink when something happens': 'اومض عند حدوث شيء',
-    'The mark blinks once when a session or an application appears.': 'تومض العلامة مرة واحدة عند ظهور جلسة أو تطبيق.',
+    'Show': 'اعرض',
     // The values a choice offers.
     'left': 'يسار', 'right': 'يمين', 'top': 'أعلى', 'bottom': 'أسفل',
     'mark': 'الشعار', 'bar': 'شريط', 'dot': 'نقطة', 'count': 'عدد',
     'idle': 'ساكن', 'working': 'يعمل', 'paused': 'متوقف مؤقتا', 'offline': 'غير مشغل',
   });
+  /** What a setting is called here: the schema carries both languages, so this only picks one. */
+  const wording = (entry, field) => (language === 'ar' && entry.arabic?.[field]) || entry[field];
 
   const view = element('settings-view');
   const groups = element('settings-groups');
   const status = element('settings-status');
   const search = element('settings-search');
-  let schema = [], browsers = [], monitors = [], loaded = false, writing = 0;
+  let schema = [], browsers = [], monitors = [], loaded = false;
   const timers = new Map();
 
   /** Say what happened, briefly. A change that worked says so and then gets out of the way. */
@@ -109,16 +66,16 @@
    * back is the whole settings list as it now stands rather than what this page hoped it wrote.
    */
   async function write(key, value, options = {}) {
-    writing++;
     try {
-      const answer = await rpc('settings.write', options.all ? { all: true } : options.reset ? { key, reset: true } : { key, value });
-      schema = answer.settings || schema;
+      const answer = await rpc('settings.write', { ...(options.all ? { all: true } : options.reset ? { key, reset: true } : { key, value }),
+        ...(options.redraw === false ? { list: false } : {}) });
+      if (answer.settings?.length) schema = answer.settings;
       say(t('Saved'));
       if (options.redraw !== false) draw();
     } catch (error) {
       say(t('Could not save: {reason}', { reason: error.message }), true);
       draw();
-    } finally { writing--; }
+    }
   }
 
   /** A slider fires on every pixel. The file is written once the hand stops. */
@@ -132,8 +89,12 @@
   function matches(entry) {
     const query = search.value.trim().toLowerCase();
     if (!query) return true;
-    const haystack = [t(entry.label), t(entry.description), entry.key, entry.group, t(entry.group), ...(entry.terms || [])];
-    return haystack.some(word => String(word).toLowerCase().includes(query));
+    // The same rule the schema's own search uses: one haystack, and every word of the query has to be
+    // in it. Two words that land in two different fields find the setting here as they do at a terminal.
+    const haystack = [entry.key, entry.group, entry.label, entry.description,
+      wording(entry, 'group'), wording(entry, 'label'), wording(entry, 'description'), ...(entry.terms || [])]
+      .join(' ').toLowerCase();
+    return query.split(/\s+/).every(word => haystack.includes(word));
   }
 
   function draw() {
@@ -144,7 +105,7 @@
       const card = document.createElement('section');
       card.className = 'settings-group';
       const heading = document.createElement('h3');
-      heading.textContent = t(name);
+      heading.textContent = wording(wanted.find(one => one.group === name), 'group');
       card.append(heading);
       for (const entry of wanted.filter(one => one.group === name)) card.append(row(entry));
       return card;
@@ -160,10 +121,10 @@
     text.className = 'setting-text';
     const label = document.createElement('span');
     label.className = 'setting-label';
-    label.textContent = t(entry.label);
+    label.textContent = wording(entry, 'label');
     const about = document.createElement('p');
     about.className = 'setting-about';
-    about.textContent = t(entry.description);
+    about.textContent = wording(entry, 'description');
     text.append(label, about);
     const control = document.createElement('div');
     control.className = 'setting-control';
@@ -179,7 +140,18 @@
       const [low, high] = entry.range || (entry.kind === 'fraction' ? [0, 1] : [0, 100]);
       return [slider(entry, low, high)];
     }
-    if (entry.kind === 'accent_color') return [swatch(entry.value, next => write(entry.key, next))];
+    if (entry.kind === 'accent_color') return [swatch(entry.value, next => write(entry.key, next)),
+      ...(entry.choices || []).map(named => {
+        // A colour setting that also accepts a word, such as following the desktop's own accent. The
+        // schema says which words; this draws one switch for each rather than knowing any of them.
+        const chip = document.createElement('button');
+        chip.type = 'button'; chip.className = 'segment named';
+        chip.setAttribute('role', 'radio');
+        chip.setAttribute('aria-checked', String(entry.value === named));
+        chip.textContent = t('Follow the desktop theme');
+        chip.onclick = () => write(entry.key, entry.value === named ? entry.default : named);
+        return chip;
+      })];
     if (entry.kind === 'colors') return Object.keys(entry.value || {}).map(state => {
       const pair = document.createElement('span');
       pair.className = 'swatch-pair';
@@ -194,12 +166,12 @@
       entry.value || '', next => write(entry.key, next))];
     if (entry.kind === 'monitor') {
       // With no panel running there is no list to choose from, so the name is typed instead of picked.
-      if (!monitors.length) return [textbox(entry.value || '', next => write(entry.key, next))];
+      if (!monitors.length) return [textbox(entry, entry.value || '', next => write(entry.key, next))];
       return [picker([{ value: '', label: t('Largest screen') },
         ...monitors.map(screen => ({ value: screen.connector, label: `${screen.connector} (${screen.width} × ${screen.height})` }))],
         entry.value == null ? '' : String(entry.value), next => write(entry.key, next))];
     }
-    return [textbox(String(entry.value ?? ''), next => write(entry.key, next))];
+    return [textbox(entry, String(entry.value ?? ''), next => write(entry.key, next))];
   }
 
   /* --- The controls ------------------------------------------------------------------------------
@@ -242,7 +214,7 @@
     input.min = String(low); input.max = String(high);
     input.step = entry.kind === 'fraction' ? '0.01' : '1';
     input.value = String(entry.value ?? low);
-    input.setAttribute('aria-label', t(entry.label));
+    input.setAttribute('aria-label', wording(entry, 'label'));
     const readout = document.createElement('span');
     readout.className = 'slider-value';
     const show = value => { readout.textContent = entry.kind === 'fraction' ? `${Math.round(Number(value) * 100)}%` : String(value); };
@@ -274,11 +246,11 @@
     return select;
   }
 
-  function textbox(value, onChange) {
+  function textbox(entry, value, onChange) {
     const input = document.createElement('input');
     input.type = 'text'; input.className = 'setting-input';
     input.value = value;
-    input.setAttribute('aria-label', t('Name of the monitor'));
+    input.setAttribute('aria-label', wording(entry, 'label'));
     input.onchange = () => onChange(input.value);
     return input;
   }
@@ -287,7 +259,6 @@
    * Two views in one page rather than two pages: the rail, the identity and the connection state are
    * the same in both, and a settings page that lost them would be a second application again.
    */
-  const shell = document.getElementById('shell');
   function show(name) {
     shell.dataset.view = name;
     view.hidden = name !== 'settings';
@@ -300,23 +271,10 @@
   // Choosing a session is asking for the sessions, so the settings stand aside.
   element('sessions').addEventListener('click', () => { if (shell.dataset.view === 'settings') show('sessions'); });
   search.addEventListener('input', () => { if (loaded) draw(); });
-  element('settings-reset').onclick = async () => {
-    // Every setting at once, which is the one destructive thing this page can do, so it asks first.
-    if (element('settings-reset').dataset.confirm !== 'true') {
-      element('settings-reset').dataset.confirm = 'true';
-      const wording = element('settings-reset').textContent;
-      element('settings-reset').textContent = `${wording}?`;
-      setTimeout(() => { element('settings-reset').dataset.confirm = ''; element('settings-reset').textContent = wording; }, 4000);
-      return;
-    }
-    element('settings-reset').dataset.confirm = '';
-    element('settings-reset').textContent = t('Put everything back the way it came');
-    await write('', '', { all: true });
-  };
+  // Every setting at once, which is the one destructive thing this page can do, so it asks first.
+  confirmOnce(element('settings-reset'), () => write('', '', { all: true }));
   // The language switch rewrites the page's own words; these are drawn from a schema, so they are
   // redrawn here rather than left in the language they were first painted in.
   element('language').addEventListener('click', () => { if (loaded) draw(); });
-  // The words above were added to the table after the page's first language pass ran, so it runs again.
-  applyLanguage();
   show(new URLSearchParams(location.search).get('view') === 'settings' ? 'settings' : 'sessions');
 })();

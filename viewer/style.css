@@ -155,8 +155,12 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1
 .session-task,.session-meta,.session-when { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-inline-start:15px; }
 .session-task { font-size:11.5px; color:var(--ink-dim); }
 .session-meta,.session-when { font-size:10.5px; color:var(--ink-faint); }
-.dot,.live-dot { width:6px; height:6px; border-radius:50%; background:var(--ink-dim); flex:none; }
-.session[data-working="true"] .dot,.agent-badge[data-working="true"] .dot { background:var(--ink); box-shadow:0 0 0 3px var(--level-4); animation:pulse 1.8s var(--ease) infinite; }
+.dot,.live-dot { position:relative; width:6px; height:6px; border-radius:50%; background:var(--ink-dim); flex:none; }
+/* The ring is a pseudo-element that scales, not a shadow that grows: a box-shadow keyframe repaints
+   on every frame for as long as an agent is working, and a transform does not leave the compositor. */
+.dot::after { content:""; position:absolute; inset:-3px; border-radius:50%; background:var(--level-4); z-index:-1; opacity:0; }
+.session[data-working="true"] .dot,.agent-badge[data-working="true"] .dot { background:var(--ink); }
+.session[data-working="true"] .dot::after,.agent-badge[data-working="true"] .dot::after { opacity:1; animation:pulse 1.8s var(--ease) infinite; }
 .session[data-state="closed"] { opacity:.55; }
 .session[data-state="closed"]:hover,.session[data-state="closed"][aria-current="true"] { opacity:1; }
 /* Removing a finished session is the only thing left to do to one, so it shows
@@ -167,7 +171,7 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; line-height: 1
 .session-forget:hover:not(:disabled) { background:var(--level-4); color:var(--ink); }
 .session[data-confirm="true"] .session-forget { display:inline-flex; width:auto; padding:0 10px; font-size:10.5px; background:var(--loud); color:var(--on-loud); font-weight:600; }
 @keyframes card-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
-@keyframes pulse { 0%,100% { box-shadow:0 0 0 3px var(--level-4); } 50% { box-shadow:0 0 0 5px var(--level-2); } }
+@keyframes pulse { 0%,100% { transform:scale(1); opacity:1; } 50% { transform:scale(1.5); opacity:.45; } }
 
 
 /* --- The filter row ------------------------------------------------------ */
@@ -398,6 +402,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .segmented { display:inline-flex; gap:2px; padding:2px; background:var(--level-2); border-radius:var(--r-sm); }
 .segment { padding:6px 11px; font-size:11.5px; background:transparent; color:var(--ink-dim); border-radius:calc(var(--r-sm) - 2px); }
 .segment[aria-checked="true"] { background:var(--loud); color:var(--on-loud); font-weight:600; }
+/* A colour setting that also takes a word. It sits beside the swatch rather than inside a group. */
+.segment.named { background:var(--level-2); border-radius:var(--r-sm); }
+.segment.named[aria-checked="true"] { background:var(--loud); color:var(--on-loud); }
 .segment:hover:not([aria-checked="true"]) { background:var(--level-3); color:var(--ink); }
 
 .slider { display:inline-flex; align-items:center; gap:10px; }

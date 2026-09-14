@@ -152,16 +152,24 @@ function t(source, values) {
  * there would rebuild every card once a second for no new information. Latin digits in both languages
  * and a 12 hour clock, which is how this workstation writes times.
  */
+let formatters;
 function when(stamp) {
   if (!stamp) return '';
   try {
-    const locale = language === 'ar' ? 'ar-u-nu-latn' : 'en-GB';
+    // Built once per language rather than once per card per poll: a formatter is expensive to make
+    // and this runs for every session on every tick, only to compare the string it produces.
+    if (formatters?.language !== language) {
+      const locale = language === 'ar' ? 'ar-u-nu-latn' : 'en-GB';
+      formatters = { language,
+        clock: new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', hour12: true }),
+        day: new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }) };
+    }
     const date = new Date(stamp), now = new Date();
-    const clock = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', hour12: true }).format(date);
+    const clock = formatters.clock.format(date);
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     if (stamp >= midnight) return `${t('Today')} ${clock}`;
     if (stamp >= midnight - 86400000) return `${t('Yesterday')} ${clock}`;
-    return `${new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(date)} ${clock}`;
+    return `${formatters.day.format(date)} ${clock}`;
   } catch { return ''; }
 }
 const languageButton = element('language');
@@ -180,6 +188,25 @@ function applyLanguage() {
   for (const node of document.querySelectorAll('[data-i18n-title]')) node.setAttribute('title', t(node.dataset.i18nTitle));
   for (const node of document.querySelectorAll('[data-i18n-label]')) node.setAttribute('aria-label', t(node.dataset.i18nLabel));
   for (const node of document.querySelectorAll('[data-i18n-placeholder]')) node.setAttribute('placeholder', t(node.dataset.i18nPlaceholder));
+}
+/**
+ * How a module loaded after this one adds its own words. It assigns and then repaints the static
+ * markup, because a table extended after the first pass leaves whatever it translates in English and
+ * nothing says so.
+ */
+function registerStrings(table) { Object.assign(arabic, table); applyLanguage(); }
+/**
+ * A button that asks once. The second press inside four seconds does the thing; the first only says
+ * what it is about to do, in the button itself, which is the only place a person is already looking.
+ */
+function confirmOnce(button, action) {
+  const resting = button.textContent;
+  button.onclick = () => {
+    if (button.dataset.confirm === 'true') { button.dataset.confirm = ''; button.textContent = resting; action(); return; }
+    button.dataset.confirm = 'true';
+    button.textContent = `${resting}?`;
+    setTimeout(() => { if (button.dataset.confirm === 'true') { button.dataset.confirm = ''; button.textContent = resting; } }, 4000);
+  };
 }
 element('preview-mode').addEventListener('change', () => { previewMode = element('preview-mode').value; captureQueued = false; });
 element('refresh-frame').onclick = () => { captureQueued = true; };
@@ -205,22 +232,16 @@ function applyPalette() {
  */
 const biggerButton = element('expand');
 let bigger = false;
-biggerButton.onclick = () => {
-  bigger = !bigger;
-  shell.classList.toggle('bigger', bigger);
-  biggerButton.setAttribute('aria-pressed', String(bigger));
-  biggerButton.textContent = t(bigger ? 'Exit focus' : 'Focus view');
-};
 languageButton.onclick = () => {
   language = language === 'ar' ? 'en' : 'ar';
   try { localStorage.setItem('orbit-language', language); } catch { /* not remembered */ }
   applyLanguage();
-  // Everything the poll writes is rewritten on its own next tick; these are the strings that are
-  // only ever written once, plus the rail, whose signature would otherwise hold the old language.
-  paletteButton.textContent = t(desktopPalette ? 'Using my desktop colours' : 'Match my desktop colours');
+  // Everything the poll writes is rewritten on its own next tick; these are the two whose text is
+  // state dependent, so the language pass cannot know which of the two words to paint, plus the rail,
+  // whose signature would otherwise hold the old language.
+  applyPalette();
   biggerButton.textContent = t(bigger ? 'Exit focus' : 'Focus view');
-  railSignature = '';
-  renderSessions(listed);
+  redrawRail();
   controls();
 };
 paletteButton.onclick = () => {
@@ -305,7 +326,7 @@ function renderSessions(list) {
   // person's hand. The printed minute is what a card actually says, so it is what is compared.
   const line = entry => JSON.stringify([entry.sessionId, entry.state, entry.agentName, entry.taskName, entry.conversationName, entry.projectName, entry.activity?.state, when(recency(entry)), entry.sessionId === selected]);
   const signature = [language, filter, ...list.map(line)].join('|');
-  element('session-count').textContent = list.length ? t('Assistants · {n}', { n: list.length }) : t('Assistants');
+  setText('session-count', list.length ? t('Assistants · {n}', { n: list.length }) : t('Assistants'));
   if (signature === railSignature) return;
   railSignature = signature;
   renderFilters(list);
@@ -413,12 +434,13 @@ function renderFilters(list) {
     chip.onclick = () => {
       filter = one.id;
       try { localStorage.setItem('orbit-filter', filter); } catch { /* not remembered */ }
-      railSignature = '';
-      renderSessions(listed);
+      redrawRail();
     };
     return chip;
   }));
 }
+/** Repaint the rail from what it already has: the signature is what stops it, so it goes first. */
+function redrawRail() { railSignature = ''; renderSessions(listed); }
 /** How recently anything happened in a session, which is the order the rail is read in. */
 const recency = entry => Math.max(entry.lastActivityAt || 0, entry.createdAt || 0);
 async function forgetSession(id) {
