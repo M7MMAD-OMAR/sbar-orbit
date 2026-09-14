@@ -128,6 +128,18 @@ The binding constraint is the shared budget, not the number of applications. `CP
 
 System Monitor inside the session reported the host's real memory and CPU. Private display separation does not hide the machine from an application, which is the documented position, not a defect.
 
+### Fifteen more applications, one at a time
+
+Applications beyond those four, each launched through the broker into one private display, its first window recorded with title and launch time, one frame kept, and the window closed through the session's own command before the next. Reproduce with `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/application-coverage.ts`; frames and `report.json` land in `output/application-coverage-<date>/`.
+
+Measured 14 September 2026: 15 of 15 mapped, in 714 ms to 2597 ms. GTK4 with libadwaita: Ptyxis, Characters, Clocks, Weather, Loupe, Papers, Showtime, Snapshot, Font Viewer. GTK3: Inkscape 1.4.4. LibreOffice Writer through its own VCL, with a file the session reserved. Qt 6 and KDE Frameworks: Konsole and Dolphin. GLFW and OpenGL: kitty. And Calculator forced onto Xwayland. Launch to first frame cost 21% to 64% of one core for all but kitty, which cost 163% while llvmpipe stood in for a GPU.
+
+Two things the run showed that a reader should know before choosing an application. Ptyxis maps and then shows `Failed to connect to user scope bus via local transport`, because it starts its shell through the systemd user bus and a private session has no session bus by design; Konsole and kitty, which start a shell themselves, run one. KFontView 6.7.4 exits 1 with nothing on stderr when handed a font file, while `--version` runs and the two KDE applications beside it map, so that is the application's own refusal and it is left out of the list rather than counted as a failure of the display.
+
+The first run of this experiment is what found the launch defect fixed the same day: Writer's window belongs to `soffice.bin`, a grandchild of the launched script, and the broker waited 30 seconds for a window carrying the launched pid before giving up on an application that had been on screen since the fourth. A mapped window is now matched on the session id the supervisor gave the application, and Writer maps in 1.6 seconds.
+
+Not measured: anything past the first window. No application was driven, and how many of these run together within the budget is the previous section's question, not this one's.
+
 ### Launching real desktop applications does not guarantee fresh state
 
 A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Native sessions now set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside the session's own directory, so an application starts without the person's configuration and cannot restore their previous session. The repeat trial opened only the disposable file it was given.
@@ -193,8 +205,9 @@ process leads its own group and its own environment names this session's runtime
 from a graceful stop to a forced one is measured by the first test against an application that ignores
 the first signal.
 
-This covers one failure mode of one component. The rest of gate 2, account coverage and applications
-beyond the four already launched, is untouched by it.
+This covers one failure mode of one component. Applications beyond the four are the section above,
+since 14 September 2026; account coverage, which needs a real account and the person's consent, is
+the part of gate 2 still untouched.
 
 ## Fresh machine installation, the unprivileged half
 

@@ -34,8 +34,12 @@
    given. The backend now records the process group each supervisor leads, sweeps it when a supervisor
    exits and again when a session closes, and signals nothing whose private runtime directory does not
    name this session. Five checks in `tests/owned-group.test.ts` and one end to end native check cover
-   it, and the end to end check was run first against the unfixed code, where it failed. Still open in
-   this gate: account coverage, and applications beyond the four launched so far.
+   it, and the end to end check was run first against the unfixed code, where it failed. Application
+   coverage widened on 14 September 2026: `experiments/application-coverage.ts` launches fifteen
+   more, one at a time, across GTK4, GTK3, LibreOffice's VCL, Qt 6 with KDE Frameworks, an OpenGL
+   terminal and Xwayland, and all fifteen map, in 714 ms to 2597 ms; the first run of it found and
+   fixed a launch that timed out on a window owned by a grandchild of the launched process. See
+   [validation](validation.md). Still open in this gate: account coverage.
 3. **Closed on 13 September 2026, on a container that is a machine rather than a filesystem.**
    `experiments/fresh-machine/systemd-session.sh` gives a clean Fedora 44 image the half the other
    container cannot have: systemd as PID 1, a lingering unprivileged account whose user manager owns
