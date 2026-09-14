@@ -53,11 +53,11 @@ jobs:
       - run: |
           (./install.sh --json; echo "install exit $?") 2>&1 | tee output/verify/install.log
           sleep 5
-          (systemctl --user is-active sbar-orbit.service; echo "service $?"; systemctl --user status sbar-orbit.service --no-pager -l; journalctl --user -u sbar-orbit.service --no-pager -n 80; cat "$HOME/.config/systemd/user/sbar-orbit.service"; ls -la "$XDG_RUNTIME_DIR/sbar-orbit/" 2>&1) 2>&1 | tee output/verify/service.log
+          (set +e; systemctl --user is-active sbar-orbit.service; echo "service $?"; systemctl --user status sbar-orbit.service --no-pager -l; journalctl --user -u sbar-orbit.service --no-pager -n 80; cat "$HOME/.config/systemd/user/sbar-orbit.service"; ls -la "$XDG_RUNTIME_DIR/sbar-orbit/" 2>&1) 2>&1 | tee output/verify/service.log
           export ORBIT_SOCKET="$XDG_RUNTIME_DIR/sbar-orbit/broker.sock"
           (bun run src/cli.ts doctor; echo "doctor exit $?") 2>&1 | tee output/verify/doctor.log
           export ORBIT_AGENT_NAME=runner ORBIT_TASK_NAME="gate 3 on a runner"
-          (ID=$(bun run src/cli.ts session create browser | tee output/verify/session-create.log | sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' | head -1); echo "session $ID"; \
+          (set +e; ID=$(bun run src/cli.ts session create browser | tee output/verify/session-create.log | sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' | head -1); echo "session $ID"; \
             bun run src/cli.ts act "$ID" '{"type":"navigate","url":"https://example.com/"}'; bun run src/cli.ts act "$ID" '{"type":"read","selector":"h1"}'; \
             bun run src/cli.ts session observe "$ID" --output "$PWD/output/verify/frame.jpg"; bun run src/cli.ts session stop "$ID"; echo "session exit $?") 2>&1 | tee output/verify/session.log
           (bun run src/cli.ts status; echo "status exit $?") 2>&1 | tee output/verify/status.log
