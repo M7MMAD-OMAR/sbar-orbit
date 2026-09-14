@@ -39,9 +39,24 @@ file ([src/fedora.ts:138](../src/fedora.ts)), and saving an account spawns `src/
 ([src/clone.ts:68](../src/clone.ts)). The broker's own modules are all statically imported, so they are
 resolved once at start and an overwrite cannot reach them; these child scripts are read from disk at the
 moment they are used. Overwriting the tree in place therefore pairs an old broker with a new supervisor
-at the next `session.create`. Not measured: what that pair actually does, which is a test worth writing
-before any updater exists, since it is the failure a naive `git pull` or an in place `bun add -g` causes
-on a machine with work open.
+at the next `session.create`.
+
+Measured on this host on 14 September 2026 by [experiments/live-overwrite.ts](../experiments/live-overwrite.ts),
+against a staged copy of the tracked source with its own private socket, so no live session was involved.
+The result is more precise than the reading was, and in one direction better than expected:
+
+| While the tree is overwritten | What happens |
+|---|---|
+| A session already open | Survives. It answered `session.observe` after both overwrites, because its supervisor was already running |
+| A new session, half written file | `BACKEND_FAILED`, `Owned Chrome exited with code 1 before publishing its endpoint: SyntaxError: '[' was never closed` |
+| A new session, completed change of interface | `BACKEND_FAILED`, `Owned Chrome exited with code 2 before publishing its endpoint: supervise: --mode is required` |
+| A new session, after the file is restored | Created |
+
+So an in place update does not take away the session the person is watching. It takes away their ability
+to start another one, for as long as the broker and the tree disagree, and it reports that as a backend
+failure rather than as an update in progress. On a `git pull` that window is milliseconds; on a version
+whose supervisor interface changed it lasts until the service restarts. Both are avoided entirely by
+never writing into the tree a running broker executes from, which is what the design below does.
 
 **The native runtime is inside the source directory.** `nativeRuntimePaths` resolves
 `<source>/.runtime/sway` ([src/runtime-paths.ts:5](../src/runtime-paths.ts)), 9.9 MB on this host. A new
@@ -144,19 +159,26 @@ what the previous one wrote, or it says so and refuses rather than guessing. Not
 on-disk shape has changed between the published alphas in a way that would break a downgrade, which is the
 case rollback creates.
 
-## Decisions that are the owner's, not mine
+## The four decisions, made
 
-1. **May an update activate on its own at an idle moment, or must the person always say now?** The stated
-   goal is automatic. This project's own rule is that the person owns their screen, and activation
-   restarts the desktop panel, which is visible. A middle position exists: activate silently when the
-   broker is idle and the panel is not on screen, ask otherwise.
-2. **One channel or two.** A single stable channel is less to maintain and less to explain. Two lets this
-   machine run ahead of everyone else's, which is the only way a maturation delay gets tested by anyone.
-3. **Where the native runtime lives.** Shared outside the versions, or rebuilt per version. Shared is the
-   only one that keeps native sessions working across an update without a download.
-4. **The release feed.** The npm registry, which is where `bun add -g` already points, or the GitHub
-   releases this project already signs with a digest. The registry is simpler; the releases carry the
-   manifest the source verifier already reads.
+The owner handed these back on 14 September 2026 with "decide them yourself". Each is written with the
+constraint that settled it, so a later reader can reopen one by attacking its reason rather than its
+conclusion.
+
+1. **Activation is silent when the machine is idle and the panel is not on screen, and waits otherwise.**
+   The goal is automatic; this project's rule is that the person owns their screen, and activation
+   restarts the panel. Idle with no panel visible satisfies both, and needs no mechanism that does not
+   already exist. Zero open sessions is a precondition in every case, never waived.
+2. **One channel.** Three published alphas and one maintainer. A second channel is a thing to maintain
+   that nothing yet tests, and the maturation delay already gives this machine the early exposure a
+   second channel would have been for.
+3. **The native runtime is shared, outside the versions**, keyed by the package set the bootstrap pins.
+   It is the only option that keeps native sessions working across an update without a download, which is
+   the second finding above. A version that finds a runtime built at the old path inside a source tree
+   adopts it rather than rebuilding, and `preflight` reports which path it found.
+4. **The release feed is the npm registry.** `bun add -g` already points there, so this adds no second
+   path for the same bytes, and the version metadata the eligibility rules need is already published
+   there.
 
 ## If it is built, this is the order
 
