@@ -8,7 +8,7 @@ import { OrbitError, record } from "./errors";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
-import { nativeRuntimePaths } from "./runtime-paths";
+import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
@@ -60,7 +60,6 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
   throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text, paste, resize and window");
 }
 const project = resolve(import.meta.dir, "..");
-const { runtime, executables } = nativeRuntimePaths(project);
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // One frame format for the private display. Measured on this output, PNG deflate added about 70 ms per frame
 // on top of a 7 ms raw readback, while JPEG at quality 80 added almost nothing.
@@ -116,7 +115,10 @@ export class FedoraBackend {
   static async create(size: Viewport = defaultViewport) {
   await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Fedora backend requires Linux");
-    if (!await Bun.file(join(executables, "sway")).exists() || !await Bun.file(join(runtime, "pointer")).exists())
+    // Resolved per session rather than at import, because the runtime is shared between versions now
+    // and a session started after a build should see it without the broker being restarted.
+    const { runtime, executables, source: runtimeSource } = await usableNativeRuntime(project);
+    if (runtimeSource === "none")
       throw new OrbitError("UNSUPPORTED", "Run the documented Fedora native bootstrap first");
     const directory = await mkdtemp("/tmp/orbit-native-");
     const env = { ...process.env };

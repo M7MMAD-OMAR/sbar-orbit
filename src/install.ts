@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
-import { nativeRuntimePackages, nativeRuntimePaths } from "./runtime-paths";
+import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
 import { activateLocal } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
@@ -39,7 +39,7 @@ export type InstallOptions = {
   /** Injected for tests, which must never spawn a package manager. */
   install?: (source: string) => Promise<{ ok: boolean; output: string }>;
   /** Injected for tests, which must never download packages or compile anything. */
-  bootstrap?: (source: string) => Promise<{ ok: boolean; output: string }>;
+  bootstrap?: (source: string, runtimeDirectory: string) => Promise<{ ok: boolean; output: string }>;
 };
 
 const project = resolve(import.meta.dir, "..");
@@ -58,8 +58,9 @@ async function runBunInstall(source: string) {
   return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
 }
 
-async function runBootstrap(source: string) {
-  const child = Bun.spawn(["bash", join(source, "experiments/fedora-display/bootstrap.sh")], { cwd: source, stdout: "pipe", stderr: "pipe" });
+async function runBootstrap(source: string, runtimeDirectory: string) {
+  const child = Bun.spawn(["bash", join(source, "experiments/fedora-display/bootstrap.sh")],
+    { cwd: source, stdout: "pipe", stderr: "pipe", env: { ...process.env, ORBIT_RUNTIME_DIR: runtimeDirectory } });
   const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
 }
@@ -71,16 +72,34 @@ const nativeBuildRemedy: Remedy = { id: "no-native-build-tools", needsElevation:
   message: "Building the private display runtime needs a C toolchain, the Wayland and xkbcommon development files, the tools that download and unpack Fedora packages, and the libraries the compositor links against." };
 
 /**
- * The private compositor and pointer helper, built from the tracked bootstrap into `.runtime/sway`.
+ * The private compositor and pointer helper, built from the tracked bootstrap into the shared runtime
+ * directory, outside every version of Orbit, so a version swap does not take native sessions away.
  * Measured 13 September 2026 on this Fedora 44 host: the script downloads three pinned packages,
  * unpacks them without installing, checks two protocol files against their digests, compiles the
  * helper, and reports sway 1.11, 3.3 MB on disk, in under a minute. It has run on no other system,
  * which is why the step is opt-in and says so.
  */
 export async function buildNativeRuntime(source: string, options: { dryRun?: boolean; bootstrap?: InstallOptions["bootstrap"]; which?: (tool: string) => string | null } = {}): Promise<StepOutcome> {
-  const runtime = nativeRuntimePaths(source);
+  const { shared, inSource } = nativeRuntimeLocations(source);
   const present = async (path: string) => Bun.file(path).exists();
-  if (await present(join(runtime.executables, "sway")) && await present(runtime.pointer)) return { state: "skipped", detail: `already built in ${runtime.runtime}` };
+  const built = async (paths: NativeRuntime) => await present(join(paths.executables, "sway")) && await present(paths.pointer);
+  if (await built(shared)) return { state: "skipped", detail: `already built in ${shared.runtime}`, data: { runtime: shared.runtime, source: "shared" } };
+  // A runtime built before the move is inside whichever source tree built it, and copying it is seconds
+  // against a download and a compile. Adopting is also what keeps native sessions working across the
+  // first version swap on a machine that already had one, which is the whole reason for the move.
+  if (await built(inSource)) {
+    if (options.dryRun) return { state: "skipped", detail: `would adopt the runtime in ${inSource.runtime}` };
+    await mkdir(dirname(shared.runtime), { recursive: true });
+    // `cp -a`, not the library copy. Measured 14 September 2026: `node:fs/promises` `cp` rewrote the
+    // unpacked tree's relative symlinks into absolute paths back into the source tree, so the adopted
+    // runtime kept working only while the tree it came from was still there, and sway failed to load
+    // libliftoff.so.0 the moment it was not. That is the exact dependency this move exists to remove.
+    const copied = Bun.spawn(["cp", "-a", `${inSource.runtime}/.`, shared.runtime], { stdout: "pipe", stderr: "pipe" });
+    const problem = (await new Response(copied.stderr).text()).trim();
+    if (await copied.exited !== 0) return { state: "failed", detail: problem.split("\n").at(-1)?.slice(0, 200) || "the copy failed" };
+    if (!await built(shared)) return { state: "failed", detail: "the copy finished and left no runtime behind" };
+    return { state: "done", detail: `adopted the runtime built in ${inSource.runtime}`, data: { runtime: shared.runtime, source: "adopted" } };
+  }
   const which = options.which ?? (tool => Bun.which(tool));
   const missing = nativeBuildTools.filter(tool => !which(tool));
   if (missing.length) return { state: "failed", detail: `${missing.join(", ")} missing`, remedies: [nativeBuildRemedy] };
@@ -93,12 +112,12 @@ export async function buildNativeRuntime(source: string, options: { dryRun?: boo
         command: "git clone https://github.com/M7MMAD-OMAR/sbar-orbit",
         message: "Native sessions need the private display runtime, which is built from experiments/fedora-display/bootstrap.sh in the repository. Clone it and run ./install.sh --native there. Browser sessions need none of this." }] };
   if (options.dryRun) return { state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" };
-  const result = await (options.bootstrap ?? runBootstrap)(source);
+  const result = await (options.bootstrap ?? runBootstrap)(source, shared.runtime);
   if (!result.ok) return { state: "failed", detail: result.output || "the bootstrap failed",
     remedies: [{ id: "native-bootstrap-failed", needsElevation: false, agentMayRun: true, command: "bash experiments/fedora-display/bootstrap.sh",
       message: `The bootstrap failed in ${source}. Run it there and read its own output; it pins Fedora package versions.` }] };
-  if (!(await present(join(runtime.executables, "sway")) && await present(runtime.pointer))) return { state: "failed", detail: "the bootstrap finished and left no runtime behind" };
-  return { state: "done", detail: `sway and the pointer helper in ${runtime.runtime}`, data: { runtime: runtime.runtime } };
+  if (!await built(shared)) return { state: "failed", detail: "the bootstrap finished and left no runtime behind" };
+  return { state: "done", detail: `sway and the pointer helper in ${shared.runtime}`, data: { runtime: shared.runtime, source: "built" } };
 }
 
 /** The checks a dependency install cannot fix, separated from the ones it can. */

@@ -58,6 +58,9 @@ failure rather than as an update in progress. On a `git pull` that window is mil
 whose supervisor interface changed it lasts until the service restarts. Both are avoided entirely by
 never writing into the tree a running broker executes from, which is what the design below does.
 
+**The native runtime was inside the source directory, and is not any more.** Moved on 14 September 2026,
+which is step 2 below, done. What follows is what the problem was.
+
 **The native runtime is inside the source directory.** `nativeRuntimePaths` resolves
 `<source>/.runtime/sway` ([src/runtime-paths.ts:5](../src/runtime-paths.ts)), 9.9 MB on this host. A new
 version in a new directory starts with none of it, so every native session on that machine would stop
@@ -66,6 +69,19 @@ update that silently removes a capability is worse than no update. This has to b
 updater ships, and it is a relocation with its own compatibility question, so it belongs in its own step:
 the runtime moves to a shared location outside the versioned tree, keyed by the package versions the
 bootstrap pins, or activation carries the built runtime forward.
+
+It is now `${XDG_DATA_HOME}/sbar-orbit/runtime/sway-1.11-3.fc44-<digest>`, one build per pinned package
+set, shared by every version that pins the same set. A runtime built at the old path is still found and
+is adopted by `./install.sh --native` rather than downloaded again, and `preflight` reports which of the
+two it found. Gate, measured on this host: with the source tree's own `.runtime/sway` hidden, two native
+sessions open, capture and drive an application from the shared runtime.
+
+That gate is also what found the defect in the first attempt. `node:fs/promises` `cp` rewrote the
+unpacked tree's relative soname links into absolute paths back into the source tree, so the adopted
+runtime kept working only while the tree it came from still existed: sway could not load
+`libliftoff.so.0` the moment it did not. The copy is `cp -a` now, and the link staying relative is
+asserted in `tests/native-runtime.test.ts`. A copy that passes while the original is still there is
+exactly the failure a version swap turns into a broken machine.
 
 **The stable name already exists, which is the part that works.** Because the service, the connector
 configuration and the person's `PATH` all go through one symlink, repointing it is the whole of

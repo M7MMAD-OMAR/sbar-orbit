@@ -19,7 +19,9 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   expect(browser).toMatchObject({ id: "no-browser", needsElevation: true, agentMayRun: false });
   expect(browser?.command).toContain("chromium");
   expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
-  const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes(".runtime") });
+  // A machine with neither runtime. Named by the two files rather than by a directory, because the
+  // runtime is shared between versions now and is no longer under a `.runtime` path.
+  const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !/\/sway$|\/pointer$/.test(path) });
   expect(noNative.browserPrerequisitesFound).toBe(true);
   expect(noNative.nativePrerequisitesFound).toBe(false);
   // The fresh-machine failure: a compositor that is built and cannot load, which is a package

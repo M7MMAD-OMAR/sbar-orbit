@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path";
 import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
+import { nativeRuntimeLocations } from "../src/runtime-paths";
 
 const project = resolve(import.meta.dir, "..");
 // No package manager is ever spawned from a test. The dependency step is the one part of the
@@ -153,13 +154,19 @@ test("nothing the installer shows a person claims more than the project has meas
 test("the native runtime step builds only when asked, and names the tools it lacks", async () => {
   // A source with no runtime, so the step has something to build; nothing here compiles anything.
   const source = await mkdtemp("/tmp/orbit-native-source-");
-  const runtime = join(source, ".runtime/sway");
+  // A data home of its own: the runtime is shared between versions now, and a test must never write
+  // into the person's real one. tests/native-runtime.test.ts covers where it lands and why.
+  const dataHome = await mkdtemp("/tmp/orbit-native-data-");
+  const previousDataHome = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = dataHome;
+  const { shared } = nativeRuntimeLocations(source);
+  const runtime = shared.runtime;
   const calls: string[] = [];
-  const fake = async (from: string) => {
+  const fake = async (from: string, runtimeDirectory: string) => {
     calls.push(from);
-    await mkdir(join(runtime, "root/usr/bin"), { recursive: true });
-    await writeFile(join(runtime, "root/usr/bin/sway"), "#!/bin/sh\n");
-    await writeFile(join(runtime, "pointer"), "");
+    await mkdir(join(runtimeDirectory, "root/usr/bin"), { recursive: true });
+    await writeFile(join(runtimeDirectory, "root/usr/bin/sway"), "#!/bin/sh\n");
+    await writeFile(join(runtimeDirectory, "pointer"), "");
     return { ok: true, output: "sway version 1.11" };
   };
   try {
@@ -180,5 +187,9 @@ test("the native runtime step builds only when asked, and names the tools it lac
     expect(await buildNativeRuntime(source, { which: () => null, bootstrap: fake })).toMatchObject({ state: "skipped", detail: `already built in ${runtime}` });
     expect(calls).toEqual([source]);
     expect(nativeBuildTools).toContain("wayland-scanner");
-  } finally { await rm(source, { recursive: true, force: true }); }
+  } finally {
+    if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previousDataHome;
+    await rm(source, { recursive: true, force: true });
+    await rm(dataHome, { recursive: true, force: true });
+  }
 });

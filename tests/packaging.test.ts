@@ -52,10 +52,19 @@ test("a native build the package does not carry refuses by name rather than by a
   // Before this was handled, `bash` reported a path it could not open and that text became the step's
   // whole explanation, which says nothing about why the file is absent or what to do instead.
   const source = await mkdtemp(join(tmpdir(), "orbit-native-"));
+  // A data home of its own, or this reads whatever the machine running the test has already built: the
+  // runtime is shared between versions, so the step would answer "already built" instead of refusing.
+  const dataHome = await mkdtemp(join(tmpdir(), "orbit-native-data-"));
+  const previousDataHome = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = dataHome;
   try {
     const outcome = await buildNativeRuntime(source, { which: () => "/usr/bin/true" });
     expect(outcome.state).toBe("failed");
     expect(outcome.detail).toMatch(/registry|clone|repository/i);
     expect(outcome.remedies?.[0]?.id).toBe("native-bootstrap-absent");
-  } finally { await rm(source, { recursive: true, force: true }); }
+  } finally {
+    if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previousDataHome;
+    await rm(source, { recursive: true, force: true });
+    await rm(dataHome, { recursive: true, force: true });
+  }
 });

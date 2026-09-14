@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { chromeExecutables, nativeRuntimePackages, nativeRuntimePaths } from "./runtime-paths";
+import { chromeExecutables, nativeRuntimeLocations, nativeRuntimePackages } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -105,7 +105,14 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     await systemPackages(probe, "no-browser",
       "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at.",
       { any: ["chromium"] }));
-  const native = nativeRuntimePaths(project);
+  // Which runtime this machine would use, resolved through the probe rather than the filesystem, so an
+  // injected probe still decides everything. `in-source` means one built before 14 September 2026,
+  // inside a source tree, still usable and adopted by `./install.sh --native`.
+  const locations = nativeRuntimeLocations(project);
+  const built = async (paths: { executables: string; pointer: string }) =>
+    await probe.file(join(paths.executables, "sway"), true) && await probe.file(paths.pointer, true);
+  const runtimeSource = await built(locations.shared) ? "shared" : await built(locations.inSource) ? "in-source" : "none";
+  const native = runtimeSource === "in-source" ? locations.inSource : locations.shared;
   for (const [id, path] of [["private-sway", join(native.executables, "sway")], ["private-pointer", native.pointer]] as const)
     add(id, "native", await probe.file(path, true),
       // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
@@ -134,6 +141,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
       { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
   return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound: available("native"), checks,
+    nativeRuntime: { source: runtimeSource },
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],
     startsApplications: false };
 }
