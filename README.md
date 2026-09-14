@@ -7,7 +7,9 @@
 
 Local application workspaces for tool-capable AI agents. The mark is two surfaces offset on the diagonal: the screen you keep, and the one Orbit opens beside it. They never touch. [Brand](docs/brand.md).
 
-**Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or a private display of its own. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile.
+**Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or a private display of its own. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile, and the viewer itself opens in a browser window that is Orbit's own, never a tab of yours.
+
+<img src="docs/images/viewer-window.jpg" alt="The Orbit viewer in a window of its own: a session rail on the left, the watched page in the middle, take over and hand back above it" width="720">
 
 ```mermaid
 flowchart LR
@@ -30,6 +32,37 @@ flowchart LR
 
     Viewer -.->|"watch, pause, take over, resume"| Broker
 ```
+
+## What it costs an agent
+
+Measured 14 September 2026 on the development host, through the broker's own socket, one browser
+session on a real public page; reproduce any line with the CLI in [cli](docs/cli.md).
+
+| Step | Round trip | What comes back |
+|---|---|---|
+| `session.create` | 431 ms | a session id |
+| `navigate` to a public page | 2248 ms | 37 bytes, the time is the network and the page |
+| `observe`, image | 87 to 112 ms | a 41 to 58 KiB JPEG at 1280 by 800 |
+| `observe`, metadata only | 2 ms | 258 bytes: title, location, tabs, pointer |
+| `read` a selector | 43 ms | the element's text |
+| `scroll` | 32 ms | 16 bytes |
+
+Orbit itself is not where an agent's time or money goes. Every call above is under a tenth of a
+second except the page load, which is the page's. What costs is the model turn around each call, and
+above all each image: a 1280 by 800 frame is roughly 1,400 input tokens for a vision model and several
+seconds of thinking, every time. An agent that alternates `act` and `observe` with an image after
+every action is paying for pictures it did not need. The cheap loop is `read` for text and the
+metadata observation for where it is, with an image only when the layout itself is the question; the
+[agent interface](docs/agent-interface.md) and the [orbit-usage skill](skills/orbit-usage/SKILL.md)
+say the same in the agent's own terms.
+
+<p>
+<img src="docs/images/writer-in-private-display.jpg" alt="LibreOffice Writer open inside an Orbit private display" width="360">
+<img src="docs/images/dolphin-in-private-display.jpg" alt="Dolphin open inside an Orbit private display" width="360">
+</p>
+
+Two of the fifteen applications launched into a private display, one at a time, on 14 September 2026;
+all fifteen mapped. [Validation](docs/validation.md) has the list, the times and what each cost.
 
 ## What is actually supported
 
@@ -156,7 +189,7 @@ alongside the image. CLI file output keeps base64 out of the text context.
 
 ## Scope
 
-The alpha includes browser/native lifecycle tests and a successful scripted 10-minute viewer run. See [validation](docs/validation.md). Human participation, wider account/application compatibility, clean-machine installation, macOS and Windows remain separate gates.
+The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. macOS and Windows remain unmeasured: there is no such machine in this project's reach.
 
 Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
 

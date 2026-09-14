@@ -27,6 +27,14 @@ const reviewedBinaries = new Map([
   ["brand/logo/mark-black.png", "e22b658f87f66abbf24e5f4e52fa010dbfde39b8b2a42c142bde729cc95ff407"],
   ["brand/logo/mark-blue.png", "f98a558b41bb1f6d1b2635f2757da0c69094203fb397a0ae9763a76fe09a131b"],
   ["brand/logo/mark-white.png", "2342f42a14facb079c7535f1bcdb4e45b658d179ca75aa9f7a6a562997e80884"],
+  // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
+  ["docs/images/dolphin-in-private-display.jpg", "86eae2ca1ad62e58f2d5cb04f122cc7f5f9dd6fc288c08503578f0df69104cf8"],
+  // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
+  ["docs/images/extension-headed-private-display.jpg", "e9195720647e4a58994a20a44becde868f1f14a60dac4214bb3bdd9aa52a4105"],
+  // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
+  ["docs/images/viewer-window.jpg", "4b6f7af5a2ef21bd3a36dbff9377712e5fee189ce43e8602c34079503b8b0875"],
+  // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
+  ["docs/images/writer-in-private-display.jpg", "33af88f1c9337bb12b9786da3950f3be14e6d6304d8773898677219bb82ed643"],
   ["website/public/brand/logo-white.png", "8f503621e67e794946247dac93ae0f12b4d2d12946376c19c27b7da6d6a9c07e"],
   ["website/public/brand/logo.png", "9f2fd99fdc6f92921d73a515c15199b652d741d35038ea776c7160298b020277"],
   ["website/public/fonts/dm-sans-latin.woff2", "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543"],
