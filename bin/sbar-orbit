@@ -4,6 +4,19 @@ set -euo pipefail
 orbit_script=$(readlink -f -- "${BASH_SOURCE[0]}")
 orbit_root=$(dirname -- "$(dirname -- "$orbit_script")")
 
+# Bun by absolute location, not by the caller's PATH. A systemd user service starts this launcher with
+# the manager's own PATH, which has no ~/.bun/bin in it: measured on an Ubuntu runner on 14 September
+# 2026, where the service exited 127 on every restart while the same launcher worked from the shell.
+orbit_bun=$(command -v bun 2>/dev/null || true)
+for orbit_candidate in "${BUN_INSTALL:-$HOME/.bun}/bin/bun" "$HOME/.bun/bin/bun" /usr/local/bin/bun /usr/bin/bun; do
+  if [ -z "$orbit_bun" ] && [ -x "$orbit_candidate" ]; then orbit_bun=$orbit_candidate; fi
+done
+if [ -z "$orbit_bun" ]; then
+  echo "sbar-orbit: bun was not found on PATH, in ~/.bun/bin, /usr/local/bin or /usr/bin; install Bun 1.3 or newer" >&2
+  exit 127
+fi
+export PATH="$(dirname -- "$orbit_bun"):$PATH"
+
 case "${1:-help}" in
   help|--help|-h)
     cat <<'HELP'

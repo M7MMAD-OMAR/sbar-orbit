@@ -36,3 +36,25 @@ test("launcher works through a symlink outside the repository and stops a nested
     await broker.exited; reader.releaseLock(); await stderr;
   }
 }, 15000);
+
+/**
+ * A systemd user service starts the launcher with the manager's PATH, which has no ~/.bun/bin in it.
+ * Measured on an Ubuntu runner on 14 September 2026: the service exited 127 on every restart. The
+ * launcher resolves bun by location, so the fake bun under a fake HOME is what runs here.
+ */
+test("the launcher finds bun under ~/.bun/bin when PATH has none, and says so when nothing has it", async () => {
+  const home = await mkdtemp("/tmp/orbit launcher-home-");
+  const { mkdir, writeFile, chmod } = await import("node:fs/promises");
+  await mkdir(join(home, ".bun/bin"), { recursive: true });
+  const fake = join(home, ".bun/bin/bun");
+  await writeFile(fake, '#!/bin/sh\necho "fake bun: $*"\n');
+  await chmod(fake, 0o755);
+  const bare = { HOME: home, PATH: "/usr/bin:/bin" };
+  const found = Bun.spawn(["bash", resolve("bin/sbar-orbit"), "preflight"], { env: bare, stdout: "pipe", stderr: "pipe" });
+  expect(await new Response(found.stdout).text()).toContain("fake bun: run");
+  expect(await found.exited).toBe(0);
+  const none = Bun.spawn(["bash", resolve("bin/sbar-orbit"), "preflight"], { env: { HOME: join(home, "empty"), PATH: "/usr/bin:/bin" }, stdout: "pipe", stderr: "pipe" });
+  const [err, code] = await Promise.all([new Response(none.stderr).text(), none.exited]);
+  expect(code).toBe(127);
+  expect(err).toContain("bun was not found");
+});
