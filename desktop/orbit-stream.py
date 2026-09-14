@@ -13,10 +13,12 @@ Timestamps are excluded from that comparison, or every second would be a change.
 reads stretches when nothing is happening, because a bar that is drawing nothing needs no news.
 
     orbit-stream.py                 stream until killed
-    orbit-stream.py --open-viewer   ask the broker for a viewer link and open it, then exit
+    orbit-stream.py --open-viewer   ask the broker to open the viewer in its own window, then exit
 
 The link carries a fresh access token, so it is requested at the moment of the click and never
-written down, and only a loopback link is ever opened.
+written down, and only a loopback link is ever opened. The broker opens it in a browser window that
+is Orbit's own, never a tab of the person's browser; xdg-open is only the fallback for a broker that
+is too old to do that.
 
 The shape:
 
@@ -83,15 +85,37 @@ def unreachable(path):
 
 
 def open_viewer(path):
+    """The broker opens the viewer in a window of Orbit's own, in the browser and the app window
+    setting the panel's settings name. Until 14 September 2026 this handed the link to xdg-open,
+    which is the person's default browser and their own profile, the one place the viewer must not
+    open; and from a shell that carries no xdg-open on its PATH it opened nothing and said nothing.
+    The launcher below is the fallback for a broker too old to open the viewer itself."""
     try:
-        url = rpc(path, "preview.open")["url"]
+        from orbit_settings import load
+        settings, _ = load()
+    except Exception:
+        settings = {}
+    try:
+        answer = rpc(path, "preview.open", {"launch": True,
+                                            "browser": settings.get("viewerBrowser", ""),
+                                            "appWindow": settings.get("viewerAppWindow", True)})
     except Exception as error:
         print(f"orbit-stream: could not open the viewer: {error}", file=sys.stderr)
         return 1
+    url = answer.get("url", "") if isinstance(answer, dict) else ""
     if not viewer_link_is_local(url):
         print("orbit-stream: the broker returned something other than a local viewer link", file=sys.stderr)
         return 1
-    subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if answer.get("opened"):
+        print(f"orbit-stream: viewer opened in {answer.get('browser') or 'the chosen browser'}"
+              f"{' as a window of its own' if answer.get('appWindow') else ' as a tab'}", file=sys.stderr)
+        return 0
+    print("orbit-stream: the broker did not open the viewer; handing the link to the desktop", file=sys.stderr)
+    try:
+        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as error:
+        print(f"orbit-stream: xdg-open is not available: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
