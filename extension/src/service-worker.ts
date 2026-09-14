@@ -3,16 +3,16 @@
  *
  * Loaded and run on 14 September 2026 in an Orbit owned headless Chromium, never in the person's
  * browser: this file registers, the click listener is present and the APIs it calls are bound.
- * Gates G12 and G14 in `docs/porting.md` closed on that run; G13 stays open because it is about
- * what a wake puts on the person's screen, and the owned browser has none.
+ * Gates G12 and G14 in `docs/porting.md` closed on that run, and G13 on a second one in a private
+ * display with a screen: no wake without a person drew anything, and nothing woke it unbidden.
  *
  * The shape is the one decided in `docs/separate-workspace-review.md`: the extension never drives
  * anything. It runs in the person's browser, and on request it mints narrow, short lived, origin
  * scoped state and hands it to a separate Orbit browser through a native messaging host. There is
  * no content script, no tab automation and no navigation here, and there should never be.
  *
- * Person initiated, because gate G13 is open: nobody has attempted the wake paths into a stopped
- * MV3 service worker on a screen, so the design takes the fallback that gate names in advance. The
+ * Person initiated, which gate G13 measured rather than assumed: a stopped MV3 service worker has
+ * no wake path that reaches it unbidden, so the click is the only way a mint can begin. The
  * sequence starts with a click on the toolbar action, which is both the gesture
  * `chrome.permissions.request` needs and the wake the worker needs, and a request arriving with
  * nobody present is refused.

@@ -97,8 +97,9 @@
    three gates closed on that run: G12, `chrome.cookies.getAll` returns `HttpOnly` cookies and a
    partition key survives the round trip into a second browser; and G14, the idle worker stops at
    30 seconds and an open native messaging port to the real host keeps it running past 150. G13
-   stays open, because it asks what a wake path puts on the person's screen and a headless browser
-   has none; the design keeps its person initiated answer. Two facts the run found are now in
+   closed the same day in a private display with a screen, `experiments/extension-wake.ts`: the two
+   wakes that need no person draw no window, nothing wakes the worker unbidden, and the person
+   initiated design is therefore the measured answer. Two facts the first run found are now in
    [packaging](packaging.md): branded Google Chrome ignores `--load-extension`, so a person loads it
    unpacked through `chrome://extensions`, and on Linux the native messaging host manifest belongs
    under the browser's user data directory.
