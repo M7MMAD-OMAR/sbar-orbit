@@ -68,7 +68,7 @@ rest stay `Reasoned`.
 
 | Capability | Tier | Evidence, or what would move it | Gate |
 |---|---|---|---|
-| Owned headless browser, fresh profile | Reasoned | `bun run verify` on that host | |
+| Owned headless browser, fresh profile | Measured, 1 host: Ubuntu 24.04.5 on a GitHub runner, `bun run verify` inside `sbarorbit.slice`, 233 pass, 0 fail, 22 native tests skipped, 119 s | `verify-ubuntu-24.04-2026-09-14.log` attached to the `v0.1.0-alpha.5` release; one earlier run had one browser tab test fail with `BACKEND_ERROR` and the next two runs did not, so that is recorded, not explained | |
 | Private display, bundled compositor | Limited on Arch and openSUSE Tumbleweed: `dlopen` loads, `ldd -r` clean, smoke probe and frame pass in a container. Refused on Debian 13 and Ubuntu 24.04: `libdisplay-info.so.3` on both, `liblcms2.so.2` and older libinput, libwayland and pixman symbols on Ubuntu | `experiments/linux-families/run.sh`, 14 September 2026 | G2 |
 | Private display, the family's own sway from a private prefix | Limited on all four: Debian sway 1.10.1, Ubuntu sway 1.9 (needs `--unsupported-gpu` beside a proprietary NVIDIA module, recorded), Arch sway 1.12, Tumbleweed sway 1.12, each passing the smoke probe with the Fedora built pointer helper | `experiments/linux-families/run.sh`, 14 September 2026 | G5 |
 | Compositor with no logind session | Limited: started in 51 ms on all four with nothing open under `/run/systemd`, `/run/seatd`, `/run/user` or `/run/dbus` | Same run | G1 |
@@ -99,7 +99,7 @@ rows are `Limited`, one borrowed machine with no person at it.
 | Real sessions, profile clone | **Refused** | App Bound Encryption returns `kNotUsingDefaultUserDataDir` for any non default user data directory, and returns before the policy branch, so `ApplicationBoundEncryptionEnabled=0` does not help either |
 | Native applications with both separate input and real sessions | **Refused** | A `CreateDesktop` desktop cannot reach the person's running applications, and `SendInput` on the person's desktop drives their windows |
 | A second concurrent interactive session for one user | **Refused** | Not a supported configuration on Windows 11 Pro or Home. Wrapper unlocks are refused on the license, not on feasibility |
-| Origin lease below the browser | Reasoned, with no equivalent designed | There is no `--unshare-net`. What exists is a network compartment or a Windows Filtering Platform filter, one of which needs a driver. G28 |
+| Origin lease below the browser | Limited, and narrower than a namespace | A firewall rule scoped to the program path blocked the internet and left loopback for headless Chrome on the runner, with no driver; it holds every `chrome.exe` on the machine rather than one session, so it is not the per session boundary. G28 |
 | A headed browser on the person's desktop as a fallback | **Refused** | There is no such path, at any tier, for any error |
 
 ## macOS 13 and later

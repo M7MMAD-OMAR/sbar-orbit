@@ -69,7 +69,9 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation. There is no macOS,
 Windows or non Fedora Linux machine in this project's reach, so every statement about those platforms is
 reasoning about vendor documentation and not a test, apart from what containers of Debian, Ubuntu, Arch
-and openSUSE on that one host could show, which the tier table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
+and openSUSE on that one host could show, which the tier table marks `Limited`, and one more fact: on
+14 September 2026 `bun run verify` passed on a GitHub Ubuntu 24.04 runner, 233 tests, so the browser path
+is measured on a second host. `sbar-orbit doctor --report` prints which row of the
 [support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
 paste into an issue.
 

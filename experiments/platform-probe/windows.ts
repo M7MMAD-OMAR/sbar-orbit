@@ -62,7 +62,7 @@ async function pipeServe() {
     server.listen(held, async () => {
       // pwsh rather than Windows PowerShell: on the runner the latter could not load its Security module.
       // Get-Acl cannot open a pipe (error 87); a client stream can, and reads the ACL off its handle.
-      const { out, err } = await run(["pwsh", "-NoProfile", "-Command", `$c = [System.IO.Pipes.NamedPipeClientStream]::new('.', '${held.replace("\\\\.\\pipe\\", "")}', 'InOut'); $c.Connect(3000); $c.GetAccessControl().GetSecurityDescriptorSddlForm('All'); $c.Dispose()`], { allowFailure: true, timeoutMs: 30000 });
+      const { out, err } = await run(["pwsh", "-NoProfile", "-Command", `$c = [System.IO.Pipes.NamedPipeClientStream]::new('.', '${held.replace("\\\\.\\pipe\\", "")}', 'InOut'); $c.Connect(3000); [System.IO.Pipes.PipesAclExtensions]::GetAccessControl($c).GetSecurityDescriptorSddlForm('All'); $c.Dispose()`], { allowFailure: true, timeoutMs: 30000 });
       server.close(); resolve(out || `unreadable: ${err.slice(0, 160)}`);
     });
     server.on("error", error => resolve(`listen failed: ${error.message}`));
