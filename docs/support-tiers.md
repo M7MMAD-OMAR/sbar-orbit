@@ -86,13 +86,16 @@ rest stay `Reasoned`.
 
 ## Windows 10 1809 and later
 
-Gated as a whole platform. Nothing may be claimed until a Windows host runs the probes in
-[porting.md section 7](porting.md).
+Gated as a whole platform. Since 14 September 2026 a Windows Server 2025 runner (10.0.26100) has run
+`experiments/platform-probe/`, report `platform-probe-windows-2026-09-14.json` attached to the `v0.1.0-alpha.5` release; those
+rows are `Limited`, one borrowed machine with no person at it.
 
 | Capability | Tier | The deciding fact |
 |---|---|---|
-| Owned headless browser, fresh profile | Reasoned | |
-| Broker transport | Reasoned | A named pipe is the design. Loopback TCP is refused: it is reachable by every process on the machine, so the broker refuses to start rather than listen weakly. G15 |
+| Owned headless browser, fresh profile | Limited | Chrome resolved through `App Paths`, launched headless under a job object, rendered a page to PNG. No broker ran there yet |
+| Broker transport | Limited | `node:net` served a named pipe and completed one framed request; `Bun.serve({unix})` refuses a pipe name (Bun issue 15350); `Bun.listen({unix})` binds `AF_UNIX` on a filesystem path. Loopback TCP stays refused. The DACL readback is still open. G15 |
+| Process containment, job objects | Limited | Chrome's ten processes stayed inside a `KILL_ON_JOB_CLOSE` job created through `bun:ffi`, nine of ten answered `IsProcessInJob`, one had exited, and closing the job left none. G16 |
+| One core budget, commit ceiling | Limited | Under a 2 GiB job memory limit and a 25% hard CPU cap, headless Chrome rendered the fixture to a byte identical PNG in the same 8.4 s as unlimited. G17 |
 | Real sessions, profile clone | **Refused** | App Bound Encryption returns `kNotUsingDefaultUserDataDir` for any non default user data directory, and returns before the policy branch, so `ApplicationBoundEncryptionEnabled=0` does not help either |
 | Native applications with both separate input and real sessions | **Refused** | A `CreateDesktop` desktop cannot reach the person's running applications, and `SendInput` on the person's desktop drives their windows |
 | A second concurrent interactive session for one user | **Refused** | Not a supported configuration on Windows 11 Pro or Home. Wrapper unlocks are refused on the license, not on feasibility |
@@ -101,13 +104,18 @@ Gated as a whole platform. Nothing may be claimed until a Windows host runs the 
 
 ## macOS 13 and later
 
-Prototype and measure on hardware. The no prompt guarantee is unproven, and the profile clone is not
-on the list of things to build.
+Prototype and measure on hardware. Since 14 September 2026 a macOS 26.6.2 runner (virtual Apple M1,
+Chrome 152) has run `experiments/platform-probe/`, report
+`platform-probe-macos-2026-09-14.json` attached to the `v0.1.0-alpha.5` release; those rows are `Limited`, and a runner's Keychain
+and TCC state is not a person's Mac, so the no prompt guarantee stays unproven.
 
 | Capability | Tier | The deciding fact |
 |---|---|---|
-| Owned headless browser, fresh profile | Reasoned | |
-| Real sessions, profile clone | Reasoned, and every failure mode is a dialog on the person's screen | The Keychain ACL is keyed to the saving application's code signature. G19 to G22 |
+| Owned headless browser, fresh profile | Limited | Chrome's bundle verified with `codesign --strict`, Team ID read at runtime, launched headless against a fresh profile and wrote a `v10` cookie. No broker ran there yet |
+| Resource accounting | Limited | `proc_pid_rusage` reachable from `bun:ffi` with no helper; `ri_phys_footprint` 88.9 MiB against `ps` 115.4 MiB. G24 |
+| Session job, `launchctl` | Limited | `bootstrap gui/501` accepted a job in a real gui session and `bootout` left no survivors of its group. A Keystone agent was not present to test. G25 |
+| Profile clone on APFS | Limited | `cp -c` shared blocks with no growth in used space, `cp -Rpc` returned 0. G22 |
+| Real sessions, profile clone | Reasoned, and every failure mode is a dialog on the person's screen | The Keychain ACL is keyed to the saving application's code signature. On the runner a `ditto` copy of Chrome decrypted with no hang and a `gui` job read the profile `allowed`, which is consistent with the design and not proof on a person's Mac. G19 to G22 |
 | Reading `Chrome Safe Storage` from any helper binary | **Refused** | Chromium's own design document states macOS raises a dialog when a different application requests the item, and that dialog takes focus on the person's screen |
 | Native applications with both separate input and real sessions | **Refused** | No second concurrent GUI session for one user, and acting in place drives the person's own windows |
 | A second Aqua session for an already logged in user | **Refused** | No documented Apple API creates one. Fast User Switching gives a different user a different Keychain |

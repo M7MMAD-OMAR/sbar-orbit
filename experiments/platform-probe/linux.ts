@@ -80,6 +80,6 @@ kill $l 2>/dev/null`;
     const b = await bundle();
     const missing = (await run(["sh", "-c", `LD_LIBRARY_PATH=${b.libdir} ldd -r ${b.sway} ${b.libdir}/libwlroots-0.19.so ${b.pointer} 2>&1 | awk '/not found/ {print $1} /undefined symbol/ {print $3}' | sort -u | tr '\\n' ' '`])).out;
     const dlopen = (await run(["python3", "-c", `import ctypes,os; ctypes.CDLL("${b.libdir}/libwlroots-0.19.so", mode=os.RTLD_NOW); print("loaded")`], { allowFailure: true, env: { LD_LIBRARY_PATH: b.libdir } }));
-    return { lddMissing: missing || "none", dlopen: dlopen.code === 0 ? "loaded" : dlopen.err.slice(-200), smoke: missing ? "not attempted, the loader already refused" : await smoke(b.sway, b.libdir, b.pointer, "bundled") };
+    return { lddMissing: missing || "none", dlopen: dlopen.code === 0 ? "loaded" : dlopen.err.trim().split("\n").at(-1), smoke: missing ? "not attempted, the loader already refused" : await smoke(b.sway, b.libdir, b.pointer, "bundled") };
   },
 };

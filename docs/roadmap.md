@@ -94,7 +94,13 @@
    display and no systemd session.
    What still closes this gate is a real machine with a systemd user session, cgroup delegation and
    wlroots, where `./install.sh` runs to completion and the broker it starts answers.
-4. Repeat browser and native adapter gates on actual macOS and Windows hosts.
+4. Repeat browser and native adapter gates on actual macOS and Windows hosts. Since 14 September
+   2026 the platform probes run on GitHub's Windows, macOS and Ubuntu runners,
+   `.github/workflows/platform-probes.yml`: G16, G17, G24 and G25 closed, G15 closed for the
+   transport, G19, G21 and G22 measured on a runner, G23 not measurable on a virtual Mac, and on a
+   stock Ubuntu 24.04 host the egress lease is `in-browser` because AppArmor refuses the namespace.
+   Every one of those is tier `Limited`; a person's machine, with a desktop session and their own
+   Keychain, is still what closes the rest. See [porting](porting.md) section 9.
 5. Publish capabilities from evidence; unsupported closed tools remain explicit. The tier table,
    the local `doctor --report` and the issue forms now exist; what they need is a host this project
    does not have. See [support tiers](support-tiers.md).
