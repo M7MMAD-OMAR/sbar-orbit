@@ -140,6 +140,12 @@ Claude Code also passed the same editor task through the identical Orbit tools: 
 
 These are individual successful tasks with the same Wayland application, not repeated reliability or X11 model tests. The selected host only changes the command and response parsing; file verification and application checks are shared.
 
+## Renderer, measured
+
+The private display draws with pixman, and since 14 September 2026 that is a measured choice rather than a cautious one. `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/renderer-cost.ts` runs one capture loop of 24 frames against the GTK fixture at 1280 by 800 and at 1920 by 1200, once on pixman and once on GLES2 pinned to the integrated device: the compositor process cost 2.5 ms per frame at the default size on both, 5.4 against 5.0 ms at the large one, and the median observe was 16.5 against 16.8 ms and 18.0 against 21.4 ms. The person's Hyprland stayed at 0% through both loops from 0.3% at rest. Visual Studio Code's Electron binary mapped in 1027 ms on pixman and 1036 ms on GLES2.
+
+The GPU renderer is an opt in for the person who wants it anyway, in the broker's environment: `ORBIT_NATIVE_RENDERER=gles2` and `ORBIT_NATIVE_RENDER_DEVICE=/dev/dri/renderD128`, both required together. An unpinned GPU renderer is refused, because unpinned wlroots opened the discrete NVIDIA device on this laptop, and a session reports `renderer: { asked, bound, device, driver }` with `bound` read from the compositor's log, so a GPU renderer that fell over is a refused session rather than a black frame.
+
 ## Vertical scrolling (unreleased)
 
 Native agents can send `{"type":"scroll","x":200,"y":200,"deltaY":3}` through CLI, broker RPC or MCP. Coordinates are integers inside 1280 x 800. `deltaY` is a nonzero integer wheel-step count from -20 to 20: positive scrolls down, negative up. It is not a requested pixel distance; applications choose their scroll amount. The private pointer moves to the requested point without clicking, then sends vertical wheel events. Pause rejects agent scroll actions. The viewer exposes vertical wheel control over its scaled image while paused.

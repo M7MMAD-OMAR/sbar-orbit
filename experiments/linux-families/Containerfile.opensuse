@@ -1,0 +1,17 @@
+# openSUSE Tumbleweed: rolling glibc, /usr/lib64 like Fedora, rpm packaging with different names.
+# sway is installed once for its library set, the rpms are downloaded again and unpacked into a
+# private prefix for G5 with rpm2cpio, then sway and its wlroots are removed from the system.
+FROM docker.io/opensuse/tumbleweed:latest
+RUN zypper --non-interactive install sway xwayland xterm foot grim bubblewrap socat python3 binutils cpio \
+ && wl=$(rpm -q --whatprovides "$(rpm -qR sway | grep -m1 -o 'libwlroots[^ ]*')" --qf '%{NAME}\n' | head -1) && echo "wlroots package: $wl" && test -n "$wl" \
+ && mkdir -p /opt/distro-sway && cd /opt/distro-sway \
+ && zypper --non-interactive --pkg-cache-dir /tmp/rpms download sway $wl \
+ && for rpm in $(find /tmp/rpms -name '*.rpm'); do rpm2cpio "$rpm" | cpio -idu --quiet; done \
+ && (for p in sway $wl; do rpm -q $p; done) > manifest.txt \
+ && zypper --non-interactive remove sway $wl \
+ && rm -rf /tmp/rpms && zypper clean --all
+RUN useradd --create-home --uid 1000 orbit
+COPY inside.sh smoke.py /opt/orbit/
+USER orbit
+ENV HOME=/home/orbit
+CMD ["/opt/orbit/inside.sh"]

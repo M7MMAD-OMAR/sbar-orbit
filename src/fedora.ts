@@ -10,6 +10,7 @@ import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
+import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./native-renderer";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
@@ -108,6 +109,8 @@ export class FedoraBackend {
   private waylandDisplay = "";
   private clipboard?: ChildProcessWithoutNullStreams;
   private closing?: Promise<void>;
+  /** What the compositor was asked to draw with, and what its log says actually bound. */
+  renderer: { asked: NativeRenderer["renderer"]; bound: string; device?: string; driver?: string } = { asked: "pixman", bound: "pixman" };
   private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams, private size: Viewport) {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
@@ -131,19 +134,26 @@ export class FedoraBackend {
     // The person's theme, icons, cursor and fonts, so applications look the way they do on the
     // desktop. Documents, history and credentials are not part of it.
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
-    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", WLR_RENDERER: "pixman",
+    // Pixman unless the broker's environment opts into a pinned GPU renderer; see native-renderer.ts.
+    const renderer = nativeRendererFromEnv();
+    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
     const cursor = appearance.cursor ? `seat seat0 xcursor_theme ${appearance.cursor.theme} ${appearance.cursor.size}\n` : "";
     await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
-    const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), "-c", config], { env, detached: true });
+    const compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), ...(renderer.renderer === "pixman" ? [] : ["-V"]), "-c", config], { env, detached: true });
     // The compositor's own output is the only evidence when a display fails to start, so keep it
     // beside the session rather than discarding it. Bounded, because sway can log per frame.
     const log = createWriteStream(join(directory, "compositor.log"), { mode: 0o600 });
     log.on("error", () => {});
-    let logged = 0;
-    const keep = (chunk: Buffer) => { if (logged < 262144 && !log.writableEnded) { logged += chunk.length; log.write(chunk); } };
+    let logged = 0, head = "";
+    const keep = (chunk: Buffer) => {
+      if (logged < 262144 && !log.writableEnded) { logged += chunk.length; log.write(chunk); }
+      // The opening of the log stays in memory too: the renderer check below reads it before the
+      // write stream has necessarily reached the disk.
+      if (head.length < 65536) head += chunk.toString("utf8", 0, Math.min(chunk.length, 65536 - head.length));
+    };
     compositor.stdout.on("data", keep); compositor.stderr.on("data", keep);
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
@@ -159,6 +169,11 @@ export class FedoraBackend {
       // The supervisor reports the compositor it started. Kept because a supervisor killed outright
       // leaves that compositor running, and the display directory is removed out from under it.
       try { backend.compositorGroup = JSON.parse(await readFile(join(directory, "compositor.json"), "utf8")).pid; } catch {}
+      // Which renderer bound is read from the log, not assumed: a GPU renderer that was asked for and
+      // fell over would otherwise be reported as running while every frame came from nowhere.
+      const { bound, driver } = rendererBound(renderer.renderer, head);
+      backend.renderer = { asked: renderer.renderer, bound, ...(renderer.device ? { device: renderer.device } : {}), ...(driver ? { driver } : {}) };
+      if (bound !== renderer.renderer) throw new OrbitError("UNSUPPORTED", `The private compositor did not bind the ${renderer.renderer} renderer${renderer.device ? ` on ${renderer.device}` : ""}; see ${join(directory, "compositor.log")}`);
       // Export only the private compositor's X11 endpoint, never the host environment.
       const handoff = join(directory, "display.json");
       const code = `import os,json;json.dump({'display':os.environ.get('DISPLAY')},open('${handoff}','w'))`;

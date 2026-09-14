@@ -42,7 +42,7 @@ The only class with rows that are not reasoning. Measured on `0.1.0-alpha.1` and
 | Capability | Tier | Evidence | Date |
 |---|---|---|---|
 | Owned headless browser, fresh profile | Measured | `bun run verify`, browser lifecycle tests, and a 600 second viewer run at 5.006 FPS with maximum sampled frame age 284 ms | 12 September 2026 |
-| Private display, real desktop applications | Limited: four GNOME and KDE applications launched and a file was saved. No session bus, so portal backed file dialogs are the next gate, G10 | `experiments/native-editor.ts`, `experiments/multi-application.ts` | 11 September 2026 |
+| Private display, real desktop applications | Limited: nineteen applications across GTK4, GTK3, LibreOffice, Qt 6 and Xwayland launched and mapped, a file was saved, and the GTK file chooser opened and worked with no session bus at all, which closed G10. Still one host | `experiments/native-editor.ts --dialog`, `experiments/application-coverage.ts`, `experiments/multi-application.ts` | 14 September 2026 |
 | Viewer and pause | Measured | `experiments/viewer-timing.ts 600`, 2077 submissions, 3005 frames | 11 September 2026 |
 | Human takeover and resume | Failed | [validation.md](validation.md) records the manual resume workflow as not completed, and further interactive trials as on hold. G27 | 10 September 2026 |
 | One core budget, participant acceptance | Failed | The participant stopped the trial at about 123 seconds over CPU cost. A scheduling defect was found and fixed; no second trial has run | 10 September 2026 |
@@ -60,14 +60,19 @@ The only class with rows that are not reasoning. Measured on `0.1.0-alpha.1` and
 
 ## Linux, another glibc distribution
 
-No host in reach. Every row is `Reasoned` unless a primary source refuses it.
+No real host in reach. Since 14 September 2026 four families run as containers on the measured host,
+`experiments/linux-families/run.sh`, which is enough to say whether the compositor loads and starts
+and nothing about a screen, a GPU or a systemd user session. Those rows are `Limited` and say so; the
+rest stay `Reasoned`.
 
-| Capability | Tier | What would move it | Gate |
+| Capability | Tier | Evidence, or what would move it | Gate |
 |---|---|---|---|
 | Owned headless browser, fresh profile | Reasoned | `bun run verify` on that host | |
-| Private display | Reasoned | Whether the bundled `libwlroots-0.19.so` loads on that glibc, then the compositor smoke and frame capture checks | G2, G5 |
+| Private display, bundled compositor | Limited on Arch and openSUSE Tumbleweed: `dlopen` loads, `ldd -r` clean, smoke probe and frame pass in a container. Refused on Debian 13 and Ubuntu 24.04: `libdisplay-info.so.3` on both, `liblcms2.so.2` and older libinput, libwayland and pixman symbols on Ubuntu | `experiments/linux-families/run.sh`, 14 September 2026 | G2 |
+| Private display, the family's own sway from a private prefix | Limited on all four: Debian sway 1.10.1, Ubuntu sway 1.9 (needs `--unsupported-gpu` beside a proprietary NVIDIA module, recorded), Arch sway 1.12, Tumbleweed sway 1.12, each passing the smoke probe with the Fedora built pointer helper | `experiments/linux-families/run.sh`, 14 September 2026 | G5 |
+| Compositor with no logind session | Limited: started in 51 ms on all four with nothing open under `/run/systemd`, `/run/seatd`, `/run/user` or `/run/dbus` | Same run | G1 |
 | Real sessions, profile clone | Reasoned, and only where reflink and a secret service both answer | The reflink probe and the keyring item check, both of which `doctor --report` already prints | |
-| Origin lease below the browser | Reasoned | The `confinedEgress` probe, then `experiments/confined-egress.ts`. Unprivileged user namespaces are present, absent, or administratively disabled, and only asking tells the three apart | G29 |
+| Origin lease below the browser | Limited: `bwrap` and `socat` packaged on all four, the probe passes, and the network namespace confined a fetch to the socat relay alone. The pid half of Orbit's shape is a container limit, and a real host's AppArmor `userns` policy is unmeasured | Same run; then the `confinedEgress` probe and `experiments/confined-egress.ts` on a real host | G29 |
 | Everything inside a rootless container | Reasoned | Whether a user namespace nests, and whether `systemd-run --user --scope` registers on the host manager | G6, G7 |
 
 ## Linux, musl, or no desktop stack

@@ -1,0 +1,22 @@
+# debian: a glibc host with a full desktop stack, and no Fedora anywhere in it. sway is installed
+# once so that every library the compositor links against is present, then sway and its wlroots are
+# unpacked into a private prefix for G5 and removed from the system, so the only sway binaries on this
+# machine are the bundled Fedora one and the family's own copy in /opt/distro-sway.
+FROM docker.io/library/debian:stable
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends sway xwayland xterm foot grim bubblewrap socat python3 binutils ca-certificates \
+ && mkdir -p /opt/distro-sway && cd /opt/distro-sway \
+ && packages="sway $(apt-cache depends sway | awk '/Depends: libwlroots/ {print $2}')" \
+ && apt-get download $packages \
+ && for deb in *.deb; do dpkg-deb -x "$deb" . ; done \
+ && (for p in $packages; do dpkg-query -W -f='${Package} ${Version}\n' $p; done) > manifest.txt \
+ && rm -f *.deb \
+ && apt-get remove -y $packages \
+ && rm -rf /var/lib/apt/lists/*
+# Ubuntu images ship an "ubuntu" account on uid 1000 already; the account here is the one that runs.
+RUN if id -u 1000 >/dev/null 2>&1; then userdel -r "$(id -un 1000)"; fi && useradd --create-home --uid 1000 orbit
+COPY inside.sh smoke.py /opt/orbit/
+USER orbit
+ENV HOME=/home/orbit
+CMD ["/opt/orbit/inside.sh"]

@@ -85,7 +85,9 @@ The cases cover abrupt browser/native broker death, detached descendants ignorin
 ORBIT_TEST_NATIVE=1 bun run verify tests/native-crash.test.ts tests/browser-crash.test.ts tests/native-file-leases.test.ts
 ```
 
-Repeat the command three times for this check. This is repeatability evidence on one Fedora host, not power-loss recovery, independent supervisor death, arbitrary application compatibility or proof that a snapshot captures later descendants. Human takeover remains unconfirmed.
+Repeat the command three times for this check. This is repeatability evidence on one Fedora host, not power-loss recovery, arbitrary application compatibility or proof that a snapshot captures later descendants. Human takeover remains unconfirmed.
+
+Repeated on 14 September 2026, after the supervisor death fix and the owned group sweep landed, one run at a time with nothing else in the slice: three consecutive runs, 6 tests and 33 assertions each, in 13.17, 12.87 and 12.89 seconds, no skips and no failures. The sixth test is the end to end check that a supervisor killed outright no longer leaves its application behind.
 
 ## Participant trial: resource acceptance failed
 

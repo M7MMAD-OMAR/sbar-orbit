@@ -34,7 +34,11 @@
    `Viewer cycle: 24 to 56 ms of every 1000 ms (2 to 6%)` at the default cadence on a blank
    session; see [validation](validation.md). The participant reads the same `#cost` line in that
    window on their desktop, and that reading is the one this gate still waits for.
-2. Broaden failure and native application/account coverage. Three repeated recovery runs pass.
+2. Broaden failure and native application/account coverage. Three repeated recovery runs pass:
+   repeated on 14 September 2026 with the supervisor death fix in, three consecutive runs of the
+   crash and file lease suites, 6 tests and 33 assertions each, 13.17, 12.87 and 12.89 seconds, no
+   failures; see [validation](validation.md). The GTK file chooser question, G10, closed the same
+   day with no session bus needed; see [porting](porting.md).
    Independent supervisor death is now covered rather than open: a supervisor killed outright runs
    none of its own reaping, so its application survived it and outlived the runtime directory it was
    given. The backend now records the process group each supervisor leads, sweeps it when a supervisor
@@ -108,5 +112,12 @@
    [packaging](packaging.md): branded Google Chrome ignores `--load-extension`, so a person loads it
    unpacked through `chrome://extensions`, and on Linux the native messaging host manifest belongs
    under the browser's user data directory.
+7. The other Linux families, as far as a container can take them. Since 14 September 2026
+   `experiments/linux-families/run.sh` runs the compositor contract probe on Debian 13, Ubuntu 24.04,
+   Arch and openSUSE Tumbleweed: the bundled build loads on Arch and Tumbleweed and is refused by
+   soname on Debian and Ubuntu, the family's own sway starts from a private prefix on all four, no
+   family's compositor needs a logind session, and unprivileged user namespaces confine a network
+   namespace on all four. Every row is tier `Limited`; what closes more is a real machine of each
+   family with a screen. See [support tiers](support-tiers.md) and [porting](porting.md).
 
 Use [acceptance cases](acceptance.md) as release criteria. Alpha versions do not imply these gates are complete.

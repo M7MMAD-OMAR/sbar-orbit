@@ -1,0 +1,16 @@
+# Arch: rolling glibc, /usr/lib rather than /usr/lib64, wlroots packaged per minor version. sway is
+# installed once for its library set, its package files are unpacked into a private prefix for G5,
+# and then sway and wlroots are removed from the system.
+FROM docker.io/library/archlinux:latest
+RUN pacman -Syu --noconfirm --disable-download-timeout \
+ && pacman -S --noconfirm --disable-download-timeout sway xorg-xwayland xterm foot grim bubblewrap socat python binutils \
+ && mkdir -p /opt/distro-sway && cd /opt/distro-sway \
+ && wl=$(pacman -Qi sway | awk -F': ' '/Depends On/ {for (i=1;i<=NF;i++) print $i}' | tr ' ' '\n' | grep '^wlroots' | head -1) \
+ && for p in sway $wl; do tar -xf /var/cache/pacman/pkg/$p-*.pkg.tar.zst -C /opt/distro-sway --exclude=.BUILDINFO --exclude=.MTREE --exclude=.PKGINFO --exclude=.INSTALL; pacman -Q $p >> manifest.txt; done \
+ && pacman -Rdd --noconfirm sway $wl \
+ && pacman -Scc --noconfirm
+RUN useradd --create-home --uid 1000 orbit
+COPY inside.sh smoke.py /opt/orbit/
+USER orbit
+ENV HOME=/home/orbit
+CMD ["/opt/orbit/inside.sh"]
