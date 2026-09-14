@@ -709,7 +709,12 @@ class Panel(Gtk.Application):
         if head is None:
             # Nothing is drawn, so nothing should be clickable: an empty region lets every event
             # through to the person's windows instead of into a surface they cannot see.
-            surface.set_input_region(cairo.Region())
+            self.apply_region(surface, cairo.Region())
+            # A hidden mark is meant to take no input, and render() settles again when it comes
+            # back. A visible mark with no shape yet is mid layout, and nothing else would come
+            # back to open the region again, so ask on the next turn of the loop.
+            if self.mark.get_visible():
+                GLib.timeout_add(120, self.settle)
             return False
         if self.expanded or self.shell.progress > 0.01:
             region = cairo.Region(cairo.RectangleInt(0, 0, width, height))
@@ -719,8 +724,16 @@ class Panel(Gtk.Application):
             # and the surface starts one padding earlier in both directions.
             pad = shell_padding(self.settings)
             region = cairo.Region(cairo.RectangleInt(int(x) + pad - 2, int(y) + pad - 2, int(w) + 4, int(h) + 4))
-        surface.set_input_region(region)
+        self.apply_region(surface, region)
         return False
+
+    def apply_region(self, surface, region):
+        """A region reaches the compositor with the next frame this surface commits, and a mark that
+        is not animating commits nothing on its own. Without the redraw the region written when the
+        mark comes back after an idle spell sat in GDK unsent, and the mark drew at the edge and
+        took neither a hover nor a click until something else happened to repaint it."""
+        surface.set_input_region(region)
+        self.shell.queue_draw()
 
     def relocate(self):
         """Applied live from the settings: the mark moves, and the frame follows it to the monitor."""
@@ -899,7 +912,14 @@ class Panel(Gtk.Application):
             # Not while the mark is being carried. Showing or hiding it changes how big the shell is,
             # which moves the surface, which moves the frame the drag measures its offsets in, and the
             # drop would step sideways because an agent happened to start work mid gesture.
-            self.mark.set_visible(not (self.settings["hideWhenIdle"] and state in ("idle", "offline")))
+            wanted = not (self.settings["hideWhenIdle"] and state in ("idle", "offline"))
+            if wanted != self.mark.get_visible():
+                self.mark.set_visible(wanted)
+                # The input region is written once per settle, and hiding the mark writes an empty
+                # one. Without this the mark drew again when work started and stayed deaf to the
+                # pointer, because nothing else calls settle() until the cards open, and the cards
+                # only open on a hover the empty region swallows.
+                GLib.idle_add(self.settle)
         self.shell.queue_draw()
         self.sync_frame()
         self.cards_stale = True
