@@ -167,6 +167,39 @@ Note that `~/.config` is a Git repository on this workstation, so the written un
 
 What this does and does not give you. The broker starts at login and restarts on failure; surviving a full logout additionally needs `loginctl enable-linger`, which requires elevation. Only one managed broker can run: a second refuses with `PROFILE_BUSY` rather than displacing the first, while a socket file nothing answers on is treated as stale and replaced. Sessions do not survive a broker restart: `Sessions.close` stops every session on shutdown, so a restarted broker comes back empty. The per-lifetime caps of 32 sessions and 10,000 action IDs were written assuming restarts, so a long-lived broker eventually refuses new work and must be restarted.
 
+## Updating without ending a session
+
+```sh
+sbar-orbit update status     # which version is running, which are prepared, whether one is waiting
+sbar-orbit update check      # what the registry has, and whether it is eligible yet
+sbar-orbit update stage      # prepare it beside the running version, activate nothing
+sbar-orbit update activate VERSION
+sbar-orbit update on|off     # check daily by itself, or stop doing that
+```
+
+A session is state inside the broker process, so pointing the launcher at another version and restarting
+ends every open one. Activation therefore refuses while any session is open, and there is no flag to
+waive that. Preparing is the opposite and is the half that runs by itself: versions sit side by side in
+their own directories with one symlink saying which is current, so a new one is downloaded, verified,
+unpacked and given its dependencies without anything being written into the tree the running broker is
+executing from.
+
+If the broker does not answer `doctor` after its restart, the link goes back to the version that was
+working, the broker is restarted again, and the report says `rolledBack` rather than reporting a success.
+The version that failed is kept, because it is the evidence.
+
+Automatic updates are off until `update on`, and absence of the switch means off. `update off` is read
+before the feed and before anything else, so it stops a run with no network and no broker, which is the
+state a kill switch exists for. A published version is not eligible until it has been public for 72
+hours: a compromised publishing account reached about 6,000 machines in under 40 minutes on another
+registry, and a signature verifies all of them, because the attacker holds the credentials. A different
+release line is reported and never taken by itself.
+
+An install running from a source checkout is refused by name: its updater is git, and an automatic swap
+has no business moving somebody's working tree. The desktop mark is a separate process that keeps
+running its own version until the person's next login, which `status` reports rather than hides. See
+[automatic updates](updates.md).
+
 ## Disk that sessions leave behind
 
 Every session gets a fresh profile directory under `~/.cache/sbar-orbit/workspaces`, on disk rather than in RAM, since a browser profile is written constantly. The profile is removed when the session stops, and the broker removes its whole workspace when it closes, so a clean shutdown leaves nothing. A broker that was killed or crashed does leave its workspace behind, and older versions retained every profile: this workstation had accumulated 4.5 GB of them from test runs.

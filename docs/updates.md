@@ -242,5 +242,22 @@ the condition about the panel being visible is unnecessary: a boundary is zero o
 is the whole of it. What remains true is that a panel and a broker can be from different versions for a
 while, which `status` reports rather than hides.
 
-Nothing in this file is measured except the three source findings and the layout of this host. The rest is
-a design, and it stays `not measured` until it runs.
+## What is built, and what is still not measured
+
+All five steps are built and their unit gates pass: 22 checks in `tests/update.test.ts`, the three that
+guard activation run against the code with the guard and the rollback taken out, where they failed, and
+`sbar-orbit update check` run against the real registry, where it answered that this is the newest version
+the feed has.
+
+One gate has not been run and this is where it is written down. **An end to end activation on a machine
+whose launcher goes through a managed version directory, with real systemd and a real broker, is
+`not measured`.** Every activation test injects the restart and the health check, which means the
+orchestration is tested and the two commands that reach the machine are not. This host cannot be that
+gate: its launcher points at a working checkout, which the updater refuses by design, and pointing it
+somewhere else would be an experiment run on the person's own installation. The place for it is the
+fresh-machine container in `experiments/fresh-machine/`, which already gives a clean Fedora a real
+systemd user session, and the run would be: install from the registry, prepare a second version, activate
+it, read `doctor`, break it deliberately, watch the rollback, read `doctor` again.
+
+Also not measured: what a downgrade does to anything a newer version wrote on disk, which is the case a
+rollback creates.
