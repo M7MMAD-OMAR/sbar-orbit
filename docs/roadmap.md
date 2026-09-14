@@ -94,6 +94,16 @@
    display and no systemd session.
    What still closes this gate is a real machine with a systemd user session, cgroup delegation and
    wlroots, where `./install.sh` runs to completion and the broker it starts answers.
+   **The browser half closed on 14 September 2026 on a real second machine**, a GitHub Ubuntu 24.04.5
+   runner with a systemd user session and `cpu memory pids` delegated: `./install.sh --json` returned
+   `installed: true`, `sbar-orbit.service` came up and stayed up, `doctor` answered, and a browser
+   session created through the installed service navigated to a page, read its heading, captured a
+   1280 by 800 frame and stopped; the logs and the frame are attached to the `v0.1.0-alpha.5`
+   release. The first attempt found the defect a container could not: the service exited 127 on
+   every restart because the launcher took `bun` from the caller's PATH and a systemd user service
+   has none of `~/.bun/bin` in its own. The launcher now finds bun by location. The native half,
+   a compositor on that machine, is still refused there by the bundle's sonames, so it waits for a
+   real Fedora, Arch or openSUSE host.
 4. Repeat browser and native adapter gates on actual macOS and Windows hosts. Since 14 September
    2026 the platform probes run on GitHub's Windows, macOS and Ubuntu runners,
    `.github/workflows/platform-probes.yml`: G16, G17, G24 and G25 closed, G15 closed for the

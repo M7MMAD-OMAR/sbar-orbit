@@ -75,6 +75,19 @@ session that owned it is gone. It also refuses the browser its escape: inside a 
 attempt to move itself into a systemd scope of its own is refused by systemd with `Process 2 is a kernel
 thread, refusing`, which is a containment Orbit otherwise has to remove a session bus to keep.
 
+## The suite on a second host
+
+On 14 September 2026 `bun run verify` ran on a GitHub Ubuntu 24.04.5 runner, a real machine with a
+systemd user session and `cpu memory pids` delegated, inside the `sbarorbit.slice` that
+`scripts/limited.ts` makes there: 234 pass, 0 fail, 22 native tests skipped, about 120 s. Four runs
+in the day, and what the first three found: three tests assumed this workstation (the desktop sampler
+needs `hyprctl`, the update test judged the person's own launcher link, the restore test expected a
+filesystem that snapshots), and one test closed its popup on a 150 ms timer that a slower host beat.
+All four are fixed as tests, not as skips. `./install.sh --json` on the same runner then installed and
+started the service, and a browser session through it navigated, read and captured a frame, after the
+launcher stopped depending on the caller's PATH. Logs and the frame are attached to the
+`v0.1.0-alpha.5` release. See [support tiers](support-tiers.md).
+
 ## Repeated recovery on Fedora
 
 After the initial alpha tag, the crash and selected-file suites passed three consecutive runs under the shared resource caps: 5 tests and 26 assertions per run, with no skips or failures. Each run used fresh broker sessions and disposable application state. The shared scope had zero remaining processes after the runner exited.
