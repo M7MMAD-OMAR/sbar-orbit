@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { nativeRuntimeLocations } from "../src/runtime-paths";
+import { commandName } from "../src/local-install";
 import { tmpdir } from "node:os";
 
 const project = resolve(import.meta.dir, "..");
@@ -35,7 +36,7 @@ test("a dry run reports every step and changes nothing", async () => {
     // The first step only reads, so it runs for real even here. Everything that writes is skipped.
     expect(report.steps.filter(step => step.state === "skipped").map(step => step.id))
       .toEqual(["dependencies", "native", "launcher", "service", "connector", "verify"]);
-    expect(await missing(join(box.prefix, "bin/sbar-orbit"))).toBe(true);
+    expect(await missing(join(box.prefix, "bin", commandName()))).toBe(true);
     expect(await missing(join(box.config, "sbar-orbit/mcp.json"))).toBe(true);
   } finally { await box.restore(); }
 }, 20000);
@@ -45,9 +46,16 @@ test("an install without a service links the command and writes connector config
   try {
     const report = await runInstall({ prefix: box.prefix, service: false, install: refuse });
     expect(report.installed).toBe(true);
-    const link = join(box.prefix, "bin/sbar-orbit");
+    const link = join(box.prefix, "bin", commandName());
     expect(report.launcher).toBe(link);
-    expect(await Bun.file(link).text()).toContain("Sbar Orbit");
+    // On Linux the installed command IS the launcher, reached through a symlink, so its own text is
+    // there. On Windows it is a shim that forwards to the launcher, so what identifies it is the
+    // marker and the target rather than the launcher's contents.
+    const installed = await Bun.file(link).text();
+    if (process.platform === "win32") {
+      expect(installed).toContain("sbar-orbit-managed-shim");
+      expect(installed).toContain(commandName());
+    } else expect(installed).toContain("Sbar Orbit");
     const written = JSON.parse(await readFile(join(box.config, "sbar-orbit/mcp.json"), "utf8"));
     // The prefix link, which is the path local-install switches between versions, rather than
     // this checkout: configuration written against a source directory does not survive an
@@ -73,14 +81,16 @@ test("an install refuses a directory that is not an Orbit source, and says which
   try {
     await mkdir(join(fake, "bin"), { recursive: true });
     await writeFile(join(fake, "package.json"), JSON.stringify({ name: "not-orbit", version: "1.0.0" }));
-    await writeFile(join(fake, "bin/sbar-orbit"), "#!/bin/sh\n", { mode: 0o755 });
+    // The launcher name this platform installs, so the fixture is a source tree a real install
+    // would accept rather than one that only looks right on Linux.
+    await writeFile(join(fake, "bin", commandName()), "#!/bin/sh\n", { mode: 0o755 });
     const report = await runInstall({ source: fake, prefix: box.prefix, service: false, install: refuse });
     expect(report.installed).toBe(false);
     const failed = report.steps.filter(step => step.state === "failed");
     expect(failed.length).toBeGreaterThan(0);
     // It stops at the first failure rather than reporting later steps it never attempted.
     expect(report.steps.at(-1)?.state).toBe("failed");
-    expect(await missing(join(box.prefix, "bin/sbar-orbit"))).toBe(true);
+    expect(await missing(join(box.prefix, "bin", commandName()))).toBe(true);
   } finally {
     await rm(fake, { recursive: true, force: true });
     await box.restore();

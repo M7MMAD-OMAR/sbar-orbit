@@ -20,8 +20,10 @@ test("preflight distinguishes browser, native and common missing prerequisites",
   expect(browser?.command).toContain("chromium");
   expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
   // A machine with neither runtime. Named by the two files rather than by a directory, because the
-  // runtime is shared between versions now and is no longer under a `.runtime` path.
-  const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !/\/sway$|\/pointer$/.test(path) });
+  // runtime is shared between versions now and is no longer under a `.runtime` path. Both separators,
+  // because `join` produces backslashes on Windows and a POSIX-only pattern matched nothing there,
+  // so the fixture claimed a runtime the mock meant to remove.
+  const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !/[/\\](sway|pointer)$/.test(path) });
   expect(noNative.browserPrerequisitesFound).toBe(true);
   expect(noNative.nativePrerequisitesFound).toBe(false);
   // The fresh-machine failure: a compositor that is built and cannot load, which is a package

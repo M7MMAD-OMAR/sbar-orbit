@@ -111,9 +111,12 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
         message: "Project dependencies are not installed. Run this in the source directory; the one command install does it for you." });
   // The same resolver `doctor` uses, so a Windows install and a Windows doctor cannot disagree about
   // whether a browser exists. `chromeExecutables` is a list of Linux paths and finds nothing there.
-  const browsers = windows
-    ? [windowsBrowserInstalls().length > 0]
-    : await Promise.all(chromeExecutables.map(path => probe.file(path, true)));
+  //
+  // Still asked through `probe.file`, one path at a time, rather than by calling the resolver for a
+  // yes or no: the probe is the seam every test injects, and answering from the real machine instead
+  // made this check unmockable and silently ignored the caller's probe.
+  const browserCandidates = windows ? windowsBrowserInstalls().map(install => install.executable) : chromeExecutables;
+  const browsers = await Promise.all(browserCandidates.map(path => probe.file(path, true)));
   add("chrome-or-chromium", "browser", browsers.some(Boolean),
     await systemPackages(probe, "no-browser",
       "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at.",

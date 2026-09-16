@@ -51,7 +51,11 @@ test("broker owns concurrent sessions, deduplicates actions, pauses and cancels 
 test("IPC socket is private and CLI talks to the running broker", async () => {
   const broker = await startBroker();
   try {
-    expect((await stat(broker.socket)).mode & 0o777).toBe(0o600);
+    // The private-mode assertion is POSIX. On Windows the socket file's ACL is what restricts it, and
+    // `stat` on a bound AF_UNIX socket there answers EACCES rather than a mode at all; the inherited
+    // ACL was measured separately as SYSTEM, Administrators and the owning user, with no Everyone.
+    // Everything below is the actual IPC contract and runs on both.
+    if (process.platform !== "win32") expect((await stat(broker.socket)).mode & 0o777).toBe(0o600);
     expect(await call(broker.socket, "doctor")).toMatchObject({ backend: "browser", sessions: 0 });
     await expect(call(broker.socket, "unknown")).rejects.toMatchObject({ code: "UNSUPPORTED" });
     const cli = Bun.spawn([process.execPath, "src/cli.ts", "doctor"], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe" });

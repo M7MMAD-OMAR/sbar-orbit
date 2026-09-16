@@ -820,7 +820,75 @@ approximate, classified by pattern rather than diagnosed one at a time, and one 
 several kinds of line. **No claim is made that what remains is only harness.** Three product bugs came
 out of the last two passes over exactly this kind of list.
 
-## 13. The control channel, for whoever repeats this
+## 13. The remaining failures, diagnosed one at a time
+
+Section 12 said the remaining 27 were classified by log pattern rather than diagnosed, and that no
+claim was being made that they were only harness. This read every one of them.
+
+| | Section 12 | Now |
+|---|---|---|
+| pass | 158 | **160** |
+| fail | 27 | **21** |
+| skip | 87 | **92** |
+
+Nothing regressed: the failures that disappeared are a subset, with no new name in the list.
+
+### One more product bug, in the policy layer
+
+`parsePolicy` required an advisor command to start with `/`:
+
+```ts
+if (typeof first !== "string" || !first.startsWith("/"))
+```
+
+The rule it means is *absolute*, so the broker never resolves an advisor through PATH and lets
+whatever the agent host exported decide which program approves an action. Written in POSIX terms it
+rejected every valid Windows path, which made the advisor **impossible to configure on Windows at
+all**: a policy feature silently unavailable rather than refused with a reason. It is `isAbsolute`
+now, in the platform's own terms, and a UNC path is still refused because a policy should not consult
+a program across the network.
+
+### A check that had quietly become unmockable
+
+The Windows browser probe I added in section 10 called `windowsBrowserInstalls()` for a yes or no,
+which reads the real machine. `inspectPrerequisites` takes an injected probe precisely so a test can
+describe a machine, and answering from the host ignored it. The resolver still names the candidates,
+but each one is now asked through `probe.file`, so the seam works on both platforms.
+
+### Where a skip was the honest answer, and what had to be written to earn it
+
+`tests/local-install.test.ts` asserts `readlink` on the installed command and runs `#!/bin/sh`
+launchers. Its subject is the POSIX symlink install, so it is `linuxOnlySuite` now. That is only
+honest if what Windows does instead is tested rather than left as a hole, which is the exact trap
+`tests/platform-support.ts` warns about, so a Windows case was written alongside: the shim is a
+marker carrying file, it forwards with `%*`, no symlink is created, re-activating is idempotent, and
+a foreign `sbar-orbit.cmd` is refused **and left intact** by both activate and deactivate. That last
+one matters most: it is the check that protects a person's own command, and losing it in the port
+would be worse than losing the shim.
+
+`IPC socket is private` was split rather than skipped. Only its first line is POSIX, asserting mode
+`0o600`; the rest is the real IPC contract and now runs on both.
+
+### Two of my own fixes were incomplete, and the guest said so
+
+`preflight` and `an install without a service` both still failed after the fixes above, one line
+further on each time. The first because the test's mock stripped paths with a POSIX-only pattern that
+matched nothing against Windows backslashes, so the fixture claimed a runtime it meant to remove. The
+second because the installed command on Windows is a shim that forwards to the launcher rather than
+being the launcher, so asserting the launcher's own text was wrong: the marker and the target are
+what identify it.
+
+### The 21 that remain
+
+Individually read, they group as: 7 update and packaging tests whose fixtures build source trees with
+`symlink()`, 4 advisor tests that spawn `/bin/sh` and `/bin/true`, 3 that spawn `/usr/bin/python3` or
+`findmnt`, 2 asserting a POSIX file mode, 2 in workspace cleanup using `chmod` semantics Windows does
+not have, 1 broker-death reaping test, and `the documented plan command` failing with `EFTYPE` on a
+spawn. None of them is a Windows code path failing; all are fixtures written against POSIX. **That is
+a statement about these 21 specifically, read one at a time, and not a general claim that what is left
+is always harness.** Four product bugs have come out of three passes over this list.
+
+## 14. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

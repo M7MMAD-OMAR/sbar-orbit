@@ -1,4 +1,5 @@
 import { OrbitError, record } from "./errors";
+import { isAbsolute } from "node:path";
 import type { AdvisorConfig } from "./advisor";
 
 /**
@@ -273,8 +274,13 @@ export function parsePolicy(value: unknown): SessionPolicy {
     if (!Array.isArray(given.command) || !given.command.length || given.command.some(part => typeof part !== "string"))
       throw new OrbitError("INVALID_REQUEST", "An advisor needs a command, as an array of strings");
     const first = given.command[0];
-    if (typeof first !== "string" || !first.startsWith("/"))
-      throw new OrbitError("INVALID_REQUEST", "An advisor command must name an absolute executable");
+    // Absolute, so the broker never resolves an advisor through PATH: that would let whatever the
+    // agent host happened to export decide which program approves an action. `startsWith("/")` said
+    // that in POSIX terms only, which rejected every valid Windows path and left the advisor
+    // impossible to configure there. `isAbsolute` is the same rule in the platform's own terms, and
+    // a UNC path is refused because a policy should not consult a program across the network.
+    if (typeof first !== "string" || !isAbsolute(first) || first.startsWith("\\\\"))
+      throw new OrbitError("INVALID_REQUEST", "An advisor command must name an absolute local executable");
     const timeoutMs = given.timeoutMs === undefined ? 5000 : Number(given.timeoutMs);
     if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000)
       throw new OrbitError("INVALID_REQUEST", "An advisor timeout must be between 100 and 30000 ms");
