@@ -259,11 +259,47 @@ What is left is no longer noise. Every remaining cause is a real platform questi
 That is the honest state: the tree builds and typechecks on Windows, half the suite passes, and the
 remaining half is a list of four named jobs rather than an unknown.
 
-### What still has not happened
+### The broker now starts, measured the same day
 
-No broker has been started on the guest. `serve` refuses before it binds, because
-`requireResourceBudget()` runs first and there is no cgroup. Joining `src/windows-job.ts` to that
-call is the next piece of work, and until it is done, **no Orbit session has ever run on Windows**.
+The sentence that stood here said no broker had been started on the guest, because
+`requireResourceBudget()` read a cgroup and refused before `serve` could bind. That is no longer
+true. `requireResourceBudget()` branches on the platform instead of being removed, so Linux still
+refuses anything outside its slice, and Windows joins the named job object that
+`src/windows-job.ts` wraps.
+
+Run on the guest on 16 September 2026, in the interactive session, against the same tree:
+
+| What was asked | What happened |
+|---|---|
+| `requireResourceBudget()` | passed, `enforcement: "job-object"`, 2 GiB commit ceiling, 1536 active processes, `unbounded: ["swap", "threads"]` |
+| `budgetHeadroom()` | 1 of 1536 tasks used, 82.1 MiB of the 2 GiB peak, read from the job rather than from what the broker believes it started |
+| `startBroker()` | **bound**, at `%LOCALAPPDATA%\Temp\orbit-broker-<random>\broker.sock`, an AF_UNIX socket on a Windows filesystem path |
+| `doctor` over that socket | answered, `platform: "win32"`, `backend: "browser"`, `sessions: 0`, with the job object's counters in `resources` |
+| `session.create` with `backend: "browser"` | refused, `Owned Chrome launcher currently requires Linux with Chrome or Chromium` |
+
+So the first Orbit broker on Windows exists and serves. The request travelled through the socket,
+the session dispatcher, the budget and the headroom check, and stopped at the one place left:
+`launchChrome()` in `src/chrome.ts`, which is Linux only by an explicit test on the platform and by
+what it spawns, `native/supervise.py`, plus a DBUS suppression with no Windows analogue.
+`windowsChromeArguments()` in `src/windows-job.ts` is where the replacement starts.
+
+`cpuCores: 2` in those limits is computed by `src/service.ts` from the guest's 8 vCPU, and on
+Windows it is advisory: the CPU share is set per session rather than on the shared pool, so nothing
+capped this broker.
+
+This is `Limited`, not `Measured`. One guest, virtual hardware, Edge only, no person at it. Three
+things named earlier in this document are still exactly as they were:
+
+- `serve --managed-socket` has never run. `serviceSocketPath()` throws `CONFIG_REQUIRED` without
+  `XDG_RUNTIME_DIR`, which does not exist on Windows, so a managed broker there needs a socket path
+  of its own. The unmanaged path above is the one that ran.
+- The other three suite failure causes are untouched: the `/usr/bin/python3` helpers, `EPERM` on
+  `symlink`, and the systemd probes.
+- No browser session has run on Windows, and no page has been rendered through a broker there.
+
+The Linux gate was re-run against the same tree before and after this, `bun run verify`: 249 pass,
+14 skip, 0 fail. Nothing was traded away for the Windows branch, and nothing in that suite exercises
+it either, because there is no Windows CI here.
 
 ## 7. The control channel, for whoever repeats this
 
