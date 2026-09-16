@@ -1015,7 +1015,57 @@ And the check was shown to catch something before it was trusted: a file granted
 `icacls` is **refused** by the same helper on the same machine. A privacy assertion that has never
 rejected an exposed file has not been shown to guard anything.
 
-## 17. The control channel, for whoever repeats this
+## 17. The person's own browser, with a real one running
+
+`AGENTS.md` names two guarantees. Section 15 measured the first, that an agent's browser does not
+outlive its broker. This is the second: **agents do not touch the person's own browser, screen,
+pointer or windows.** It had not been measured on Windows, and Windows carries a hazard Linux does
+not.
+
+A Chromium launch normally **hands off** to an already running instance of the same browser through
+its singleton, and the launching process then exits. If that happened here, Orbit would be driving the
+person's browser, with their profile, their cookies and their windows, while reporting a perfectly
+healthy session. On Windows the person's Edge is running in nearly every real session, so this is the
+ordinary case, not an edge case.
+
+Measured with a real second browser running first: not headless, its own window, its own profile.
+
+| Question | Answer on the guest |
+|---|---|
+| the person's browser before | 14 processes, window `about:blank - Profile 1 - Microsoft Edge` |
+| Orbit got a browser of its own rather than handing off | **yes**, 12 processes in its own profile |
+| Orbit reused one of the person's processes | **no** |
+| Orbit's browser headless | yes |
+| Orbit's browser names the person's profile | **no** |
+| Orbit drove its own page while theirs ran | yes |
+| Orbit's processes after `close()` | **0** |
+| the person's processes at the end | **14 of 14**, window unchanged |
+
+What prevents the handoff is `--user-data-dir`, because the singleton is per user data directory. That
+is one argument carrying an entire guarantee, which is exactly the kind of thing that deserves a test
+standing over it rather than a comment.
+
+### The test, and the proof it catches something
+
+`tests/person-browser.test.ts` runs on both platforms: it starts a second browser in a profile that is
+not Orbit's, launches Orbit's own, and asserts the two are separate in every way a person would check.
+A handoff is caught by the assertion that Orbit's own profile holds at least one process, since a
+handoff returns a usable looking handle while leaving none.
+
+It was shown to fail before it was trusted. Pointed at the other browser's profile, the way a handoff
+would leave it, **the suite fails**. On Linux it passes in 1113ms.
+
+### Two probe errors worth recording
+
+The first run of this probe crashed: it called `launchChrome({ profile })` when the signature is
+positional, `launchChrome(profile, size, options)`. The second run then answered `false` to every
+question for the wrong reason, because `launchChrome` returns a Playwright handle rather than a pid
+and every `launched.pid` was `undefined`. **A probe that reports `false` for a safety property is
+indistinguishable from a real failure until it is read carefully**, and reading `orbit reused one of
+the person's processes: no` as a pass would have been an accident. The questions were re-asked of the
+process table by command line, which is what a person looking at their own machine would do.
+
+## 18. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
