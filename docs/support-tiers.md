@@ -87,20 +87,30 @@ rest stay `Reasoned`.
 
 ## Windows 10 1809 and later
 
-Gated as a whole platform. Since 14 September 2026 a Windows Server 2025 runner (10.0.26100) has run
-`experiments/platform-probe/`, report `platform-probe-windows-2026-09-14.json` attached to the `v0.1.0-alpha.5` release; those
-rows are `Limited`, one borrowed machine with no person at it.
+Gated as a whole platform. Two hosts have now answered. Since 14 September 2026 a Windows Server 2025
+runner (10.0.26100) has run `experiments/platform-probe/`, report
+`platform-probe-windows-2026-09-14.json` attached to the `v0.1.0-alpha.5` release. Since 16 September
+2026 a **Windows 11 25H2 guest** (build 26200, 8 vCPU, Edge 151, Bun 1.4.2) under libvirt on the
+measured host has run the probes in `experiments/windows-vm/`, recorded in
+[windows-measured.md](windows-measured.md) with raw numbers in
+`evidence/windows-vm-2026-09-16.json`. Both are `Limited`: borrowed or virtual machines with no
+person at them, and one of the two has no Chrome, only Edge.
 
 | Capability | Tier | The deciding fact |
 |---|---|---|
-| Owned headless browser, fresh profile | Limited | Chrome resolved through `App Paths`, launched headless under a job object, rendered a page to PNG. No broker ran there yet |
-| Broker transport | Limited | `node:net` served a named pipe and completed one framed request; `Bun.serve({unix})` refuses a pipe name (Bun issue 15350); `Bun.listen({unix})` binds `AF_UNIX` on a filesystem path. Loopback TCP stays refused. The default pipe DACL grants read to Everyone and Anonymous, which is the weak pipe the broker refuses to start on, so an owning process that sets the DACL is still to build. G15 |
-| Process containment, job objects | Limited | Chrome's ten processes stayed inside a `KILL_ON_JOB_CLOSE` job created through `bun:ffi`, nine of ten answered `IsProcessInJob`, one had exited, and closing the job left none. G16 |
-| One core budget, commit ceiling | Limited | Under a 2 GiB job memory limit and a 25% hard CPU cap, headless Chrome rendered the fixture to a byte identical PNG in the same 8.4 s as unlimited. G17 |
+| Owned headless browser, fresh profile | Limited | Chrome resolved through `App Paths`, launched headless under a job object, rendered a page to PNG on the runner. On the guest, Edge 151 answered CDP from inside a job object. No broker ran on either yet |
+| A broker as a Windows service, in session 0 | **Refused** | Measured on the guest: a Chromium family browser launched from session 0 as SYSTEM exits at once and never publishes `DevToolsActivePort`, with or without `--headless` and with or without `--no-sandbox`. The same launch in the interactive session answered CDP. So the broker runs in the person's session, there is no analogue of `loginctl enable-linger`, and autostart is a per user mechanism |
+| Broker transport | Limited, and simpler than planned | Measured on the guest: **`Bun.serve({unix})` serves an AF_UNIX socket on a Windows FILESYSTEM path**, the same call `src/ipc.ts` already makes, and a POST through `fetch(..., {unix})` returned the handler's body. `Bun.serve` still refuses a pipe NAME (Bun issue 15350 reproduces on 1.4.2) and `node:net` still serves one with explicit framing. Loopback TCP stays refused |
+| Broker socket access control | Limited | The socket file under `%LOCALAPPDATA%` inherits `SYSTEM`, `BUILTIN\Administrators` and the owning user, with **no Everyone and no Anonymous**, unlike a named pipe's default. Narrowed to one user ACE, `D:PAI(A;OICI;FA;;;<user>)`, from Bun with `Set-Acl` and no native code, and the server kept serving across the change |
+| Broker peer identity | **Refused** | Windows AF_UNIX carries no ancillary data, therefore no `SO_PEERCRED`. The directory ACL is the whole access control. A kernel provided peer identity needs `ImpersonateNamedPipeClient`, which needs a process owning the pipe handle, which is native code this repository does not have |
+| Process containment, job objects | Limited | Chrome's ten processes stayed inside a `KILL_ON_JOB_CLOSE` job on the runner. On the guest, `KILL_ON_JOB_CLOSE` plus a 2 GiB `JOB_MEMORY` plus `ACTIVE_PROCESS` 512 plus a 25.00% hard CPU cap were all accepted with no DFSS refusal, and closing the last job handle left **zero** survivors in three runs. G16 |
+| Containment, completeness of the session tree | Limited, with a known race | Measured on the guest: `AssignProcessToJobObject` landed 76 ms after spawn, and in that window Chrome's `--type=crashpad-handler` was outside the job, 13 of 14. A second run leaked in neither arm, so the escape is intermittent rather than closed. `PROC_THREAD_ATTRIBUTE_JOB_LIST` is the only spawn that removes the window and needs native `CreateProcessW`. Until then the job's PID list is walked on every budget sample |
+| Resource accounting | Limited, weaker than Linux | No job information class reports current committed memory outside a limit violation notification. `PeakJobMemoryUsed` is a high water mark: measured 302.6 MiB peak against 286.9 MiB live, which had to be summed per process. `resourceStatus()` publishes `swap: "not bounded"` |
+| One core budget, commit ceiling | Limited | On the runner, byte identical PNG in the same 8.4 s capped and uncapped. On the guest, four cap settings (none, 25%, 50%, 100%) twice each gave 1198 to 1522 ms with no trend and one identical PNG hash at every cap. A first run showing a 7.5x slowdown under the cap did **not** reproduce and was a cold start. G17 |
 | Real sessions, profile clone | **Refused** | App Bound Encryption returns `kNotUsingDefaultUserDataDir` for any non default user data directory, and returns before the policy branch, so `ApplicationBoundEncryptionEnabled=0` does not help either |
 | Native applications with both separate input and real sessions | **Refused** | A `CreateDesktop` desktop cannot reach the person's running applications, and `SendInput` on the person's desktop drives their windows |
 | A second concurrent interactive session for one user | **Refused** | Not a supported configuration on Windows 11 Pro or Home. Wrapper unlocks are refused on the license, not on feasibility |
-| Origin lease below the browser | Limited, and narrower than a namespace | A firewall rule scoped to the program path blocked the internet and left loopback for headless Chrome on the runner, with no driver; it holds every `chrome.exe` on the machine rather than one session, so it is not the per session boundary. G28 |
+| Origin lease below the browser | Limited, and narrower than a namespace | A firewall rule scoped to the program path blocked the internet and left loopback for headless Chrome on the runner, with no driver; it holds every `chrome.exe` on the machine rather than one session, so it is not the per session boundary. Not re run on the guest. G28 |
 | A headed browser on the person's desktop as a fallback | **Refused** | There is no such path, at any tier, for any error |
 
 ## macOS 13 and later

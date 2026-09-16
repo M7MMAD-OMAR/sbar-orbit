@@ -386,6 +386,14 @@ prefix census today.
 
 ## 5. Windows
 
+> **Measured since this section was written.** On 16 September 2026 a live Windows 11 25H2 guest ran
+> the probes in `experiments/windows-vm/`. Three things below are now wrong or incomplete, and the
+> corrections are in [windows-measured.md](windows-measured.md): the transport does not need a
+> rewrite, because `Bun.serve({unix})` serves an AF_UNIX socket on a Windows FILESYSTEM path; the
+> broker cannot be a session 0 service, because a Chromium family browser will not run there at all;
+> and the socket's inherited ACL is already user scoped, unlike a named pipe's. The design below is
+> kept as written so the change is visible rather than silently edited away.
+
 ### The design
 
 ```mermaid
