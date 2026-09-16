@@ -3,7 +3,17 @@ import { expectDeclaredImage } from "./frame-format";
 import { readFile, readdir } from "node:fs/promises";
 import { call, startBroker } from "../src/ipc";
 
+/**
+ * Every descendant of a process, per platform.
+ *
+ * Linux reads `/proc/<pid>/task/<tid>/children`. Windows has no `/proc`, so the same question is put
+ * to the kernel through `Win32_Process`, whose `ParentProcessId` builds the same tree. Writing this
+ * rather than skipping the suite is deliberate: the property it guards, that an agent's browser must
+ * not outlive the broker that owned it, is the whole reason this project exists, and it is the last
+ * thing that should be left unmeasured on a new platform.
+ */
 async function descendants(pid: number): Promise<number[]> {
+  if (process.platform === "win32") return windowsDescendants(pid);
   try {
     const tasks = await readdir(`/proc/${pid}/task`);
     const children = new Set<number>();
@@ -13,6 +23,31 @@ async function descendants(pid: number): Promise<number[]> {
     }
     return [...children, ...(await Promise.all([...children].map(descendants))).flat()];
   } catch { return []; }
+}
+
+function windowsDescendants(root: number): number[] {
+  // One snapshot of the whole table, then walked in memory: asking per process would race a tree
+  // that is still starting, and a browser launch creates processes while the walk runs.
+  const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
+    "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"]);
+  const parents = new Map<number, number[]>();
+  for (const line of listed.stdout.toString().split(/\r?\n/)) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    if (!child || parent === undefined || Number.isNaN(parent)) continue;
+    parents.set(parent, [...(parents.get(parent) ?? []), child]);
+  }
+  const found: number[] = [];
+  const walk = (pid: number) => { for (const child of parents.get(pid) ?? []) { found.push(child); walk(child); } };
+  walk(root);
+  return found;
+}
+
+/** Whether a process is still on the machine, asked the way each kernel answers it. */
+async function alive(pid: number): Promise<boolean> {
+  if (process.platform !== "win32") return Bun.file(`/proc/${pid}/stat`).exists();
+  // Signal 0 on Windows in Bun throws for a pid that is gone, which is the cheapest live check that
+  // does not spawn a process per poll.
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 test("abrupt broker death reaps its browser tree and a fresh broker rejects stale sessions", async () => {
@@ -32,13 +67,13 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
     expect(owned.length).toBeGreaterThan(4);
     brokerProcess.kill("SIGKILL");
     await brokerProcess.exited;
-    let alive: number[] = owned;
+    let survivors: number[] = owned;
     for (let i = 0; i < 150; i++) {
-      alive = (await Promise.all(owned.map(async pid => await Bun.file(`/proc/${pid}/stat`).exists() ? pid : null))).filter((pid): pid is number => pid !== null);
-      if (!alive.length) break;
+      survivors = (await Promise.all(owned.map(async pid => await alive(pid) ? pid : null))).filter((pid): pid is number => pid !== null);
+      if (!survivors.length) break;
       await Bun.sleep(30);
     }
-    expect(alive).toEqual([]);
+    expect(survivors).toEqual([]);
     await expect(call(socket, "session.observe", session)).rejects.toBeDefined();
     const fresh = await startBroker();
     try {

@@ -938,7 +938,42 @@ previous commit; it is measured now.
 The four advisor tests still failing on the guest are unaffected by this: they spawn `/bin/sh` and
 `/bin/true`, which is a fixture written against POSIX, not the advisor path failing.
 
-## 15. The control channel, for whoever repeats this
+## 15. The guarantee the project exists for, measured through a real broker death
+
+Of the 21 failures read in section 13, one was classified too quickly. `abrupt broker death reaps its
+browser tree` was filed under "fixtures written against POSIX" because it walks `/proc`. That is true
+of its enumeration and false of its subject: **an agent's browser must not outlive the broker that
+owned it**, which is the whole reason this project exists. Job object reaping was measured in
+isolation in section 3, and it had never been measured through a real broker death on Windows.
+
+So it was, before touching the test. A broker in its own process, a real browser session, then
+`taskkill /F`, which runs no cleanup handler: anything surviving would have survived because the
+kernel did not reap it.
+
+| | Result on the guest |
+|---|---|
+| browser processes with a live session | 12 |
+| broker killed with | `taskkill /F`, no cleanup |
+| survivors | **0, after 236ms** |
+| `msedge` left on the machine | **0** |
+| the dead broker's session, asked of a fresh broker | `SESSION_NOT_FOUND` |
+| a new session on the fresh broker | `running`, observed `image/jpeg 1280x800` |
+
+### The test made portable rather than skipped
+
+Skipping this one to make a number smaller would have buried the most important guarantee in the
+project, so `descendants()` learned Windows instead: `Win32_Process` and its `ParentProcessId` build
+the same tree `/proc/<pid>/task/<tid>/children` does. One snapshot of the whole table is taken and
+walked in memory, because asking per process races a browser tree that is still starting. The
+liveness poll asks each kernel the way it answers, `/proc/<pid>/stat` or signal 0.
+
+The suite then passed on the guest, on its own terms, in 2649ms, with zero browsers left behind. It
+is the same assertion Linux runs, not a weaker Windows variant.
+
+This is the difference between a count and a diagnosis. Read as a pattern it was one more POSIX
+fixture; read properly it was the single property most worth measuring on a new platform.
+
+## 16. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
