@@ -79,3 +79,23 @@ idle from stuck.
 There is no Windows CI on Linux without a VM. Wine reimplements Win32 on POSIX rather than running
 the NT kernel, and Windows containers need a Windows host. The VM is the answer; these three files
 are what make it scriptable.
+
+## The link atomicity probes
+
+`src/update.ts` repoints one symlink by rename so that no reader ever sees the name missing. These
+three establish whether that design survives on Windows, and they are kept because the answer was
+no and the reason is not the obvious one.
+
+| File | What it settles |
+|---|---|
+| `link-atomicity-probe.ps1` | whether an unelevated symlink, a junction, and a rename over a live junction work at all |
+| `link-alternatives-probe.ps1` | the two ways out: delete-then-recreate with its real gap measured, and a pointer file swapped by rename, including a reader holding it open |
+| `linux-rename-baseline.ts` | the same two renames on Linux, so the contrast is measured on both sides rather than assumed on one |
+
+Run the first two with `vmexec_user.py`, not `vmexec.py`: they touch `%LOCALAPPDATA%\Temp`, and the
+interactive session is the honest place to measure what an installer would do. Run the third with
+`bun run` on the Linux host.
+
+The finding is in `docs/windows-measured.md` section 9. In short: renaming over a plain empty
+directory is EPERM on Windows and fine on Linux, so the failure is not about reparse points and no
+junction arrangement recovers it. A pointer file is the portable shape.

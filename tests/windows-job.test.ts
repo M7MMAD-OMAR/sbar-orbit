@@ -189,3 +189,33 @@ test("the session RPC contract that the Windows run had to satisfy", async () =>
   // The frame was decoded off the guest rather than trusted as a byte count.
   expect(doc).toContain("1280x800 baseline JPEG");
 });
+
+/**
+ * The update design is the one thing measured NOT to port, so the reason is pinned here rather than
+ * left in a document that a later change could quietly contradict. `src/update.ts` repoints a symlink
+ * by rename so that no reader ever sees the name missing, and Windows cannot do that at all.
+ */
+test("the atomic version swap is refused on Windows for a reason that is not about symlinks", async () => {
+  const doc = await Bun.file(join(import.meta.dir, "..", "docs", "windows-measured.md")).text();
+  // The tempting conclusion is "Windows symlinks need elevation". The measurement says more than that.
+  expect(doc).toContain("The EPERM is **not** about reparse points");
+  // Renaming over a plain empty directory fails on Windows and succeeds on Linux. That is the cause.
+  expect(doc).toContain("Windows does not replace a");
+  // The delete-and-recreate alternative has a real window, measured rather than dismissed.
+  expect(doc).toContain("0.90ms");
+  // And the pointer file survived the property the design actually depends on.
+  expect(doc).toContain("holding the file **open** across the swap");
+});
+
+/**
+ * A stale count quoted as a current one is the failure mode this project is judged on, so the
+ * re-measurement is pinned with both numbers and the reason the gap closed.
+ */
+test("the guest suite count is the re-measured one, with the superseded figure still visible", async () => {
+  const doc = await Bun.file(join(import.meta.dir, "..", "docs", "windows-measured.md")).text();
+  expect(doc).toContain("Re-measured at HEAD");
+  // Section 6's figure is not deleted: it is marked as superseded, so the change stays auditable.
+  expect(doc).toContain("**Re-measured at HEAD in section 9: 151 pass, 88 fail.**");
+  // The closure has a named cause rather than being attributed to general progress.
+  expect(doc).toContain("appears **zero** times in the new log");
+});

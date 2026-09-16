@@ -247,7 +247,8 @@ directory basename can be a person's name.
 ### The suite after both fixes
 
 **123 pass, 107 fail, 18 skip.** Hardcoded `/tmp` failures: **0**. The Linux suite is unchanged at
-248 pass, 0 fail, so nothing was traded away for it.
+248 pass, 0 fail, so nothing was traded away for it. (These counts are as of this section.
+**Re-measured at HEAD in section 9: 151 pass, 88 fail.**)
 
 What is left is no longer noise. Every remaining cause is a real platform question:
 
@@ -409,20 +410,172 @@ The observed frame was carried back off the guest and decoded on the host: a 128
 showing the fixture's heading and paragraph. The browser really rendered, and Orbit really captured
 it. **An Orbit browser session works on Windows, end to end, through the same RPC an agent uses.**
 
+### The frame's shape, which was not a defect
+
+`session.observe` was reported here as returning `title: undefined` and no tab count. It does not.
+The frame is `{ mimeType, image, capturedAt, width, height, presence }` and the title, the location,
+the page count and the tab list are all inside `presence`, which is where `session.presence` reads
+them from too. A probe looking for them at the top level finds nothing. Nothing was chased and
+nothing was changed; the earlier note was reading the wrong level.
+
+## 8. Every action, and one failure in about ninety sessions
+
+Section 7 ran one session through the RPC. This ran the whole surface, repeatedly, because a single
+green pass is not evidence about a system that had just been described as hanging.
+
+### The whole action surface
+
+One session, driven entirely through the broker's RPC against a fixture served over loopback from the
+probe's own process, so nothing here depends on the guest reaching the internet:
+
+| Call | Result on the guest |
+|---|---|
+| `session.create` | running, in 1.6 to 3.2 s |
+| `navigate`, `read`, `fill`, `click`, `scroll` | each ok, 17 to 290 ms |
+| `open-tab`, then `session.presence` | two tabs, the second active, title and location correct |
+| `select-tab`, `close-tab`, `resize` | ok, and the surface came back 1024x768 |
+| `session.observe` | an 11.8 KB JPEG, with `presence` inside the frame |
+| `session.journal` | 10 entries, `tainted: true`, which a read is supposed to set |
+| `session.pause`, `session.resume`, `session.stop` | ok, and `session.list` then showed `closed` |
+
+A whole session costs 2.2 to 5.3 s on the guest, wall clock, including the browser launch.
+
+### The failure that is real, and unattributed
+
+**Three sessions in about ninety failed**, every one of them presenting as
+`Target page, context or browser has been closed` at whatever call happened to be in flight:
+`connectOverCDP` during create, a `goto` inside navigate, and an `open-tab`. The browser died; the
+action that reported it was a bystander.
+
+What is known, and it is less than a cause:
+
+- It is not the browser or the containment. The identical workload run directly against
+  `launchChrome()`, one layer below the broker, passed **34 of 34** times.
+- It is not the shared budget. The named job object's peak sat at 1489 MB of its 2048 MB ceiling and
+  did not move across runs, and the browser tree is charged to its own per session job, not to that
+  pool.
+- All three failures came from the same harness shape: one guest process per session, started by a
+  scheduled task, back to back, so the previous run's browser tree was being reaped as the next one
+  started. Running many sessions inside one broker (40) and many cold brokers inside one process (12)
+  produced none.
+- It has not recurred in 62 sessions since, which is not the same as being fixed.
+
+What changed because of it is attribution, not behaviour. Playwright's own message names no cause, so
+`launchChrome()` now wraps the handshake failure with the browser's exit code and its last stderr
+lines, reads the job object's own counters into that line when the kernel was what reaped the tree,
+and writes one record to the broker's journal at the moment an owned browser exits while its session
+is still open. The next occurrence should say which layer it came from rather than leaving the next
+person to bisect it.
+
+### The launcher, so Orbit can be started at all
+
+`bin/sbar-orbit` is a bash script, so until now there was no way to START Orbit on Windows: the
+broker was reachable only by importing `startBroker` from another Bun process. `bin/sbar-orbit.cmd`
+is the same dispatcher for `cmd.exe`. It resolves Bun by location rather than from the caller's PATH,
+for the reason the bash launcher already gives, and it refuses by name the subcommands that cannot
+work here rather than letting them fail further down: `install` and `update` because they link
+versions with symlinks, which need Developer Mode or elevation; `service` and `autostart` because a
+browser does not run in session 0 and there is no analogue of `loginctl enable-linger`; `panel`,
+`settings` and `config` because they are GTK and Python.
+
+`serviceSocketPath()` used to throw `CONFIG_REQUIRED` on Windows, because it wanted `XDG_RUNTIME_DIR`.
+The managed socket now goes to `%LOCALAPPDATA%\sbar-orbit\broker.sock`, the same per user,
+non roaming root `workspaceRoot()` already uses. One difference is stated rather than hidden: a
+runtime directory is cleared at logout and `%LOCALAPPDATA%` is not, so a socket file can outlive the
+broker that bound it, which is what `claimSocket()` already probes for.
+
+### Two things `doctor` was saying that were not true
+
+On a guest where Edge launched, answered CDP and rendered a page, `doctor --report` said
+`browserBackendSupported: false` and `browsers: []`. That is the one line a person on a fresh Windows
+machine reads to decide whether Orbit can work at all, and it said no.
+
+The cause was two resolvers for one question: `chrome.ts` probed the install roots and the registry,
+and `platform.ts` returned `[]` for anything that was not Linux. There is one resolver now,
+`windowsBrowserInstalls()` in `runtime-paths.ts`, which is where it belongs rather than in the
+launcher, because `doctor` must answer without loading a browser automation library.
+
+Reporting the installs correctly made a second thing necessary. `canCloneProfile()` had been refusing
+on Windows for the wrong reason: the install list was empty, so the lookup failed. Starting a session
+from the person's own profile is refused on Windows as a platform now, with the reason
+`docs/support-tiers.md` already carries, because App Bound Encryption returns
+`kNotUsingDefaultUserDataDir` for any non default user data directory and returns before the policy
+branch. A clone would open signed out, which is worse than a refusal because it looks like it worked.
+
 ### What is still not done
 
-`bin/sbar-orbit` is a bash script, so Bun cannot run it on Windows at all. The broker was reached by
-importing `startBroker` directly. A Windows launcher is a separate, small job, and until it exists
-there is no supported way to START Orbit on Windows, only to drive it from another Bun process.
+The suite still reports 107 failures on the guest, against four named causes from section 6. The
+first of those, the cgroup budget, is closed. The other three are not, and were not re-measured here:
+the `/usr/bin/python3` helpers, `EPERM` on `symlink` in `src/update.ts` and `bin/sbar-orbit`, and the
+systemd probes. (**Superseded by section 9**, which re-ran the suite: 151 pass, 88 fail, and the
+symlink cause turned out to be a design that does not port rather than a call to swap.)
 
-The suite still reports 107 failures on the guest, against four named causes from section 6. This
-section moves the product, not those numbers: they were not re-measured after this change.
+No installation has been run on Windows, and `install` refuses there by design until the symlink
+question has an answer. The tier stays `Limited`: one guest, virtual hardware, Edge only, no person
+at it, and one failure in about ninety sessions that nobody has attributed.
 
-`session.observe` returned `title: undefined` and no tab count. The frame is there and the read
-works, so this is a shape difference worth chasing rather than a failure, and it is not claimed as
-working.
+## 9. The suite re-measured, and the one design that does not port
 
-## 8. The control channel, for whoever repeats this
+Section 6 counted 107 failures on the guest. That number was quoted afterwards without being re-run,
+which is exactly how a stale figure turns into a claim. It has now been re-measured at the current
+HEAD, on the same guest.
+
+| | Section 6 | Re-measured at HEAD |
+|---|---|---|
+| pass | 123 | **151** |
+| fail | 107 | **88** |
+| skip | 18 | 18 |
+
+Nineteen failures closed, and the cause is named rather than guessed: `RESOURCE_LIMIT_REQUIRED`
+appears **zero** times in the new log. Joining the budget to a job object closed that whole class.
+
+The remaining 88 sort into three causes, counted by evidence lines in the log: symlinks (101 lines),
+`/usr/bin/python3` helpers (46), and systemd or findmnt probes (20).
+
+### Symlinks are not a call to swap, they are a design that does not port
+
+The symlink group is the largest, and it is not a matter of substituting an API. `src/update.ts`
+keeps versions side by side and repoints ONE symlink by rename, so that no reader ever sees the name
+missing. That atomicity is the design, not an implementation detail.
+
+Measured on the guest, unelevated, with Developer Mode **absent** (the registry value is not set):
+
+| Operation | Windows guest | Linux host |
+|---|---|---|
+| `symlink(dir)` | **EPERM** | ok |
+| `mklink /J` junction | ok, needs no elevation | n/a |
+| read through the junction | ok | n/a |
+| `rename` over a live junction | **EPERM** | ok (over a symlink) |
+| `rename` over an empty plain directory | **EPERM** | **ok** |
+| `rename` over an existing FILE | ok, 43.66ms | ok |
+
+The last two rows are the finding. The EPERM is **not** about reparse points: renaming over a plain
+empty directory fails the same way, and the same call succeeds on Linux. Windows does not replace a
+directory by rename at all, so no amount of junction cleverness recovers the swap.
+
+Two ways out were measured rather than argued about:
+
+- **Delete then recreate the junction.** Works, exit 0, and the name is absent for **0.90ms**, with
+  the whole operation taking 26.23ms. That window is small but it is real, and the Linux design
+  exists precisely so that there is no window. It would be a weaker guarantee wearing the same name.
+- **A pointer FILE naming the current version, swapped by rename.** Rename over an existing file is
+  allowed on Windows, so this is atomic. It survived a reader that had already read, and it survived
+  a reader holding the file **open** across the swap, which is the property the design actually
+  depends on. It needs no link, no elevation and no Developer Mode.
+
+So the portable shape is a pointer file, and the Windows port should not try to keep the symlink.
+That is a change to `src/update.ts`, deliberately NOT made in this pass: it touches how Linux
+installs switch versions, and it deserves its own change with its own Linux side evidence rather than
+being smuggled in alongside a measurement.
+
+### What this section does not claim
+
+The 88 remaining failures were counted and their causes tallied from log evidence, not individually
+diagnosed. The python3 and systemd groups have not been probed on the guest at all, so nothing is
+claimed about how hard they are. No fix was made here: this section moved a number from stale to
+measured, and turned one unknown into a named design decision.
+
+## 10. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
