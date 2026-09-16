@@ -6,6 +6,7 @@ import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } fro
 import { activateLocal } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
+import { connectorEntry } from "./connector-entry";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 
@@ -248,7 +249,9 @@ export async function runInstall(options: InstallOptions = {}) {
 
   await step("connector", async () => {
     const socket = serviceSocketPath();
-    const configuration = { mcpServers: { orbit: { command: process.execPath, args: [join(source, "src/mcp.ts")], env: { ORBIT_SOCKET: socket } } } };
+    // The launcher, not this Bun and this checkout: see connector-entry.ts for why a source path
+    // cannot survive an upgrade, a rollback or a machine that is not the one it was written on.
+    const configuration = { mcpServers: { orbit: { ...connectorEntry({ launcher, source }), env: { ORBIT_SOCKET: socket } } } };
     const directory = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "sbar-orbit");
     const path = join(directory, "mcp.json");
     // This path does not follow --prefix: one machine has one registered connector, whichever source

@@ -46,6 +46,10 @@ test("the documented plan command returns the documented report", async () => {
     const connector = report.steps.find((step: { id: string }) => step.id === "connector");
     expect(["creates", "unchanged", "replaces an earlier configuration"]).toContain(connector.data.replaces);
     expect(connector.data.configuration.mcpServers.orbit.env.ORBIT_SOCKET).toContain("broker.sock");
+    // What an agent host is told to run: the launcher this run reports, and nothing that names
+    // an interpreter, a checkout or a version.
+    expect(connector.data.configuration.mcpServers.orbit.command).toBe(report.launcher);
+    expect(connector.data.configuration.mcpServers.orbit.args).toEqual(["mcp"]);
   } finally { await rm(prefix, { recursive: true, force: true }); }
 }, 60000);
 

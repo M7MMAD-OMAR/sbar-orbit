@@ -88,6 +88,23 @@ connector, whichever source was installed last, so the step reports `creates`, `
 `steps[].data.configuration`. Read that before installing a second source on a machine that already
 has one.
 
+What that configuration names is a contract of its own, and it changed on 16 September 2026. It is
+the launcher and one argument:
+
+```json
+{ "command": "~/.local/bin/sbar-orbit", "args": ["mcp"],
+  "env": { "ORBIT_SOCKET": "$XDG_RUNTIME_DIR/sbar-orbit/broker.sock" } }
+```
+
+It used to be the Bun that ran the installer plus an absolute path into the source checkout, which is
+three separate ways to be wrong on a machine that is not the one it was generated on. The launcher
+link is the path `local-install.ts` switches atomically between versions, so configuration written
+against it survives an upgrade and a rollback; the launcher also resolves Bun by location rather than
+from the caller's PATH, which is the fix a systemd user service needed on an Ubuntu runner. Windows
+has no launcher, because `bin/sbar-orbit` is a shell script, so there the interpreter and
+`src/mcp.ts` are named directly. `src/connector-entry.ts` is the only place that decides this, and
+`tests/connector-entry.test.ts` holds it.
+
 ## Remedies, and the line an agent does not cross
 
 A remedy is the shape to branch on, and it carries two separate facts because one boolean cannot hold

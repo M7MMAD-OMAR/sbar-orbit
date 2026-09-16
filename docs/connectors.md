@@ -28,6 +28,13 @@ Start the broker, set `ORBIT_SOCKET` to its printed path, then run:
 ./bin/sbar-orbit connector-config
 ```
 
+What it prints names the launcher, not an interpreter and a source file:
+`{"command": "<the sbar-orbit you ran>", "args": ["mcp"]}`. Run it through an installed link and the
+link is what gets written down, so the configuration keeps working after an upgrade switches the
+source behind it. Run it out of a checkout and the checkout's own `bin/sbar-orbit` is named instead,
+which is the best stable name a checkout has. Windows has no launcher to run, so there the
+configuration names Bun and `src/mcp.ts` directly.
+
 On this workstation the server is registered for Claude Code at user scope (`claude mcp add --scope user orbit ...` with the managed socket), and for Hermes in its `mcp_servers`, so every conversation on the machine has the tools. The machine-wide agent instructions in `~/AGENTS.md` and the `sbar-orbit` skill in `~/.claude/skills` say when to use them: any task that needs a screen, a browser or a desktop application goes through an Orbit session and never through the person's own screen. The rule exists because an agent that merely has the tool available still reaches for a host screenshot unless it is told not to; that happened in a Claude conversation before the rule was written.
 
 An agent can do the whole installation itself, including this file, by following

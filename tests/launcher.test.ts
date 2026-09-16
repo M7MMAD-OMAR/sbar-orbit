@@ -28,7 +28,11 @@ test("launcher works through a symlink outside the repository and stops a nested
       return JSON.parse(text);
     };
     expect(await invoke("doctor")).toMatchObject({ ok: true, result: { sessions: 0, resources: { scope: "all-orbit-jobs" } } });
-    expect(await invoke("connector-config")).toMatchObject({ mcpServers: { orbit: { env: { ORBIT_SOCKET: socket } } } });
+    // An agent host is handed the launcher and one argument, so the configuration keeps working
+    // across an upgrade and does not name whichever Bun happened to generate it.
+    expect(await invoke("connector-config")).toMatchObject({
+      mcpServers: { orbit: { command: launcher, args: ["mcp"], env: { ORBIT_SOCKET: socket } } },
+    });
     broker.kill("SIGTERM");
     expect(await Promise.race([broker.exited, Bun.sleep(5000).then(() => "timeout")])).toBe(0);
     await expect(fetch("http://localhost/rpc", { unix: socket, method: "POST", body: '{}' })).rejects.toBeDefined();

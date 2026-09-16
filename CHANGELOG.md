@@ -4,6 +4,21 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+### Changed
+
+- Generated agent connector configuration names the launcher and one argument,
+  `{"command": "<prefix>/bin/sbar-orbit", "args": ["mcp"]}`, instead of the Bun that ran the
+  installer plus an absolute path into a source checkout. The old shape could not survive an upgrade
+  or a rollback, because it pointed past the launcher link that `local-install.ts` switches between
+  versions, and it could not be right on any machine other than the one that generated it. Hosts
+  registered with the previous shape keep working; regenerate with `sbar-orbit connector-config` to
+  pick up the new one. Windows still names the interpreter and `src/mcp.ts` directly, because
+  `bin/sbar-orbit` is a shell script. `src/connector-entry.ts` is the one place that decides this.
+- `src/mcp.ts` falls back to the managed broker's socket when `ORBIT_SOCKET` is unset, the way
+  `src/cli.ts` and `src/status.ts` already did, rather than refusing. An adapter started with a
+  stripped environment now reaches the same broker. It still refuses when there is no runtime
+  directory for that socket to live in.
+
 ## 0.1.0-alpha.6 - 14 September 2026
 
 - The one command install on a second machine. On a GitHub Ubuntu 24.04.5 runner with a systemd user session, `./install.sh --json` installed and started `sbar-orbit.service`, `doctor` answered, and a browser session through the installed service navigated to a page, read its heading and captured a frame; the browser half of gate 3 closes on a real machine that is not this workstation. The first attempt found the launcher taking `bun` from the caller's PATH, which a systemd user service does not have, so the service exited 127 on every restart; `bin/sbar-orbit` now finds bun by location and refuses with a named reason when nothing has it, with a test that runs it under a bare PATH. The tab closing test closes its popup on the test's signal rather than a timer a slower host beat. [roadmap](docs/roadmap.md), [validation](docs/validation.md).

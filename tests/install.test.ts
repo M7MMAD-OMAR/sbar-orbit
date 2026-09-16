@@ -49,7 +49,11 @@ test("an install without a service links the command and writes connector config
     expect(report.launcher).toBe(link);
     expect(await Bun.file(link).text()).toContain("Sbar Orbit");
     const written = JSON.parse(await readFile(join(box.config, "sbar-orbit/mcp.json"), "utf8"));
-    expect(written.mcpServers.orbit.args[0]).toBe(join(project, "src/mcp.ts"));
+    // The prefix link, which is the path local-install switches between versions, rather than
+    // this checkout: configuration written against a source directory does not survive an
+    // upgrade or a rollback, and cannot be right on a machine that is not this one.
+    expect(written.mcpServers.orbit.command).toBe(link);
+    expect(written.mcpServers.orbit.args).toEqual(["mcp"]);
     expect(written.mcpServers.orbit.env.ORBIT_SOCKET).toContain("sbar-orbit/broker.sock");
     // Nothing was installed into systemd, so the step that needs a managed broker cannot claim a pass.
     expect(report.steps.find(step => step.id === "service")?.state).toBe("skipped");

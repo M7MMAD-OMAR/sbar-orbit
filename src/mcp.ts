@@ -6,6 +6,7 @@ import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
 import { splitFrame } from "./observation-output";
 import { viewportLimits } from "./viewport";
+import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
 
@@ -115,8 +116,12 @@ export function createMcpServer(socket: string) {
 }
 
 if (import.meta.main) {
-  const socket = process.env.ORBIT_SOCKET;
-  if (!socket) { console.error("ORBIT_SOCKET is required"); process.exit(1); }
+  // The managed broker's socket when nothing names another, which is what `cli.ts` and `status.ts`
+  // already do. Generated configuration still carries ORBIT_SOCKET, so an agent host that starts this
+  // adapter with a stripped environment reaches the same broker either way.
+  let socket;
+  try { socket = process.env.ORBIT_SOCKET || serviceSocketPath(); }
+  catch { console.error("ORBIT_SOCKET is required, or a runtime directory the managed broker's socket can live in"); process.exit(1); }
   const server = createMcpServer(socket);
   await server.connect(new StdioServerTransport());
   const stop = async () => { await server.close(); process.exit(0); };

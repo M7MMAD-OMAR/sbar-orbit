@@ -131,6 +131,13 @@ HELP
   connector-config|mcp)
     orbit_entry=$1
     shift
+    # The path this launcher was actually invoked by, absolute but NOT resolved through symlinks. An
+    # installation links a stable name in a prefix and switches the source underneath it on every
+    # upgrade, so the link is what generated agent configuration has to name; resolving it would
+    # write down the one version that happens to be current and break on the next one. Exported only
+    # here, because every other subcommand starts a broker and a browser, and a path under the
+    # person's home has no business in a browser's environment.
+    export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
     ;;
   *) exec bun run "$orbit_root/src/cli.ts" "$@" ;;
