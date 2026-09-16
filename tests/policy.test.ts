@@ -156,3 +156,29 @@ test("the lease is a property of the session, and a page cannot be an exception 
   // A session with no credentials installs no lease, which is what "any" means to the backend.
   expect(freshProfilePolicy.origins).toBe("any");
 });
+
+/**
+ * An advisor command must be absolute, so the broker never resolves the program that approves an
+ * action through PATH, where whatever the agent host exported would decide it.
+ *
+ * The rule used to be written `startsWith("/")`, which says "absolute" in POSIX terms only and so
+ * rejected every valid Windows path: the advisor was not refused there with a reason, it was
+ * impossible to configure at all. These pin the rule in both dialects, on either platform, and pin
+ * the UNC refusal too, because a policy should not consult a program across the network.
+ */
+test("an advisor command is absolute in the platform's own terms, and never a UNC path", () => {
+  const withCommand = (command: string) => () => parsePolicy({ advisor: { command: [command] } });
+
+  // Refused everywhere: a bare name, a relative path, and a network path.
+  for (const bad of ["advisor", "advisor.cmd", "./advisor", "..\\advisor.cmd", "\\\\server\\share\\advisor.cmd"])
+    expect(withCommand(bad)).toThrow("absolute local executable");
+
+  // Accepted on the platform that has that shape, and this must not become a "both always pass"
+  // test: a Windows path is not absolute on Linux, and asserting otherwise would hide the rule.
+  if (process.platform === "win32") {
+    expect(withCommand("C:\\Program Files\\advisor\\advisor.cmd")).not.toThrow();
+    expect(withCommand("C:/tools/advisor.exe")).not.toThrow();
+  } else {
+    expect(withCommand("/usr/local/bin/advisor")).not.toThrow();
+  }
+});

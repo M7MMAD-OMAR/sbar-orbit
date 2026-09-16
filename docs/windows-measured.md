@@ -912,7 +912,33 @@ spawn. None of them is a Windows code path failing; all are fixtures written aga
 a statement about these 21 specifically, read one at a time, and not a general claim that what is left
 is always harness.** Four product bugs have come out of three passes over this list.
 
-## 14. The control channel, for whoever repeats this
+## 14. The advisor, consulted on Windows
+
+Section 13 changed `parsePolicy` so a Windows advisor path is accepted, and that was a type level
+fix: nothing had ever consulted an advisor on Windows. A security relevant path enabled by reasoning
+is not the same as one that works, so every branch of the contract was run against real programs on
+the guest, written as `.cmd` files because that is what a Windows machine would configure.
+
+| What was asked | Result on the guest |
+|---|---|
+| `parsePolicy` with `C:\...\allow.cmd` | accepted |
+| `parsePolicy` with a relative path | refused, "must name an absolute local executable" |
+| `parsePolicy` with `\\server\share\a.cmd` | **refused**, so a policy cannot consult a program across the network |
+| an advisor answering `{"decision":"allow"}` | `allow` / `advisor-allowed`, 41ms |
+| an advisor answering `{"decision":"deny"}` | `deny` / `advisor-denied`, 32ms |
+| an advisor exiting non zero | `deny` / `advisor-failed`, 28ms |
+| an advisor printing something that is not JSON | `deny` / `advisor-unparsable`, 57ms |
+| an advisor that hangs, against a 1500ms clock | `deny` / `advisor-timeout` at **1517ms** |
+| an advisor reading the record on stdin | yes |
+
+Every failure mode is a deny, which is the property the design turns on, and the clock is real rather
+than a safety net that has never fired. The UNC refusal was the part written from reasoning in the
+previous commit; it is measured now.
+
+The four advisor tests still failing on the guest are unaffected by this: they spawn `/bin/sh` and
+`/bin/true`, which is a fixture written against POSIX, not the advisor path failing.
+
+## 15. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
