@@ -23,6 +23,13 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ### Fixed
 
+- `hostClassTier()` handed every Windows host the tier the measured guest earned. `Limited` in
+  `docs/support-tiers.md` reads "it ran HERE and passed inside a stated limit", and a capability probe
+  has run nothing here, so it answers `Reasoned` the way the Fedora 44 branch already does: this host
+  class is in reach, and nothing has run on this machine.
+- `needsCommand("git")` was applied to two tests that never call git, which is the thing
+  `tests/platform-support.ts` warns about in its own first paragraph.
+
 - `doctor --report` said `browserBackendSupported: false` and `browsers: []` on Windows, on a guest
   where a browser launched, answered CDP and rendered a page. Two resolvers answered one question;
   there is one now, `windowsBrowserInstalls()`, and it lives in `runtime-paths.ts` so a capability

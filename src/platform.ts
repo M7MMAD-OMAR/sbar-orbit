@@ -294,11 +294,14 @@ export async function containerized(): Promise<boolean> {
 
 export async function hostClassTier(): Promise<{ assigned: string; why: string }> {
   // Windows stopped being a platform with no host in reach on 16 September 2026: a Windows 11 guest
-  // has run the broker, a browser session and the whole action surface. That is one virtual machine
-  // with no person at it, which is `Limited` and not `Measured`, and saying so here is the difference
-  // between a bug report that is welcome and one filed against a host nothing has ever run on.
+  // has run the broker, a browser session and the whole action surface. That does NOT make this host
+  // `Limited`, and the difference is the discipline this function exists to keep. `Limited` in
+  // docs/support-tiers.md reads "it ran HERE and passed inside a stated limit", and a probe has run
+  // nothing here. The answer is the same shape the Fedora 44 branch below gives: this host is the
+  // same class as the one that was measured, which is a reason to expect a test report rather than a
+  // bug report, and nothing more.
   if (process.platform === "win32")
-    return { assigned: "Limited", why: "One Windows 11 guest has run the broker, a browser session and every action, and five sessions of about a hundred failed: three unattributed and two on contention. Virtual hardware, one browser, nobody at the machine. See docs/windows-measured.md." };
+    return { assigned: "Reasoned", why: "A Windows 11 guest has run the broker, a browser session and every action, so this host class is in reach and a report from here is welcome. Nothing has run on THIS machine: run bun run verify for that. The guest's own limits, including five failed sessions of about a hundred, are in docs/windows-measured.md." };
   if (process.platform !== "linux")
     return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
   const { id, versionId } = await distributionName();

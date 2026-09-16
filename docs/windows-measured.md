@@ -762,6 +762,30 @@ null events under test at all.
 
 One test shelled out to `bash -c ls` to glob for a tarball. It reads the directory now.
 
+### The registry package on Windows, and the one thing that does not work
+
+`docs/packaging.md` documents `bun add -g sbar-orbit` as how a machine that is not a development
+checkout gets Orbit. That path was measured on the guest on 16 September 2026, from a tarball built by
+`bun pm pack` and installed into a throwaway `BUN_INSTALL` home, and it is half working:
+
+| Step | Result |
+|---|---|
+| `bun add -g <tarball>` | **succeeded**, 95 packages, 64.8 s, with `os: ["linux"]` still in `package.json`. Bun did not enforce that field here |
+| The shim it generated, `bin\sbar-orbit.exe` | **failed**: `interpreter executable "bash" not found in %PATH%` |
+| `bin/sbar-orbit.cmd` inside the installed package | present, and CRLF, which is what `.gitattributes` now guarantees |
+| That `.cmd`, run directly: `doctor --report` | exit 0 |
+| That `.cmd`, run directly: `preflight` | exit 0 |
+
+The cause is one line. `package.json` names `bin/sbar-orbit` as its `bin`, the shim generator reads
+that file's `#!/usr/bin/env bash` shebang, and writes a Windows shim that calls `bash`. A package can
+map one command name to one file, so the Windows launcher cannot simply be named beside it.
+
+So `os` is left as `["linux"]` deliberately, and this is the reason rather than an oversight:
+declaring Windows support would install a command that does not run, which is worse than a refusal
+because it looks like it worked. The path that works today is the `.cmd` inside the installed package.
+Making `bin` a launcher that starts on both platforms is the next named job for the registry path, and
+it changes a measured Linux entry point, so it belongs in its own commit rather than this one.
+
 ### The thirty that are left
 
 Eleven are in `src/install.ts`, `src/local-install.ts`, `src/update.ts` and `src/preflight.ts`, which

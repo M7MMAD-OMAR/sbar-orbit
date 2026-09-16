@@ -1,5 +1,5 @@
 import { isPublicSourcePath } from "../scripts/public-paths";
-import { expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { needsCommand } from "./platform-support";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -40,7 +40,7 @@ needsCommand("git", "git ls-files")("publication audit checks staged blobs and r
 });
 
 
-needsCommand("git", "git ls-files")("publication path policy keeps private directories excluded even for example filenames", () => {
+test("publication path policy keeps private directories excluded even for example filenames", () => {
   for (const path of [".private/.env.example", "output/.env.example", "docs/evidence/.env.example", ".git/config", ".env.production.env.example", "../README.md", "docs//README.md", "docs/../README.md"])
     expect(isPublicSourcePath(path)).toBe(false);
   for (const path of [".env.example", "examples/.env.example", "README.md", ".github/workflows/checks.yml"])
