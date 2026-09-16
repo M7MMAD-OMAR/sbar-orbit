@@ -172,3 +172,20 @@ test("the Windows browser command line drops the Linux only switches", () => {
   // --disable-dev-shm-usage is about /dev/shm, which does not exist on Windows.
   expect(argv).not.toContain("--disable-dev-shm-usage");
 });
+
+/**
+ * The session RPC contract, as measured through the broker on the guest. These are Linux side
+ * assertions about the contract itself: both probe bugs that hid a working Windows session were
+ * violations of it, so the contract is worth pinning rather than rediscovering on the next port.
+ */
+test("the session RPC contract that the Windows run had to satisfy", async () => {
+  const doc = await Bun.file(join(import.meta.dir, "..", "docs", "windows-measured.md")).text();
+  // A session identifier is `sessionId`. The probe sent `id` and every call after create was refused.
+  expect(doc).toContain("The probe sent `id`");
+  // `requestId` is not optional: it is how a retried action is kept from running twice.
+  expect(doc).toContain("it is how a retried");
+  // file:// is refused by design, and that refusal is Orbit working rather than Windows failing.
+  expect(doc).toContain("only HTTP and HTTPS navigation is supported");
+  // The frame was decoded off the guest rather than trusted as a byte count.
+  expect(doc).toContain("1280x800 baseline JPEG");
+});

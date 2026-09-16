@@ -380,14 +380,47 @@ The Windows command line deliberately drops three Linux switches: `--no-sandbox`
 workaround and dropping the sandbox on Windows is a straight regression, `--password-store` selects a
 Linux keyring backend that does not exist there, and `--disable-dev-shm-usage` is about `/dev/shm`.
 
+### A whole session, through the broker's own RPC
+
+The session that would not complete was a fault in the probe, not in Orbit, and saying so matters
+because the opposite conclusion was the tempting one. Two probe bugs hid a working system:
+
+- The probe sent `id`. The API takes `sessionId`, so every call after create was correctly refused
+  with `INVALID_REQUEST`.
+- It then sent `session.act` with no `requestId`. That field is not optional: it is how a retried
+  action is kept from running twice.
+
+With both fixed, one more refusal came back, and it was Orbit enforcing its own contract rather than
+Windows failing: `file://` is rejected, because only HTTP and HTTPS navigation is supported. Serving
+the fixture over loopback is what a real session does anyway.
+
+Every call then succeeded on the guest:
+
+| Call | Result |
+|---|---|
+| `doctor` | ok, 20ms |
+| `session.create` (backend `browser`) | ok, 1610ms |
+| `session.act` navigate | ok, 747ms |
+| `session.act` read `#h` | ok, `{"text":"through the broker"}` |
+| `session.observe` | ok, a 16228 character frame |
+| `session.stop` | ok, 215ms |
+
+The observed frame was carried back off the guest and decoded on the host: a 1280x800 baseline JPEG
+showing the fixture's heading and paragraph. The browser really rendered, and Orbit really captured
+it. **An Orbit browser session works on Windows, end to end, through the same RPC an agent uses.**
+
 ### What is still not done
 
-A session created through the broker's `session.create` RPC did not complete. The launcher underneath
-it works, so the remaining problem is in the session layer above `launchChrome`, not in the launch.
-That is the next piece, and it is named rather than left as "it hangs sometimes".
+`bin/sbar-orbit` is a bash script, so Bun cannot run it on Windows at all. The broker was reached by
+importing `startBroker` directly. A Windows launcher is a separate, small job, and until it exists
+there is no supported way to START Orbit on Windows, only to drive it from another Bun process.
 
-`bin/sbar-orbit` is also a bash script, so Bun cannot run it on Windows at all. The broker was
-reached by importing `startBroker` directly. A Windows launcher is a separate, small job.
+The suite still reports 107 failures on the guest, against four named causes from section 6. This
+section moves the product, not those numbers: they were not re-measured after this change.
+
+`session.observe` returned `title: undefined` and no tab count. The frame is there and the read
+works, so this is a shape difference worth chasing rather than a failure, and it is not claimed as
+working.
 
 ## 8. The control channel, for whoever repeats this
 
