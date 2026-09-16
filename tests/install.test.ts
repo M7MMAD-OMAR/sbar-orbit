@@ -15,10 +15,17 @@ const refuse = async () => { throw new Error("A test must not run a package mana
 async function sandbox() {
   const prefix = await mkdtemp(join(tmpdir(), "orbit-install-prefix-"));
   const config = await mkdtemp(join(tmpdir(), "orbit-install-config-"));
-  const previous = process.env.XDG_CONFIG_HOME;
+  // Both variables, because `connectorConfigDirectory` reads `XDG_CONFIG_HOME` on Linux and `APPDATA`
+  // on Windows. Setting only the POSIX one left the Windows run writing into the real roaming profile
+  // while the test read the sandbox: the test failed with ENOENT, and had it passed it would have
+  // been writing to the machine running it.
+  const previous = { xdg: process.env.XDG_CONFIG_HOME, appData: process.env.APPDATA };
   process.env.XDG_CONFIG_HOME = config;
+  process.env.APPDATA = config;
   return { prefix, config, async restore() {
-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+    for (const [key, value] of [["XDG_CONFIG_HOME", previous.xdg], ["APPDATA", previous.appData]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
     await rm(prefix, { recursive: true, force: true });
     await rm(config, { recursive: true, force: true });
   } };

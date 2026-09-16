@@ -1411,7 +1411,51 @@ create: {"sessionId":"d78438db-...","state":"running","backend":"browser","agent
 The loop closes: Orbit writes a connector file, an agent host reads that file, launches what it names,
 and gets a running browser session on Windows.
 
-## 24. The control channel, for whoever repeats this
+## 24. The front door, which still said none of this existed
+
+This project's rule is that a capability is claimed at the tier its evidence supports and no higher.
+The inverse is the same defect wearing the other face, and the README carried it for days:
+
+> macOS and Windows remain unmeasured: there is no such machine in this project's reach.
+
+That was written when it was true and stayed after it was not. **A stale denial is as wrong as a stale
+overclaim**, and it is worse in one way: nobody files a bug about a capability the front page says does
+not exist, and nobody looks for a document that nothing links to.
+
+Three claims were corrected to exactly what the evidence supports:
+
+| Said | Now |
+|---|---|
+| no Windows machine in reach | the browser backend is measured on **three** host classes, this guest among them |
+| requires Linux cgroup delegation | requires Bun and a browser; cgroups are the **Linux** budget, a job object is the Windows one |
+| Windows unmeasured | measured and `Limited`: **201 pass, 0 fail, 96 skip**, with the 96 named as the honest half |
+
+`install.cmd` now appears in the Start block beside `./install.sh`, and the two steps that differ on
+Windows are stated there rather than left for a person to discover: the command is a shim rather than a
+symlink, and no service is installed.
+
+`docs/porting.md` said the same thing twice more. Its Windows reasoning is **left standing rather than
+edited**, because the difference between what that document predicted and what the machine did is worth
+more than a corrected page. The header now says which column has been run since.
+
+### A gate, because the drift was invisible
+
+`tests/readme-claims.test.ts` fails if the README returns to claiming Windows is unmeasured, stops
+linking the evidence, stops showing the Windows entry point beside the Linux one, or drops the skip
+count. Both halves were shown to fail before being trusted: restoring the old sentence fails the first,
+deleting the `install.cmd` block fails the second.
+
+### And it caught a test that would have written to the person's machine
+
+Running it on the guest failed `an install without a service` with ENOENT. The sandbox redirected
+`XDG_CONFIG_HOME` only, which `connectorConfigDirectory` ignores on Windows, so the installer wrote into
+the **real roaming profile** while the test read the sandbox.
+
+Note what a pass would have meant there: a test quietly writing a connector file into the profile of
+whoever ran it. It failed loudly instead, and only because the guest ran it. **201 pass, 0 fail, 96
+skip.**
+
+## 25. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

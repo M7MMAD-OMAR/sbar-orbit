@@ -2,8 +2,11 @@
 
 > How to read this: every row is tiered. **Measured** ran on the owner's workstation and its command
 > is in this repository. **Reasoned** is vendor documentation with no host to test on. **Refused**
-> has a primary source saying it cannot work. There is no Windows, macOS or non Fedora Linux host in
-> this project's reach, so nothing outside the first column has been run.
+> has a primary source saying it cannot work. When this was written there was no Windows, macOS or non
+> Fedora Linux host in this project's reach, so nothing outside the first column had been run. The
+> Windows column is no longer in that state: a live Windows 11 guest has run it since, and section 5
+> and [what Windows measured](windows-measured.md) carry the results, including the places this
+> document reasoned wrongly. The macOS column is still reasoning only.
 
 Written 11 September 2026 against the alpha in this repository, on the findings of
 [the separate workspace review](separate-workspace-review.md). Seventeen candidate designs were
@@ -13,10 +16,12 @@ those with high confidence. This document carries the corrected form, not the pr
 The scope is narrow and stated first: how the Orbit approach ports off this one workstation, and what
 an experimental community release needs in order to be honest about it.
 
-Everything called measured was run on the owner's Fedora 44, Hyprland, btrfs workstation. Everything
-about Windows and macOS is reasoning from vendor documentation. There is no Windows host, no macOS
-host and no non Fedora Linux host in this project's reach, and that limit shapes every section below
-rather than sitting in a disclaimer at the end.
+Everything called measured here was run on the owner's Fedora 44, Hyprland, btrfs workstation, and
+everything about Windows and macOS was reasoning from vendor documentation on the day this was
+written. That limit shaped every section below rather than sitting in a disclaimer at the end, and it
+is why the Windows reasoning is left standing rather than edited: a live Windows 11 guest has since
+run the port, and the difference between what this document predicted and what the machine did is
+worth more than a corrected page. Section 5 marks each one. macOS is still reasoning only.
 
 ## 1. What ports, what needs a per platform design, and what cannot exist
 

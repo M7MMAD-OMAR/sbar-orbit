@@ -66,12 +66,13 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 
 ## What is actually supported
 
-Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation. There is no macOS,
-Windows or non Fedora Linux machine in this project's reach, so every statement about those platforms is
-reasoning about vendor documentation and not a test, apart from what containers of Debian, Ubuntu, Arch
-and openSUSE on that one host could show, which the tier table marks `Limited`, and one more fact: on
-14 September 2026 `bun run verify` passed on a GitHub Ubuntu 24.04 runner, 233 tests, so the browser path
-is measured on a second host. `sbar-orbit doctor --report` prints which row of the
+Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.
+The browser backend is measured on three: that host, a GitHub Ubuntu 24.04 runner where `bun run verify`
+passed 233 tests on 14 September 2026, and a Windows 11 guest where the published release archive
+installs and an agent host drives a browser session through MCP. There is no macOS machine in this
+project's reach, so every statement about it is reasoning about vendor documentation and not a test, as
+it is for non Fedora Linux beyond what containers of Debian, Ubuntu, Arch and openSUSE on that one host
+could show, which the tier table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
 [support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
 paste into an issue.
 
@@ -85,7 +86,9 @@ leaves the machine is a report you generated, read and pasted yourself.
 
 ## Start
 
-Requires Linux user cgroup delegation, Bun and Chrome/Chromium. The native backend needs the separate [Fedora bootstrap](docs/fedora-results.md).
+Requires Bun and Chrome, Chromium or Edge. On Linux it also needs user cgroup delegation, which is where
+the shared budget lives; on Windows that budget is a named job object instead and there is nothing to
+delegate. The native backend is Linux only and needs the separate [Fedora bootstrap](docs/fedora-results.md).
 
 ```sh
 git clone https://github.com/M7MMAD-OMAR/sbar-orbit
@@ -93,10 +96,23 @@ cd sbar-orbit
 ./install.sh
 ```
 
+On Windows the same command is `install.cmd`, and it is the same installer behind both doors:
+
+```bat
+git clone https://github.com/M7MMAD-OMAR/sbar-orbit
+cd sbar-orbit
+install.cmd
+```
+
 One command, and it shows every step as it happens. It checks what the machine already has, prepares
 dependencies from the frozen lockfile, links the `sbar-orbit` command into `~/.local/bin`, installs and
 starts the broker service and the desktop mark, writes the agent connector configuration, then verifies
 that the installed broker answers. `./install.sh --dry-run` reports the same steps and changes nothing.
+
+Two of those steps differ on Windows and say so in the report rather than claiming a pass: the command
+is a `.cmd` shim rather than a symlink, and no service is installed, because a Chromium family browser
+will not run in Windows session 0, so the broker belongs in your own session. `verify` is skipped for
+that reason too, with the commands to start one yourself. Start it with `sbar-orbit.cmd serve`.
 
 It installs nothing that needs root. Bun, a browser and the capture tools stay your package
 manager's job, and the run prints the exact command for each one it finds missing rather than reporting
@@ -192,7 +208,12 @@ alongside the image. CLI file output keeps base64 out of the text context.
 
 ## Scope
 
-The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. macOS and Windows remain unmeasured: there is no such machine in this project's reach.
+The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. macOS remains unmeasured: there is no such machine in this project's reach. Windows is measured and
+`Limited`: the suite runs on a Windows 11 guest at 196 pass and 0 fail with 95 skipped, the published
+release installs there, and an agent host reaches a browser session through the connector Orbit writes.
+95 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
+keyring and btrfs snapshots are Linux capabilities and are not ported. See
+[what Windows measured](docs/windows-measured.md).
 
 Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
 
@@ -211,6 +232,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Research](docs/research.md) | Primary technical sources |
 | [Separate workspace review](docs/separate-workspace-review.md) | Whether this is the best approach, what was refuted, and what a real session costs |
 | [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
+| [What Windows measured](docs/windows-measured.md) | Every Windows result on a live guest, including the defects only a real machine found |
 | [Support tiers](docs/support-tiers.md) | What is known to work, on which host class, on what evidence, and which report to file |
 | [Autonomy](docs/autonomy.md) | Running without a human checkpoint: the policy, the prior art it borrows from, and what bounds it |
 | [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |
