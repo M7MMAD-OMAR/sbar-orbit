@@ -51,3 +51,16 @@ export function needsSymlink(reason: string) {
 
 /** The same rule for a single test inside a suite that otherwise ports. */
 export const linuxOnlyTest = linuxOnlySuite;
+
+/**
+ * A test that needs a command this host may not have.
+ *
+ * `git` is the case that produced it: `tests/packaging.test.ts` and `tests/public-audit.test.ts` ask
+ * git what is tracked, which is the right question and unanswerable on a machine without it. A host
+ * with no git should say so rather than report the project broken, and the Windows guest is exactly
+ * such a host.
+ */
+export function needsCommand(command: string, reason: string) {
+  if (!reason.trim()) throw new Error("A test that needs a command has to say what for");
+  return Bun.which(command) ? test : test.skip;
+}

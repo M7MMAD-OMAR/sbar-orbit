@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, readFile, writeFile, mkdir, stat } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { installService, uninstallService, serviceSocketPath, claimSocket, budget } from "../src/service";
 import { tmpdir } from "node:os";
@@ -99,4 +99,41 @@ test("claiming refuses to remove a path that is not a socket", async () => {
   await writeFile(socket, "not a socket");
   await expect(claimSocket(socket, async () => false)).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
   expect(await readFile(socket, "utf8")).toBe("not a socket");
+});
+
+/**
+ * `stat` on a live Windows AF_UNIX socket answers EACCES, not ENOENT. The old code treated every
+ * `stat` failure as "nothing is there", which on the guest left a stale socket file in place and
+ * failed the bind with "Failed to listen on unix socket" and no cause. Only ENOENT may mean absent.
+ */
+test("a socket that cannot be inspected is probed, not assumed absent", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-claim-"));
+  try {
+    // A directory with no execute bit: `stat` on a path inside it fails with EACCES rather than
+    // ENOENT, which is the shape a live Windows socket file presents. Skipped for root, who is not
+    // stopped by the mode and would see ENOENT instead.
+    const locked = join(root, "locked");
+    await mkdir(locked, { recursive: true });
+    const socket = join(locked, "broker.sock");
+    await writeFile(socket, "");
+    await chmod(locked, 0o000);
+    try {
+      let probed = false;
+      await expect(claimSocket(socket, async () => { probed = true; return true; })).rejects.toThrow(/already serving/);
+      expect(probed).toBe(true);
+    } finally { await chmod(locked, 0o700); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+/**
+ * A missing path is still the ordinary case and must not be probed or unlinked.
+ */
+test("an absent socket path is claimed without probing anything", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-claim-absent-"));
+  try {
+    let probed = false;
+    const claimed = await claimSocket(join(root, "nested", "broker.sock"), async () => { probed = true; return true; });
+    expect(claimed).toMatchObject({ claimed: true, replacedStaleSocket: false });
+    expect(probed).toBe(false);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

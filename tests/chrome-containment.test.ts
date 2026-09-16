@@ -1,5 +1,8 @@
 import { createWorkspaceDirectory } from "../src/workspace-storage";
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the /proc cgroup audit of a browser tree, which a Windows job object replaces; tests/windows-job.test.ts is its counterpart");
 import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { auditProcessScope } from "../src/process-scope";

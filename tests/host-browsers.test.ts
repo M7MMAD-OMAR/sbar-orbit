@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the person's own browsers, which are read from XDG desktop entries; opening the viewer in one needs a Windows mechanism that does not exist yet");
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

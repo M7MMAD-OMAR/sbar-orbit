@@ -1,10 +1,11 @@
 import { isPublicSourcePath } from "../scripts/public-paths";
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { needsCommand } from "./platform-support";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-test("publication audit checks staged blobs and reports identifiers without their values", async () => {
+needsCommand("git", "git ls-files")("publication audit checks staged blobs and reports identifiers without their values", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-public-audit-"));
   const run = async (args: string[]) => {
     const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
@@ -39,14 +40,14 @@ test("publication audit checks staged blobs and reports identifiers without thei
 });
 
 
-test("publication path policy keeps private directories excluded even for example filenames", () => {
+needsCommand("git", "git ls-files")("publication path policy keeps private directories excluded even for example filenames", () => {
   for (const path of [".private/.env.example", "output/.env.example", "docs/evidence/.env.example", ".git/config", ".env.production.env.example", "../README.md", "docs//README.md", "docs/../README.md"])
     expect(isPublicSourcePath(path)).toBe(false);
   for (const path of [".env.example", "examples/.env.example", "README.md", ".github/workflows/checks.yml"])
     expect(isPublicSourcePath(path)).toBe(true);
 });
 
-test("a systemd template unit is not read as an address, and a real one still is", async () => {
+needsCommand("git", "git ls-files")("a systemd template unit is not read as an address, and a real one still is", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-audit-units-"));
   const run = async (args: string[]) => {
     const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });

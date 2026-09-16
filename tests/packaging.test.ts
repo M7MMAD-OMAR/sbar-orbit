@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { needsCommand } from "./platform-support";
 import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,7 +26,7 @@ async function run(command: string[], cwd: string) {
   return out;
 }
 
-test("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
+needsCommand("git", "git ls-files")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
   try {
     await run(["bun", "pm", "pack", "--destination", destination], project);
@@ -51,7 +52,7 @@ test("the registry tarball carries tracked source and nothing the working tree h
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);
 
-test("a native build the package does not carry refuses by name rather than by a missing file", async () => {
+needsCommand("git", "git ls-files")("a native build the package does not carry refuses by name rather than by a missing file", async () => {
   // The registry package ships no `experiments/`, so the bootstrap the installer spawns is not there.
   // Before this was handled, `bash` reported a path it could not open and that text became the step's
   // whole explanation, which says nothing about why the file is absent or what to do instead.
