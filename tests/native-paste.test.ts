@@ -3,6 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Sessions } from "../src/session";
 import { parseNativeAction } from "../src/fedora";
+import { tmpdir } from "node:os";
 
 test("native paste validates Unicode without broadening keyboard text semantics", () => {
   expect(parseNativeAction({ type: "paste", text: "مرحبا Orbit 🌍" })).toEqual({ type: "paste", text: "مرحبا Orbit 🌍" });
@@ -12,7 +13,7 @@ test("native paste validates Unicode without broadening keyboard text semantics"
 });
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("private clipboard pastes Arabic and emoji into Wayland and Xwayland apps", async () => {
-  const root = await mkdtemp("/tmp/orbit-paste-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-paste-test-"));
   const sessions = new Sessions(root);
   const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
   const pids: number[] = [];

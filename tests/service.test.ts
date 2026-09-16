@@ -2,10 +2,11 @@ import { test, expect } from "bun:test";
 import { mkdtemp, readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { installService, uninstallService, serviceSocketPath, claimSocket, budget } from "../src/service";
+import { tmpdir } from "node:os";
 
 /** Never the real unit directory: every case works inside a disposable prefix. */
 async function prefix() {
-  const root = await mkdtemp("/tmp/orbit-service-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-service-test-"));
   const launcher = join(root, "sbar-orbit");
   await writeFile(launcher, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
   return { units: join(root, "units"), launcher, root };

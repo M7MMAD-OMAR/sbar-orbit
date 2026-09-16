@@ -4,10 +4,11 @@ import { expectDeclaredImage } from "./frame-format";
 import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Sessions } from "../src/session";
+import { tmpdir } from "node:os";
 
 const enabled = process.env.ORBIT_TEST_NATIVE === "1";
 (enabled ? test : test.skip)("native broker owns two displays, pause, captures and independent stop", async () => {
-  const root = await mkdtemp("/tmp/orbit-native-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-test-"));
   const sessions = new Sessions(root);
   const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
   const act = (sessionId: string, action: unknown) => run("session.act", { sessionId, requestId: crypto.randomUUID(), action });
@@ -55,7 +56,7 @@ const enabled = process.env.ORBIT_TEST_NATIVE === "1";
   const { startBroker, call } = await import("../src/ipc");
   const { launchChrome } = await import("../src/chrome");
   const broker = await startBroker();
-  const root = await mkdtemp("/tmp/orbit-native-viewer-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-viewer-"));
   const browser = await launchChrome(await createWorkspaceDirectory("native-viewer-test"));
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");

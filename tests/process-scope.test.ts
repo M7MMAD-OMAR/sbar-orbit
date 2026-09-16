@@ -2,9 +2,10 @@ import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { auditProcessScope } from "../src/process-scope";
+import { tmpdir } from "node:os";
 
 test("scope audit follows non-main threads and rejects an escaped descendant", async () => {
-  const root = await mkdtemp("/tmp/orbit-proc-fixture-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-proc-fixture-"));
   await mkdir(join(root, "self")); await writeFile(join(root, "self/cgroup"), "0::/expected\n");
   for (const [pid, tids, scope] of [[42, { 42: "43", 55: "44 43 45" }, "expected"], [43, { 43: "" }, "expected"], [44, { 44: "" }, "outside"]] as const) {
     await mkdir(join(root, String(pid), "task"), { recursive: true });

@@ -2,9 +2,10 @@ import { isPublicSourcePath } from "../scripts/public-paths";
 import { test, expect } from "bun:test";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 test("publication audit checks staged blobs and reports identifiers without their values", async () => {
-  const root = await mkdtemp("/tmp/orbit-public-audit-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-public-audit-"));
   const run = async (args: string[]) => {
     const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
     const output = await new Response(child.stdout).text();
@@ -46,7 +47,7 @@ test("publication path policy keeps private directories excluded even for exampl
 });
 
 test("a systemd template unit is not read as an address, and a real one still is", async () => {
-  const root = await mkdtemp("/tmp/orbit-audit-units-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-audit-units-"));
   const run = async (args: string[]) => {
     const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
     return { code: await child.exited, output: await new Response(child.stdout).text() };

@@ -4,9 +4,10 @@ import { join, resolve } from "node:path";
 import { startBroker, call } from "../src/ipc";
 import { launchChrome } from "../src/chrome";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
+import { tmpdir } from "node:os";
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("viewer wheel controls only a paused native session", async () => {
-  const root = await mkdtemp("/tmp/orbit-viewer-scroll-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-viewer-scroll-"));
   const broker = await startBroker();
   const browser = await launchChrome(await createWorkspaceDirectory("viewer-scroll"));
   try {

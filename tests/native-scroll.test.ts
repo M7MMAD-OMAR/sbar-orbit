@@ -4,9 +4,10 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { startBroker, call } from "../src/ipc";
+import { tmpdir } from "node:os";
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("native wheel scroll via MCP changes Wayland and default GTK X11 content and respects pause", async () => {
-  const root = await mkdtemp("/tmp/orbit-scroll-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-scroll-"));
   const broker = await startBroker();
   const client = new Client({ name: "orbit-scroll-test", version: "1.0.0" });
   try {

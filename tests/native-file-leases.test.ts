@@ -2,9 +2,10 @@ import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBroker, call } from "../src/ipc";
+import { tmpdir } from "node:os";
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("two brokers reserve an editor file until its application session stops", async () => {
-  const root = await mkdtemp("/tmp/orbit-file-editors-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-file-editors-"));
   const file = join(root, "document.txt");
   await writeFile(file, "Replace this text\n");
   for (const name of ["a", "b"]) for (const dir of ["config", "data", "cache", "state"]) await mkdir(join(root, name, dir), { recursive: true });

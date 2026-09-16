@@ -2,9 +2,10 @@ import { test, expect } from "bun:test";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Sessions } from "../src/session";
+import { tmpdir } from "node:os";
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("private clipboard selections survive another session's changes and stop", async () => {
-  const root = await mkdtemp("/tmp/orbit-clipboard-isolation-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-clipboard-isolation-"));
   const sessions = new Sessions(root);
   const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
   const act = (session: { sessionId: string }, action: unknown) => run("session.act", { ...session, requestId: crypto.randomUUID(), action });

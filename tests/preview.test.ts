@@ -4,9 +4,10 @@ import { launchChrome } from "../src/chrome";
 import { startBroker, call } from "../src/ipc";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 test("viewer authenticates, renders live frames and controls only paused sessions", async () => {
-  const accountRoot = await mkdtemp("/tmp/orbit-viewer-accounts-");
+  const accountRoot = await mkdtemp(join(tmpdir(), "orbit-viewer-accounts-"));
   const broker = await startBroker({ accountRoot });
   const ownedViewer = await launchChrome(await createWorkspaceDirectory("preview-test"));
   const browser = ownedViewer.browser;

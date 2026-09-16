@@ -3,16 +3,35 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { OrbitError } from "./errors";
 
-/** Fresh private work directories on disk; retained profiles must not consume tmpfs RAM. */
-export function workspaceRoot(env = process.env) { return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "sbar-orbit/workspaces"); }
+/**
+ * Fresh private work directories on disk; retained profiles must not consume tmpfs RAM.
+ *
+ * On Windows the equivalent of `$XDG_CACHE_HOME` is `%LOCALAPPDATA%`, which is per user and
+ * deliberately non roaming, so a multi gigabyte browser profile is not synced to a domain share.
+ */
+export function workspaceRoot(env = process.env) {
+  if (process.platform === "win32" && !env.XDG_CACHE_HOME)
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "workspaces");
+  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "sbar-orbit/workspaces");
+}
 
 export async function createWorkspaceDirectory(prefix: string, root = workspaceRoot()) {
   if (!isAbsolute(root) || !/^[a-z][a-z0-9-]*$/.test(prefix)) throw new OrbitError("INVALID_REQUEST", "Workspace storage requires an absolute path and a simple prefix");
   await mkdir(root, { recursive: true, mode: 0o700 });
   const info = await lstat(root);
-  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() || (info.mode & 0o077))
+  // The POSIX half of the check: a uid to compare against and mode bits that mean something. Windows
+  // has neither. `process.getuid` is undefined there, and `mode` is synthesised from the read only
+  // attribute rather than read from an ACL, so `mode & 0o077` is a test of nothing that would refuse
+  // every Windows host for a permission it does not have. The Windows equivalent is the inherited
+  // ACL on %LOCALAPPDATA%, measured on a Windows 11 guest as SYSTEM, Administrators and the owning
+  // user, with no Everyone and no Anonymous. See docs/windows-measured.md.
+  const posixPrivate = process.platform !== "win32"
+    && (info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0);
+  if (!info.isDirectory() || info.isSymbolicLink() || posixPrivate)
     throw new OrbitError("INVALID_REQUEST", "Workspace storage must be a private directory owned by this user");
   const filesystem = await statfs(root);
+  // tmpfs and ramfs magic numbers. Neither exists on Windows, where the check is a no op rather than
+  // a wrong answer: statfs reports a type this list does not contain.
   if ([0x01021994, 0x858458f6].includes(filesystem.type))
     throw new OrbitError("UNSUPPORTED", "Workspace storage is on a RAM filesystem; set XDG_CACHE_HOME to a disk-backed directory");
   return mkdtemp(join(root, `${prefix}-`));

@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { call } from "../src/ipc";
+import { tmpdir } from "node:os";
 
 const enabled = process.env.ORBIT_TEST_NATIVE === "1";
 async function descendants(pid: number): Promise<number[]> {
@@ -33,7 +34,7 @@ async function waitGone(pids: number[]) {
 (enabled ? test : test.skip)("native trees terminate after abrupt broker death and a new broker works", async () => {
   const broker = Bun.spawn([process.execPath, "src/cli.ts", "serve"], { stdout: "pipe", stderr: "pipe" });
   const reader = broker.stdout.getReader();
-  const root = await mkdtemp("/tmp/orbit-native-crash-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-crash-"));
   let owned: number[] = [];
   try {
     const first = await reader.read();
@@ -67,7 +68,7 @@ async function waitGone(pids: number[]) {
 }, 30000);
 
 (enabled ? test : test.skip)("supervisor reaps detached descendants that ignore graceful termination", async () => {
-  const root = await mkdtemp("/tmp/orbit-native-tree-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-tree-"));
   const pidFile = join(root, "tree.json");
   const code = `import os,signal,time,json\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\npid=os.fork()\nif pid==0:\n os.setsid()\n time.sleep(60)\nelse:\n json.dump([os.getpid(),pid],open(${JSON.stringify(pidFile)},'w'))\n time.sleep(60)\n`;
   const supervisor = Bun.spawn(["/usr/bin/python3", "src/native/supervise.py", join(root, "root.json"), "/usr/bin/python3", "-c", code], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
@@ -91,7 +92,7 @@ async function waitGone(pids: number[]) {
 (enabled ? test : test.skip)("compositor crash closes its session while another display survives", async () => {
   const { startBroker } = await import("../src/ipc");
   const broker = await startBroker();
-  const root = await mkdtemp("/tmp/orbit-native-display-crash-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-display-crash-"));
   try {
     const a = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };
     const b = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };
@@ -115,7 +116,7 @@ async function waitGone(pids: number[]) {
 (enabled ? test : test.skip)("a supervisor killed on its own loses its application, and the session keeps working", async () => {
   const { startBroker } = await import("../src/ipc");
   const broker = await startBroker();
-  const root = await mkdtemp("/tmp/orbit-native-supervisor-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-supervisor-"));
   let application = 0;
   try {
     const session = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };

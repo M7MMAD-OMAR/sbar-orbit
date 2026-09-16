@@ -2,9 +2,10 @@ import { test, expect } from "bun:test";
 import { mkdir, mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { applyAppearance, filterKdeGlobals } from "../src/appearance";
+import { tmpdir } from "node:os";
 
 async function fixtureHome() {
-  const source = await mkdtemp("/tmp/orbit-appearance-source-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-appearance-source-"));
   await mkdir(join(source, "gtk-3.0"), { recursive: true });
   await mkdir(join(source, "gtk-4.0"), { recursive: true });
   await mkdir(join(source, "qt6ct/colors"), { recursive: true });
@@ -45,7 +46,7 @@ async function tree(root: string, prefix = ""): Promise<string[]> {
 
 test("appearance copies theme settings and nothing else", async () => {
   const source = await fixtureHome();
-  const target = await mkdtemp("/tmp/orbit-appearance-target-");
+  const target = await mkdtemp(join(tmpdir(), "orbit-appearance-target-"));
   const result = await applyAppearance(target, { configHome: source, dataHome: "/tmp/orbit-data-fixture", dataDirs: "/usr/share" });
   const copied = await tree(target);
   expect(copied).toEqual([
@@ -62,7 +63,7 @@ test("appearance copies theme settings and nothing else", async () => {
 
 test("a dark GTK theme becomes the colour scheme libadwaita reads without a portal", async () => {
   const source = await fixtureHome();
-  const target = await mkdtemp("/tmp/orbit-appearance-target-");
+  const target = await mkdtemp(join(tmpdir(), "orbit-appearance-target-"));
   const { env, cursor } = await applyAppearance(target, { configHome: source, dataHome: "/tmp/orbit-data-fixture", dataDirs: "/usr/local/share:/usr/share", kdePlatformTheme: "/nonexistent/kde.so" });
   expect(env).toMatchObject({ ADW_DEBUG_COLOR_SCHEME: "prefer-dark", QT_QPA_PLATFORMTHEME: "qt6ct", XCURSOR_THEME: "Bibata-Modern-Classic", XCURSOR_SIZE: "24",
     XDG_DATA_DIRS: `${join(target, "..", "shared-data")}:/usr/local/share:/usr/share` });
@@ -70,38 +71,38 @@ test("a dark GTK theme becomes the colour scheme libadwaita reads without a port
 });
 
 test("a person with no theme configuration gets an untouched session", async () => {
-  const source = await mkdtemp("/tmp/orbit-appearance-empty-");
-  const target = await mkdtemp("/tmp/orbit-appearance-target-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-appearance-empty-"));
+  const target = await mkdtemp(join(tmpdir(), "orbit-appearance-target-"));
   const result = await applyAppearance(target, { configHome: source, dataHome: "/tmp/orbit-data-fixture", dataDirs: "/usr/share" });
   expect(result).toEqual({ copied: [], env: { XDG_DATA_DIRS: `${join(target, "..", "shared-data")}:/usr/share` } });
   expect(await tree(target)).toEqual([]);
 });
 
 test("a cursor name that is not a plain identifier is not passed to the compositor", async () => {
-  const source = await mkdtemp("/tmp/orbit-appearance-odd-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-appearance-odd-"));
   await mkdir(join(source, "gtk-3.0"), { recursive: true });
   await writeFile(join(source, "gtk-3.0/settings.ini"), "[Settings]\ngtk-cursor-theme-name=Bad Name; exec x\ngtk-cursor-theme-size=9999\n");
-  const target = await mkdtemp("/tmp/orbit-appearance-target-");
+  const target = await mkdtemp(join(tmpdir(), "orbit-appearance-target-"));
   const { env, cursor } = await applyAppearance(target, { configHome: source, dataHome: "/tmp/orbit-data-fixture", dataDirs: "/usr/share" });
   expect(cursor).toBeUndefined();
   expect(env.XCURSOR_THEME).toBeUndefined();
 });
 
 test("KDE applications get their own platform theme only when it is installed", async () => {
-  const source = await mkdtemp("/tmp/orbit-appearance-kde-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-appearance-kde-"));
   await writeFile(join(source, "kdeglobals"), "[General]\nColorScheme=MaterialYouDark\n");
   const plugin = join(source, "KDEPlasmaPlatformTheme6.so");
   await writeFile(plugin, "");
-  const first = await mkdtemp("/tmp/orbit-appearance-target-"), second = await mkdtemp("/tmp/orbit-appearance-target-");
+  const first = await mkdtemp(join(tmpdir(), "orbit-appearance-target-")), second = await mkdtemp(join(tmpdir(), "orbit-appearance-target-"));
   expect((await applyAppearance(first, { configHome: source, dataHome: "/tmp/d", dataDirs: "/usr/share", kdePlatformTheme: plugin })).env.QT_QPA_PLATFORMTHEME).toBe("kde");
   expect((await applyAppearance(second, { configHome: source, dataHome: "/tmp/d", dataDirs: "/usr/share", kdePlatformTheme: join(source, "absent.so") })).env.QT_QPA_PLATFORMTHEME).toBeUndefined();
 });
 
 test("only icon, theme, font and colour scheme directories from the data home are shared", async () => {
-  const source = await mkdtemp("/tmp/orbit-appearance-empty-");
-  const dataHome = await mkdtemp("/tmp/orbit-appearance-data-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-appearance-empty-"));
+  const dataHome = await mkdtemp(join(tmpdir(), "orbit-appearance-data-"));
   for (const name of ["icons", "themes", "fonts", "color-schemes", "applications", "Trash", "gvfs-metadata", "recently-used.xbel"]) await mkdir(join(dataHome, name), { recursive: true });
-  const session = await mkdtemp("/tmp/orbit-appearance-session-");
+  const session = await mkdtemp(join(tmpdir(), "orbit-appearance-session-"));
   const target = join(session, "config");
   await mkdir(target);
   const { env } = await applyAppearance(target, { configHome: source, dataHome, dataDirs: `/usr/share:${dataHome}` });

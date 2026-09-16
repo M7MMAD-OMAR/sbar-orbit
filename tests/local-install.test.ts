@@ -2,9 +2,10 @@ import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { activateLocal, deactivateLocal } from "../src/local-install";
+import { tmpdir } from "node:os";
 
 async function fixture() {
-  const root = await mkdtemp("/tmp/orbit-install-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-install-test-"));
   const prefix = join(root, "local prefix");
   async function source(version: string) {
     const path = join(root, version);

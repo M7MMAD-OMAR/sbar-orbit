@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, writeFile, readFile, symlink, rename, link } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 test("supervised file reservations survive replacement and parent EOF until cleanup", async () => {
-  const root = await mkdtemp("/tmp/orbit-file-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-file-test-"));
   const file = join(root, "document.txt"), alias = join(root, "alias.txt"), other = join(root, "aaa-other.txt");
   await writeFile(file, "Original"); await writeFile(other, "Other"); await symlink(file, alias);
   const owners: Bun.Subprocess<"pipe", "ignore", "ignore">[] = [];

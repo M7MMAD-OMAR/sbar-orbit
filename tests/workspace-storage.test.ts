@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { chmod, lstat, mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { createWorkspaceDirectory } from "../src/workspace-storage";
+import { createWorkspaceDirectory, workspaceRoot } from "../src/workspace-storage";
+import { tmpdir } from "node:os";
 
 test("workspace storage creates unique private directories and rejects unsafe or RAM-backed roots", async () => {
   await mkdir("output", { recursive: true });
@@ -27,7 +28,7 @@ test("clean removes workspaces whose broker is gone and keeps live or recent one
   const scratch = await mkdtemp(resolve("output/storage-clean-"));
   const root = join(scratch, "workspaces");
   await mkdir(root, { recursive: true, mode: 0o700 });
-  const sockets = await mkdtemp("/tmp/orbit-clean-sockets-");
+  const sockets = await mkdtemp(join(tmpdir(), "orbit-clean-sockets-"));
   // A live broker: something answers the doctor call on its socket.
   const answering = Bun.serve({ unix: join(sockets, "live.sock"), fetch: () => Response.json({ ok: true, result: {} }) });
   const live = await createWorkspaceDirectory("broker", root);
@@ -86,4 +87,25 @@ test("one workspace that will not go does not end the sweep", async () => {
     expect(result.refused[0]?.reason).toBeTruthy();
     expect(result.removed).toEqual([name(ordinary)]);
   } finally { await chmod(stuck, 0o700); await rm(scratch, { recursive: true, force: true }); }
+});
+
+/**
+ * The workspace root is where a multi gigabyte browser profile lands, so where it goes on each
+ * platform is a decision rather than a default. Measured on a Windows 11 guest, 16 September 2026:
+ * `createWorkspaceDirectory` refused every Windows host with "must be a private directory owned by
+ * this user", because `process.getuid` is undefined there and `mode` is synthesised from the read
+ * only attribute, so `mode & 0o077` tested nothing and failed anyway. See docs/windows-measured.md.
+ */
+test("the workspace root follows the platform's own private per user location", () => {
+  // Linux, and anything else POSIX: the XDG cache home, or its documented default.
+  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache" } as NodeJS.ProcessEnv))
+    .toBe(join("/data/cache", "sbar-orbit/workspaces"));
+  // An explicit XDG_CACHE_HOME wins on every platform, which is what keeps the tests above portable.
+  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache", LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv))
+    .toBe(join("/data/cache", "sbar-orbit/workspaces"));
+  // The Windows branch is only reachable on win32, so on Linux this asserts the absence of the
+  // branch rather than its result: LOCALAPPDATA alone must not divert a POSIX host.
+  const windowsOnly = workspaceRoot({ LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv);
+  if (process.platform === "win32") expect(windowsOnly).toBe(join("C:\\Users\\x\\AppData\\Local", "sbar-orbit", "workspaces"));
+  else expect(windowsOnly).toContain("sbar-orbit");
 });

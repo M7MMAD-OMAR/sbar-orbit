@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { themeCss, themeCandidates, loadTheme } from "../src/theme";
+import { tmpdir } from "node:os";
 
 test("a flat Material You palette becomes custom properties", () => {
   const css = themeCss({ surface: "#121314", on_surface: "#e3e2e2", primary: "#b9c9d0", ignored_role: "#ff0000" });
@@ -47,7 +48,7 @@ test("candidates follow the environment rather than a fixed personal path", () =
 });
 
 test("a missing or unreadable theme leaves the shipped palette in place", async () => {
-  const directory = await mkdtemp("/tmp/orbit-theme-");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-theme-"));
   expect(await loadTheme({ ORBIT_THEME: join(directory, "absent.json") })).toBe("");
   const broken = join(directory, "broken.json");
   await writeFile(broken, "{ not json");

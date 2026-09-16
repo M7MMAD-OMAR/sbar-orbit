@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ownsGroup, sweepOwnedGroup } from "../src/owned-group";
+import { tmpdir } from "node:os";
 
 // A supervisor asked to stop reaps its own tree, which tests/native-crash.test.ts already covers.
 // These cover the other death: the supervisor is killed outright, runs nothing on the way out, and
@@ -25,7 +26,7 @@ async function supervise(directory: string, code: string, runtime = directory) {
 }
 
 test("an application outlives a supervisor that is killed, and the sweep ends it", async () => {
-  const directory = await mkdtemp("/tmp/orbit-owned-group-");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-owned-group-"));
   const { child, application } = await supervise(directory, stubborn);
   try {
     child.kill("SIGKILL");
@@ -49,7 +50,7 @@ test("an application outlives a supervisor that is killed, and the sweep ends it
 }, 20000);
 
 test("a group that stops on request is not escalated", async () => {
-  const directory = await mkdtemp("/tmp/orbit-owned-group-polite-");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-owned-group-polite-"));
   const { child, application } = await supervise(directory, "import time\ntime.sleep(120)\n");
   try {
     child.kill("SIGKILL");
@@ -63,8 +64,8 @@ test("a group that stops on request is not escalated", async () => {
 }, 20000);
 
 test("a process from another session is neither owned nor signalled", async () => {
-  const directory = await mkdtemp("/tmp/orbit-owned-group-other-");
-  const elsewhere = await mkdtemp("/tmp/orbit-owned-group-elsewhere-");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-owned-group-other-"));
+  const elsewhere = await mkdtemp(join(tmpdir(), "orbit-owned-group-elsewhere-"));
   const { child, application } = await supervise(elsewhere, stubborn);
   try {
     child.kill("SIGKILL");
@@ -82,7 +83,7 @@ test("a process from another session is neither owned nor signalled", async () =
 }, 20000);
 
 test("a process that does not lead its own group is refused", async () => {
-  const directory = await mkdtemp("/tmp/orbit-owned-group-member-");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-owned-group-member-"));
   // No new session, so it stays in this test runner's group. Signalling that group would reach the
   // test runner and everything beside it, which is exactly what the leader check exists to prevent.
   const member = Bun.spawn(["/usr/bin/python3", "-c", "import time\ntime.sleep(30)\n"],

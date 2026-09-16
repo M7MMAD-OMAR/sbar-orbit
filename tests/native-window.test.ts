@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { startBroker, call } from "../src/ipc";
 import { expectDeclaredImage, jpegSize } from "./frame-format";
+import { tmpdir } from "node:os";
 
 /**
  * An application that needs room gets it two ways: the whole private display can be resized, and one
@@ -10,7 +11,7 @@ import { expectDeclaredImage, jpegSize } from "./frame-format";
  * reach for first.
  */
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("a private display can be resized and its windows managed", async () => {
-  const root = await mkdtemp("/tmp/orbit-window-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-window-"));
   const broker = await startBroker();
   try {
     const session = await call(broker.socket, "session.create",
@@ -65,7 +66,7 @@ import { expectDeclaredImage, jpegSize } from "./frame-format";
  * shell here forks the fixture the same way, `& wait`, so the window's pid is a grandchild's.
  */
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("a window mapped by a descendant of the launched process counts as mapped", async () => {
-  const root = await mkdtemp("/tmp/orbit-descendant-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-descendant-"));
   const broker = await startBroker();
   try {
     const session = await call(broker.socket, "session.create", { backend: "fedora" }) as { sessionId: string };

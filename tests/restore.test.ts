@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   canRestoreTo, clearRestorePoints, createSubvolume, isSubvolume, listRestorePoints,
   removeRestorePoint, restoreProfile, reversibilityOf, takeRestorePoint, undoCompleteness,
@@ -232,7 +232,7 @@ test("a machine with no btrfs loses restore points, not sessions", async () => {
   expect(asked.ok).toBe(false);
   expect(asked.output).toContain("posix_spawn");
   // And the directory the caller handed over is still there, which is the rule this path already had.
-  const scratch = await mkdtemp("/tmp/orbit-no-btrfs-");
+  const scratch = await mkdtemp(join(tmpdir(), "orbit-no-btrfs-"));
   try {
     await writeFile(join(scratch, "keep"), "profile content");
     // The real tool, on a filesystem that is not btrfs, takes the same branch a missing one does.

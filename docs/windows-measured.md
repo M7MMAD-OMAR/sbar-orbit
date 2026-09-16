@@ -176,10 +176,96 @@ page, one size, one guest. A heavy page is still the next question.
 - **No hybrid cores.** Eight uniform vCPUs, so the P and E core question is untouched.
 - **No real profile**, so nothing about App Bound Encryption was exercised.
 - **No egress confinement**: G28's program scoped firewall rule was not re-run here.
-- **No broker.** No Orbit source tree has been built or run on this guest yet. Everything above is
-  the primitives underneath the broker, measured one at a time.
+- **No broker has ever started.** Section 6 records that the tree builds, typechecks and passes half
+  its suite on the guest, but `serve` still refuses before it binds, because
+  `requireResourceBudget()` reads a cgroup that does not exist there. No Orbit session has run on
+  Windows.
 
-## 6. The control channel, for whoever repeats this
+## 6. The source tree on Windows, and what the suite says there
+
+The sections above measured the primitives underneath the broker. This one runs the actual
+repository. All 333 tracked files were pushed to the guest, unpacked, installed and tested.
+
+### It builds
+
+| Step | Result |
+|---|---|
+| `bun install --frozen-lockfile --ignore-scripts` | exit 0, 100 packages, 36.9 s, Playwright present |
+| `bun run typecheck` | **exit 0** |
+
+The whole tree typechecks on Windows with no changes. That is a better starting point than the
+porting plan assumed.
+
+### The suite, before any portability work
+
+`bun test` on the guest: **109 pass, 121 fail, 18 skip**, across 248 tests in 61 files, in 13.7 s.
+
+Seventeen files were already clean, including `policy`, `extension`, `viewport`, `cpu-sample`,
+`viewer-polling` and `native-renderer`. The failures were not spread evenly, and most of them were
+not about Windows at all.
+
+### What the failures actually were
+
+The single largest cause was the **test harness**, not the product: 54 failures came from tests
+calling `mkdtemp("/tmp/orbit-...")` directly rather than `mkdtemp(join(tmpdir(), ...))`. `/tmp` does
+not exist on Windows, so those tests died before they exercised one line of Orbit. That is a harness
+assumption masquerading as a portability finding, and it hid the real ones underneath it.
+
+`scripts/portable-tmp.py` rewrote 51 call sites across 24 test files, adding the `tmpdir` and `join`
+imports each file needed. `src/fedora.ts` was deliberately left alone: the private display is Linux
+only and where it puts its runtime directory is a measured decision, not an accident.
+
+### The one real product bug the guest exposed
+
+`createWorkspaceDirectory()` refused on Windows with "Workspace storage must be a private directory
+owned by this user". The check was:
+
+```ts
+info.uid !== process.getuid?.() || (info.mode & 0o077)
+```
+
+Neither half means anything on Windows. `process.getuid` is undefined there, and `mode` is
+synthesised from the read only attribute rather than read from an ACL, so `mode & 0o077` tests
+nothing and the comparison refuses every Windows host for a permission it does not have. The POSIX
+half is now gated on the platform, and `workspaceRoot()` returns `%LOCALAPPDATA%\sbar-orbit\workspaces`
+there, which is per user and non roaming so a multi gigabyte profile is never synced to a domain
+share.
+
+Verified on the guest after the fix:
+
+```
+root:    %LOCALAPPDATA%\sbar-orbit\workspaces
+created: %LOCALAPPDATA%\sbar-orbit\workspaces\winprobe-1uMRtq
+OK
+```
+
+The account name is substituted above, the way `doctor --report` substitutes it, because a profile
+directory basename can be a person's name.
+
+### The suite after both fixes
+
+**123 pass, 107 fail, 18 skip.** Hardcoded `/tmp` failures: **0**. The Linux suite is unchanged at
+248 pass, 0 fail, so nothing was traded away for it.
+
+What is left is no longer noise. Every remaining cause is a real platform question:
+
+| Cause | Count | What it means |
+|---|---|---|
+| `RESOURCE_LIMIT_REQUIRED` | 24 | `requireResourceBudget()` reads a cgroup. Windows has a job object instead, which `src/windows-job.ts` now wraps, and the two have to be joined |
+| `uv_spawn '/usr/bin/python3'` | 15 | `supervise.py`, `one_secret.py` and the settings helper. The supervisor is replaced by `KILL_ON_JOB_CLOSE` on Windows, and the other two are Linux only features |
+| `EPERM: symlink` | 21 | Creating a symlink on Windows needs Developer Mode or elevation. `src/update.ts` versions and `bin/sbar-orbit` both use them, and a junction or a copy is the Windows answer |
+| `uv_spawn '/usr/bin/systemctl'`, `findmnt` | 4 | systemd and filesystem probes, Linux only by definition |
+
+That is the honest state: the tree builds and typechecks on Windows, half the suite passes, and the
+remaining half is a list of four named jobs rather than an unknown.
+
+### What still has not happened
+
+No broker has been started on the guest. `serve` refuses before it binds, because
+`requireResourceBudget()` runs first and there is no cgroup. Joining `src/windows-job.ts` to that
+call is the next piece of work, and until it is done, **no Orbit session has ever run on Windows**.
+
+## 7. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

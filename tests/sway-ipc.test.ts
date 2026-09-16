@@ -2,11 +2,11 @@ import { test, expect } from "bun:test";
 import { createServer } from "node:net";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
-import { endianness } from "node:os";
+import { endianness, tmpdir } from "node:os";
 import { swayRequest } from "../src/sway-ipc";
 
 test("private compositor transport handles split frames and rejects truncated replies", async () => {
-  const path = join(await mkdtemp("/tmp/orbit-native-ipc-test-"), "sway-ipc.test.sock");
+  const path = join(await mkdtemp(join(tmpdir(), "orbit-native-ipc-test-")), "sway-ipc.test.sock");
   let truncate = false;
   const server = createServer(socket => {
     socket.once("data", async request => {

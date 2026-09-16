@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { nativeRuntimeLocations } from "../src/runtime-paths";
+import { tmpdir } from "node:os";
 
 const project = resolve(import.meta.dir, "..");
 // No package manager is ever spawned from a test. The dependency step is the one part of the
@@ -11,8 +12,8 @@ const project = resolve(import.meta.dir, "..");
 const refuse = async () => { throw new Error("A test must not run a package manager"); };
 
 async function sandbox() {
-  const prefix = await mkdtemp("/tmp/orbit-install-prefix-");
-  const config = await mkdtemp("/tmp/orbit-install-config-");
+  const prefix = await mkdtemp(join(tmpdir(), "orbit-install-prefix-"));
+  const config = await mkdtemp(join(tmpdir(), "orbit-install-config-"));
   const previous = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = config;
   return { prefix, config, async restore() {
@@ -64,7 +65,7 @@ test("an install without a service links the command and writes connector config
 
 test("an install refuses a directory that is not an Orbit source, and says which step failed", async () => {
   const box = await sandbox();
-  const fake = await mkdtemp("/tmp/orbit-install-fake-");
+  const fake = await mkdtemp(join(tmpdir(), "orbit-install-fake-"));
   try {
     await mkdir(join(fake, "bin"), { recursive: true });
     await writeFile(join(fake, "package.json"), JSON.stringify({ name: "not-orbit", version: "1.0.0" }));
@@ -153,10 +154,10 @@ test("nothing the installer shows a person claims more than the project has meas
 
 test("the native runtime step builds only when asked, and names the tools it lacks", async () => {
   // A source with no runtime, so the step has something to build; nothing here compiles anything.
-  const source = await mkdtemp("/tmp/orbit-native-source-");
+  const source = await mkdtemp(join(tmpdir(), "orbit-native-source-"));
   // A data home of its own: the runtime is shared between versions now, and a test must never write
   // into the person's real one. tests/native-runtime.test.ts covers where it lands and why.
-  const dataHome = await mkdtemp("/tmp/orbit-native-data-");
+  const dataHome = await mkdtemp(join(tmpdir(), "orbit-native-data-"));
   const previousDataHome = process.env.XDG_DATA_HOME;
   process.env.XDG_DATA_HOME = dataHome;
   const { shared } = nativeRuntimeLocations(source);

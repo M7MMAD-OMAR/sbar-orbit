@@ -3,9 +3,10 @@ import { mkdtemp, mkdir, writeFile, readFile, rename, symlink } from "node:fs/pr
 import { join, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { readVerifiedSource } from "../scripts/source-manifest";
+import { tmpdir } from "node:os";
 
 async function fixture() {
-  const root = await mkdtemp("/tmp/orbit-manifest-test-");
+  const root = await mkdtemp(join(tmpdir(), "orbit-manifest-test-"));
   const contents = { "package.json": '{"name":"sbar-orbit","version":"0.1.0-alpha.1"}', LICENSE: "Fixture license", NOTICE: "Fixture notice", "bin/sbar-orbit": "#!/bin/sh\nexit 0\n" };
   await mkdir(join(root, "bin"));
   const files = [];

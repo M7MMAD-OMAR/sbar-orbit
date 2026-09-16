@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 test("launcher works through a symlink outside the repository and stops a nested bounded broker", async () => {
-  const scratch = await mkdtemp("/tmp/orbit launcher-");
+  const scratch = await mkdtemp(join(tmpdir(), "orbit launcher-"));
   const launcher = join(scratch, "sbar-orbit");
   await symlink(resolve("bin/sbar-orbit"), launcher);
   const help = Bun.spawn([launcher, "--help"], { cwd: scratch, stdout: "pipe", stderr: "pipe" });
@@ -43,7 +44,7 @@ test("launcher works through a symlink outside the repository and stops a nested
  * launcher resolves bun by location, so the fake bun under a fake HOME is what runs here.
  */
 test("the launcher finds bun under ~/.bun/bin when PATH has none, and says so when nothing has it", async () => {
-  const home = await mkdtemp("/tmp/orbit launcher-home-");
+  const home = await mkdtemp(join(tmpdir(), "orbit launcher-home-"));
   const { mkdir, writeFile, chmod } = await import("node:fs/promises");
   await mkdir(join(home, ".bun/bin"), { recursive: true });
   const fake = join(home, ".bun/bin/bun");
