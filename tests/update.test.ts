@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { summarize } from "../src/status";
-import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus } from "../src/update";
+import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus, linkTarget } from "../src/update";
 
 /**
  * Activation, which is the part of an update that can hurt: it restarts the broker, and a restart ends
@@ -36,6 +36,24 @@ async function packFixture(root: string, version: string) {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "orbit-update-"));
   return { root, close: () => rm(root, { recursive: true, force: true }) };
+}
+
+/**
+ * The path `updatableInstall` should be given, for an install of the shape each platform makes.
+ *
+ * `updatableInstall` asks `realpath` where the launcher lands and compares that with the managed
+ * versions directory. On Linux the launcher is a symlink into the install, so the link is created and
+ * the link path is handed over. Windows cannot symlink unelevated and installs a `.cmd` shim, so
+ * there the launcher IS the file in the install and its own path is the answer.
+ *
+ * Writing a symlink on both would be EPERM on Windows, and writing a shim at the link site instead
+ * would quietly change what is being tested: `realpath` would land on the shim rather than on the
+ * install, so the test would assert that a shim is not a managed install, which is not the question.
+ */
+async function installedLauncher(target: string, link: string) {
+  if (process.platform === "win32") return target;
+  await symlink(target, link);
+  return link;
 }
 
 test("a version is activated only when no session would be ended by it", async () => {
@@ -109,10 +127,10 @@ test("an install that runs from a source checkout is not one the updater may swa
   try {
     const checkout = join(root, "checkout");
     await mkdir(join(checkout, "bin"), { recursive: true });
-    await writeFile(join(checkout, "bin/sbar-orbit"), "#!/usr/bin/env bash\n");
+    const checkoutLauncher = join(checkout, launcherName());
+    await writeFile(checkoutLauncher, "#!/usr/bin/env bash\n");
     const link = join(root, "sbar-orbit");
-    await symlink(join(checkout, "bin/sbar-orbit"), link);
-    const refused = await updatableInstall(root, link);
+    const refused = await updatableInstall(root, await installedLauncher(checkoutLauncher, link));
     expect(refused.updatable).toBe(false);
     // The reason names the directory, because "not updatable" alone tells a person nothing.
     expect((refused as { reason: string }).reason).toContain(checkout);
@@ -120,9 +138,9 @@ test("an install that runs from a source checkout is not one the updater may swa
 
     // The same machine once its launcher goes through a managed version.
     const directory = await prepared(root, "0.2.0");
-    await rm(link);
-    await symlink(join(directory, "bin/sbar-orbit"), link);
-    expect((await updatableInstall(root, link)).updatable).toBe(true);
+    await rm(link, { force: true });
+    const managed = await installedLauncher(join(directory, launcherName()), link);
+    expect((await updatableInstall(root, managed)).updatable).toBe(true);
   } finally { await close(); }
 });
 
@@ -164,7 +182,9 @@ test("pruning keeps the current version and the one a rollback would need", asyn
     const environment = { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true };
     await activateVersion("0.3.0", environment);
     await activateVersion("0.4.0", environment);
-    expect(await readlink(layout(root).previous)).toContain("0.3.0");
+    // Asked through the updater's own resolver, so this reads a symlink on Linux and the pointer
+    // file on Windows: the property is that a rollback target was recorded, not how it is spelled.
+    expect(await linkTarget(layout(root).previous)).toContain("0.3.0");
     const pruned = await pruneVersions(root, 0);
     expect(pruned.removed.sort()).toEqual(["0.1.0", "0.2.0"]);
     expect((await preparedVersions(root)).sort()).toEqual(["0.3.0", "0.4.0"]);
@@ -319,9 +339,10 @@ test("a run on a source checkout prepares nothing, whatever the switch says", as
     // A launcher of the fixture's own, linked into a checkout rather than a managed version directory,
     // so the answer does not depend on what this machine has under ~/.local/bin.
     await mkdir(join(root, "checkout/bin"), { recursive: true });
-    await writeFile(join(root, "checkout/bin/sbar-orbit"), "#!/bin/sh\n", { mode: 0o755 });
-    await symlink(join(root, "checkout/bin/sbar-orbit"), join(root, "launcher"));
-    const outcome = await runUpdate("0.1.0-alpha.4", { root, launcher: join(root, "launcher"), ...feed({ "0.1.0-alpha.9": { publishedAt: "2026-09-01T00:00:00Z" } }) });
+    const checkoutLauncher = join(root, "checkout", launcherName());
+    await writeFile(checkoutLauncher, "#!/bin/sh\n", { mode: 0o755 });
+    const launcher = await installedLauncher(checkoutLauncher, join(root, "launcher"));
+    const outcome = await runUpdate("0.1.0-alpha.4", { root, launcher, ...feed({ "0.1.0-alpha.9": { publishedAt: "2026-09-01T00:00:00Z" } }) });
     expect(outcome.ran).toBe(false);
     expect(String(outcome.reason)).toContain("git");
   } finally { await close(); }

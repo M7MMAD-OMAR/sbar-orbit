@@ -81,7 +81,17 @@ test("one workspace that will not go does not end the sweep", async () => {
   const stuck = await createWorkspaceDirectory("aaa-stuck", root);
   const ordinary = await createWorkspaceDirectory("zzz-ordinary", root);
   for (const directory of [stuck, ordinary]) await markWorkspaceOwner(directory, "/nowhere/broker.sock", 4194304 + 11);
-  await chmod(stuck, 0o500);
+  // Making a directory refuse removal is a different act on each kernel. POSIX drops write permission
+  // on the parent record. Windows ignores that mode entirely, so the sweep would delete both and the
+  // test would assert nothing: there a file is held OPEN inside it, which really does block removal.
+  let holder: number | undefined;
+  if (process.platform === "win32") {
+    await Bun.write(join(stuck, "held.lock"), "x");
+    const { openSync } = await import("node:fs");
+    holder = openSync(join(stuck, "held.lock"), "r+");
+  } else {
+    await chmod(stuck, 0o500);
+  }
   try {
     const result = await cleanWorkspaces(root, async () => false);
     const name = (path: string) => path.slice(root.length + 1);
@@ -89,7 +99,11 @@ test("one workspace that will not go does not end the sweep", async () => {
     expect(result.refused.map(entry => entry.name)).toEqual([name(stuck)]);
     expect(result.refused[0]?.reason).toBeTruthy();
     expect(result.removed).toEqual([name(ordinary)]);
-  } finally { await chmod(stuck, 0o700); await rm(scratch, { recursive: true, force: true }); }
+  } finally {
+    if (holder !== undefined) { const { closeSync } = await import("node:fs"); closeSync(holder); }
+    else await chmod(stuck, 0o700);
+    await rm(scratch, { recursive: true, force: true });
+  }
 });
 
 /**

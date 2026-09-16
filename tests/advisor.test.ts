@@ -6,13 +6,76 @@ import { consultAdvisor } from "../src/advisor";
 import { decide, immuneMatch, immuneSet, journalEntry, narrow, parsePolicy, type SessionPolicy } from "../src/policy";
 
 /** An advisor is any executable that reads one JSON object and writes one. These are the shapes. */
+/**
+ * A real advisor program, written in whatever the running machine can execute.
+ *
+ * The body is given in shell, since that is what these tests are written in, and translated for
+ * Windows where `#!/bin/sh` means nothing and there is no `/bin/sh` to spawn. Without this every
+ * advisor test on Windows fails as `advisor-unstartable`, which reads as "the advisor path is broken"
+ * when the truth is that the fixture wrote a program the platform cannot run. The advisor contract
+ * itself was measured working on a Windows guest against exactly these `.cmd` shapes: see
+ * docs/windows-measured.md section 14.
+ */
 async function advisorScript(body: string) {
   const directory = await mkdtemp(join(tmpdir(), "orbit-advisor-"));
-  const path = join(directory, "advisor.sh");
-  await writeFile(path, `#!/bin/sh\n${body}\n`);
-  await chmod(path, 0o755);
+  if (process.platform !== "win32") {
+    const path = join(directory, "advisor.sh");
+    await writeFile(path, `#!/bin/sh\n${body}\n`);
+    await chmod(path, 0o755);
+    return path;
+  }
+  const path = join(directory, "advisor.cmd");
+  await writeFile(path, `@echo off\r\n${windowsBody(body)}\r\n`);
   return path;
 }
+
+/**
+ * The handful of shell shapes these tests use, in cmd.
+ *
+ * Deliberately a small translator for known bodies rather than a general one: a general shell to cmd
+ * translation would be a second implementation to get wrong, and a body it silently mistranslated
+ * would produce a passing test that proves nothing. Anything unrecognised throws, so a new case fails
+ * loudly here instead of quietly passing on Windows.
+ */
+function windowsBody(body: string): string {
+  // `cat >/dev/null` is how these advisors drain the record on stdin before answering. cmd has no
+  // cat, and `more` waits on a console, so the drain is simply dropped: the child exiting without
+  // reading stdin is a real advisor shape too, and the pipe write is already best effort.
+  const drained = body.replace(/^cat\s*>\/dev\/null;\s*/, "");
+  // `cat >FILE` is the capture case, where the test asserts on exactly what the advisor was handed.
+  // That one has to really read stdin, so it gets a genuine copy rather than a dropped drain:
+  // `findstr` with a pattern that matches every line is cmd's `cat` and does not need a console.
+  const captured = drained.match(/^cat\s*>(\S+);\s*echo '(.*)'$/);
+  if (captured) return `findstr "^" > "${captured[1]}"\r\necho ${captured[2]!.replace(/"/g, '^"')}`;
+  const echoed = drained.match(/^echo '(.*)'$/);
+  if (echoed) {
+    // cmd has no single quoting, and JSON carries double quotes that must survive to stdout.
+    return `echo ${echoed[1]!.replace(/"/g, '^"')}`;
+  }
+  if (/^exit\s+(\d+)$/.test(drained)) return drained;
+  const exited = drained.match(/^echo '(.*)';\s*exit\s+(\d+)$/);
+  if (exited) return `echo ${exited[1]!.replace(/"/g, '^"')}\r\nexit /b ${exited[2]}`;
+  // `sleep N` is the hang case. cmd has no sleep; a ping to a routable address that never answers is
+  // the standard stand in and needs no extra binary.
+  const slept = drained.match(/^sleep\s+([\d.]+)$/);
+  if (slept) return `ping -n ${Math.max(2, Math.ceil(Number(slept[1]) + 1))} 127.0.0.1 >nul`;
+  // `kill -9 $$` is an advisor killed mid-answer, which must read as a failure rather than as a
+  // decision. cmd cannot signal itself, so the same end state is reached by exiting non zero without
+  // writing anything: no verdict on stdout, a failure exit, which is what the child's death looks
+  // like from the broker's side. Recorded in the doc, because it is a substitution rather than a
+  // translation and the two are not the same evidence.
+  if (/^kill\s+-9\s+\$\$$/.test(drained)) return "exit /b 137";
+  throw new Error(`advisorScript has no Windows form for: ${body}`);
+}
+
+/**
+ * A path that is absolute on the running platform, for tests that only parse a policy and never spawn.
+ *
+ * `parsePolicy` requires an absolute command so the broker never resolves an advisor through PATH,
+ * and "absolute" is a different shape on each platform. Using a POSIX literal here would make these
+ * tests assert the Linux spelling of the rule rather than the rule.
+ */
+const anyAdvisor = process.platform === "win32" ? "C:\\Windows\\System32\\where.exe" : "/bin/true";
 
 const pending = journalEntry({
   sequence: 1, sessionId: "s-1", actor: "agent", actionType: "click",
@@ -106,7 +169,7 @@ test("no autonomy level clears an immune id, and it is never sent to the advisor
   // policy the parser will produce.
   const permissive: SessionPolicy = {
     mode: "autonomous", origins: ["https://bank.test"], allow: ["read", "navigate", "write", "irreversible"],
-    deny: [], advisor: { command: ["/bin/true"], timeoutMs: 1000 },
+    deny: [], advisor: { command: [anyAdvisor], timeoutMs: 1000 },
     rules: [{ id: "consult-everything", verb: ["navigate"], decision: "consult", reason: "second opinion" }],
   };
   const decision = decide(permissive, "navigate", "https://bank.test/transfer", "POST");
@@ -153,7 +216,7 @@ test("rules lower a decision and can never raise one", () => {
 
   // Where several rules match, the strictest wins.
   const conflicting: SessionPolicy = { ...base, allow: ["read", "navigate"],
-    advisor: { command: ["/bin/true"], timeoutMs: 1000 },
+    advisor: { command: [anyAdvisor], timeoutMs: 1000 },
     rules: [
       { id: "soft", verb: ["navigate"], decision: "consult" as const, reason: "check it" },
       { id: "hard", verb: ["navigate"], pathPrefix: "/private", decision: "deny" as const, reason: "no" },
@@ -183,13 +246,13 @@ test("parsing refuses rules and advisors that would be decorative", () => {
   expect(() => parsePolicy({ advisor: { command: "echo hi" } })).toThrow();
   expect(() => parsePolicy({ advisor: { command: ["echo"] } })).toThrow();
   expect(() => parsePolicy({ advisor: { command: [] } })).toThrow();
-  expect(() => parsePolicy({ advisor: { command: ["/bin/true"], timeoutMs: 99 } })).toThrow();
-  expect(() => parsePolicy({ advisor: { command: ["/bin/true"], timeoutMs: 60000 } })).toThrow();
+  expect(() => parsePolicy({ advisor: { command: [anyAdvisor], timeoutMs: 99 } })).toThrow();
+  expect(() => parsePolicy({ advisor: { command: [anyAdvisor], timeoutMs: 60000 } })).toThrow();
 
   const parsed = parsePolicy({
     mode: "autonomous", origins: ["https://a.test"], allow: ["read", "navigate"],
     rules: [{ id: "r", verb: ["navigate", "click"], decision: "consult", reason: "look" }],
-    advisor: { command: ["/bin/true"] },
+    advisor: { command: [anyAdvisor] },
   });
   expect(parsed.rules?.[0]?.id).toBe("r");
   expect(parsed.advisor?.timeoutMs).toBe(5000);

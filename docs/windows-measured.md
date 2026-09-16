@@ -1065,7 +1065,56 @@ indistinguishable from a real failure until it is read carefully**, and reading 
 the person's processes: no` as a pass would have been an accident. The questions were re-asked of the
 process table by command line, which is what a person looking at their own machine would do.
 
-## 18. The control channel, for whoever repeats this
+## 18. The remaining failures, read one at a time again
+
+Section 13 read 21 failures individually and found four product bugs. Sections 14 to 17 then measured
+four guarantees that classification had hidden. This is the same exercise on what was left, and the
+count moved **18 to 10**, 167 pass to **175 pass**, with no regressions.
+
+| What failed | What it actually was |
+|---|---|
+| 4 advisor tests | **One helper**, writing every advisor as a `#!/bin/sh` script. Windows has no `/bin/sh`, so all four died as `advisor-unstartable`, which reads like the advisor path is broken when the fixture simply wrote a program the platform cannot run |
+| `install ... writes connector configuration` | The test asserted the POSIX spelling `sbar-orbit/broker.sock`. Windows correctly writes `%LOCALAPPDATA%\sbar-orbit\broker.sock`, so the assertion was checking the separator rather than the property |
+| `pruning keeps the current version` | `readlink` on `previous`, which is only half the answer: this platform records it in a **pointer file**, by the design in section 9 |
+| 2 source checkout tests | The fixture built the installed launcher with `symlink`, which is EPERM unelevated and is not what Windows installs anyway: there it is a `.cmd` shim |
+| `one workspace that will not go` | `chmod 0o500` to make a directory refuse removal. Windows ignores that mode, so the sweep deleted **both** workspaces and the test proved nothing before failing in its own cleanup |
+
+### The advisor translator, and the one case it refuses
+
+`advisorScript` now writes a `.cmd` on Windows, translating the handful of shell bodies these tests
+use. It is deliberately a **small translator for known shapes rather than a general one**: a general
+shell to cmd translation is a second implementation to get wrong, and a body it mistranslated would
+produce a **passing test that proves nothing**. Anything unrecognised throws.
+
+That refusal earned itself immediately. The first guest run after the change failed with
+`advisorScript has no Windows form for: kill -9 $$`, which is precisely the design working: the case
+was visible instead of silently mistranslated into something that passed.
+
+`kill -9 $$` is an advisor killed mid answer. cmd cannot signal itself, so it is **substituted** with a
+non zero exit and no verdict on stdout, which is the same end state from the broker's side. That is a
+substitution rather than a translation, and it is written down here because the two are not the same
+evidence.
+
+### Two fixtures that were asserting nothing
+
+The workspace sweep is the sharper one. On POSIX, `chmod 0o500` on the parent makes a record
+unremovable, which is how the test creates a workspace that will not go. Windows ignores the mode
+entirely, so the sweep removed both workspaces, `refused` was empty, and the test then **failed in its
+own `finally`** on a path that no longer existed. A test that cannot create the condition it is testing
+is not a weaker test, it is a test of nothing. On Windows the fixture now holds a **file open** inside
+the directory, which really does block removal there.
+
+### What is left, and what it is
+
+Ten failures. Named rather than grouped: 3 need `git`, which is **not installed on this guest**, and
+`winget` could not fetch it in this session; 2 need `/usr/bin/findmnt` and `/bin/sh`; 1 needs the
+systemd slice; 1 is the `plan` command's documented report; and 3 are packaging tests that read an
+archive built by the git-dependent path.
+
+The git ones are an **environment gap, not a code defect**, and they are recorded as unmeasured rather
+than as passing or as harness noise. `not measured` is not a pass.
+
+## 19. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

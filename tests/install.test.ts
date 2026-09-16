@@ -62,7 +62,11 @@ test("an install without a service links the command and writes connector config
     // upgrade or a rollback, and cannot be right on a machine that is not this one.
     expect(written.mcpServers.orbit.command).toBe(link);
     expect(written.mcpServers.orbit.args).toEqual(["mcp"]);
-    expect(written.mcpServers.orbit.env.ORBIT_SOCKET).toContain("sbar-orbit/broker.sock");
+    // The socket path is correct on each platform in that platform's own spelling: a POSIX runtime
+    // directory, or %LOCALAPPDATA% with backslashes on Windows. Asserting the POSIX form everywhere
+    // would assert the Linux spelling rather than the property, which is that the connector is told
+    // the same socket the broker binds.
+    expect(written.mcpServers.orbit.env.ORBIT_SOCKET).toContain(join("sbar-orbit", "broker.sock"));
     // Nothing was installed into systemd, so the step that needs a managed broker cannot claim a pass.
     expect(report.steps.find(step => step.id === "service")?.state).toBe("skipped");
     expect(report.steps.find(step => step.id === "verify")?.state).toBe("skipped");

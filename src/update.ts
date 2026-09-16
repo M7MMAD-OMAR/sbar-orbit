@@ -67,7 +67,12 @@ export function layout(root = updateRoot()): Layout {
  */
 const pointerFile = (link: string) => `${link}.txt`;
 
-async function linkTarget(path: string) {
+/**
+ * What a pointer names, whichever form this platform uses: a symlink's target, or the pointer file's
+ * contents on Windows. Exported so a test can ask the same question the updater asks rather than
+ * reaching for `readlink`, which is only half the answer and fails outright on Windows.
+ */
+export async function linkTarget(path: string) {
   if (process.platform === "win32") {
     // A pointer file written by this code, not a path the user typed, so a trailing newline is the
     // only tolerance needed. An absent file means no version is current, the same as an absent link.
