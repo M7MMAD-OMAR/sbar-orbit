@@ -718,7 +718,62 @@ Two CLI papercuts were found and deliberately not fixed here, because they behav
 Linux and are not Windows work: `--version` is not a verb, and `session create browser --json` reads
 `--json` as the account name, since positional parsing does not filter flags.
 
-## 11. The control channel, for whoever repeats this
+## 11. The suite triaged, and what a failure count was hiding
+
+The guest suite's failure count was being read as the size of the remaining port. It was not. Most of
+those tests are not shared code failing on Windows, they are tests of features this project has
+already decided do not exist there, failing correctly and being counted as defects. A number made of
+those hides the real ones underneath it.
+
+| After | Failures | Skips |
+|---|---|---|
+| Before this session | 107 | 18 |
+| The port's own work landing | 76 | 22 |
+| Suites that name themselves Linux only | 48 | 60 |
+| More gates, and two tests that were simply wrong | 39 | 69 |
+| The resource contract per platform, and three more suites | **30** | **86** |
+
+Every skip states its reason at the call site, and `tests/platform-support.ts` says in its own comment
+that reaching for either gate to make a number smaller is how a portability defect gets buried. The
+rule is narrow on purpose: use it only where the feature under test is one this project has already
+decided does not exist on the other platform.
+
+What is gated, and why it is not a port: the private display runtime and the compositor's IPC, the
+panel broker and the settings schema, which are Python and GTK, the desktop theming, systemd
+autostart and units, the profile clone, which `docs/support-tiers.md` records as `Refused` with a
+primary source, the Python subreaper, which a job object replaces outright, the bash launcher, which
+`bin/sbar-orbit.cmd` replaces, saved account leases, which `src/profiles.ts` already refuses off Linux
+because they are held with `flock`, the person's own browsers, which are read from XDG desktop
+entries, and the `/proc` cgroup audit of a browser tree.
+
+Two gates are probes rather than platform checks, which matters. `needsSymlink` tries to make one: an
+unelevated Windows process cannot, and dies building its fixture before reaching a line of product
+code, while a Windows host with Developer Mode on runs those tests for real. `needsCommand` asks
+whether the host has the binary: the guest has no `git`, and asking git what is tracked is the right
+question and unanswerable there.
+
+Three tests were wrong rather than Linux only, and are fixed rather than gated. `tests/theme.test.ts`
+asserted a literal `/` against paths the product builds with `join`, so it tested the runner's
+separator. `tests/service.test.ts` named no platform while `serviceSocketPath()` now answers
+differently on Windows. `tests/resources.test.ts` asserted the Linux resource shape everywhere and
+failed against a broker that was answering correctly; it pins each platform's own promise now, which
+is what puts `enforcement`, `unbounded`, the peak rather than a current commit, and the null swap and
+null events under test at all.
+
+One test shelled out to `bash -c ls` to glob for a tarball. It reads the directory now.
+
+### The thirty that are left
+
+Eleven are in `src/install.ts`, `src/local-install.ts`, `src/update.ts` and `src/preflight.ts`, which
+another session was working in while this was written, and which are deliberately untouched here.
+
+The rest are real questions, none of them large, and none of them measured further: a broker socket
+that answers `stat` with `EACCES` while bound, which `claimSocket()` already handles and two tests do
+not expect; `uv_spawn` of a Linux helper in the agent contract and session suites; the source manifest
+and workspace storage checking POSIX mode bits; and a browser crash case that counts processes the way
+Linux counts them.
+
+## 12. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

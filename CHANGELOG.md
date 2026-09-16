@@ -54,6 +54,13 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ### Changed
 
+- The guest test suite names which of its suites are Linux only instead of reporting them as
+  failures. Measured on the Windows 11 guest across one session: 107 failures, then 76 once the port
+  landed, then 48, 39 and 30, with 86 skips each stating a reason at the call site.
+  `tests/platform-support.ts` carries the two gates and the rule that governs them. Two of the gates
+  probe the host rather than branching on the platform, so a Windows machine with Developer Mode on
+  runs the symlink tests for real and a machine with `git` runs the packaging ones.
+
 - Generated agent connector configuration names the launcher and one argument,
   `{"command": "<prefix>/bin/sbar-orbit", "args": ["mcp"]}`, instead of the Bun that ran the
   installer plus an absolute path into a source checkout. The old shape could not survive an upgrade
