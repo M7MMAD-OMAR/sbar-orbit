@@ -288,6 +288,14 @@ export async function runInstall(options: InstallOptions = {}) {
   await step("verify", async () => {
     if (dryRun) return { state: "skipped", detail: "would ask the broker for a doctor report" };
     if (!wantsService) return { state: "skipped", detail: "no managed broker was installed" };
+    // The service step above skips on Windows by design, so there is no managed broker to answer and
+    // nothing to verify. Without this the install waited 15 seconds for a broker nobody started, then
+    // reported `verify: failed` and exited 1 on a Windows machine where every step had actually
+    // succeeded: a correct install reporting itself as a failed one, with a remedy telling the person
+    // to read a systemd journal that does not exist here. Found by installing the published release
+    // on a Windows guest, not by the suite, because no test installs the real archive.
+    if (process.platform === "win32")
+      return { state: "skipped", detail: "no managed broker on Windows: start one with `sbar-orbit.cmd serve`, then `sbar-orbit.cmd status`" };
     const socket = serviceSocketPath();
     for (let attempt = 0; attempt < 60; attempt++) {
       try {

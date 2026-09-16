@@ -1282,7 +1282,80 @@ What zero failures means is narrower and still worth saying: **every test that c
 does, and passes.** There is no longer a pile of failures standing between a reader and the question of
 what is actually supported.
 
-## 22. The control channel, for whoever repeats this
+## 22. The published release, installed on a machine that had nothing
+
+Everything through section 21 ran from **my own working tree**, pushed as a tarball, with
+`node_modules` already present. That is not what a person downloads. This is the other question: does
+the **release archive the packager produces** install and work on a Windows machine with none of that?
+
+Fresh directory, nothing carried over, only the commands `docs/agent-install.md` names. It found two
+defects that the suite could not, because **no test installs the real artifact**.
+
+### The release shipped batch files Windows cannot safely read
+
+Unpacked on the guest, measured rather than inferred:
+
+```
+install.cmd in the archive: CRLF=0  bare LF=45
+bin/sbar-orbit.cmd:         CRLF=0  bare LF=136
+```
+
+`.gitattributes` says `*.cmd text eol=crlf`, but that governs **checkout**. `scripts/package.ts` reads
+raw bytes from the **git index**, where the file is stored with LF. cmd.exe reads a batch file byte by
+byte and a multi line `( )` block in an LF only file is where that goes wrong.
+
+It worked anyway, and only by luck: both files were written without such a block. **That is a landmine,
+not a design.** The next person to add one breaks the published release while every git checkout, and
+every test, keeps passing, because the defect exists only in the artifact nobody tests. The packager
+now writes CRLF for `.cmd` and `.bat`, and a gate asserts it against the index bytes, including that a
+non batch file is left alone and that the correction is idempotent.
+
+### A correct install reported itself as a failed one
+
+```
+verify = failed :: no answer from the managed broker
+exit: 1
+```
+
+Every step had succeeded. The service step **skips on Windows by design**, but `verify` was gated only
+on `wantsService`, so it waited 15 seconds for a broker nobody had started and then failed the whole
+install. The remedy it printed told the person to read a **systemd journal that does not exist here**.
+
+Now:
+
+```
+verify = skipped :: no managed broker on Windows: start one with `sbar-orbit.cmd serve`, then `sbar-orbit.cmd status`
+exit: 0   installed=True
+```
+
+### And then it was driven, from the installed command
+
+| Step | Result |
+|---|---|
+| `install.cmd --json --prefix ...` | exit **0**, `installed=True` |
+| `sbar-orbit.cmd serve --managed-socket` | socket bound |
+| `sbar-orbit.cmd status --json` | real broker status |
+| `sbar-orbit.cmd act ID '{"type":"navigate",...}'` | `{"ok":true,"result":{"url":"http://127.0.0.1:61093/"}}` |
+| `session observe ID --output` | **29249 byte JPEG**, decoded and read |
+
+The frame shows the fixture page rendered: white on dark blue, "Sbar Orbit / the published release,
+installed and driven on Windows".
+
+### Three probe errors, recorded because the first one nearly passed
+
+The first observe used `--socket`, which `observe` does not take. The second used
+`session act ID navigate URL`, a syntax the CLI does not have: it returned an error, the navigation
+never happened, and `observe` still produced a **6758 byte JPEG** that was entirely **blank white**. A
+frame arrived, a byte count was printed, and the whole thing looked like success. Decoding it is what
+caught it: the metadata still said `location: "New page"`.
+
+**A byte count is not a measurement.** The image had to be looked at.
+
+The third was PowerShell stripping the JSON's inner quotes before the process saw them. That one was
+checked against the CLI directly before being blamed on the launcher, and both failed **identically**,
+which is what proved it was the shell rather than Orbit.
+
+## 23. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

@@ -1,4 +1,5 @@
 import { isPublicSourcePath } from "./public-paths";
+import { windowsLineEndings } from "./package-endings";
 import { mkdir, mkdtemp, readFile, writeFile, chmod } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -30,6 +31,7 @@ for (const path of paths) {
     throw new Error("Private or invalid package input");
 }
 if (!paths.includes("LICENSE") || !paths.includes("NOTICE")) throw new Error("License and NOTICE must be included");
+
 const bytesFor = async (path: string) => {
   if (!fromIndex) {
     const file = verifiedFiles.get(path);
@@ -58,7 +60,7 @@ for (const path of [...new Set(paths)].sort()) {
     if (!file) throw new Error("Missing verified source metadata");
     executable = file.executable;
   }
-  const bytes = await bytesFor(path), target = join(root, path);
+  const bytes = windowsLineEndings(path, await bytesFor(path)), target = join(root, path);
   await mkdir(resolve(target, ".."), { recursive: true });
   await writeFile(target, bytes); await chmod(target, executable ? 0o755 : 0o644);
   // The executable bit travels IN the manifest, because the filesystem a release is unpacked on may

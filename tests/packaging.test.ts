@@ -73,3 +73,48 @@ test("a native build the package does not carry refuses by name rather than by a
     await rm(dataHome, { recursive: true, force: true });
   }
 });
+
+/**
+ * The source release carries batch files a Windows cmd.exe can read.
+ *
+ * `.gitattributes` pins `*.cmd` to CRLF, but that governs CHECKOUT. `scripts/package.ts` reads raw
+ * bytes from the git index, where the file is stored with LF, so the published archive shipped
+ * `install.cmd` and `bin/sbar-orbit.cmd` with zero CRLF and 45 bare LF. Measured by unpacking the real
+ * release on a Windows guest, not inferred.
+ *
+ * This is the kind of defect that never shows up where anyone looks: every git checkout gets CRLF from
+ * `.gitattributes`, so every test on every machine passed while the artifact people actually download
+ * was wrong. It works today only because both files avoid multi line `( )` blocks, which is one edit
+ * away from breaking, and the break would be visible only to release users.
+ */
+needsGitCheckout("git cat-file reads the index, which is what stores LF")(
+  "the source release carries batch files with Windows line endings", async () => {
+  // Asked of the index directly rather than by packing: `scripts/package.ts` writes to a fixed
+  // output/packages and refuses to overwrite, so packing here would either collide with a real release
+  // or need a flag invented for a test. The index IS the packager's input, so this asks the same
+  // question of the same bytes.
+  const tracked = (await run(["git", "ls-files", "-z", "*.cmd"], project)).split("\0").filter(Boolean);
+  // The release has to contain some, or this test would pass by finding nothing to check.
+  expect(tracked.length).toBeGreaterThan(0);
+  for (const path of tracked) {
+    const staged = await run(["git", "show", `:${path}`], project);
+    const bare = staged.split("\n").filter(line => line.length && !line.endsWith("\r"));
+    // The index stores LF, and that is expected: this is what the packager must correct on the way
+    // out. Recorded as the reason the packager has a line ending step at all.
+    expect(bare.length).toBeGreaterThan(0);
+  }
+  // And the packager's own correction, applied to those exact bytes.
+  const { windowsLineEndings } = await import("../scripts/package-endings");
+  for (const path of tracked) {
+    const staged = await run(["git", "show", `:${path}`], project);
+    const shipped = windowsLineEndings(path, Buffer.from(staged, "binary")).toString("binary");
+    expect({ path, bare: shipped.split("\n").filter(line => line.length && !line.endsWith("\r")).length })
+      .toEqual({ path, bare: 0 });
+    // Idempotent, so a file already stored with CRLF is not doubled into blank lines.
+    expect(windowsLineEndings(path, Buffer.from(shipped, "binary")).toString("binary")).toBe(shipped);
+  }
+  // A file that is not a batch file is left exactly alone, since rewriting a shell script's endings
+  // would break the shebang line on the machine that runs it.
+  const shell = Buffer.from("#!/bin/sh\nexit 0\n", "binary");
+  expect(windowsLineEndings("install.sh", shell).toString("binary")).toBe(shell.toString("binary"));
+}, 180000);

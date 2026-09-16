@@ -212,3 +212,31 @@ test("the native runtime step builds only when asked, and names the tools it lac
     await rm(dataHome, { recursive: true, force: true });
   }
 });
+
+/**
+ * An install that installs no service does not then fail for the absence of one.
+ *
+ * On Windows the service step skips by design, because a Chromium family browser cannot run in
+ * session 0. `verify` was still gated only on `wantsService`, so it waited 15 seconds for a managed
+ * broker nobody had started, reported `verify: failed`, and exited 1 on a machine where every step had
+ * actually succeeded. The remedy it printed told the person to read a systemd journal that does not
+ * exist there.
+ *
+ * Found by installing the published release archive on a Windows guest. Nothing in the suite installs
+ * the real artifact, which is exactly why it survived: `--no-service` takes a different branch, and
+ * the Windows branch had no test at all. See docs/windows-measured.md section 22.
+ */
+test("an install that installs no service reports verify as skipped, not failed", async () => {
+  const box = await sandbox();
+  try {
+    const report = await runInstall({ prefix: box.prefix, service: false, install: refuse });
+    const verify = report.steps.find(step => step.id === "verify");
+    const service = report.steps.find(step => step.id === "service");
+    expect(service?.state).toBe("skipped");
+    // The one that matters: a skipped service cannot produce a failed verification.
+    expect(verify?.state).toBe("skipped");
+    expect(report.installed).toBe(true);
+    // And no remedy sends a person to a journal for a broker that was never installed.
+    expect(report.remedies.map(remedy => remedy.id)).not.toContain("broker-silent");
+  } finally { await box.restore(); }
+});
