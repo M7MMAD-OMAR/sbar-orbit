@@ -70,7 +70,7 @@ Six steps, each reported as it happens, with the reason beside it when one does 
 | Prepare project dependencies | `bun install --frozen-lockfile --ignore-scripts` | Skipped when the modules already resolve; no lifecycle scripts, ever |
 | Link the sbar-orbit command | `activateLocal` into the prefix, default `~/.local` | Never edits shell configuration, and never puts the prefix on PATH for you |
 | Install the broker service and desktop entries | The units, the panel autostart pair, then enable and start | Nothing that needs elevation, so a full logout still needs `loginctl enable-linger` |
-| Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, Orbit's own directory | Never writes into an agent host's configuration; the command to register it is printed instead |
+| Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, or `%APPDATA%\sbar-orbit\mcp.json` on Windows, Orbit's own directory | Never writes into an agent host's configuration; the command to register it is printed instead |
 | Verify the installed broker answers | One `doctor` call on the managed socket | Does not claim the browser, the display or any application works |
 
 `--json` prints the report and nothing else, which is how an agent runs this: the report's shape, the

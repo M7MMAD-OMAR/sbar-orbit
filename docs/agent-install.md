@@ -193,7 +193,8 @@ there is, and it is why the fields exist in the shape they do.
 
 ## Registering Orbit with an agent host
 
-The install writes `~/.config/sbar-orbit/mcp.json`, which is Orbit's own directory and never a host's
+The install writes `~/.config/sbar-orbit/mcp.json`, or `%APPDATA%\sbar-orbit\mcp.json` on Windows,
+which is Orbit's own directory and never a host's
 configuration. The run prints the exact one line command to register it. Registering is the person's
 decision, so print the command rather than editing their host settings. [Connectors](connectors.md)
 covers the tools themselves.

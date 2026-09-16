@@ -1355,7 +1355,63 @@ The third was PowerShell stripping the JSON's inner quotes before the process sa
 checked against the CLI directly before being blamed on the launcher, and both failed **identically**,
 which is what proved it was the shell rather than Orbit.
 
-## 23. The control channel, for whoever repeats this
+## 23. The connector, written where Windows keeps configuration
+
+Every other per user Orbit path already branches per platform: `serviceSocketPath` to
+`%LOCALAPPDATA%`, `workspaceRoot` to `%LOCALAPPDATA%`, the update root likewise. The connector did
+not. Measured on the guest, the installer wrote:
+
+```
+%USERPROFILE%\.config\sbar-orbit\mcp.json
+```
+
+A POSIX dotfile in a Windows profile, holding `ORBIT_SOCKET` written in Windows terms. The file was
+correct and the location was one **nothing on Windows looks in**. It now goes to
+`%APPDATA%\sbar-orbit\mcp.json`.
+
+`%APPDATA%` rather than `%LOCALAPPDATA%`, deliberately: this is configuration a person may want to
+follow them between machines, which is the roaming distinction Windows draws. The socket and the
+workspaces stay local, because those are machine state. The test asserts a **different accepted shape
+per platform** rather than one that passes everywhere, and asserts the Windows one is neither
+`.config` nor the local directory, so the two cannot quietly merge.
+
+| Measured on the guest | |
+|---|---|
+| written to | `%APPDATA%\sbar-orbit\mcp.json` |
+| ACL | SYSTEM, Administrators, the owning user; **nothing exposed** |
+| `command` / `args` | `sbar-orbit.cmd` / `mcp` |
+| `ORBIT_SOCKET` | `%LOCALAPPDATA%\sbar-orbit\broker.sock` |
+
+### The file the old behaviour left behind
+
+A machine installed before this has a connector at the POSIX path too, and after the move there would
+be **two files disagreeing**, with the stale one the kind that gets found later and trusted. The
+install now says so:
+
+```
+...\AppData\Roaming\sbar-orbit\mcp.json, replaces an earlier configuration;
+an older ~\.config\sbar-orbit\mcp.json is still there and is no longer read
+```
+
+**Said, not deleted.** It is the person's file, and a step that removes something without saying so is
+worse than one that leaves something behind.
+
+### And an agent actually connected
+
+The whole project exists to give an **agent** a browser through MCP. Sections 1 to 22 measured the
+broker's RPC, the CLI and the installer; this is the interface an agent really uses, driven from an
+agent host speaking **MCP over stdio**, launched from the connector entry Orbit itself wrote rather
+than from a command I chose:
+
+```
+tools offered: 12
+create: {"sessionId":"d78438db-...","state":"running","backend":"browser","agentName":"SbarOrbit",...}
+```
+
+The loop closes: Orbit writes a connector file, an agent host reads that file, launches what it names,
+and gets a running browser session on Windows.
+
+## 24. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

@@ -23,7 +23,7 @@ From the project directory, one command:
 ```
 
 It checks prerequisites, prepares dependencies, links `sbar-orbit` into `~/.local/bin`, installs and
-starts the broker service and the desktop mark, writes `~/.config/sbar-orbit/mcp.json` and then asks
+starts the broker service and the desktop mark, writes `~/.config/sbar-orbit/mcp.json`, `%APPDATA%\sbar-orbit\mcp.json` on Windows, and then asks
 the broker it started for a `doctor` report. Every step is shown as it runs, and anything only a
 package manager can supply is printed at the end with its remedy rather than failing quietly.
 `./install.sh --dry-run` reports the same steps and changes nothing, and `--no-service` keeps systemd

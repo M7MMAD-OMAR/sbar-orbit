@@ -30,6 +30,25 @@ export const memoryMiB = Math.max(2048, Math.min(8192, Math.floor(totalmem() / 4
 export const budget = { CPUQuota: `${cpuCores * 100}%`, MemoryHigh: `${memoryMiB - 256}M`, MemoryMax: `${memoryMiB}M`, MemorySwapMax: "0", TasksMax: "1536", CPUWeight: "10", IOWeight: "10" };
 
 /**
+ * Where the connector configuration this machine registers lives, per platform.
+ *
+ * `$XDG_CONFIG_HOME` on Linux, `%APPDATA%` on Windows. Every other per user Orbit path already
+ * branches this way, `serviceSocketPath` and `workspaceRoot` among them, and this one did not: it
+ * wrote a POSIX `.config` dotfile into the Windows profile, measured on the guest as
+ * `%USERPROFILE%\.config\sbar-orbit\mcp.json`. A file naming the broker socket in Windows terms,
+ * sitting at a path only POSIX uses, is a thing no Windows tool would think to look for.
+ *
+ * `%APPDATA%` rather than `%LOCALAPPDATA%`, deliberately: this is configuration a person may want to
+ * follow them between machines, which is exactly the roaming/non roaming distinction Windows draws.
+ * The socket and the workspaces stay local because they are machine state.
+ */
+export function connectorConfigDirectory(env = process.env, platform = process.platform) {
+  if (platform === "win32")
+    return join(env.APPDATA || join(homedir(), "AppData", "Roaming"), "sbar-orbit");
+  return join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "sbar-orbit");
+}
+
+/**
  * A fixed socket path for a managed broker. Brokers started by tests and experiments keep their own
  * private directories, so only the managed one uses this path and they cannot collide.
  */

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { runInstall, stepTitles, type StepRecord } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { requireResourceBudget } from "../src/resource-budget";
+import { connectorConfigDirectory } from "../src/service";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -22,8 +23,17 @@ if (flag("--help") || flag("-h")) {
 function connectorCommand(report: { steps: { id: string; data?: Record<string, unknown> }[] }) {
   const written = report.steps.find(step => step.id === "connector")?.data as { configuration?: { mcpServers: { orbit: unknown } } } | undefined;
   const server = written?.configuration?.mcpServers.orbit;
-  return server ? `claude mcp add-json orbit '${JSON.stringify(server)}'`
-    : "claude mcp add-json orbit \"$(cat ~/.config/sbar-orbit/mcp.json)\"";
+  if (server) return `claude mcp add-json orbit '${JSON.stringify(server)}'`;
+  // The fallback names the file this platform actually writes, and reads it the way this platform
+  // reads one. A hardcoded `~/.config/...` and `$(cat ...)` printed on Windows would tell a person to
+  // read a file that is not there with a shell they are not running.
+  const path = join(connectorConfigDirectory(), "mcp.json");
+  // cmd.exe has no command substitution, so there is no one-liner equivalent of `$(cat ...)`: a
+  // pasted `%(type ...)%` would reach the tool literally. PowerShell does have one, and naming the
+  // shell it needs is better than inventing a flag for a tool this project does not own.
+  return process.platform === "win32"
+    ? `powershell -c "claude mcp add-json orbit (Get-Content -Raw '${path}')"`
+    : `claude mcp add-json orbit "$(cat ${path})"`;
 }
 
 const json = flag("--json");

@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { installService, uninstallService, serviceSocketPath, claimSocket, budget } from "../src/service";
+import { installService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
 import { tmpdir } from "node:os";
 
 /** Never the real unit directory: every case works inside a disposable prefix. */
@@ -145,4 +145,35 @@ test("an absent socket path is claimed without probing anything", async () => {
     expect(claimed).toMatchObject({ claimed: true, replacedStaleSocket: false });
     expect(probed).toBe(false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+/**
+ * The connector configuration goes where each platform keeps configuration.
+ *
+ * Every other per user Orbit path already branches, `serviceSocketPath` and `workspaceRoot` among
+ * them. This one did not, and the guest showed the result: the installer wrote
+ * `%USERPROFILE%\.config\sbar-orbit\mcp.json`, a POSIX dotfile in a Windows profile, holding a
+ * socket path written in Windows terms. Nothing on Windows looks in `.config`.
+ *
+ * Asserted per platform rather than with one shape that passes everywhere, for the reason the advisor
+ * gate gives: a test that accepts both spellings is not guarding the rule, it is describing it.
+ */
+test("the connector configuration follows each platform's own configuration directory", () => {
+  // A stand-in for a roaming profile, built rather than written as a literal user path: the
+  // publication audit refuses those, and a real one would be somebody's machine.
+  const roaming = join(tmpdir(), "AppData", "Roaming");
+  const linux = connectorConfigDirectory({ XDG_CONFIG_HOME: join(tmpdir(), "config") } as NodeJS.ProcessEnv, "linux");
+  expect(linux).toBe(join(tmpdir(), "config", "sbar-orbit"));
+
+  // %APPDATA%, not %LOCALAPPDATA%: this is configuration a person may want to follow them between
+  // machines, which is the distinction Windows draws. The socket and the workspaces stay local
+  // because they are machine state, and this asserts the two do not get confused.
+  const windows = connectorConfigDirectory({ APPDATA: roaming } as NodeJS.ProcessEnv, "win32");
+  expect(windows).toBe(join(roaming, "sbar-orbit"));
+  expect(windows).not.toContain(".config");
+  expect(windows.toLowerCase()).not.toContain("local\\sbar-orbit");
+
+  // A Windows machine with no APPDATA set still lands in the profile rather than at a relative path.
+  const bare = connectorConfigDirectory({} as NodeJS.ProcessEnv, "win32");
+  expect(bare).toContain(join("AppData", "Roaming"));
 });

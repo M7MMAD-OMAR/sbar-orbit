@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
 import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
 import { activateLocal, commandName } from "./local-install";
-import { installService, serviceSocketPath } from "./service";
+import { installService, serviceSocketPath, connectorConfigDirectory } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
 import { connectorEntry } from "./connector-entry";
 import { call } from "./ipc";
@@ -269,7 +269,7 @@ export async function runInstall(options: InstallOptions = {}) {
     // The launcher, not this Bun and this checkout: see connector-entry.ts for why a source path
     // cannot survive an upgrade, a rollback or a machine that is not the one it was written on.
     const configuration = { mcpServers: { orbit: { ...connectorEntry({ launcher, source }), env: { ORBIT_SOCKET: socket } } } };
-    const directory = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "sbar-orbit");
+    const directory = connectorConfigDirectory();
     const path = join(directory, "mcp.json");
     // This path does not follow --prefix: one machine has one registered connector, whichever source
     // was installed last. So say what is already there before replacing it, and in a dry run print
@@ -282,7 +282,16 @@ export async function runInstall(options: InstallOptions = {}) {
     // Orbit's own directory, never the host's configuration. Registering it with a particular agent
     // host stays the person's decision, and the exact command for it is printed at the end.
     await writeFile(path, `${JSON.stringify(configuration, null, 2)}\n`, { mode: 0o600 });
-    return { state: "done", detail: `${path}, ${replaces}`, data: { path, replaces, configuration } };
+    // A machine installed before the connector learned about %APPDATA% has one at the POSIX path
+    // too, naming a socket in Windows terms from a directory nothing on Windows reads. Leaving it
+    // would leave two connector files disagreeing after the next upgrade, and the stale one is the
+    // kind of thing that gets found years later and trusted. Said in the report rather than removed
+    // silently: it is the person's file, and a step that deletes without saying so is worse than one
+    // that leaves something behind.
+    const stale = process.platform === "win32" ? join(homedir(), ".config", "sbar-orbit", "mcp.json") : null;
+    const leftBehind = stale && stale !== path && await readFile(stale, "utf8").then(() => true).catch(() => false);
+    return { state: "done", data: { path, replaces, configuration, ...(leftBehind ? { stale } : {}) },
+      detail: leftBehind ? `${path}, ${replaces}; an older ${stale} is still there and is no longer read` : `${path}, ${replaces}` };
   });
 
   await step("verify", async () => {
