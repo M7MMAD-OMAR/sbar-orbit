@@ -139,3 +139,36 @@ test("the measured findings the layer was built from are written down", () => {
   // The race is recorded as intermittent rather than as closed by a flag that was not proven to close it.
   expect(measured).toContain("intermittently");
 });
+
+/**
+ * The budget contract now carries which mechanism enforces it, because Linux and Windows do not
+ * promise the same thing and printing a Windows number in a Linux shape is how a weaker guarantee
+ * gets read as the stronger one.
+ */
+test("the budget says which mechanism enforces it and what it cannot bound", async () => {
+  const { requireResourceBudget } = await import("../src/resource-budget");
+  if (process.platform === "win32") {
+    // Not reachable from the Linux suite; kept so the Windows run asserts it rather than skipping.
+    const limits = await requireResourceBudget();
+    expect(limits.enforcement).toBe("job-object");
+    expect(limits.unbounded).toContain("swap");
+    expect(limits.unbounded).toContain("threads");
+    return;
+  }
+  const limits = await requireResourceBudget();
+  expect(limits.enforcement).toBe("kernel-cgroup");
+  // The kernel bounds everything Orbit asks it to, so the honest list is empty rather than absent.
+  expect(limits.unbounded).toEqual([]);
+  expect(limits.swapBytes).toBe(0);
+});
+
+test("the Windows browser command line drops the Linux only switches", () => {
+  const argv = windowsChromeArguments("C:\\orbit\\session");
+  // --no-sandbox is a Linux workaround. On Windows the sandbox works, so passing it is a regression.
+  expect(argv).not.toContain("--no-sandbox");
+  // --password-store selects a Linux keyring backend and means nothing on Windows, where a private
+  // user data directory already puts App Bound Encryption out of reach.
+  expect(argv.some(argument => argument.startsWith("--password-store"))).toBe(false);
+  // --disable-dev-shm-usage is about /dev/shm, which does not exist on Windows.
+  expect(argv).not.toContain("--disable-dev-shm-usage");
+});

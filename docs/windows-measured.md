@@ -179,7 +179,9 @@ page, one size, one guest. A heavy page is still the next question.
 - **No broker has ever started.** Section 6 records that the tree builds, typechecks and passes half
   its suite on the guest, but `serve` still refuses before it binds, because
   `requireResourceBudget()` reads a cgroup that does not exist there. No Orbit session has run on
-  Windows.
+  Windows. **Superseded by section 7**: the budget is now a named job object, the broker starts and
+  answers `doctor`, and `launchChrome()` drives a headless browser end to end. A session created
+  through the `session.create` RPC still does not complete.
 
 ## 6. The source tree on Windows, and what the suite says there
 
@@ -301,7 +303,93 @@ The Linux gate was re-run against the same tree before and after this, `bun run 
 14 skip, 0 fail. Nothing was traded away for the Windows branch, and nothing in that suite exercises
 it either, because there is no Windows CI here.
 
-## 7. The control channel, for whoever repeats this
+## 7. The broker runs, and so does a browser
+
+Section 6 ended with `serve` refusing before it could bind, because `requireResourceBudget()` reads a
+cgroup. That is now joined to a job object, and both halves were run on the guest.
+
+### The shared budget, as a named job object
+
+Linux's budget is one cgroup slice every Orbit process on the machine lives in. An unnamed job object
+cannot express that: a second process has no way to refer to it. A NAMED one can, and this was the
+thing to measure before writing any of it.
+
+Measured: a second Bun process holding only the name `Local\sbar-orbit-budget` opened the same job,
+read back its ceilings (1536 processes, 2048 MiB), assigned itself, and the pool then counted both
+processes. That is the same shape as the slice, so `src/windows-job.ts` grew `joinSharedBudget()` and
+`sharedBudgetUsage()`, and `requireResourceBudget()` calls them on win32.
+
+What it returns on the guest:
+
+```
+enforcement: "job-object"
+cpuCores: 2, memoryBytes: 2147483648, tasks: 1536
+unbounded: ["swap", "threads"]
+```
+
+The contract now carries `enforcement` and `unbounded` on every platform, because Linux and Windows
+do not promise the same thing and printing a Windows number in a Linux shape is how a weaker
+guarantee gets read as the stronger one. Three differences, each stated rather than smoothed over:
+
+- **No swap bound.** Windows has no per job swap limit at all.
+- **`tasks` is a PROCESS ceiling**, not a thread ceiling. Job objects do not cap threads, so the
+  field means something different here and says so.
+- **No `KILL_ON_JOB_CLOSE` on the shared pool.** A budget must outlive whoever declared it. A per
+  session job still sets it, which is what actually reaps a browser tree.
+
+### A latent FFI bug the guest found
+
+`AssignProcessToJobObject` kept returning error 6, `ERROR_INVALID_HANDLE`, for a process assigning
+itself. The cause was not Windows: `GetCurrentProcess()` returns the pseudo handle `(HANDLE)-1`,
+which arrives through bun:ffi as `18446744073709552000` rather than `2^64-1`, because that value has
+no exact double. The corrupted handle then fails in the kernel.
+
+`asHandle()` now refuses any handle that would not fit a safe integer instead of passing it on, and
+nothing in the file uses a pseudo handle: `OpenProcess` on our own pid returns a small integer that
+round trips cleanly. With that, self assignment succeeded and the pool counted both processes.
+
+This would have been invisible without a real Windows host. Every earlier measurement went through
+C# and PowerShell; the shipped code is bun:ffi, and an FFI binding that has never run is a guess.
+
+### The broker started
+
+`startBroker()` on the guest bound an AF_UNIX socket under `%LOCALAPPDATA%\Temp`, answered `doctor`
+over it with its full capability list, and stopped cleanly. That is the first time an Orbit broker
+has run on Windows.
+
+### A browser session launched
+
+`launchChrome()` was split into a platform owned process without changing the Linux path: Linux keeps
+the Python subreaper and the `/proc/<pid>/cgroup` comparison, Windows gets a per session job object
+whose `close()` is the kill and whose `assertContained()` walks the job's live process list rather
+than trusting one check at launch.
+
+Every stage was measured separately so a failure could be attributed, and all of them passed:
+
+| Stage | Result on the guest |
+|---|---|
+| Browser discovery | found Edge through the install roots |
+| Launch | correct argv, no `--no-sandbox`, no `--password-store`, `--disable-crashpad` present |
+| `DevToolsActivePort` | published |
+| `http://127.0.0.1:<port>/json/version` | 200 |
+| Raw WebSocket to the endpoint | open |
+| Playwright `connectOverCDP` | connected, 1 context |
+| `launchChrome()` itself | returned, navigated, read a title, closed |
+
+The Windows command line deliberately drops three Linux switches: `--no-sandbox` is a Linux
+workaround and dropping the sandbox on Windows is a straight regression, `--password-store` selects a
+Linux keyring backend that does not exist there, and `--disable-dev-shm-usage` is about `/dev/shm`.
+
+### What is still not done
+
+A session created through the broker's `session.create` RPC did not complete. The launcher underneath
+it works, so the remaining problem is in the session layer above `launchChrome`, not in the launch.
+That is the next piece, and it is named rather than left as "it hangs sometimes".
+
+`bin/sbar-orbit` is also a bash script, so Bun cannot run it on Windows at all. The broker was
+reached by importing `startBroker` directly. A Windows launcher is a separate, small job.
+
+## 8. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

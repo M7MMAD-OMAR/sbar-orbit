@@ -27,6 +27,7 @@ function kernel32() {
     throw new OrbitError("UNSUPPORTED", "The job object containment layer is Windows only");
   return dlopen(`kernel32.${suffix}`, {
     CreateJobObjectW: { args: [pointer, pointer], returns: pointer },
+    OpenJobObjectW: { args: [u32, bool, pointer], returns: pointer },
     SetInformationJobObject: { args: [pointer, i32, pointer, u32], returns: bool },
     QueryInformationJobObject: { args: [pointer, i32, pointer, u32, pointer], returns: bool },
     AssignProcessToJobObject: { args: [pointer, pointer], returns: bool },
@@ -38,6 +39,23 @@ function kernel32() {
   }).symbols;
 }
 
+/**
+ * Narrow a kernel HANDLE that bun:ffi may hand back as a bigint.
+ *
+ * This is not cosmetic. Measured on the guest: `GetCurrentProcess()` returns the pseudo handle
+ * (HANDLE)-1, which arrives here as 18446744073709552000 rather than 2^64-1, because that value has
+ * no exact double. Passing it back to `AssignProcessToJobObject` fails with error 6,
+ * ERROR_INVALID_HANDLE. A real handle from `OpenProcess` is a small integer and round trips
+ * cleanly, which is why nothing in this file ever uses a pseudo handle.
+ */
+function asHandle(value: unknown): Pointer {
+  if (typeof value === "bigint") {
+    if (value > BigInt(Number.MAX_SAFE_INTEGER))
+      throw new OrbitError("BACKEND_FAILED", "A kernel handle did not fit a safe integer; refusing to pass it back");
+    return Number(value) as Pointer;
+  }
+  return value as Pointer;
+}
 /** winnt.h. Only the flags this design sets, so an unused constant cannot drift out of date. */
 const LIMIT = {
   /** 0x8. Blast radius bound on a runaway fork loop. */
@@ -106,12 +124,12 @@ export class WindowsJob {
   readonly cpuCapEnforced: boolean;
 
   constructor(readonly budget: JobBudget) {
-    // bun:ffi types a HANDLE return as Pointer or bigint, because a 64 bit value that does not fit a
-    // JavaScript number comes back as a bigint. A kernel handle is small, so narrowing is safe, and
-    // it is done once here rather than with a cast at each of the seven call sites below.
-    const handle = this.api.CreateJobObjectW(null, null);
+    // bun:ffi types a HANDLE return as Pointer or bigint. `asHandle` refuses a value that would lose
+    // precision rather than passing a corrupted handle back to the kernel, which is how error 6 was
+    // produced on the guest before this existed.
+    const handle = asHandle(this.api.CreateJobObjectW(null, null));
     if (!handle) throw new OrbitError("BACKEND_FAILED", `CreateJobObject failed, error ${this.api.GetLastError()}`);
-    this.handle = (typeof handle === "bigint" ? Number(handle) : handle) as Pointer;
+    this.handle = handle;
 
     // JOBOBJECT_EXTENDED_LIMIT_INFORMATION is 144 bytes on x64: a 64 byte basic block, 48 bytes of
     // IO_COUNTERS, then four 64 bit memory fields. LimitFlags is at 16, ActiveProcessLimit at 40,
@@ -149,7 +167,9 @@ export class WindowsJob {
 
   /** Bring an already running process, and everything it starts from now on, inside the job. */
   assign(pid: number): void {
-    const process = this.api.OpenProcess(PROCESS_ACCESS, false, pid);
+    // Always a real handle from OpenProcess, never `GetCurrentProcess()`: the pseudo handle does not
+    // survive the trip through FFI and the kernel rejects what comes back. Measured on the guest.
+    const process = asHandle(this.api.OpenProcess(PROCESS_ACCESS, false, pid));
     if (!process) throw new OrbitError("BACKEND_FAILED", `OpenProcess ${pid} failed, error ${this.api.GetLastError()}`);
     try {
       if (!this.api.AssignProcessToJobObject(this.handle, process))
@@ -220,6 +240,114 @@ export class WindowsJob {
     if (this.closed) return;
     this.closed = true;
     this.api.CloseHandle(this.handle);
+  }
+}
+
+/**
+ * The shared budget, as a named job object.
+ *
+ * On Linux the budget is one cgroup slice that every Orbit process on the machine lives in: the
+ * managed broker's sessions, a test run and an installer all draw on the same pool, which is what
+ * `budgetHeadroom()` means and why `requireResourceBudget()` refuses a process outside it. An
+ * unnamed job cannot express that, because a second process has no way to refer to it.
+ *
+ * A NAMED job can. Measured on the guest: a second Bun process that knew only the name opened the
+ * job, read back its limits (1536 processes, 2048 MiB), assigned itself, and the pool then counted
+ * both. That is the same shape as the slice.
+ *
+ * Two places it is NOT the same, and both are printed rather than hidden:
+ *
+ *   - No `KILL_ON_JOB_CLOSE` here. A shared budget must outlive whoever declared it, so the pool is
+ *     held open by whichever Orbit process is alive rather than by one owner. A per session job
+ *     still sets it, which is what actually reaps a browser tree.
+ *   - There is no task count. Windows job objects cap active PROCESSES, not threads, so `tasks` on
+ *     Windows is the process limit and says so, rather than being reported as if it were `pids.max`.
+ */
+const SHARED_BUDGET_NAME = "Local\\sbar-orbit-budget";
+
+/** JOB_OBJECT_ALL_ACCESS, which is what an owner and a joiner both need. */
+const JOB_ALL_ACCESS = 0x1f_001f;
+
+export type SharedBudget = {
+  memoryBytes: number;
+  /** Active process ceiling. Not a thread count: Windows jobs do not have one. */
+  processes: number;
+  /** Whether this process is inside the pool, which is the check `requireResourceBudget` makes. */
+  joined: boolean;
+};
+
+/**
+ * Join the shared pool, creating it if this is the first Orbit process on the machine.
+ *
+ * `CreateJobObjectW` on an existing name returns a handle to the existing job with
+ * `ERROR_ALREADY_EXISTS`, so create and open are the same call and there is no race between two
+ * brokers starting at once.
+ */
+export function joinSharedBudget(budget: { memoryBytes: number; processes: number }): SharedBudget {
+  const api = kernel32();
+  const name = Buffer.from(`${SHARED_BUDGET_NAME}\0`, "utf16le");
+  const handle = asHandle(api.CreateJobObjectW(null, ptr(name)));
+  if (!handle) throw new OrbitError("BACKEND_FAILED", `Could not open the shared Orbit budget, error ${api.GetLastError()}`);
+  const existed = api.GetLastError() === 183; // ERROR_ALREADY_EXISTS
+
+  // Only the creator sets the limits. A second process that rewrote them could widen the pool it
+  // just joined, which is the one way a shared budget stops being a budget.
+  if (!existed) {
+    const extended = new Uint8Array(144);
+    const view = new DataView(extended.buffer);
+    view.setUint32(16, LIMIT.JOB_MEMORY | LIMIT.ACTIVE_PROCESS, true);
+    view.setUint32(40, budget.processes, true);
+    view.setBigUint64(120, BigInt(budget.memoryBytes), true);
+    if (!api.SetInformationJobObject(handle, CLASS.ExtendedLimitInformation, ptr(extended), 144))
+      throw new OrbitError("BACKEND_FAILED", `Could not set the shared Orbit budget, error ${api.GetLastError()}`);
+  }
+
+  const self = asHandle(api.OpenProcess(PROCESS_ACCESS, false, process.pid));
+  if (!self) throw new OrbitError("BACKEND_FAILED", `Could not open this process, error ${api.GetLastError()}`);
+  let joined = false;
+  try {
+    joined = api.AssignProcessToJobObject(handle, self);
+    // Already in the pool from an earlier call is success, not failure.
+    if (!joined) {
+      const flag = new Uint8Array(4);
+      if (api.IsProcessInJob(self, handle, ptr(flag))) joined = flag[0] === 1;
+    }
+  } finally {
+    api.CloseHandle(self);
+  }
+
+  // Read the limits back from the kernel rather than trusting what was asked for: a process that
+  // joined a pool someone else created must report THAT pool's ceiling.
+  const readback = new Uint8Array(144);
+  let memoryBytes = budget.memoryBytes;
+  let processes = budget.processes;
+  if (api.QueryInformationJobObject(handle, CLASS.ExtendedLimitInformation, ptr(readback), 144, null)) {
+    const view = new DataView(readback.buffer);
+    processes = view.getUint32(40, true);
+    memoryBytes = Number(view.getBigUint64(120, true));
+  }
+  // The handle is deliberately NOT closed: it is what keeps the pool alive for the next process.
+  return { memoryBytes, processes, joined };
+}
+
+/** What the shared pool currently holds, for `budgetHeadroom` and `resourceStatus`. */
+export function sharedBudgetUsage(): { processes: number; peakMemoryBytes: number } {
+  const api = kernel32();
+  const name = Buffer.from(`${SHARED_BUDGET_NAME}\0`, "utf16le");
+  const handle = asHandle(api.OpenJobObjectW(JOB_ALL_ACCESS, false, ptr(name)));
+  if (!handle) throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "The shared Orbit budget is not open on this machine");
+  try {
+    const basic = new Uint8Array(48);
+    let processes = 0;
+    if (api.QueryInformationJobObject(handle, CLASS.BasicAccountingInformation, ptr(basic), 48, null))
+      processes = new DataView(basic.buffer).getUint32(40, true);
+    const extended = new Uint8Array(144);
+    let peak = 0;
+    if (api.QueryInformationJobObject(handle, CLASS.ExtendedLimitInformation, ptr(extended), 144, null))
+      peak = Number(new DataView(extended.buffer).getBigUint64(136, true));
+    return { processes, peakMemoryBytes: peak };
+  } finally {
+    api.CloseHandle(handle);
   }
 }
 
