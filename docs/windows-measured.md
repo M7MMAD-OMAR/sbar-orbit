@@ -1180,7 +1180,61 @@ needs a shell this platform does not have; the systemd slice test; `/usr/bin/fin
 tests that build a Linux release archive and check it against a Windows install. None is a Windows
 code path failing.
 
-## 20. The control channel, for whoever repeats this
+## 20. The documented install, which did not exist on Windows
+
+`docs/agent-install.md` opens by saying it is "not written for one operating system either". The only
+entry point it named was `./install.sh`, a bash script. **On Windows the documented install did not
+exist**: an agent handed that contract had nothing it could run, and the contract test proved it by
+spawning `install.sh` and failing.
+
+`install.cmd` is the second door into the same `scripts/install.ts`. Not a second installer: a second
+door, because a second implementation drifts and the drift is only ever found on the platform nobody
+tests. It checks for Bun and nothing else, since the systemd user session `install.sh` requires has no
+analogue here and the shared budget is a job object the process joins itself.
+
+Run on the guest exactly as the contract tells an agent to run it:
+
+| Field | Value |
+|---|---|
+| exit | **0** |
+| `installed` / `dryRun` | true / true |
+| `launcher` | `%LOCALAPPDATA%\Temp\orbit-contract-.../bin/sbar-orbit.cmd` |
+| `capabilities` | `browserSessions=True`, `nativeSessions=False` |
+| `steps` | prerequisites:done, then six skipped, as a dry run should |
+
+### The first run found a real defect
+
+That run reported **three remedies**, and all three were unactionable:
+
+```
+no-native-runtime   ./install.sh --native
+no-capture-tools    sudo dnf install grim wl-clipboard
+no-xwayland         sudo dnf install xorg-x11-server-Xwayland
+```
+
+Fedora packages, `sudo` and a bash script, on a machine with none of the three and no possible private
+display. The native backend is a nested Wayland compositor and cannot exist on Windows, yet every one
+of its checks was still running. The contract requires an agent to **report the remedies it did not
+run**, so Orbit would have had an agent faithfully hand a Windows user instructions for Fedora. A
+remedy nobody can act on is worse than no remedy. Gated: **3 remedies to 0**.
+
+### And the fix to that had a trap in it
+
+Skipping the native checks makes the native list empty, and `every()` on an empty list is **true**, so
+`nativePrerequisitesFound` would have flipped to `true` on a machine that cannot have a private
+display at all. That is worse than the noise it replaced: noise is noise, but this is a **false
+capability claim in the field an agent branches on**. It is stated as `false` outright.
+
+`not measured` is not a pass, and here it is not even a possibility.
+
+### What the suite says now
+
+**178 pass, 4 distinct failures, 87 skip.** The four: the systemd slice test, `/usr/bin/findmnt`, and
+two update tests that build a Linux release archive and check it against a Windows install. The last
+two fail with `the archive carries no bin/sbar-orbit.cmd, so it is not an Orbit release for this
+platform`, which is the Windows install **correctly refusing a Linux-only archive**.
+
+## 21. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

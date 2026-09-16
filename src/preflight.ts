@@ -124,39 +124,53 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // Which runtime this machine would use, resolved through the probe rather than the filesystem, so an
   // injected probe still decides everything. `in-source` means one built before 14 September 2026,
   // inside a source tree, still usable and adopted by `./install.sh --native`.
-  const locations = nativeRuntimeLocations(project);
-  const built = async (paths: { executables: string; pointer: string }) =>
-    await probe.file(join(paths.executables, "sway"), true) && await probe.file(paths.pointer, true);
-  const runtimeSource = await built(locations.shared) ? "shared" : await built(locations.inSource) ? "in-source" : "none";
-  const native = runtimeSource === "in-source" ? locations.inSource : locations.shared;
-  for (const [id, path] of [["private-sway", join(native.executables, "sway")], ["private-pointer", native.pointer]] as const)
-    add(id, "native", await probe.file(path, true),
-      // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
-      // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
-      { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
-        message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
-  // A runtime that is present and cannot load is the fresh-machine failure the container found: the
-  // bootstrap unpacks packages and the libraries they need are the machine's own. ldd is the same
-  // question the dynamic loader will ask, asked before a session does.
-  const sway = join(native.executables, "sway");
-  if (await probe.file(sway, true)) {
-    const missing = probe.missingLibraries([sway, native.pointer], join(native.runtime, "root/usr/lib64"));
-    add("private-runtime-libraries", "native", !missing.length,
-      { id: "no-native-libraries", needsElevation: true, agentMayRun: false,
-        command: `sudo dnf install ${nativeRuntimePackages}`,
-        message: `The private compositor is built and cannot load${missing.length ? ` ${missing.join(", ")}` : ""}. Those are Fedora packages the bootstrap does not install.` });
+  // The native backend is a nested Wayland compositor: Linux only, by construction. Running these
+  // checks on Windows emitted three remedies telling an agent to run `./install.sh --native` and to
+  // `sudo dnf install` Fedora packages, on a machine with no dnf, no sudo and no possible private
+  // display. A remedy nobody can act on is worse than no remedy: the contract says an agent must
+  // report what it did not run, so it would faithfully report Fedora instructions to a Windows user.
+  let runtimeSource: "shared" | "in-source" | "none" = "none";
+  if (!windows) {
+    const locations = nativeRuntimeLocations(project);
+    const built = async (paths: { executables: string; pointer: string }) =>
+      await probe.file(join(paths.executables, "sway"), true) && await probe.file(paths.pointer, true);
+      runtimeSource = await built(locations.shared) ? "shared" : await built(locations.inSource) ? "in-source" : "none";
+    const native = runtimeSource === "in-source" ? locations.inSource : locations.shared;
+    for (const [id, path] of [["private-sway", join(native.executables, "sway")], ["private-pointer", native.pointer]] as const)
+      add(id, "native", await probe.file(path, true),
+        // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
+        // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
+        { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
+          message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
+    // A runtime that is present and cannot load is the fresh-machine failure the container found: the
+    // bootstrap unpacks packages and the libraries they need are the machine's own. ldd is the same
+    // question the dynamic loader will ask, asked before a session does.
+    const sway = join(native.executables, "sway");
+    if (await probe.file(sway, true)) {
+      const missing = probe.missingLibraries([sway, native.pointer], join(native.runtime, "root/usr/lib64"));
+      add("private-runtime-libraries", "native", !missing.length,
+        { id: "no-native-libraries", needsElevation: true, agentMayRun: false,
+          command: `sudo dnf install ${nativeRuntimePackages}`,
+          message: `The private compositor is built and cannot load${missing.length ? ` ${missing.join(", ")}` : ""}. Those are Fedora packages the bootstrap does not install.` });
+    }
+    for (const name of ["grim", "wl-copy", "wl-paste"])
+      add(name, "native", await probe.file(`/usr/bin/${name}`, true),
+        await systemPackages(probe, "no-capture-tools",
+          "Native sessions capture with grim and paste through wl-clipboard. Browser sessions do not need either.",
+          { any: ["grim", "wl-clipboard"] }));
+    const xwayland = probe.which("Xwayland");
+    add("xwayland", "native", !!xwayland && await probe.file(xwayland, true),
+      await systemPackages(probe, "no-xwayland", "X11 applications on the private display need Xwayland on PATH.",
+        { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
   }
-  for (const name of ["grim", "wl-copy", "wl-paste"])
-    add(name, "native", await probe.file(`/usr/bin/${name}`, true),
-      await systemPackages(probe, "no-capture-tools",
-        "Native sessions capture with grim and paste through wl-clipboard. Browser sessions do not need either.",
-        { any: ["grim", "wl-clipboard"] }));
-  const xwayland = probe.which("Xwayland");
-  add("xwayland", "native", !!xwayland && await probe.file(xwayland, true),
-    await systemPackages(probe, "no-xwayland", "X11 applications on the private display need Xwayland on PATH.",
-      { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
-  return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound: available("native"), checks,
+  // `every` on an empty list is true, so skipping the native checks on Windows would report
+  // `nativePrerequisitesFound: true` on a machine that cannot have a private display at all. That is a
+  // worse answer than the Fedora remedies it replaced: one is noise, this would be a false capability
+  // claim in the field an agent branches on. Not measured is not a pass, and here it is not even a
+  // possibility, so it is stated as false.
+  const nativePrerequisitesFound = windows ? false : available("native");
+  return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound, checks,
     nativeRuntime: { source: runtimeSource },
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],
     startsApplications: false };

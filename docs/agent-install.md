@@ -23,10 +23,10 @@ Install Sbar Orbit on this machine.
 1. Clone https://github.com/M7MMAD-OMAR/sbar-orbit into a directory that will stay where it is, and
    work there. If I have already given you the source, use that instead and clone nothing.
 2. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
-3. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
-   never on the prose.
-4. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
-   which step stopped it.
+3. Plan before acting: run ./install.sh --dry-run --json, or install.cmd --dry-run --json on
+   Windows, and read the JSON. Branch on the fields, never on the prose.
+4. Run ./install.sh --json, or install.cmd --json on Windows. Exit 0 means installed, exit 1 means
+   not installed. Read steps[] to see which step stopped it.
 5. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or its
    message and packages when it carries no command, and stop. Never run it yourself, never add sudo
    to a command that does not have it, and never use sudo for anything.
@@ -43,8 +43,16 @@ Install Sbar Orbit on this machine.
 | `./bin/sbar-orbit preflight` | What this machine has, reads only, starts nothing | Prerequisite report | 0 when browser prerequisites are found, else 1 |
 | `./install.sh --dry-run --json` | The plan. Changes nothing | Install report | 0 when nothing would fail, else 1 |
 | `./install.sh --json` | The installation itself | Install report | 0 installed, 1 not installed |
+| `install.cmd --dry-run --json` | The same plan, on Windows | Install report | 0 when nothing would fail, else 1 |
+| `install.cmd --json` | The same installation, on Windows | Install report | 0 installed, 1 not installed |
 | `./bin/sbar-orbit doctor --report` | Host class and capabilities, needs no broker | Capability report | 0 |
 | `./bin/sbar-orbit status --json` | Sessions, tabs and windows of a running broker | Status | 0 |
+
+On Windows every `./bin/sbar-orbit` row above is `bin\sbar-orbit.cmd`, and `install.cmd` replaces
+`./install.sh`. The two installers are doors into the same `scripts/install.ts`, so the report, the
+fields and the exit codes below are identical: nothing in this contract branches on which one ran.
+The Windows installer checks for Bun and nothing else, because the systemd user session `install.sh`
+requires has no analogue there; the shared budget is a named job object the process joins itself.
 
 `--json` prints the report and nothing else, so it can be parsed directly. Without it the same run
 prints a step display for a person. `--plain` is the middle option: one line per step, no repainting.
