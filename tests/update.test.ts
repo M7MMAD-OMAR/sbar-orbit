@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { summarize } from "../src/status";
-import { activateVersion, automaticUpdates, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus } from "../src/update";
+import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus } from "../src/update";
 
 /**
  * Activation, which is the part of an update that can hurt: it restarts the broker, and a restart ends
@@ -14,7 +14,10 @@ import { activateVersion, automaticUpdates, checkForUpdate, compareVersions, cur
 async function prepared(root: string, version: string) {
   const directory = join(layout(root).versions, version);
   await mkdir(join(directory, "bin"), { recursive: true });
-  await writeFile(join(directory, "bin/sbar-orbit"), "#!/usr/bin/env bash\n");
+  // The launcher activation actually looks for on this platform. Writing the bash name unconditionally
+  // made the Windows branch of these tests agree with itself while a real Windows run refused every
+  // activation with "is not a prepared version".
+  await writeFile(join(directory, launcherName()), "#!/usr/bin/env bash\n");
   return directory;
 }
 
@@ -330,4 +333,68 @@ test("an idle machine with a version waiting says so in the one line a bar shows
   // The waiting version is visible rather than silent, which is what makes a machine that never
   // reaches a boundary explainable instead of just out of date.
   expect(summarize({ ...idle, pendingVersion: "0.1.0-alpha.9" })).toBe("Orbit idle, 0.1.0-alpha.9 waiting");
+});
+
+/**
+ * The Windows branch of the version pointer, exercised on Linux by pretending to be win32.
+ *
+ * This is worth doing here rather than only on the guest, because the guest run is manual and this
+ * path decides which version a machine boots. `process.platform` is read at call time, not captured,
+ * so redefining it for the duration of the test reaches the same branch the guest does. The bytes on
+ * disk are then checked directly: a pointer FILE, and no symlink.
+ */
+async function asWindows<T>(work: () => Promise<T>): Promise<T> {
+  const real = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+  try { return await work(); } finally { Object.defineProperty(process, "platform", real); }
+}
+
+test("on Windows the current version is a pointer file swapped by rename, not a symlink", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-winptr-"));
+  try {
+    const paths = layout(root);
+
+    await asWindows(async () => {
+      // Inside the override, so the fixture carries the launcher name a Windows install really has.
+      await prepared(root, "1.0.0");
+      await prepared(root, "2.0.0");
+      expect(launcherName()).toBe("bin/sbar-orbit.cmd");
+      const environment = { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true };
+      expect(await currentVersion(root)).toBeNull();
+      expect(await activateVersion("1.0.0", environment)).toMatchObject({ activated: true });
+      expect(await currentVersion(root)).toBe("1.0.0");
+
+      // The pointer is a real file holding the target path, and `current` itself is never created.
+      expect(await Bun.file(`${paths.current}.txt`).text()).toBe(join(paths.versions, "1.0.0"));
+      expect(await Bun.file(paths.current).exists()).toBe(false);
+
+      // A second activation must move the pointer and record the rollback target the same way.
+      expect(await activateVersion("2.0.0", environment)).toMatchObject({ activated: true });
+      expect(await currentVersion(root)).toBe("2.0.0");
+      expect(await Bun.file(`${paths.previous}.txt`).text()).toBe(join(paths.versions, "1.0.0"));
+
+      // And the rollback target must survive a prune, which is what the backslash split protects.
+      const pruned = await pruneVersions(root, 0);
+      expect(pruned.removed).toEqual([]);
+      expect(pruned.kept.sort()).toEqual(["1.0.0", "2.0.0"]);
+    });
+
+    // No symlink was created at any point, which is the whole reason this branch exists.
+    await expect(readlink(paths.current)).rejects.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// Linux only by definition: it asserts that a symlink was made, which Windows cannot do unelevated.
+// Skipped rather than made conditional inside, so a Windows run reports it as not applicable instead
+// of as a pass it never earned.
+test.skipIf(process.platform === "win32")("the Linux install stays a symlink, so the Windows branch did not leak into it", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-linptr-"));
+  try {
+    await prepared(root, "1.0.0");
+    const paths = layout(root);
+    await activateVersion("1.0.0", { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true });
+    // A symlink, not a pointer file: the atomic rename over a live symlink is what Linux has and keeps.
+    expect(await readlink(paths.current)).toBe(join(paths.versions, "1.0.0"));
+    expect(await Bun.file(`${paths.current}.txt`).exists()).toBe(false);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

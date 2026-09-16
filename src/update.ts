@@ -1,6 +1,6 @@
-import { mkdir, readdir, readlink, realpath, rename, rm, symlink, unlink } from "node:fs/promises";
+import { mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { call } from "./ipc";
 import { serviceSocketPath } from "./service";
 
@@ -20,15 +20,59 @@ import { serviceSocketPath } from "./service";
 export type Layout = { root: string; versions: string; current: string; previous: string };
 
 export function updateRoot() {
+  // `%LOCALAPPDATA%` is the Windows equivalent of `$XDG_DATA_HOME`: per user and non roaming, so a
+  // tree of prepared versions is never synced to a domain share. Same reasoning as `workspaceRoot()`.
+  if (process.platform === "win32")
+    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
   const data = process.env.XDG_DATA_HOME || join(homedir(), ".local/share");
   return join(data, "sbar-orbit");
+}
+
+/**
+ * What makes a directory a prepared version: its launcher, which is the file `current` ultimately
+ * resolves to. The name differs by platform, and hardcoding the bash one made every Windows
+ * activation refuse with "is not a prepared version" even though the directory was complete.
+ */
+export function launcherName() {
+  return process.platform === "win32" ? "bin/sbar-orbit.cmd" : "bin/sbar-orbit";
+}
+
+/** Where the launcher this install runs from is expected to live, per platform. */
+export function defaultLauncherPath() {
+  if (process.platform === "win32")
+    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "bin", "sbar-orbit.cmd");
+  return join(homedir(), ".local/bin/sbar-orbit");
 }
 
 export function layout(root = updateRoot()): Layout {
   return { root, versions: join(root, "versions"), current: join(root, "current"), previous: join(root, "previous") };
 }
 
+/**
+ * Which version is current is recorded differently per platform, and the difference is forced rather
+ * than chosen.
+ *
+ * Linux keeps a symlink and repoints it by rename, so no reader ever sees the name missing. Windows
+ * cannot do that: measured unelevated on a Windows 11 guest, `symlink()` is EPERM without Developer
+ * Mode, and `rename` over a live junction is EPERM as well. The cause is not reparse points, because
+ * `rename` over an empty PLAIN directory is EPERM too while the same call succeeds on Linux. Windows
+ * does not replace a directory by rename at all, so no junction arrangement recovers the swap.
+ *
+ * What it does allow is rename over an existing FILE, which is atomic. So Windows records the current
+ * version in a pointer file beside the name Linux uses for its link. Measured on the same guest: the
+ * swap survived a reader that had already read, and a reader holding the file OPEN across it, which is
+ * the property the design actually depends on. It needs no link, no elevation and no Developer Mode.
+ *
+ * See docs/windows-measured.md section 9, and experiments/windows-vm/link-atomicity-probe.ps1.
+ */
+const pointerFile = (link: string) => `${link}.txt`;
+
 async function linkTarget(path: string) {
+  if (process.platform === "win32") {
+    // A pointer file written by this code, not a path the user typed, so a trailing newline is the
+    // only tolerance needed. An absent file means no version is current, the same as an absent link.
+    try { return (await readFile(pointerFile(path), "utf8")).trim() || null; } catch { return null; }
+  }
   try { return await readlink(path); } catch { return null; }
 }
 
@@ -39,27 +83,39 @@ export async function preparedVersions(root = updateRoot()) {
 
 export async function currentVersion(root = updateRoot()) {
   const target = await linkTarget(layout(root).current);
-  return target ? target.split("/").filter(Boolean).at(-1) ?? null : null;
+  // Split on both separators: the pointer file records a Windows path, and the symlink a POSIX one.
+  return target ? target.split(/[/\\]/).filter(Boolean).at(-1) ?? null : null;
 }
 
 /**
  * Whether this install is one the updater may touch. A source checkout is not: its updater is git, and
  * a machine's working tree is not something an automatic swap should ever move.
  */
-export async function updatableInstall(root = updateRoot(), launcher = join(homedir(), ".local/bin/sbar-orbit")) {
+export async function updatableInstall(root = updateRoot(), launcher = defaultLauncherPath()) {
   const target = await realpath(launcher).catch(() => null);
   if (!target) return { updatable: false as const, reason: "no sbar-orbit launcher is linked on this machine" };
   const versions = await realpath(layout(root).versions).catch(() => null);
-  if (!versions || !target.startsWith(`${versions}/`))
+  // Compare with the platform's own separator. On Windows `realpath` returns backslashes, so a POSIX
+  // prefix test would call every managed install unmanaged and silently refuse to update it.
+  if (!versions || !target.startsWith(versions + sep))
     return { updatable: false as const, reason: `this install runs from ${dirname(dirname(target))}, not from a managed version directory; a source checkout updates with git` };
   return { updatable: true as const, launcher: target };
 }
 
-/** Repoint one symlink by rename, so no reader ever sees the name missing. */
+/**
+ * Repoint `current` (or `previous`) atomically, so no reader ever sees the name missing.
+ *
+ * Both branches are a rename onto the live name, because that is the only shape either platform makes
+ * atomic. Linux renames a freshly made symlink over the old one. Windows writes the target into a
+ * temporary file and renames that over the pointer file, which is allowed there while renaming over a
+ * directory or a junction is not.
+ */
 async function point(link: string, target: string) {
-  const temporary = `${link}.${crypto.randomUUID()}`;
-  await symlink(target, temporary);
-  try { await rename(temporary, link); }
+  const destination = process.platform === "win32" ? pointerFile(link) : link;
+  const temporary = `${destination}.${crypto.randomUUID()}`;
+  if (process.platform === "win32") await writeFile(temporary, target, "utf8");
+  else await symlink(target, temporary);
+  try { await rename(temporary, destination); }
   finally { await unlink(temporary).catch(() => {}); }
 }
 
@@ -113,7 +169,7 @@ export async function activateVersion(version: string, environment: ActivationEn
   const openSessions = await (environment.openSessions ?? brokerSessions)();
   if (openSessions !== null && openSessions > 0)
     return { activated: false, reason: "a session is open, and activating would end it", openSessions };
-  if (!await Bun.file(join(target, "bin/sbar-orbit")).exists())
+  if (!await Bun.file(join(target, launcherName())).exists())
     return { activated: false, reason: `${version} is not a prepared version on this machine` };
   const previous = await currentVersion(paths.root);
   if (previous === version) return { activated: false, reason: `${version} is already the current version` };
@@ -159,7 +215,10 @@ export async function updateStatus(environment: ActivationEnvironment = {}) {
 export async function pruneVersions(root = updateRoot(), keep = 1) {
   const paths = layout(root);
   const current = await currentVersion(root);
-  const previous = (await linkTarget(paths.previous))?.split("/").filter(Boolean).at(-1) ?? null;
+  // Both separators, for the same reason `currentVersion` splits on both: on Windows this reads a
+  // pointer file holding a backslash path, and a POSIX-only split would leave `previous` unprotected
+  // and let a prune delete the version a rollback needs.
+  const previous = (await linkTarget(paths.previous))?.split(/[/\\]/).filter(Boolean).at(-1) ?? null;
   const protectedNames = new Set([current, previous].filter(Boolean) as string[]);
   const removable = (await preparedVersions(root)).filter(version => !protectedNames.has(version)).sort(compareVersions);
   const spare = removable.slice(Math.max(0, removable.length - Math.max(0, keep)));
@@ -287,7 +346,9 @@ export type Preparation = { prepared: false; reason: string } | { prepared: true
 export async function prepareVersion(candidate: Candidate, feed: Feed = {}, environment: { root?: string; install?: (directory: string) => Promise<{ ok: boolean; output: string }> } = {}): Promise<Preparation> {
   const paths = layout(environment.root);
   const directory = join(paths.versions, candidate.version);
-  if (await Bun.file(join(directory, "bin/sbar-orbit")).exists())
+  // The same launcher name activation will look for, so a version cannot be "prepared" here and then
+  // refused there as not prepared.
+  if (await Bun.file(join(directory, launcherName())).exists())
     return { prepared: true, version: candidate.version, directory, files: 0 };
   const bytes = await (feed.download ?? (async (url: string) => {
     const response = await fetch(url);
@@ -308,8 +369,8 @@ export async function prepareVersion(candidate: Candidate, feed: Feed = {}, envi
     const problem = (await new Response(unpack.stderr).text()).trim();
     if (await unpack.exited !== 0) return { prepared: false, reason: problem.split("\n").at(-1)?.slice(0, 200) || "the archive could not be unpacked" };
     await rm(archive, { force: true });
-    if (!await Bun.file(join(staging, "bin/sbar-orbit")).exists())
-      return { prepared: false, reason: "the archive carries no launcher, so it is not an Orbit release" };
+    if (!await Bun.file(join(staging, launcherName())).exists())
+      return { prepared: false, reason: `the archive carries no ${launcherName()}, so it is not an Orbit release for this platform` };
     const installed = await (environment.install ?? (async (target: string) => {
       const child = Bun.spawn(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
       const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

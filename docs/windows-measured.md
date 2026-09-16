@@ -599,9 +599,49 @@ Two ways out were measured rather than argued about:
   depends on. It needs no link, no elevation and no Developer Mode.
 
 So the portable shape is a pointer file, and the Windows port should not try to keep the symlink.
-That is a change to `src/update.ts`, deliberately NOT made in this pass: it touches how Linux
-installs switch versions, and it deserves its own change with its own Linux side evidence rather than
-being smuggled in alongside a measurement.
+
+### The pointer file, implemented and run on the guest
+
+`src/update.ts` now records the current version per platform. Linux keeps the symlink and its rename,
+unchanged. Windows writes the target into `current.txt` and renames a temporary file over it, which is
+the one atomic swap Windows offers.
+
+Measured on the guest, unelevated, driving the shipped code:
+
+| | Result |
+|---|---|
+| `activate 1.0.0` | activated, `current` reads `1.0.0` |
+| pointer file / plain `current` directory | present / never created |
+| `activate 2.0.0`, then `previous` | activated, rollback target recorded as `1.0.0` |
+| swap while a reader held the pointer **open** | ok, and `current` then read `1.0.0` |
+| `pruneVersions(root, 0)` | removed nothing, kept both, so the rollback target survived |
+| `readlink(current)` | ENOENT, because no symlink was ever made |
+
+### Two bugs a simulated platform could not have found
+
+The Linux suite exercises this branch by overriding `process.platform`, which is worth having. It is
+not the platform, and the guest proved it twice.
+
+- **Every Windows activation refused.** `activateVersion()` tested for `bin/sbar-orbit` to decide
+  whether a directory is a prepared version, and a Windows install's launcher is `bin\sbar-orbit.cmd`.
+  A complete, correct version directory was rejected as "not a prepared version". The name now comes
+  from `launcherName()`, and `prepareVersion()` uses the same one, so a version cannot be prepared by
+  one check and refused by the other.
+- **The test agreed with itself.** Its fixture wrote `bin/sbar-orbit` regardless of platform, so the
+  simulated Windows run passed against a file a real Windows install would never have. The fixture is
+  now built inside the platform override and uses `launcherName()`.
+
+Two more Windows-only details were fixed with it, both of which would have silently disabled updates:
+`updateRoot()` returns `%LOCALAPPDATA%\sbar-orbit` rather than an `XDG_DATA_HOME` path that does not
+exist there, and `updatableInstall()` compares with the platform separator, because `realpath` returns
+backslashes on Windows and a POSIX prefix test would call every managed install unmanaged. The
+`previous` pointer is also split on both separators, since a POSIX-only split left the rollback target
+unprotected and a prune would have deleted it.
+
+The remaining `update.test.ts` failures on the guest are harness, not product: the fixtures build
+source checkouts with `symlink()` and feed tarballs carrying the bash launcher. The one test that
+asserts a symlink exists is now skipped on Windows rather than left to fail, so a Windows run reports
+it as not applicable instead of as a pass it never earned.
 
 ### What this section does not claim
 
