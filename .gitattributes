@@ -1,3 +1,6 @@
 * text=auto eol=lf
 LICENSE text eol=lf
+# cmd.exe reads a batch file byte by byte, and a multi line ( ) block in an LF only file is where that
+# goes wrong. The Windows launcher is a Windows file, whatever checks it out.
+*.cmd text eol=crlf
 NOTICE text eol=lf
