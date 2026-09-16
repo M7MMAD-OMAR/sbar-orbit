@@ -1489,7 +1489,7 @@ And the frame is checked against a **size floor**, with the reason written next 
 byte JPEG passed a byte count on the guest while the navigation had silently never happened. The
 metadata is what names the page; the floor only catches the blank.
 
-### The workflow was run before being trusted
+### The workflow's own steps were run before being trusted
 
 Its pwsh step was executed on the guest first, exactly as written, because a workflow that has never
 executed is the same `not measured` trap this project is judged on, and the `cmd /c` quoting in it took
@@ -1501,6 +1501,24 @@ act:     {"ok":true,"result":{"url":"https://example.com/"}}
 observe: {"title":"Example Domain","location":"https://example.com/",...}
 frame bytes: 17719   passes the floor the workflow asserts: True
 ```
+
+### What this job has NOT yet shown
+
+**It has not run on a GitHub runner.** Running it requires pushing this branch, which is the repository
+owner's decision and not an agent's, so what is measured here is the job's logic on the Windows guest
+and nothing more. The runner differs from the guest in exactly the ways that make it worth having, and
+those differences are untested: a different Bun, whatever browser `windows-latest` ships and wherever
+it puts it, a non interactive session, and no Edge profile.
+
+That last one is the most likely to fail first. Every browser measurement in this document was made in
+an interactive desktop session, and the reason the broker is not a service on Windows is that a
+Chromium family browser will not run in session 0 at all. A CI runner is not session 0, but it is not
+the person's desktop either, and whether Edge starts there is a question this job exists to answer
+rather than one it has answered.
+
+So this section claims what it can: the job is written, its steps run on a real Windows machine, and it
+is wired to the workflow. Whether `windows-latest` can run it is **not measured**, and that is exactly
+the kind of gap this file is for.
 
 ## 26. The control channel, for whoever repeats this
 
