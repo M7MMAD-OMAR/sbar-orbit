@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the desktop panel's broker half, which is Python and GTK on the person's own desktop");
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

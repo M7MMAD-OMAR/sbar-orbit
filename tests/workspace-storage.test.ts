@@ -1,10 +1,12 @@
 import { test, expect } from "bun:test";
+import { linuxOnlyTest, needsSymlink } from "./platform-support";
 import { chmod, lstat, mkdir, mkdtemp, symlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createWorkspaceDirectory, workspaceRoot } from "../src/workspace-storage";
 import { tmpdir } from "node:os";
 
-test("workspace storage creates unique private directories and rejects unsafe or RAM-backed roots", async () => {
+linuxOnlyTest("POSIX mode bits on the root and a /dev/shm root, neither of which Windows has")(
+  "workspace storage creates unique private directories and rejects unsafe or RAM-backed roots", async () => {
   await mkdir("output", { recursive: true });
   const scratch = await mkdtemp(resolve("output/storage-test-"));
   const root = join(scratch, "workspaces");
@@ -23,7 +25,8 @@ test("workspace storage creates unique private directories and rejects unsafe or
   await expect(createWorkspaceDirectory("test", ram)).rejects.toMatchObject({ code: "UNSUPPORTED" });
 });
 
-test("clean removes workspaces whose broker is gone and keeps live or recent ones", async () => {
+needsSymlink("a symlinked workspace root, which the sweep must refuse to follow")(
+  "clean removes workspaces whose broker is gone and keeps live or recent ones", async () => {
   const { cleanWorkspaces, markWorkspaceOwner, brokerAnswers } = await import("../src/workspace-storage");
   const scratch = await mkdtemp(resolve("output/storage-clean-"));
   const root = join(scratch, "workspaces");

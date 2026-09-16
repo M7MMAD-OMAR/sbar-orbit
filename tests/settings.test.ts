@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the settings schema, which is Python because the panel is");
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

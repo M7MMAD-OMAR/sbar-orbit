@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the private compositor's own IPC transport, which has no counterpart off Linux");
 import { createServer } from "node:net";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";

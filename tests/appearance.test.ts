@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the GTK, Qt and Kvantum theming of the person's own desktop");
 import { mkdir, mkdtemp, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { applyAppearance, filterKdeGlobals } from "../src/appearance";

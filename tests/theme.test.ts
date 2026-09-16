@@ -43,8 +43,11 @@ test("candidates follow the environment rather than a fixed personal path", () =
   expect(themeCandidates({ ORBIT_THEME: "/tmp/custom.json" })).toEqual(["/tmp/custom.json"]);
   const home = "/tmp/orbit-home-fixture";
   const candidates = themeCandidates({ HOME: home, XDG_CONFIG_HOME: undefined, XDG_STATE_HOME: undefined });
-  expect(candidates[0]).toBe(`${home}/.config/sbar-orbit/theme.json`);
-  expect(candidates.every(path => path.startsWith(`${home}/`))).toBe(true);
+  // Joined rather than spelled with a slash: the product builds these with `join`, so a literal
+  // separator here tests the runner's platform instead of the rule, and failed on Windows for that
+  // reason alone.
+  expect(candidates[0]).toBe(join(home, ".config/sbar-orbit/theme.json"));
+  expect(candidates.every(path => path.startsWith(join(home, "")))).toBe(true);
 });
 
 test("a missing or unreadable theme leaves the shipped palette in place", async () => {

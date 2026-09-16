@@ -73,8 +73,10 @@ test("uninstalling an absent installation is not an error", async () => {
 
 test("the managed socket path lives under the runtime directory", () => {
   expect(serviceSocketPath("/run/user/1000")).toBe("/run/user/1000/sbar-orbit/broker.sock");
-  // An empty runtime directory is the missing case; passing undefined would select the default.
-  expect(() => serviceSocketPath("")).toThrow("XDG_RUNTIME_DIR");
+  // An empty runtime directory is the missing case; passing undefined would select the default. The
+  // platform is named rather than inherited, because Windows has no runtime directory and answers
+  // with %LOCALAPPDATA% instead; that branch is pinned in tests/windows-host.test.ts.
+  expect(() => serviceSocketPath("", process.env, "linux")).toThrow("XDG_RUNTIME_DIR");
 });
 
 test("claiming refuses a live broker and clears only a dead socket", async () => {

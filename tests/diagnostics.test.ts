@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { needsSymlink } from "./platform-support";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -68,7 +69,8 @@ test('retry IDs correlate attempts without storing input, and unfinished operati
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('unsafe log files fail visibly without breaking operations or changing their target', async () => {
+needsSymlink('a log path that is a symlink pointing outside the diagnostic directory')(
+  'unsafe log files fail visibly without breaking operations or changing their target', async () => {
   const root = await mkdtemp(join(tmpdir(), 'orbit-diagnostics-'));
   try {
     const target = join(root, 'private');

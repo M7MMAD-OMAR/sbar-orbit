@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("the Python subreaper and its /proc walk, which a Windows job object replaces outright");
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ownsGroup, sweepOwnedGroup } from "../src/owned-group";

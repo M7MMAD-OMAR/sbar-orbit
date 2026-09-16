@@ -1,9 +1,11 @@
 import { test, expect } from "bun:test";
+import { needsSymlink } from "./platform-support";
 import { mkdtemp, writeFile, readFile, symlink, rename, link } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-test("supervised file reservations survive replacement and parent EOF until cleanup", async () => {
+needsSymlink("an alias beside the reserved file, so the lease is checked against a symlink to it")(
+  "supervised file reservations survive replacement and parent EOF until cleanup", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-file-test-"));
   const file = join(root, "document.txt"), alias = join(root, "alias.txt"), other = join(root, "aaa-other.txt");
   await writeFile(file, "Original"); await writeFile(other, "Other"); await symlink(file, alias);

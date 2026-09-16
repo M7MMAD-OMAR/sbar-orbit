@@ -1,5 +1,8 @@
 import { createWorkspaceDirectory } from "../src/workspace-storage";
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("saved account leases, which src/profiles.ts refuses off Linux because they are held with flock");
 import { mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Sessions } from "../src/session";

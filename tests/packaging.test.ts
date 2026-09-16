@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildNativeRuntime } from "../src/install";
@@ -29,7 +29,11 @@ test("the registry tarball carries tracked source and nothing the working tree h
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
   try {
     await run(["bun", "pm", "pack", "--destination", destination], project);
-    const archive = (await run(["bash", "-c", `ls ${JSON.stringify(destination)}/*.tgz`], destination)).trim();
+    // Read with readdir rather than shelling out to `bash -c ls`: a glob is not worth a shell, and
+    // the shell was the only reason this test needed one at all.
+    const packed = (await readdir(destination)).filter(entry => entry.endsWith(".tgz"));
+    expect(packed.length).toBe(1);
+    const archive = join(destination, packed[0]!);
     const shipped = (await run(["tar", "tzf", archive], destination)).split("\n")
       .filter(Boolean).map(entry => entry.replace(/^package\//, "")).filter(entry => !entry.endsWith("/"));
     const tracked = new Set((await run(["git", "ls-files", "-z"], project)).split("\0").filter(Boolean));

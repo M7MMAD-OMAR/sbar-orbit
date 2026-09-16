@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { needsSymlink } from "./platform-support";
 import { mkdtemp, mkdir, writeFile, readFile, rename, symlink } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -39,7 +40,8 @@ test("manifest rejects duplicate/private/traversal paths and mismatched versions
   await expect(readVerifiedSource(f.root)).rejects.toThrow("version mismatch");
 });
 
-test("source cannot follow a symlinked parent even when content hashes match", async () => {
+needsSymlink("a symlinked bin/ parent, which is the thing the verifier must refuse to follow")(
+  "source cannot follow a symlinked parent even when content hashes match", async () => {
   const f = await fixture();
   await rename(join(f.root, "bin"), join(f.root, "other-bin"));
   await symlink(join(f.root, "other-bin"), join(f.root, "bin"));

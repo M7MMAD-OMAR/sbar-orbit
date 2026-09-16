@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("bin/sbar-orbit itself, which is a bash script; the Windows launcher is bin/sbar-orbit.cmd and is measured on the guest in docs/windows-measured.md");
 import { mkdtemp, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";

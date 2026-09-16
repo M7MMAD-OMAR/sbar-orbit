@@ -1,4 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+
+const test = linuxOnlySuite("starting a session from the person's own browser profile, which docs/support-tiers.md records as Refused on Windows because App Bound Encryption refuses any non default user data directory");
 import { Database } from "bun:sqlite";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";

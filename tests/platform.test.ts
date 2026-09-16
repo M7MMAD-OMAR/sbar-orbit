@@ -1,5 +1,6 @@
 import { version } from "../package.json";
 import { test, expect } from "bun:test";
+import { needsSymlink } from "./platform-support";
 import { Database } from "bun:sqlite";
 import { lstat, mkdir, mkdtemp, symlink, writeFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,7 +43,8 @@ test("the launch store comes from the desktop, not from the profile's bytes", ()
   expect(passwordStoreFor("basic", "available", "GNOME")).toBe("basic");
 });
 
-test("the singleton markers are stripped from a copy and the source is never touched", async () => {
+needsSymlink("Chrome writes its singleton markers as symlinks, two of them dangling by design")(
+  "the singleton markers are stripped from a copy and the source is never touched", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-singleton-"));
   const source = join(root, "source"), copy = join(root, "copy");
   for (const directory of [source, copy]) {
