@@ -1455,7 +1455,54 @@ Note what a pass would have meant there: a test quietly writing a connector file
 whoever ran it. It failed loudly instead, and only because the guest ran it. **201 pass, 0 fail, 96
 skip.**
 
-## 25. The control channel, for whoever repeats this
+## 25. A second Windows host, so this does not depend on one VM
+
+Every Windows result in this document was measured on **one** Windows 11 guest on the owner's
+workstation. That is a real machine and the results stand, but it is also a single point of failure of
+a particular kind: if the only place Windows runs is a VM one person starts by hand, the next change
+breaks Windows and **nobody finds out**.
+
+`.github/workflows/platform-probes.yml` already had a `windows-latest` job. It runs the porting
+**probes** and no suite, which is why it never noticed any of the defects sections 13 to 24 found.
+
+A `verify-windows` job now runs, on a host with nothing in common with the guest: a GitHub runner, a
+different Bun, no Edge profile of its own, and no state from any earlier run.
+
+| Step | What it asserts |
+|---|---|
+| `bun run typecheck` | the tree still builds there |
+| `install.cmd --dry-run --json` | the documented plan command still answers |
+| `bun test` | the suite, whose count is what this document quotes |
+| `install.cmd --json` | a real install, expected to exit 0 with `verify` skipped |
+| `serve`, `status`, `act`, `observe`, `stop` | a browser session through the **installed** command |
+
+It is `continue-on-error`, deliberately: it is not a gate on merging, it is the thing that says a
+Windows claim stopped being true somewhere other than one person's VM.
+
+### Two lessons from this port are compiled into it
+
+The website workspace is installed, because without it one test file fails to resolve
+`react/jsx-dev-runtime`, which is a missing dependency rather than a Windows result and cost a
+debugging round in section 21.
+
+And the frame is checked against a **size floor**, with the reason written next to it: a blank 6758
+byte JPEG passed a byte count on the guest while the navigation had silently never happened. The
+metadata is what names the page; the floor only catches the blank.
+
+### The workflow was run before being trusted
+
+Its pwsh step was executed on the guest first, exactly as written, because a workflow that has never
+executed is the same `not measured` trap this project is judged on, and the `cmd /c` quoting in it took
+three attempts by hand.
+
+```
+install exit: 0
+act:     {"ok":true,"result":{"url":"https://example.com/"}}
+observe: {"title":"Example Domain","location":"https://example.com/",...}
+frame bytes: 17719   passes the floor the workflow asserts: True
+```
+
+## 26. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

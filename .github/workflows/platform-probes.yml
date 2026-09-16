@@ -29,6 +29,78 @@ jobs:
         with:
           name: platform-probe-${{ matrix.os }}
           path: output/platform-probe/
+  # The suite on a real Windows host, which is the half the probe job above never covered: it answers
+  # gate questions and runs no tests. Every Windows result in docs/windows-measured.md was measured on
+  # one Windows 11 guest on the owner's workstation, so nothing outside that machine would notice a
+  # regression. This is a second Windows host, and a different one: a GitHub runner, no Edge profile of
+  # its own, a different Bun, and no state from any earlier run.
+  #
+  # Allowed to fail, and the log is the result. It is not a gate on merging: it is the thing that says
+  # a Windows claim stopped being true, in a place other than one person's VM.
+  verify-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # The website is a separate workspace. Without it one test file fails to resolve react/jsx-dev-runtime,
+      # which is a missing dependency rather than a Windows result, and it cost a debugging round on the guest.
+      - run: cd website && bun install --frozen-lockfile --ignore-scripts
+      - name: typecheck, the documented plan command, and the suite
+        shell: cmd
+        run: |
+          mkdir output\verify
+          (bun run typecheck & echo typecheck exit %errorlevel%) > output\verify\typecheck.log 2>&1
+          (install.cmd --dry-run --json & echo install dry-run exit %errorlevel%) > output\verify\install-dry-run.log 2>&1
+          (bun test & echo suite exit %errorlevel%) > output\verify\suite.log 2>&1
+          type output\verify\suite.log
+      # A real install and a real browser session, the way section 20 and section 22 measured them by
+      # hand. `verify` is skipped on Windows by design, so the install is expected to exit 0 with no
+      # managed broker, and the broker is started explicitly here the way a person would.
+      - name: install, then drive a browser session through the installed command
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $prefix = Join-Path $env:LOCALAPPDATA "orbit-ci"
+          cmd /c "install.cmd --json --prefix ""$prefix""" | Tee-Object output/verify/install.log
+          $launcher = Join-Path $prefix "bin\sbar-orbit.cmd"
+          $serve = Start-Process -FilePath $launcher -ArgumentList "serve","--managed-socket" -PassThru -WindowStyle Hidden -RedirectStandardOutput output/verify/serve.out -RedirectStandardError output/verify/serve.err
+          $socket = $null
+          for ($i = 0; $i -lt 120 -and -not $socket; $i++) {
+            Start-Sleep -Milliseconds 500
+            $line = Get-Content output/verify/serve.out -EA SilentlyContinue | Select-Object -First 1
+            if ($line) { try { $socket = ($line | ConvertFrom-Json).socket } catch {} }
+          }
+          if (-not $socket) { Get-Content output/verify/serve.err -EA SilentlyContinue; throw "the broker never published a socket" }
+          $env:ORBIT_SOCKET = $socket
+          & $launcher status --json | Tee-Object output/verify/status.log
+          $created = & $launcher session create browser | Tee-Object output/verify/session-create.log | Out-String
+          $id = ([regex]::Match($created, "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")).Value
+          if (-not $id) { throw "no session was created" }
+          # act takes ID then one JSON document, and cmd is used because PowerShell strips the inner
+          # quotes before the process sees them. Measured on the guest: both the CLI and the launcher
+          # failed identically under PowerShell, which is what proved it was the shell.
+          $action = '{""type"":""navigate"",""url"":""https://example.com/""}'
+          cmd /c """$launcher"" act $id ""$action""" | Tee-Object output/verify/act.log
+          & $launcher session observe $id --output "$PWD/output/verify/frame.jpg"
+          & $launcher session observe $id --metadata | Tee-Object output/verify/observe.log
+          & $launcher session stop $id
+          Stop-Process -Id $serve.Id -Force -EA SilentlyContinue
+          # A frame that exists is not a frame that rendered: a blank 6758 byte JPEG passed a byte count
+          # check on the guest while the navigation had silently never happened. Size is a floor, and the
+          # metadata above is what says which page it is.
+          $bytes = (Get-Item output/verify/frame.jpg).Length
+          "frame bytes: $bytes"
+          if ($bytes -lt 10000) { throw "the frame is too small to be a rendered page: $bytes bytes" }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-windows-latest
+          path: output/verify/
   # The suite itself, on a real Ubuntu host: the runner's user manager delegates cpu, memory and pids,
   # so scripts/limited.ts may be able to make the slice it needs. Allowed to fail; the log is the result.
   verify-ubuntu:
