@@ -32,8 +32,14 @@ What it prints names the launcher, not an interpreter and a source file:
 `{"command": "<the sbar-orbit you ran>", "args": ["mcp"]}`. Run it through an installed link and the
 link is what gets written down, so the configuration keeps working after an upgrade switches the
 source behind it. Run it out of a checkout and the checkout's own `bin/sbar-orbit` is named instead,
-which is the best stable name a checkout has. Windows has no launcher to run, so there the
-configuration names Bun and `src/mcp.ts` directly.
+which is the best stable name a checkout has.
+
+On Windows the launcher is `bin/sbar-orbit.cmd`, and whether a host can start it depends on how that
+host spawns. A `.cmd` is not an image the kernel executes. Measured on a Windows 11 guest: Bun's own
+spawn started it both verbatim, exactly as the configuration reads, and through `cmd.exe`. A host
+calling Node's `child_process.spawn` without `shell: true` cannot. For that host, add `--no-launcher`
+and the configuration names Bun and `src/mcp.ts` instead, which is the same entry point one level
+down and gives up the upgrade safety the launcher buys.
 
 On this workstation the server is registered for Claude Code at user scope (`claude mcp add --scope user orbit ...` with the managed socket), and for Hermes in its `mcp_servers`, so every conversation on the machine has the tools. The machine-wide agent instructions in `~/AGENTS.md` and the `sbar-orbit` skill in `~/.claude/skills` say when to use them: any task that needs a screen, a browser or a desktop application goes through an Orbit session and never through the person's own screen. The rule exists because an agent that merely has the tool available still reaches for a host screenshot unless it is told not to; that happened in a Claude conversation before the rule was written.
 

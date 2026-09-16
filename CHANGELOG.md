@@ -11,6 +11,10 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
   from another Bun process. It resolves Bun by location rather than from PATH, and refuses by name the
   subcommands that cannot work there (`install`, `update`, `service`, `autostart`, `panel`,
   `settings`, `config`) rather than letting them fail further down.
+- `sbar-orbit connector-config --no-launcher`, for an agent host that cannot spawn a `.cmd`. On
+  Windows the configuration names `bin/sbar-orbit.cmd`, which Bun's own spawn starts both verbatim
+  and through `cmd.exe`, measured on the guest; a host calling Node's `child_process.spawn` without
+  `shell: true` cannot, and this flag names Bun and `src/mcp.ts` for it instead.
 - A managed broker socket path on Windows, `%LOCALAPPDATA%\sbar-orbit\broker.sock`.
   `serviceSocketPath()` used to throw `CONFIG_REQUIRED` there, because it wanted `XDG_RUNTIME_DIR`.
 

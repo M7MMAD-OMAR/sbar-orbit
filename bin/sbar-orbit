@@ -76,6 +76,8 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit account save ID     Snapshot a paused session's login state
   sbar-orbit act ID JSON         Execute a session action
   sbar-orbit connector-config    Print MCP configuration for this broker
+  sbar-orbit connector-config --no-launcher
+                                 For a host that cannot spawn the launcher itself
   sbar-orbit mcp                 Run the stdio MCP adapter
   sbar-orbit usage on|off|status [CONVERSATION_ID]
                                  Control this conversation, not the shared service

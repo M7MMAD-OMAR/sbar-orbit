@@ -532,6 +532,7 @@ but the commands and the connector. Run on the guest, in the interactive session
 | `sbar-orbit.cmd connector-config` | `{"command": "...\bin\sbar-orbit.cmd", "args": ["mcp"], "env": {"ORBIT_SOCKET": "...\broker.sock"}}` |
 | `sbar-orbit.cmd doctor --report` | the capability report, with the home directory redacted to `~` |
 | `cmd.exe /c sbar-orbit.cmd mcp` | initialize, 12 tools listed |
+| `sbar-orbit.cmd mcp` spawned verbatim, no shell | initialize answered, so the configuration is startable as written by a host that spawns the way Bun does |
 | `orbit_create`, `orbit_act` navigate, `orbit_act` read, `orbit_observe`, `orbit_status`, `orbit_stop` | every one `isError: false`, the read returned the fixture's heading, observe returned the title, location and tab list |
 
 That is the whole path an agent host takes on Windows, with nothing imported by hand.

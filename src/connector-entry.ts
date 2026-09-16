@@ -22,10 +22,13 @@ import { join } from "node:path";
  *     name either of them has.
  *
  * Windows has a launcher of its own now, `bin/sbar-orbit.cmd`, and it is named the same way with one
- * difference stated rather than smoothed over: a `.cmd` is not an image the kernel can execute, so an
- * agent host has to run it through `cmd.exe`, and not every host does. A host that refuses it can be
- * pointed at the interpreter and `src/mcp.ts` instead, which is the same entry point one level down,
- * and `windowsFallback` is that switch. Nothing else in the project has to know the difference.
+ * difference stated rather than smoothed over. A `.cmd` is not an image the kernel executes, so
+ * whether a host can start it depends on how that host spawns. Measured on the guest: Bun's own
+ * spawn started it both verbatim, exactly as this configuration reads, and through `cmd.exe`. A host
+ * calling Node's `child_process.spawn` without `shell: true` cannot, and that host is pointed at the
+ * interpreter and `src/mcp.ts` instead, which is the same entry point one level down.
+ * `windowsFallback` is that switch, and `sbar-orbit connector-config --no-launcher` is how a person
+ * reaches it. Nothing else in the project has to know the difference.
  */
 export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string; windowsFallback?: boolean }) {
   const platform = options.platform ?? process.platform;

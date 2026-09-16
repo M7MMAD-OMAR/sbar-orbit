@@ -114,6 +114,8 @@ echo   sbar-orbit preflight           Check prerequisites without starting anyth
 echo   sbar-orbit clean               Remove workspaces no running broker owns
 echo   sbar-orbit diagnostics         Prepare a private report and an issue link
 echo   sbar-orbit connector-config    Print MCP configuration for an agent host
+echo   sbar-orbit connector-config --no-launcher
+echo                                  For a host that cannot spawn a .cmd
 echo   sbar-orbit mcp                 Run the stdio MCP adapter
 echo.
 echo Linux only, and refused here by name rather than failing later: install, service, autostart,
