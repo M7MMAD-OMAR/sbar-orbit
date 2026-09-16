@@ -6,10 +6,15 @@ import {
   canRestoreTo, clearRestorePoints, createSubvolume, isSubvolume, listRestorePoints,
   removeRestorePoint, restoreProfile, reversibilityOf, takeRestorePoint, undoCompleteness,
 } from "../src/restore";
+import { expectPrivatePath } from "./private-path";
 
 /** Snapshots need btrfs, so the filesystem tests run where the workspaces actually live. */
 const workspaceRoot = join(homedir(), ".cache");
 const onBtrfs = await (async () => {
+  // findmnt is Linux only. Spawning it elsewhere throws ENOENT at module load, which takes down every
+  // test in the file rather than the one that cares about snapshots: the answer there is simply "no
+  // btrfs", which is what every non Linux machine is.
+  if (process.platform !== "linux") return false;
   const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", workspaceRoot], { stdout: "pipe", stderr: "ignore" });
   return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
 })();
@@ -139,7 +144,7 @@ test("a filesystem that cannot make a subvolume leaves the directory exactly as 
   // tmpfs has no subvolumes. The first version of this removed the directory before asking btrfs,
   // so on tmpfs it deleted the session profile and returned false, and every browser session then
   // failed to start into a profile that was no longer there.
-  const root = await mkdtemp(join("/tmp", "orbit-nosubvol-"));
+  const root = await mkdtemp(join(tmpdir(), "orbit-nosubvol-"));
   const profile = join(root, "profile");
   await mkdir(profile, { recursive: true, mode: 0o700 });
   await writeFile(join(profile, "marker"), "still here");
@@ -148,7 +153,7 @@ test("a filesystem that cannot make a subvolume leaves the directory exactly as 
     // The directory, its mode and its contents all survive a filesystem that said no.
     expect((await stat(profile)).isDirectory()).toBe(true);
     expect(await readFile(join(profile, "marker"), "utf8")).toBe("still here");
-    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(profile, 0o700);
     // And no half-made spare is left beside it.
     await expect(stat(`${profile}.subvol`)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -161,7 +166,7 @@ test.if(onBtrfs)("a new subvolume is no looser than the directory it replaces", 
   try {
     expect(await createSubvolume(profile)).toBe(true);
     // btrfs creates at the umask, and this directory holds a copy of the person's live sessions.
-    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(profile, 0o700);
     expect(await isSubvolume(profile)).toBe(true);
   } finally {
     await Bun.spawn(["/usr/bin/btrfs", "property", "set", "-ts", profile, "ro", "false"], { stdout: "ignore", stderr: "ignore" }).exited;
@@ -191,7 +196,7 @@ test.if(onBtrfs)("a restore swaps the profile for the point, and what happened a
     await expect(stat(join(profile, "Local State"))).rejects.toThrow();
     // Still a subvolume, so the session can keep taking points after being restored.
     expect(await isSubvolume(profile)).toBe(true);
-    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(profile, 0o700);
     // And neither side of the swap is left lying around.
     await expect(stat(`${profile}.replaced`)).rejects.toThrow();
     await expect(stat(`${profile}.restored`)).rejects.toThrow();
@@ -207,7 +212,7 @@ test.if(onBtrfs)("a restore swaps the profile for the point, and what happened a
 });
 
 test("a filesystem that cannot snapshot leaves the profile exactly as it was", async () => {
-  const root = await mkdtemp(join("/tmp", "orbit-restore-nosnap-"));
+  const root = await mkdtemp(join(tmpdir(), "orbit-restore-nosnap-"));
   const profile = join(root, "profile");
   await mkdir(profile, { recursive: true, mode: 0o700 });
   await writeFile(join(profile, "Preferences"), "live");
@@ -216,7 +221,7 @@ test("a filesystem that cannot snapshot leaves the profile exactly as it was", a
     expect(await restoreProfile(profile, point)).toBe(false);
     // The caller has a profile either way, so a refusal must not be the reason it loses one.
     expect(await readFile(join(profile, "Preferences"), "utf8")).toBe("live");
-    expect((await stat(profile)).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(profile, 0o700);
     await expect(stat(`${profile}.restored`)).rejects.toThrow();
     await expect(stat(`${profile}.replaced`)).rejects.toThrow();
   } finally { await rm(root, { recursive: true, force: true }); }

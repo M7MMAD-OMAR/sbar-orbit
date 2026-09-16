@@ -25,7 +25,13 @@ async function prepared(root: string, version: string) {
 async function packFixture(root: string, version: string) {
   const tree = join(root, `fixture-${version}`, "package");
   await mkdir(join(tree, "bin"), { recursive: true });
+  // Both launchers, because a real Orbit release carries both: `git ls-files bin/` on a packaged
+  // archive lists `bin/sbar-orbit` and `bin/sbar-orbit.cmd`. Writing only the bash one made this
+  // fixture a Linux-only archive, which the Windows updater then refused, correctly, with "the archive
+  // carries no bin/sbar-orbit.cmd". The refusal was right and the fixture was wrong: it was testing
+  // that a release missing this platform's launcher is rejected, not that a release is prepared.
   await writeFile(join(tree, "bin/sbar-orbit"), "#!/usr/bin/env bash\n");
+  await writeFile(join(tree, "bin/sbar-orbit.cmd"), "@echo off\r\n");
   await writeFile(join(tree, "package.json"), JSON.stringify({ name: "sbar-orbit", version }));
   const archive = join(root, `${version}.tgz`);
   const packed = Bun.spawn(["tar", "czf", archive, "-C", join(root, `fixture-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
@@ -418,4 +424,45 @@ test.skipIf(process.platform === "win32")("the Linux install stays a symlink, so
     expect(await readlink(paths.current)).toBe(join(paths.versions, "1.0.0"));
     expect(await Bun.file(`${paths.current}.txt`).exists()).toBe(false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+/**
+ * A release that does not carry this platform's launcher is refused, not half prepared.
+ *
+ * This was found by accident: `packFixture` wrote only `bin/sbar-orbit`, so on Windows every update
+ * test hit the refusal instead of the behaviour it meant to check. The fixture was wrong, but the
+ * refusal was right and nothing was asserting it, so it gets a test of its own rather than being
+ * fixed away. A Linux-only archive reaching a Windows machine is a real shape: the two launchers are
+ * separate files, and a release built from a tree missing one of them would install a command that
+ * cannot start.
+ */
+test("an archive without this platform's launcher is refused rather than prepared", async () => {
+  const { root, close } = await fixture();
+  try {
+    const version = "0.1.0-alpha.9";
+    const tree = join(root, `wrong-${version}`, "package");
+    await mkdir(join(tree, "bin"), { recursive: true });
+    // The launcher for the OTHER platform only, which is what a release built on one side looks like
+    // if the other side's file never got tracked.
+    const foreign = process.platform === "win32" ? "bin/sbar-orbit" : "bin/sbar-orbit.cmd";
+    await writeFile(join(tree, foreign), "placeholder\n");
+    await writeFile(join(tree, "package.json"), JSON.stringify({ name: "sbar-orbit", version }));
+    const archive = join(root, `${version}-wrong.tgz`);
+    const packed = Bun.spawn(["tar", "czf", archive, "-C", join(root, `wrong-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
+    expect(await packed.exited).toBe(0);
+
+    const bytes = await Bun.file(archive).arrayBuffer();
+    const integrity = `sha512-${Buffer.from(await crypto.subtle.digest("SHA-512", bytes)).toString("base64")}`;
+    const source = feed({ [version]: { publishedAt: "2026-09-01T00:00:00Z", bytes, integrity } });
+    const found = await checkForUpdate("0.1.0-alpha.4", source);
+    const prepared = await prepareVersion(found.eligible!, source, { root, install: async () => ({ ok: true, output: "" }) });
+
+    expect(prepared.prepared).toBe(false);
+    // The reason names the file that is missing, so a person reading it knows what was wrong with the
+    // release rather than only that something was.
+    expect(String((prepared as { reason: string }).reason)).toContain(launcherName());
+    // And nothing is left behind: a refused release must not leave a half prepared version that a
+    // later activate could find.
+    expect(await preparedVersions(root)).toEqual([]);
+  } finally { await close(); }
 });

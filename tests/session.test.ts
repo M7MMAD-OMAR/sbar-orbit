@@ -144,6 +144,7 @@ test("a restore is refused far more often than it is granted, and says why", asy
   const origin = `http://127.0.0.1:${server.port}`;
   const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
   const onBtrfs = await (async () => {
+    if (process.platform !== "linux") return false;
     const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", workspace], { stdout: "pipe", stderr: "ignore" });
     return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
   })();

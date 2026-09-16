@@ -2,6 +2,8 @@ import { test } from "bun:test";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 /**
  * A suite whose SUBJECT is Linux only, skipped elsewhere with the reason written down.
@@ -77,7 +79,11 @@ export function needsCommand(command: string, reason: string) {
 export function needsGitCheckout(reason: string) {
   if (!reason.trim()) throw new Error("A test that needs a git checkout has to say what for");
   if (!Bun.which("git")) return test.skip;
+  // `new URL("..", import.meta.url).pathname` yields `/C:/...` on Windows, which is not a path any
+  // Windows API accepts: spawning with it threw between tests rather than failing one, taking down
+  // every file that imports this module. `fileURLToPath` is the conversion that knows about drives.
+  const here = dirname(fileURLToPath(import.meta.url));
   const asked = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"],
-    { cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "ignore" });
+    { cwd: resolve(here, ".."), stdout: "pipe", stderr: "ignore" });
   return asked.stdout.toString().trim() === "true" ? test : test.skip;
 }

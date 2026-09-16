@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { installService, uninstallService, serviceSocketPath, claimSocket, budget } from "../src/service";
@@ -12,7 +13,11 @@ async function prefix() {
   return { units: join(root, "units"), launcher, root };
 }
 
-test("installing writes a slice carrying the budget and a service bound to it", async () => {
+// A systemd unit file, which Windows does not have and deliberately does not install: the launcher
+// there installs no service at all, because a Chromium family browser cannot run in session 0 and the
+// broker belongs in the person's own session. Asserting unit contents is asserting the Linux install.
+linuxOnlySuite("the Windows install writes no service at all, by design, so there are no units to assert")(
+  "installing writes a slice carrying the budget and a service bound to it", async () => {
   const { units, launcher } = await prefix();
   const result = await installService(launcher, units);
   expect(result.written.map(path => path.split("/").at(-1)).sort())

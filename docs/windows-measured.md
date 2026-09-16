@@ -1234,7 +1234,55 @@ two update tests that build a Linux release archive and check it against a Windo
 two fail with `the archive carries no bin/sbar-orbit.cmd, so it is not an Orbit release for this
 platform`, which is the Windows install **correctly refusing a Linux-only archive**.
 
-## 21. The control channel, for whoever repeats this
+## 21. Zero failures on the guest, and what that does and does not mean
+
+The guest suite is at **196 pass, 0 fail, 95 skip**. Every failure recorded across sections 13, 18, 19
+and 20 is now closed, and the last four went the way the earlier ones did: read one at a time, they
+were four different things, not one category.
+
+| What failed | What it was |
+|---|---|
+| 2 update tests | `packFixture` wrote only `bin/sbar-orbit`, so the fixture was a **Linux-only archive** and the Windows updater refused it, correctly. The refusal was right and the fixture was wrong |
+| `a restore is refused ...` | `/usr/bin/findmnt` spawned at **module load**, so an ENOENT took down every test in the file instead of the one that cares about btrfs |
+| the systemd slice test | Genuinely Linux only: Windows installs no service at all, by design, so there are no units to assert |
+| `website/tests/locale.test.tsx` | `Cannot find module 'react/jsx-dev-runtime'`. The website is a **separate workspace** and its dependencies were never installed on the guest |
+
+### The refusal got a test instead of being deleted
+
+`packFixture` now writes both launchers, the way a real release does, which was verified against an
+actual packaged archive rather than assumed: `sbar-orbit-0.1.0-alpha.6-source.tar.gz` carries
+`bin/sbar-orbit`, `bin/sbar-orbit.cmd` and `install.cmd`, and every manifest entry carries the
+executable field added in section 19.
+
+But the behaviour the broken fixture had been accidentally exercising is worth keeping, so it has a
+test of its own now: an archive missing **this platform's** launcher is refused, the reason names the
+missing file, and no half prepared version is left behind. That shape is real, since the two launchers
+are separate tracked files.
+
+### Two of my own tools were wrong
+
+`needsGitCheckout`, added in section 19, used `new URL("..", import.meta.url).pathname`, which is
+`/C:/...` on Windows and is not a path any Windows API accepts. It threw **between tests** rather than
+failing one, which took down every file importing the module and showed up as three failures with no
+`(fail)` marker anywhere in the log. `fileURLToPath` is the conversion that knows about drive letters.
+
+And two restore tests used a literal `/tmp`, which on Windows becomes `C:\tmp` at the **drive root**
+and inherits the root's permissive ACL. The privacy helper from section 16 caught it: five principals
+where none should be exposed. A fresh directory under `%TEMP%` has exactly the three. The helper found
+a real difference between two directories that both look like "a temporary directory".
+
+### What zero does not mean
+
+95 tests are **skipped** on Windows, and a skip is not a pass. The private display, the systemd units,
+the D-Bus and keyring work, the btrfs snapshots: those are Linux capabilities, and Orbit on Windows is
+a browser backend, not a whole port of the Linux one. `docs/support-tiers.md` states each capability at
+the tier its evidence supports, and this section does not raise any of them.
+
+What zero failures means is narrower and still worth saying: **every test that can run on Windows
+does, and passes.** There is no longer a pile of failures standing between a reader and the question of
+what is actually supported.
+
+## 22. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
