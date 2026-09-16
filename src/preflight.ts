@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { chromeExecutables, nativeRuntimeLocations, nativeRuntimePackages } from "./runtime-paths";
+import { chromeExecutables, nativeRuntimeLocations, nativeRuntimePackages, windowsBrowserInstalls } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -82,25 +82,38 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   const add = (id: string, group: "common" | "browser" | "native", available: boolean, remedy: Remedy) => {
     checks.push({ id, group, available, remedy: available ? null : remedy });
   };
-  add("linux", "common", probe.platform === "linux",
+  // What the platform has to provide, which is not the same list everywhere. Windows has none of
+  // systemd, and does not need it: the budget is a named job object and the broker runs in the
+  // person's own session, both measured on a Windows 11 guest. Checking for systemctl there would
+  // fail an install for the absence of something the Windows path never calls.
+  const windows = probe.platform === "win32";
+  add("supported-platform", "common", probe.platform === "linux" || windows,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
-      message: "This alpha requires Linux. The macOS and Windows adapters are unverified, so nothing here can install them." });
-  for (const name of ["systemctl", "systemd-run", "nice", "python3"]) {
-    const owner = name === "nice" ? { any: ["coreutils"] } : name === "python3" ? { any: ["python3"], apt: ["python3"], pacman: ["python"] } : { any: ["systemd"] };
-    add(name, "common", await probe.file(`/usr/bin/${name}`, true),
-      await systemPackages(probe, `system-tool-${name}`, `Orbit needs ${name} from the base system. Installing it belongs to the package manager, so it is yours to run.`, owner));
+      message: "This alpha runs on Linux and, at the Limited tier, on Windows. The macOS adapter is unverified, so nothing here can install it." });
+  if (!windows) {
+    for (const name of ["systemctl", "systemd-run", "nice", "python3"]) {
+      const owner = name === "nice" ? { any: ["coreutils"] } : name === "python3" ? { any: ["python3"], apt: ["python3"], pacman: ["python"] } : { any: ["systemd"] };
+      add(name, "common", await probe.file(`/usr/bin/${name}`, true),
+        await systemPackages(probe, `system-tool-${name}`, `Orbit needs ${name} from the base system. Installing it belongs to the package manager, so it is yours to run.`, owner));
+    }
+    add("systemd-user-session", "common", await probe.userManager(),
+      { id: "no-systemd-user-session", needsElevation: false, agentMayRun: false,
+        message: "Orbit runs every process it owns inside a systemd user slice, and no user manager is running for this account. A desktop login provides one. A container and a bare ssh session without lingering do not." });
+    // The Python subreaper that holds a browser tree on Linux. Windows uses a job object instead, so
+    // its absence there is correct rather than an incomplete source tree.
+    add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise.py"), false),
+      { id: "incomplete-source", needsElevation: false, agentMayRun: false,
+        message: "This source tree is missing files a release carries. Extract a complete Orbit source release, or check out the repository again." });
   }
-  add("systemd-user-session", "common", await probe.userManager(),
-    { id: "no-systemd-user-session", needsElevation: false, agentMayRun: false,
-      message: "Orbit runs every process it owns inside a systemd user slice, and no user manager is running for this account. A desktop login provides one. A container and a bare ssh session without lingering do not." });
-  add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise.py"), false),
-    { id: "incomplete-source", needsElevation: false, agentMayRun: false,
-      message: "This source tree is missing files a release carries. Extract a complete Orbit source release, or check out the repository again." });
   for (const name of ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"])
     add(name, "common", probe.module(name, project),
       { id: "dependencies-missing", needsElevation: false, agentMayRun: true, command: "bun install --frozen-lockfile --ignore-scripts",
         message: "Project dependencies are not installed. Run this in the source directory; the one command install does it for you." });
-  const browsers = await Promise.all(chromeExecutables.map(path => probe.file(path, true)));
+  // The same resolver `doctor` uses, so a Windows install and a Windows doctor cannot disagree about
+  // whether a browser exists. `chromeExecutables` is a list of Linux paths and finds nothing there.
+  const browsers = windows
+    ? [windowsBrowserInstalls().length > 0]
+    : await Promise.all(chromeExecutables.map(path => probe.file(path, true)));
   add("chrome-or-chromium", "browser", browsers.some(Boolean),
     await systemPackages(probe, "no-browser",
       "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at.",

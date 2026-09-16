@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
 import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
-import { activateLocal } from "./local-install";
+import { activateLocal, commandName } from "./local-install";
 import { installService, serviceSocketPath } from "./service";
 import { enableAutostart, autostartStatus } from "./autostart";
 import { connectorEntry } from "./connector-entry";
@@ -212,7 +212,7 @@ export async function runInstall(options: InstallOptions = {}) {
     if (dryRun) {
       // The top level launcher is what a caller reads to find the command afterwards. During a dry
       // run it has to name where the link would go, not where the source happens to be.
-      launcher = join(prefix, "bin/sbar-orbit");
+      launcher = join(prefix, "bin", commandName());
       return { state: "skipped", detail: `would link ${launcher}` };
     }
     const link = await activateLocal(source, prefix);
@@ -231,6 +231,11 @@ export async function runInstall(options: InstallOptions = {}) {
 
   await step("service", async () => {
     if (!wantsService) return { state: "skipped", detail: "--no-service" };
+    // Not a gap to fill later. A Chromium family browser will not run in Windows session 0, measured
+    // on a Windows 11 guest, so the broker belongs in the person's own session and there is no
+    // analogue of `loginctl enable-linger`. Autostart there is a per user Run key or logon task.
+    if (process.platform === "win32")
+      return { state: "skipped", detail: "Windows has no user service for this: a browser cannot run in session 0, so the broker runs in your session. Start it with `sbar-orbit.cmd serve`" };
     if (dryRun) return { state: "skipped", detail: "would write units and enable the broker" };
     const units = await installService(launcher, unitDirectory);
     const autostart = await enableAutostart(launcher);

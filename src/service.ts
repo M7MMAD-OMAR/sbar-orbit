@@ -53,8 +53,24 @@ export function serviceSocketPath(runtimeDirectory = process.env.XDG_RUNTIME_DIR
 export async function claimSocket(socket: string, probe: (path: string) => Promise<boolean>) {
   await mkdir(dirname(socket), { recursive: true, mode: 0o700 });
   let existing;
-  try { existing = await stat(socket); } catch { return { claimed: true, replacedStaleSocket: false }; }
-  if (!existing.isSocket()) throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and is not a socket; remove it deliberately`);
+  try { existing = await stat(socket); }
+  catch (error) {
+    // ENOENT is the ordinary "nothing to claim". On Windows a socket file that IS there answers
+    // `stat` with EACCES while it is bound, and treating that as absent was measured to leave a
+    // stale file in place and fail the bind with "Failed to listen on unix socket", which says
+    // nothing about the cause. Anything that is not ENOENT means a path that exists and cannot be
+    // inspected, so it is probed rather than assumed away.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { claimed: true, replacedStaleSocket: false };
+    if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
+    await unlink(socket).catch(() => {});
+    return { claimed: true, replacedStaleSocket: true };
+  }
+  // `isSocket()` is false for a Windows AF_UNIX socket file, which reports as a regular file, so the
+  // shape test is Linux only. On Windows the probe above is the thing that tells a live broker from
+  // a leftover, and a leftover is what the design already expects there because %LOCALAPPDATA% is
+  // not cleared at logout the way a runtime directory is.
+  if (process.platform !== "win32" && !existing.isSocket())
+    throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and is not a socket; remove it deliberately`);
   if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
   await unlink(socket);
   return { claimed: true, replacedStaleSocket: true };

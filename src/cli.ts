@@ -111,8 +111,15 @@ try {
     console.log(JSON.stringify({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result }));
   }
 } catch (error) {
+  // An OrbitError carries a message meant for a person. Anything else used to be reported as the bare
+  // string "Command failed", which on Windows meant a broker that would not start said nothing at all
+  // about why. The real message is kept, trimmed, because a diagnosable failure is worth more than a
+  // uniform one. ORBIT_DEBUG=1 adds the stack for the case where the message alone is not enough.
+  const message = error instanceof OrbitError ? error.message
+    : `Command failed: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]?.slice(0, 300)}`;
   console.error(JSON.stringify({ ok: false, error: { code: error instanceof OrbitError ? error.code : "CLI_ERROR",
     diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined,
-    message: error instanceof OrbitError ? error.message : "Command failed" } }));
+    message,
+    ...(process.env.ORBIT_DEBUG && error instanceof Error && error.stack ? { stack: error.stack.split("\n").slice(0, 8) } : {}) } }));
   process.exitCode = 1;
 }

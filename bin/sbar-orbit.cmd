@@ -38,15 +38,16 @@ if "%orbit_command%"=="serve" goto :serve
 if "%orbit_command%"=="status" goto :status
 if "%orbit_command%"=="mcp" goto :adapter
 if "%orbit_command%"=="connector-config" goto :adapter
+rem Through limited.ts, like the bash launcher: on Windows that joins the shared job object rather
+rem than shelling out to systemd-run, so an install runs inside the same budget everything else does.
+if "%orbit_command%"=="install" goto :install
 
 rem Linux only, each for a reason this project has measured rather than assumed.
 if "%orbit_command%"=="service" goto :no_service
 if "%orbit_command%"=="autostart" goto :no_service
-if "%orbit_command%"=="install" goto :no_install
 if "%orbit_command%"=="panel" goto :no_desktop
 if "%orbit_command%"=="settings" goto :no_desktop
 if "%orbit_command%"=="config" goto :no_desktop
-if "%orbit_command%"=="update" goto :no_update
 
 rem doctor, clean, diagnostics and anything else the CLI grows.
 "%orbit_bun%" run "%orbit_root%\src\cli.ts" %*
@@ -80,26 +81,20 @@ shift
 "%orbit_bun%" run "%orbit_root%\src\%orbit_command%.ts" %1 %2 %3 %4
 exit /b %errorlevel%
 
+:install
+shift
+"%orbit_bun%" run "%orbit_root%\scripts\limited.ts" "%orbit_bun%" run "%orbit_root%\scripts\install.ts" %1 %2 %3 %4 %5 %6
+exit /b %errorlevel%
+
 :no_service
 echo sbar-orbit: there is no Orbit service on Windows. A Chromium family browser does not run in 1>&2
 echo session 0, so the broker belongs in your own session: run "sbar-orbit serve" there. 1>&2
 echo See docs/support-tiers.md. 1>&2
 exit /b 2
 
-:no_install
-echo sbar-orbit: the one command installation is Linux only. It links the command with a symlink, 1>&2
-echo which needs Developer Mode or elevation here, and installs a systemd user service, which does 1>&2
-echo not exist. Run Orbit from this source tree: "sbar-orbit serve", then "sbar-orbit doctor". 1>&2
-exit /b 2
-
 :no_desktop
 echo sbar-orbit: the panel, the settings window and the config command are GTK and Python, and are 1>&2
 echo Linux only. The broker, the browser sessions and the MCP adapter are not. 1>&2
-exit /b 2
-
-:no_update
-echo sbar-orbit: automatic updates switch a symlinked version directory, which needs Developer Mode 1>&2
-echo or elevation here. Update by replacing this source tree. 1>&2
 exit /b 2
 
 :help
@@ -118,8 +113,8 @@ echo   sbar-orbit connector-config --no-launcher
 echo                                  For a host that cannot spawn a .cmd
 echo   sbar-orbit mcp                 Run the stdio MCP adapter
 echo.
-echo Linux only, and refused here by name rather than failing later: install, service, autostart,
-echo panel, settings, config, update. See docs\support-tiers.md for what Windows can and cannot do.
+echo Linux only, and refused here by name rather than failing later: service, autostart,
+echo panel, settings, config. See docs\support-tiers.md for what Windows can and cannot do.
 echo.
 echo ORBIT_SOCKET selects another broker; without it the managed socket under %%LOCALAPPDATA%% is used.
 exit /b 0

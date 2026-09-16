@@ -651,7 +651,74 @@ diagnosed. The python3 and systemd groups have not been probed on the guest at a
 claimed about how hard they are. No fix was made here: this section moved a number from stale to
 measured, and turned one unknown into a named design decision.
 
-## 10. The control channel, for whoever repeats this
+## 10. The one command install, run on the guest
+
+`install` had never run on Windows. It refused there by name, pending the symlink answer, and that
+answer now exists, so this is the command actually running.
+
+### What it writes instead of a symlink
+
+`activateLocal` writes a `.cmd` shim that forwards to the source launcher. The shim carries a marker
+line, because the Linux path refuses to replace anything that is not a symlink pointing into a
+recognised source, and a shim that could not be told from a person's own batch file would have traded
+that safety away. Measured on the guest, 131 bytes:
+
+```
+@echo off
+@rem sbar-orbit-managed-shim
+@rem Target: C:\orbit\src\bin\sbar-orbit.cmd
+@call "C:\orbit\src\bin\sbar-orbit.cmd" %*
+```
+
+### The run
+
+| Step | Result on the guest |
+|---|---|
+| `install --dry-run --json` | `installed: true`, every step reporting what it would do |
+| `install --json` | `installed: true`, launcher and connector written |
+| prerequisites | `done`, 6 optional items missing, no blocking failure |
+| installing twice | safe, no duplicate |
+| a foreign `sbar-orbit.cmd` in the prefix | **refused**, and the file was left byte for byte intact |
+
+Then the whole product, driven through the INSTALLED command rather than the source tree:
+
+| Call | Result |
+|---|---|
+| `sbar-orbit.cmd serve --managed-socket` | bound `%LOCALAPPDATA%\sbar-orbit\broker.sock` |
+| `sbar-orbit.cmd status` | real JSON, `Orbit idle`, naming that socket |
+| `sbar-orbit.cmd session create browser` | `state: running` |
+| `sbar-orbit.cmd session observe` | `image/jpeg, 1280x800` |
+| `sbar-orbit.cmd session stop` | stopped |
+
+### Three product bugs, each found by running it
+
+- **The managed broker could not bind, and would not say why.** `claimSocket` treated every `stat`
+  failure as "nothing is there". On Windows a socket file that IS there answers `stat` with EACCES
+  while it is bound, so a leftover was left in place and the bind failed with
+  `Failed to listen on unix socket` and no cause. Only ENOENT means absent now; anything else is
+  probed. The `isSocket()` shape test is Linux only, because a Windows AF_UNIX socket file reports as
+  a regular file. This is exactly the trap section 2 predicted, reaching the product this time.
+- **The CLI threw away every error it did not recognise.** Any non `OrbitError` was reported as the
+  bare string `Command failed`. That is what made the bind failure undiagnosable, and finding the
+  cause needed the message back. It is kept and trimmed now, with `ORBIT_DEBUG=1` adding the stack.
+- **`preflight` demanded systemd on a platform that has none.** The install failed at its first step
+  for the absence of `systemctl`, `systemd-run`, `nice` and `python3`, none of which the Windows path
+  calls, and it looked for a browser at Linux paths while `doctor` used the Windows resolver. The
+  platform check now admits Windows at the Limited tier, skips the systemd group there, and uses the
+  same browser resolver `doctor` does.
+
+### What is not claimed
+
+`install` ran with `--no-service` throughout. The service step refuses on Windows by design, because a
+browser does not run in session 0, so nothing about autostart there has been measured. The prefix was
+a throwaway directory, not a real one on PATH, and `prefix-not-on-path` was reported rather than
+acted on, which is the same thing it does on Linux.
+
+Two CLI papercuts were found and deliberately not fixed here, because they behave identically on
+Linux and are not Windows work: `--version` is not a verb, and `session create browser --json` reads
+`--json` as the account name, since positional parsing does not filter flags.
+
+## 11. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:
