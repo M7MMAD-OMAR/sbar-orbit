@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { access, constants, lstat, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { windowsBrowserInstalls } from "./runtime-paths";
 
 /**
  * What this machine can actually do, probed rather than assumed.
@@ -217,12 +218,16 @@ export async function supportsReflink(directory: string): Promise<boolean> {
 export async function detectPlatform(home = homedir()): Promise<PlatformCapabilities> {
   const platform = process.platform;
   const linux = platform === "linux";
+  const windows = platform === "win32";
+  const windowsInstalls = windows ? windowsBrowserInstalls() : [];
   const sessionType = !linux ? "none"
     : process.env.WAYLAND_DISPLAY ? "wayland"
     : process.env.DISPLAY ? "x11" : "none";
   const secretService = await secretServiceState();
   const notes: string[] = [];
-  if (!linux) notes.push("Only the browser backend is designed for this platform, and it is unverified. See docs/porting.md.");
+  if (windows) notes.push("The browser backend runs here and the private display does not. Measured on one Windows 11 guest, so this is a Limited tier: see docs/support-tiers.md.");
+  if (windows) notes.push("A session cannot start from your own browser profile on Windows. App Bound Encryption refuses any non default user data directory, so the clone would start signed out.");
+  if (!linux && !windows) notes.push("Only the browser backend is designed for this platform, and it is unverified. See docs/porting.md.");
   if (linux && sessionType === "none") notes.push("No desktop session was found. The browser backend needs none; the private display does.");
   if (secretService === "absent") notes.push("No secret service answered, so a profile whose cookies need the keyring cannot be decrypted here.");
   if (linux && !await confinedEgressAvailable())
@@ -232,12 +237,19 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
     // The private display nests its own compositor, so it depends on Linux and on the bundled
     // runtime rather than on which desktop the person happens to be using.
     nativeDisplaySupported: linux,
-    browserBackendSupported: linux,
+    // Not `linux`. A guest where Edge launched, answered CDP and rendered a page reported `false`
+    // here, which is the one line a person on a fresh Windows machine reads to decide whether Orbit
+    // can work at all. It is whether this platform has a backend AND a browser it can start.
+    browserBackendSupported: linux || (windows && windowsInstalls.length > 0),
     secretService,
     filteredBusProxy: linux && await exists("/usr/bin/xdg-dbus-proxy", true) ? "/usr/bin/xdg-dbus-proxy" : null,
     systemdUserScopes: await systemdUserScopes(),
     confinedEgress: await confinedEgressAvailable(),
-    browsers: linux ? await detectBrowsers(home) : [],
+    // Windows installs carry no keyring names, because there is no keyring: Chromium's key lives in
+    // DPAPI under App Bound Encryption there. The fields are empty rather than filled with a Linux
+    // shaped guess, and `canCloneProfile` refuses the whole platform before it could read them.
+    browsers: linux ? await detectBrowsers(home)
+      : windowsInstalls.map(install => ({ ...install, packaging: "system" as const, keyringItem: "", keyringApplication: "" })),
     notes,
   };
 }
@@ -281,6 +293,12 @@ export async function containerized(): Promise<boolean> {
 }
 
 export async function hostClassTier(): Promise<{ assigned: string; why: string }> {
+  // Windows stopped being a platform with no host in reach on 16 September 2026: a Windows 11 guest
+  // has run the broker, a browser session and the whole action surface. That is one virtual machine
+  // with no person at it, which is `Limited` and not `Measured`, and saying so here is the difference
+  // between a bug report that is welcome and one filed against a host nothing has ever run on.
+  if (process.platform === "win32")
+    return { assigned: "Limited", why: "One Windows 11 guest has run the broker, a browser session and every action, and three sessions in about ninety died unattributed. Virtual hardware, one browser, nobody at the machine. See docs/windows-measured.md." };
   if (process.platform !== "linux")
     return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
   const { id, versionId } = await distributionName();
@@ -328,6 +346,17 @@ export type CloneRefusal = { allowed: false; reason: string } | { allowed: true;
  * gigabyte copy. Refusing with a reason is the whole point of this function.
  */
 export async function canCloneProfile(profileDirectory: string, capabilities: PlatformCapabilities, workspace: string): Promise<CloneRefusal> {
+  // Refused on Windows as a platform, before anything is read, and stated here rather than falling
+  // out of a later check. Chromium's App Bound Encryption returns kNotUsingDefaultUserDataDir for any
+  // non default user data directory, and it returns BEFORE the policy branch, so
+  // ApplicationBoundEncryptionEnabled=0 does not reopen it either. A clone would start signed out,
+  // which is worse than a refusal because it looks like it worked. See docs/support-tiers.md.
+  //
+  // Until Windows browsers were reported at all this was refused by accident: the install list was
+  // empty there, so the lookup below failed for the wrong reason. Reporting the installs correctly
+  // is what made saying this out loud necessary.
+  if (capabilities.platform === "win32")
+    return { allowed: false, reason: "Starting from your own browser profile is refused on Windows. App Bound Encryption refuses any user data directory but the browser's own, so the copy would open with no logins in it." };
   const install = capabilities.browsers.find(candidate => candidate.profileDirectory === profileDirectory);
   if (!install) return { allowed: false, reason: "No detected browser install owns that profile directory, so the binary that can decrypt it is unknown." };
   // Packaging decides where a profile lives, not whether its key can be read: the keyring item is

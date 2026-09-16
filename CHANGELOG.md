@@ -4,6 +4,33 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+### Added
+
+- `bin/sbar-orbit.cmd`, a Windows launcher. `bin/sbar-orbit` is a bash script, so until now there was
+  no way to start Orbit on Windows at all: the broker was reachable only by importing `startBroker`
+  from another Bun process. It resolves Bun by location rather than from PATH, and refuses by name the
+  subcommands that cannot work there (`install`, `update`, `service`, `autostart`, `panel`,
+  `settings`, `config`) rather than letting them fail further down.
+- A managed broker socket path on Windows, `%LOCALAPPDATA%\sbar-orbit\broker.sock`.
+  `serviceSocketPath()` used to throw `CONFIG_REQUIRED` there, because it wanted `XDG_RUNTIME_DIR`.
+
+### Fixed
+
+- `doctor --report` said `browserBackendSupported: false` and `browsers: []` on Windows, on a guest
+  where a browser launched, answered CDP and rendered a page. Two resolvers answered one question;
+  there is one now, `windowsBrowserInstalls()`, and it lives in `runtime-paths.ts` so a capability
+  report does not have to load a browser automation library to produce one.
+- Starting a session from the person's own browser profile is refused on Windows as a platform, with
+  the reason, rather than by accident because no install was detected. App Bound Encryption refuses
+  any non default user data directory, so the clone would open signed out.
+- A launch timeout reported `Owned Chrome exited with code () => child.exitCode`, on every platform.
+  `exitCode` is a function on that interface, so the comparison against `null` was always false and
+  the template printed the function's source. The still running case now says how long it waited.
+- An owned browser that dies mid session is attributed. Playwright reports `Target page, context or
+  browser has been closed`, which names no cause; the failure now carries the browser's exit code,
+  its last stderr lines, and on Windows the job object's own counters when the kernel was what reaped
+  the tree, and one record goes to the broker's journal at the moment the browser exits.
+
 ### Changed
 
 - Generated agent connector configuration names the launcher and one argument,

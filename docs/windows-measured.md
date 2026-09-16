@@ -440,32 +440,49 @@ probe's own process, so nothing here depends on the guest reaching the internet:
 
 A whole session costs 2.2 to 5.3 s on the guest, wall clock, including the browser launch.
 
-### The failure that is real, and unattributed
+### Five failures in about a hundred sessions, and what they were
 
-**Three sessions in about ninety failed**, every one of them presenting as
-`Target page, context or browser has been closed` at whatever call happened to be in flight:
-`connectOverCDP` during create, a `goto` inside navigate, and an `open-tab`. The browser died; the
-action that reported it was a bystander.
+**Five sessions of roughly a hundred failed.** They are recorded here rather than averaged away,
+because the number is the useful part and so is the shape.
 
-What is known, and it is less than a cause:
+| What was reported | Count | What it was |
+|---|---|---|
+| `Target page, context or browser has been closed` | 3 | the browser died, at `connectOverCDP`, inside a `goto`, and at an `open-tab`. Unattributed |
+| `Browser operation timed out` after 5310 ms | 1 | the context's own 5 s locator timeout. Contention, not a missing element |
+| `did not publish its local endpoint` after 15.7 s | 1 | the browser never came up inside the launch deadline |
+
+Every one of them came from the same harness shape: one guest process per session, started by a
+scheduled task, back to back, so the previous run's browser tree was still being reaped while the
+next one launched, on 2 vCPU. The two timeouts are that contention stated plainly. The three closed
+browsers are not explained.
+
+What is known about those three, and it is less than a cause:
 
 - It is not the browser or the containment. The identical workload run directly against
   `launchChrome()`, one layer below the broker, passed **34 of 34** times.
 - It is not the shared budget. The named job object's peak sat at 1489 MB of its 2048 MB ceiling and
-  did not move across runs, and the browser tree is charged to its own per session job, not to that
-  pool.
-- All three failures came from the same harness shape: one guest process per session, started by a
-  scheduled task, back to back, so the previous run's browser tree was being reaped as the next one
-  started. Running many sessions inside one broker (40) and many cold brokers inside one process (12)
-  produced none.
-- It has not recurred in 62 sessions since, which is not the same as being fixed.
+  did not move across runs, and a browser tree is charged to its own per session job, not to that pool.
+- Neither 40 sessions inside one broker nor 12 cold brokers inside one process produced any failure
+  at all.
 
-What changed because of it is attribution, not behaviour. Playwright's own message names no cause, so
-`launchChrome()` now wraps the handshake failure with the browser's exit code and its last stderr
-lines, reads the job object's own counters into that line when the kernel was what reaped the tree,
-and writes one record to the broker's journal at the moment an owned browser exits while its session
-is still open. The next occurrence should say which layer it came from rather than leaving the next
-person to bisect it.
+### The bug the failures exposed, which was not about Windows
+
+The launch timeout printed this:
+
+```
+Owned Chrome exited with code () => child.exitCode before publishing its endpoint
+```
+
+`exitCode` is a function on that interface. Comparing the function to `null` is always false, so the
+branch that says "did not publish, still running" was unreachable, and interpolating the function
+printed its source. Every launch timeout on **every** platform has been reporting a function body as
+an exit code. It is read once and used now, and the still running case says how long it waited.
+
+The rest of what changed is attribution, not behaviour. Playwright's own message names no cause, so
+`launchChrome()` wraps the handshake failure with the browser's exit code and its last stderr lines,
+reads the job object's own counters into that line when the kernel was what reaped the tree, and
+writes one record to the broker's journal at the moment an owned browser exits while its session is
+still open.
 
 ### The launcher, so Orbit can be started at all
 
@@ -501,6 +518,23 @@ from the person's own profile is refused on Windows as a platform now, with the 
 `docs/support-tiers.md` already carries, because App Bound Encryption returns
 `kNotUsingDefaultUserDataDir` for any non default user data directory and returns before the policy
 branch. A clone would open signed out, which is worse than a refusal because it looks like it worked.
+
+### An agent host drove it, through the launcher
+
+The last thing to check was the shape a person actually gets: not a probe importing `startBroker`,
+but the commands and the connector. Run on the guest, in the interactive session:
+
+| Step | Result |
+|---|---|
+| `sbar-orbit.cmd serve --managed-socket` | bound `%LOCALAPPDATA%\sbar-orbit\broker.sock` |
+| `sbar-orbit.cmd doctor` | answered, `browserBackendSupported: true`, Edge listed, job object limits |
+| `sbar-orbit.cmd status` | `Orbit idle`, naming the managed socket |
+| `sbar-orbit.cmd connector-config` | `{"command": "...\bin\sbar-orbit.cmd", "args": ["mcp"], "env": {"ORBIT_SOCKET": "...\broker.sock"}}` |
+| `sbar-orbit.cmd doctor --report` | the capability report, with the home directory redacted to `~` |
+| `cmd.exe /c sbar-orbit.cmd mcp` | initialize, 12 tools listed |
+| `orbit_create`, `orbit_act` navigate, `orbit_act` read, `orbit_observe`, `orbit_status`, `orbit_stop` | every one `isError: false`, the read returned the fixture's heading, observe returned the title, location and tab list |
+
+That is the whole path an agent host takes on Windows, with nothing imported by hand.
 
 ### What is still not done
 

@@ -1,4 +1,4 @@
-import { totalmem } from "node:os";
+import { totalmem, homedir } from "node:os";
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { OrbitError } from "./errors";
@@ -33,7 +33,18 @@ export const budget = { CPUQuota: `${cpuCores * 100}%`, MemoryHigh: `${memoryMiB
  * A fixed socket path for a managed broker. Brokers started by tests and experiments keep their own
  * private directories, so only the managed one uses this path and they cannot collide.
  */
-export function serviceSocketPath(runtimeDirectory = process.env.XDG_RUNTIME_DIR) {
+export function serviceSocketPath(runtimeDirectory = process.env.XDG_RUNTIME_DIR, env = process.env, platform = process.platform) {
+  // Windows has no XDG_RUNTIME_DIR and no tmpfs to put one in, and `Bun.serve({unix})` was measured
+  // serving an AF_UNIX socket on an ordinary Windows filesystem path, so the fixed socket goes where
+  // every other per user Orbit path already goes there. %LOCALAPPDATA% is the precedent
+  // `workspaceRoot()` set: per user, non roaming, and inheriting an ACL of SYSTEM, Administrators
+  // and the owning user with no Everyone and no Anonymous. See docs/windows-measured.md.
+  //
+  // It differs from the Linux path in one way worth stating: a runtime directory is cleared when the
+  // person logs out and this is not, so a socket file can outlive the broker that bound it. That is
+  // what `claimSocket` already handles, by probing the socket before replacing it.
+  if (!runtimeDirectory && platform === "win32")
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "broker.sock");
   if (!runtimeDirectory) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
   return join(runtimeDirectory, "sbar-orbit", "broker.sock");
 }

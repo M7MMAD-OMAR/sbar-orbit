@@ -4,7 +4,7 @@ import { readFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
-import { chromeExecutables } from "./runtime-paths";
+import { chromeExecutables, windowsBrowserInstalls } from "./runtime-paths";
 import { defaultViewport } from "./viewport";
 
 export type ChromeLaunchOptions = {
@@ -53,28 +53,10 @@ export type ChromeLaunchOptions = {
  * Chrome was not installed.
  */
 export function defaultChromeExecutable(): string | undefined {
-  if (process.platform === "win32") return defaultWindowsBrowser();
+  if (process.platform === "win32") return windowsBrowserInstalls()[0]?.executable;
   return chromeExecutables.find(path => Bun.file(path).size > 0);
 }
 
-function defaultWindowsBrowser(): string | undefined {
-  const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter(Boolean) as string[];
-  const relative = ["Google\\Chrome\\Application\\chrome.exe", "Chromium\\Application\\chrome.exe", "Microsoft\\Edge\\Application\\msedge.exe"];
-  for (const leaf of relative)
-    for (const root of roots) {
-      const candidate = join(root, leaf);
-      if (Bun.file(candidate).size > 0) return candidate;
-    }
-  // The registry is the documented answer and the install roots are the common one, so the registry
-  // is the fallback rather than the first try: reading it costs a process, and a present file does not.
-  for (const exe of ["chrome.exe", "msedge.exe"])
-    for (const hive of ["HKCU", "HKLM"]) {
-      const probe = Bun.spawnSync(["reg", "query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`, "/ve"]);
-      const found = /REG_SZ\s+(.+?)\s*$/m.exec(probe.stdout.toString())?.[1]?.trim();
-      if (found && Bun.file(found).size > 0) return found;
-    }
-  return undefined;
-}
 
 /**
  * The launched browser and whatever keeps it contained, which is a different mechanism per platform.
@@ -140,12 +122,13 @@ function launchOnLinux(executable: string, profile: string, argv: string[], env:
 async function launchOnWindows(executable: string, profile: string, argv: string[], env: Record<string, string>): Promise<OwnedBrowser> {
   const { WindowsJob } = await import("./windows-job");
   const { cpuCores } = await import("./service");
-  const job = new WindowsJob({
+  const budget = {
     memoryBytes: 2 * 1024 * 1024 * 1024,
     // Hundredths of a percent of the WHOLE machine, not of a core, which is what CpuRate means.
     cpuCycleSharePercent: Math.min(10000, Math.round((cpuCores / navigator.hardwareConcurrency) * 10000)),
     activeProcesses: 512,
-  });
+  };
+  const job = new WindowsJob(budget);
   const child = Bun.spawn([executable, ...argv], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
   let diagnostics = "";
   void (async () => {
@@ -163,7 +146,21 @@ async function launchOnWindows(executable: string, profile: string, argv: string
   return {
     exitCode: () => child.exitCode,
     exited: child.exited,
-    diagnostics: () => diagnostics.split("\n").map(line => line.trim()).filter(Boolean).slice(-3).join("; "),
+    // A dead browser on Windows says nothing on stderr when the KERNEL is what killed it, and a job
+    // object kills for two reasons this budget can reach: the commit ceiling and the process ceiling.
+    // The counters that record it are the only witness, so they are read into the diagnostic line
+    // rather than left for someone to guess at. `terminatedProcesses` above zero is the kernel
+    // saying it reaped the tree; a peak at the ceiling says which limit it was.
+    diagnostics: () => {
+      const lines = diagnostics.split("\n").map(line => line.trim()).filter(Boolean).slice(-3);
+      let charged = "";
+      try {
+        const counts = job.accounting();
+        if (counts.terminatedProcesses > 0 || counts.peakJobMemoryBytes > budget.memoryBytes * 0.9)
+          charged = `the job object charged ${Math.round(counts.peakJobMemoryBytes / 1048576)} MB of its ${Math.round(budget.memoryBytes / 1048576)} MB ceiling, ${counts.activeProcesses} of ${budget.activeProcesses} processes live, ${counts.terminatedProcesses} terminated by the kernel`;
+      } catch {}
+      return [charged, ...lines].filter(Boolean).join("; ");
+    },
     async stop() {
       if (stopped) return;
       stopped = true;
@@ -245,7 +242,8 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     for (const listener of listeners) listener();
   })();
   try {
-    const deadline = Date.now() + 15000;
+    const endpointWaitMs = 15000;
+    const deadline = Date.now() + endpointWaitMs;
     let endpoint: string | undefined;
     while (Date.now() < deadline && owner.exitCode() === null) {
       try {
@@ -255,7 +253,14 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       } catch {}
       await Bun.sleep(25);
     }
-    if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(owner.exitCode === null ? "Owned Chrome did not publish its local endpoint" : `Owned Chrome exited with code ${owner.exitCode} before publishing its endpoint`));
+    // `exitCode` is a function on this interface, not a field. Comparing the function to null is
+    // always false and interpolating it prints its source, so every timeout on every platform read
+    // "Owned Chrome exited with code () => child.exitCode", which is not a code and not even a
+    // claim. Read once, then used.
+    const code = owner.exitCode();
+    if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(code === null
+      ? `Owned Chrome did not publish its local endpoint within ${endpointWaitMs / 1000} seconds and is still running`
+      : `Owned Chrome exited with code ${code} before publishing its endpoint`));
     socket = new WebSocket(endpoint);
     const connected = socket;
     await new Promise<void>((resolve, reject) => {
@@ -274,14 +279,33 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // runs against a Chrome that is still starting on the shared budget, so a shorter deadline here
     // only moves the starvation failure one line down. Measured: a run with the host busy enough for
     // hyprctl to miss 37 of 84 samples and the sample loop to stall 3.7 s lost this handshake at 10 s.
-    browser = await chromium.connectOverCDP(transport, { timeout: 20000 });
+    // Playwright's own failure here is "Target page, context or browser has been closed", which names
+    // no cause: the browser is gone and the reason it went is on its stderr. Measured on the Windows
+    // guest on 16 September 2026, twice in seventeen runs through the broker, and never once in
+    // fourteen direct launches, so a message without the browser's own last words sends the next
+    // person looking in the wrong layer. The handshake is attributed the same way the endpoint wait
+    // above already is.
+    try { browser = await chromium.connectOverCDP(transport, { timeout: 20000 }); }
+    catch (error) {
+      throw new OrbitError("BACKEND_FAILED", await explain(
+        `Owned Chrome published its endpoint and then dropped the connection (exit code ${owner.exitCode() ?? "none, still running"}): ${(error as Error).message}`));
+    }
     const context = browser.contexts()[0];
     if (!context) throw new OrbitError("BACKEND_FAILED", "Owned Chrome has no default context");
     const page = context.pages()[0] ?? await context.newPage();
     await page.setViewportSize(size);
     await owner.assertContained();
     browser.on("disconnected", () => { void close(); });
-    void owner.exited.then(() => close());
+    // A browser that dies mid session takes every action after it down with "Target page, context or
+    // browser has been closed", which names neither the browser nor the reason. The one moment the
+    // cause is still readable is here, before the tree is reaped, so it goes to the broker's own
+    // journal the way an unexpected RPC error already does. Without this line the next failure is
+    // attributed to whichever action happened to be in flight.
+    void owner.exited.then(async () => {
+      if (!closing) console.error(JSON.stringify({ ownedBrowser: "exited while its session was open",
+        exitCode: owner.exitCode(), cause: await explain("Owned Chrome exited") }));
+      await close();
+    });
     return { context, browser, page, close, onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); } };
   } catch (error) { await close(); throw error; }
 }

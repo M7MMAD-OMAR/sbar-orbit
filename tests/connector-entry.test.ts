@@ -21,12 +21,20 @@ test("the same source under two prefixes gives two entries, which is what an upg
     .not.toBe(connectorEntry({ launcher: "/b/bin/sbar-orbit", source, platform: "linux" }).command);
 });
 
-test("Windows has no launcher to run, so it names the interpreter and the module instead", () => {
-  expect(connectorEntry({ launcher: "C:\\orbit\\bin\\sbar-orbit", source: "C:\\orbit", platform: "win32", interpreter: "C:\\orbit\\bun.exe" }))
-    .toEqual({ command: "C:\\orbit\\bun.exe", args: [join("C:\\orbit", "src/mcp.ts")] });
-});
-
 test("a run with no launcher linked still produces a usable entry", () => {
   expect(connectorEntry({ source: "/opt/orbit", platform: "linux", interpreter: "/usr/bin/bun" }))
     .toEqual({ command: "/usr/bin/bun", args: [join("/opt/orbit", "src/mcp.ts")] });
+});
+
+test("Windows names its own launcher, and the suffix is added once", () => {
+  expect(connectorEntry({ launcher: "C:\\orbit\\bin\\sbar-orbit", source: "C:\\orbit", platform: "win32" }))
+    .toEqual({ command: "C:\\orbit\\bin\\sbar-orbit.cmd", args: ["mcp"] });
+  expect(connectorEntry({ launcher: "C:\\orbit\\bin\\sbar-orbit.cmd", source: "C:\\orbit", platform: "win32" }).command)
+    .toBe("C:\\orbit\\bin\\sbar-orbit.cmd");
+});
+
+test("a Windows host that cannot spawn a .cmd is given the interpreter and the module", () => {
+  expect(connectorEntry({ launcher: "C:\\orbit\\bin\\sbar-orbit", source: "C:\\orbit", platform: "win32",
+    interpreter: "C:\\orbit\\bun.exe", windowsFallback: true }))
+    .toEqual({ command: "C:\\orbit\\bun.exe", args: [join("C:\\orbit", "src/mcp.ts")] });
 });

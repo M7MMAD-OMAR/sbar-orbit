@@ -5,6 +5,55 @@ import { join } from "node:path";
 export const chromeExecutables = ["/opt/google/chrome/chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
 
 /**
+ * The same question on Windows, where there are no fixed paths.
+ *
+ * It lives here rather than in `chrome.ts` because two callers need it and one of them must not pull
+ * Playwright in: `doctor --report` answers on a machine with no broker and no browser session, and
+ * importing the launcher to ask which browsers exist would load a browser automation library to
+ * answer a filesystem question. The two used to disagree, and the disagreement was visible: a guest
+ * where Edge launched and rendered reported `browsers: []` and `browserBackendSupported: false`.
+ *
+ * Install roots first, registry second. `App Paths` is the documented answer and the roots are the
+ * common one, so the registry is the fallback: reading it costs a process and a present file does not.
+ * Chrome before Edge, because a profile is tied to the branding that wrote it and Chrome is what
+ * Orbit's other measurements were taken against.
+ */
+export type WindowsBrowser = { id: string; executable: string; profileDirectory: string };
+
+export function windowsBrowserInstalls(env = process.env): WindowsBrowser[] {
+  const roots = [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA].filter(Boolean) as string[];
+  const local = env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+  const known = [
+    { id: "google-chrome", leaf: "Google\\Chrome\\Application\\chrome.exe", exe: "chrome.exe", data: join(local, "Google\\Chrome\\User Data") },
+    { id: "chromium", leaf: "Chromium\\Application\\chrome.exe", exe: "chrome.exe", data: join(local, "Chromium\\User Data") },
+    { id: "microsoft-edge", leaf: "Microsoft\\Edge\\Application\\msedge.exe", exe: "msedge.exe", data: join(local, "Microsoft\\Edge\\User Data") },
+  ];
+  const found: WindowsBrowser[] = [];
+  for (const candidate of known) {
+    let executable = roots.map(root => join(root, candidate.leaf)).find(path => Bun.file(path).size > 0);
+    if (!executable) executable = registeredPath(candidate.exe);
+    if (executable) found.push({ id: candidate.id, executable, profileDirectory: candidate.data });
+  }
+  return found;
+}
+
+function registeredPath(exe: string): string | undefined {
+  for (const hive of ["HKCU", "HKLM"]) {
+    // `reg` is on every Windows install and is still spawned defensively: a host without it should
+    // report no browser, not throw out of a capability probe that a person runs to find out why
+    // nothing works.
+    let output: string;
+    try {
+      const probe = Bun.spawnSync(["reg", "query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`, "/ve"]);
+      output = probe.stdout.toString();
+    } catch { return undefined; }
+    const found = /REG_SZ\s+(.+?)\s*$/m.exec(output)?.[1]?.trim();
+    if (found && Bun.file(found).size > 0) return found;
+  }
+  return undefined;
+}
+
+/**
  * The Fedora packages the bootstrap downloads and unpacks, declared here rather than only in the shell
  * script, because the runtime directory is named after them and `tests/native-runtime.test.ts` checks
  * that the two lists still agree. Change one and the test names the other.

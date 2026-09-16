@@ -21,13 +21,29 @@ import { join } from "node:path";
  *     resolved it, and a checkout is wherever the person put it. The launcher is the only stable
  *     name either of them has.
  *
- * Windows is the exception, and it is stated rather than smoothed over: `bin/sbar-orbit` is a shell
- * script, so there is nothing for an agent host to execute. There the interpreter and the module are
- * named directly, which is the same entry point one level down. When Windows grows a launcher of its
- * own this is the single place that has to learn about it.
+ * Windows has a launcher of its own now, `bin/sbar-orbit.cmd`, and it is named the same way with one
+ * difference stated rather than smoothed over: a `.cmd` is not an image the kernel can execute, so an
+ * agent host has to run it through `cmd.exe`, and not every host does. A host that refuses it can be
+ * pointed at the interpreter and `src/mcp.ts` instead, which is the same entry point one level down,
+ * and `windowsFallback` is that switch. Nothing else in the project has to know the difference.
  */
-export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string }) {
+export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string; windowsFallback?: boolean }) {
   const platform = options.platform ?? process.platform;
-  if (options.launcher && platform !== "win32") return { command: options.launcher, args: ["mcp"] };
+  const windows = platform === "win32";
+  const launcher = windows ? windowsLauncher(options.launcher) : options.launcher;
+  if (launcher && !(windows && options.windowsFallback)) return { command: launcher, args: ["mcp"] };
   return { command: options.interpreter ?? process.execPath, args: [join(options.source, "src/mcp.ts")] };
+}
+
+/**
+ * The Windows launcher beside a path that may name the POSIX one.
+ *
+ * The installer and `connector-config` both hand over whichever launcher they know about, and on
+ * Windows that is the extensionless bash script when the caller built the path rather than being
+ * invoked through it. Adding the suffix here keeps one rule in one place instead of two callers
+ * remembering it.
+ */
+function windowsLauncher(launcher?: string) {
+  if (!launcher) return undefined;
+  return /\.(cmd|bat)$/i.test(launcher) ? launcher : `${launcher}.cmd`;
 }
