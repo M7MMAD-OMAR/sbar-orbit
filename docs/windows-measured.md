@@ -973,7 +973,49 @@ is the same assertion Linux runs, not a weaker Windows variant.
 This is the difference between a count and a diagnosis. Read as a pattern it was one more POSIX
 fixture; read properly it was the single property most worth measuring on a new platform.
 
-## 16. The control channel, for whoever repeats this
+## 16. Private files, asked of Windows instead of of a number
+
+Two more of the 21 were filed in section 13 as "POSIX file modes": they assert `0o600` and receive
+`438`. Read as a mechanism that is a mode test. Read as a subject it is **whether the files carrying a
+person's data stay private**, and Windows ignores the `mode` argument to `mkdir` and `writeFile`
+entirely, so the number the test wanted was never stored by the kernel. The assertion was standing in
+for a property that had never been checked on Windows at all.
+
+So the property was measured directly, through the real `Diagnostics` code writing a real journal.
+
+| Question | Answer on the guest |
+|---|---|
+| ACL on `events.jsonl` | `NT AUTHORITY\SYSTEM`, `BUILTIN\Administrators`, the owning user, each FullControl |
+| principals beyond those three | **none**: no Everyone, no ANONYMOUS LOGON, no `BUILTIN\Users` |
+
+That is the same set the broker socket inherits in section 2, which is the answer that matters: a
+second account on the machine cannot read an agent's diagnostics.
+
+### What the same probe found about secrets
+
+The probe also asked the question the mode assertion was sitting next to, since `exclude exception
+secrets` is the name of that test: a failure carrying `password=hunter2`, a token and a cookie was
+forced through, and **none of the three reached the journal**. The journal records the method, a trace
+ID and a timestamp, and by design never the params, so there is no redaction pass to get wrong. The
+exception text goes to the broker's stderr, which is the operator's own console and is deliberate.
+
+One caution recorded rather than dressed up: an early reading of this probe looked like the product
+had redacted a token, because the string appeared as `token=***` in my own captured output. That was
+this agent's tooling masking a GitHub-shaped string in transit, not Orbit. Checked at the source,
+`src/diagnostics.ts` has no redactor and needs none. A measurement that flatters the code is worth
+re-reading before it is written down.
+
+### The test made portable, with a negative control
+
+`tests/private-path.ts` asks each kernel in its own terms: the mode on POSIX, the ACL on Windows. It
+refuses to pass on an empty ACL read, because a probe that fails silently would turn this check into
+decoration. The four suites then pass on the guest, 13 pass and 0 fail.
+
+And the check was shown to catch something before it was trusted: a file granted `Everyone:(R)` with
+`icacls` is **refused** by the same helper on the same machine. A privacy assertion that has never
+rejected an exposed file has not been shown to guard anything.
+
+## 17. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

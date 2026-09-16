@@ -7,6 +7,7 @@ import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { leasedAuthorities, openEgressLease } from "../src/egress";
 import { detectPlatform } from "../src/platform";
 import { Sessions } from "../src/session";
+import { expectPrivatePath } from "./private-path";
 
 const confinable = (await detectPlatform()).confinedEgress;
 
@@ -85,7 +86,7 @@ test.if(confinable)("the lease forwards the authorities it holds and refuses the
     expect(lease.tier).toBe("namespace");
     const socketPath = join(root, "egress", "lease.sock");
     // The directory holds a live route out of a session carrying real logins.
-    expect((await stat(join(root, "egress"))).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(join(root, "egress"), 0o700);
 
     // A leased authority is tunnelled: the far end saw a connection, which is the only evidence that
     // does not depend on what the browser was told.

@@ -25,6 +25,7 @@ import { Diagnostics } from '../src/diagnostics';
 import { readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { OrbitError } from '../src/errors';
 import { startBroker, call } from '../src/ipc';
+import { expectPrivatePath } from "./private-path";
 
 test('diagnostics survive restart, rotate, and exclude exception secrets', async () => {
   const root = await mkdtemp(join(tmpdir(), 'orbit-diagnostics-'));
@@ -41,9 +42,11 @@ test('diagnostics survive restart, rotate, and exclude exception secrets', async
     for (const name of ['events.jsonl', 'events.previous.jsonl']) {
       const info = await stat(join(root, name));
       expect(info.size).toBeLessThanOrEqual(1400);
-      expect(info.mode & 0o777).toBe(0o600);
+      // Private in the terms the running kernel uses: a POSIX mode, or an ACL on Windows where the
+      // mode argument is ignored and asserting 0o600 would assert a number never stored.
+      await expectPrivatePath(join(root, name), 0o600);
     }
-    expect((await stat(root)).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(root, 0o700);
     const issue = new URL(report.issueUrl);
     expect(issue.origin).toBe('https://github.com');
     expect(issue.pathname).toBe('/M7MMAD-OMAR/sbar-orbit/issues/new');

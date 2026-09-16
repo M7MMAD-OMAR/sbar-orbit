@@ -6,6 +6,7 @@ const test = linuxOnlySuite("saved account leases, which src/profiles.ts refuses
 import { mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Sessions } from "../src/session";
+import { expectPrivatePath } from "./private-path";
 
 test("saved account survives a fresh browser, has an exclusive lease and stays private", async () => {
   const root = await createWorkspaceDirectory("account-test");
@@ -37,8 +38,8 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     await expect(run(a, "session.account.save", first)).rejects.toMatchObject({ code: "NOT_PAUSED" });
     await run(a, "session.pause", first);
     expect(await run(a, "session.account.save", first)).toEqual({ saved: true, accountName: "fixture" });
-    expect((await stat(join(accounts, "fixture", "state.json"))).mode & 0o777).toBe(0o600);
-    expect((await stat(join(accounts, "fixture"))).mode & 0o777).toBe(0o700);
+    await expectPrivatePath(join(accounts, "fixture", "state.json"), 0o600);
+    await expectPrivatePath(join(accounts, "fixture"), 0o700);
     await a.close();
     const second = await run(b, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
     await act(b, second, nav);

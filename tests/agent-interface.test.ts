@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { expectPrivatePath } from "./private-path";
 
 const presence = { title: "Fixture", location: "https://example.test/", pageCount: 2, pageIndex: 2,
   tabs: [{ tab: 1, label: "First", active: false }, { tab: 2, label: "Fixture", active: true }], pointer: null };
@@ -113,7 +114,7 @@ test("corrupt conversation state fails closed and explicit choice repairs it", a
     const directory = join(h.root, "usage");
     const file = (await readdir(directory))[0];
     if (!file) throw new Error("Usage state was not persisted");
-    expect((await stat(join(directory, file))).mode & 0o777).toBe(0o600);
+    await expectPrivatePath(join(directory, file), 0o600);
     await Bun.write(join(directory, file), '{"enabled":"false"}');
     expect((await h.cli(["session", "list"], "damaged-task")).data.error.code).toBe("USAGE_STATE_INVALID");
     const client = await h.connect("damaged-task");
