@@ -20,7 +20,10 @@ export const chromeExecutables = ["/opt/google/chrome/chrome", "/usr/bin/chromiu
  */
 export type WindowsBrowser = { id: string; executable: string; profileDirectory: string };
 
-export function windowsBrowserInstalls(env = process.env): WindowsBrowser[] {
+/** Spawning `reg` is injected so the rule can be pinned from a host that has no registry. */
+export type RegistryProbe = (exe: string) => string | undefined;
+
+export function windowsBrowserInstalls(env = process.env, registry: RegistryProbe = registeredPath): WindowsBrowser[] {
   const roots = [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA].filter(Boolean) as string[];
   const local = env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
   const known = [
@@ -29,10 +32,19 @@ export function windowsBrowserInstalls(env = process.env): WindowsBrowser[] {
     { id: "microsoft-edge", leaf: "Microsoft\\Edge\\Application\\msedge.exe", exe: "msedge.exe", data: join(local, "Microsoft\\Edge\\User Data") },
   ];
   const found: WindowsBrowser[] = [];
+  const claimed = new Set<string>();
   for (const candidate of known) {
-    let executable = roots.map(root => join(root, candidate.leaf)).find(path => Bun.file(path).size > 0);
-    if (!executable) executable = registeredPath(candidate.exe);
-    if (executable) found.push({ id: candidate.id, executable, profileDirectory: candidate.data });
+    const executable = roots.map(root => join(root, candidate.leaf)).find(path => Bun.file(path).size > 0)
+      ?? registry(candidate.exe);
+    if (!executable) continue;
+    // App Paths is keyed by FILE NAME, and Chrome and Chromium both ship `chrome.exe`, so the
+    // registry cannot tell the two brandings apart. Without this, a Chrome installed outside the
+    // three install roots was reported twice: once correctly, and once as a `chromium` install that
+    // does not exist, carrying Chrome's binary and Chromium's profile directory. First candidate
+    // wins, which is the same Chrome before Chromium order the install roots already use.
+    if (claimed.has(executable.toLowerCase())) continue;
+    claimed.add(executable.toLowerCase());
+    found.push({ id: candidate.id, executable, profileDirectory: candidate.data });
   }
   return found;
 }

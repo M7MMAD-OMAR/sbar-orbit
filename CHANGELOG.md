@@ -11,10 +11,13 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
   from another Bun process. It resolves Bun by location rather than from PATH, and refuses by name the
   subcommands that cannot work there (`install`, `update`, `service`, `autostart`, `panel`,
   `settings`, `config`) rather than letting them fail further down.
-- `sbar-orbit connector-config --no-launcher`, for an agent host that cannot spawn a `.cmd`. On
-  Windows the configuration names `bin/sbar-orbit.cmd`, which Bun's own spawn starts both verbatim
-  and through `cmd.exe`, measured on the guest; a host calling Node's `child_process.spawn` without
-  `shell: true` cannot, and this flag names Bun and `src/mcp.ts` for it instead.
+- `sbar-orbit connector-config --no-launcher`, for an agent host that cannot spawn the launcher
+  itself, on every platform. On Windows the configuration names `bin/sbar-orbit.cmd`, which Bun's own
+  spawn starts both verbatim and through `cmd.exe`, measured on the guest; a host calling Node's
+  `child_process.spawn` without `shell: true` cannot. The Linux launcher is an extensionless bash
+  script, which a host can refuse for its own reasons, so the flag is honoured there too rather than
+  being advertised in the launcher's help and quietly ignored. The configuration it emits was spawned
+  verbatim on the guest and answered `initialize`.
 - A managed broker socket path on Windows, `%LOCALAPPDATA%\sbar-orbit\broker.sock`.
   `serviceSocketPath()` used to throw `CONFIG_REQUIRED` there, because it wanted `XDG_RUNTIME_DIR`.
 
@@ -30,6 +33,20 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 - A launch timeout reported `Owned Chrome exited with code () => child.exitCode`, on every platform.
   `exitCode` is a function on that interface, so the comparison against `null` was always false and
   the template printed the function's source. The still running case now says how long it waited.
+- The record attributing a mid-session browser death was suppressed by the death itself. It was
+  guarded on whether a shutdown was under way, and Playwright's `disconnected` handler starts one
+  from the same socket EOF the process death produces, so the line almost never reached the journal.
+  It is guarded on whether the CALLER asked to stop now.
+- `WindowsJob.accounting()` and `processIds()` refuse on a closed handle instead of querying it.
+  Windows recycles handle values, so a diagnostic read after the job was closed could succeed against
+  an unrelated object and print its counters as the browser's. `close()` takes a final snapshot
+  first, which is the figure a caller asking after a dead browser wants anyway.
+- Windows browser discovery reported a Chromium install that does not exist. `App Paths` is keyed by
+  file name and both Chrome and Chromium ship `chrome.exe`, so a Chrome installed outside the three
+  install roots was found twice: once correctly, and once as `chromium` carrying Chrome's binary and
+  Chromium's profile directory.
+- `hostClassTier()` on Windows stated a failure count that `docs/windows-measured.md`, which the same
+  sentence points at, contradicts.
 - An owned browser that dies mid session is attributed. Playwright reports `Target page, context or
   browser has been closed`, which names no cause; the failure now carries the browser's exit code,
   its last stderr lines, and on Windows the job object's own counters when the kernel was what reaped

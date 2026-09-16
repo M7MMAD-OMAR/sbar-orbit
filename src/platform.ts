@@ -298,7 +298,7 @@ export async function hostClassTier(): Promise<{ assigned: string; why: string }
   // with no person at it, which is `Limited` and not `Measured`, and saying so here is the difference
   // between a bug report that is welcome and one filed against a host nothing has ever run on.
   if (process.platform === "win32")
-    return { assigned: "Limited", why: "One Windows 11 guest has run the broker, a browser session and every action, and three sessions in about ninety died unattributed. Virtual hardware, one browser, nobody at the machine. See docs/windows-measured.md." };
+    return { assigned: "Limited", why: "One Windows 11 guest has run the broker, a browser session and every action, and five sessions of about a hundred failed: three unattributed and two on contention. Virtual hardware, one browser, nobody at the machine. See docs/windows-measured.md." };
   if (process.platform !== "linux")
     return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
   const { id, versionId } = await distributionName();

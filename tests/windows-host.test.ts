@@ -46,7 +46,28 @@ test("cloning the person's own profile is refused on Windows, by name", async ()
 });
 
 test("browser discovery reports nothing when no install root and no registry answers", () => {
-  // On a Linux runner every candidate path is absent, which is the same answer a bare Windows host
-  // gives. What this pins is that discovery returns a list rather than throwing off its own platform.
-  expect(windowsBrowserInstalls({ ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" })).toEqual([]);
+  // The registry probe is injected rather than left to spawn `reg`. The version of this test that
+  // did not inject one passed on a Linux runner because there is no `reg` there, and would have
+  // FAILED on the Windows guest it claims to describe, where App Paths answers for a real browser.
+  expect(windowsBrowserInstalls({ ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" }, () => undefined)).toEqual([]);
+});
+
+/**
+ * App Paths is keyed by file name and both Chrome and Chromium ship `chrome.exe`, so the registry
+ * cannot tell the two brandings apart. A Chrome installed outside the three install roots used to be
+ * reported twice: once correctly, and once as a `chromium` install that does not exist.
+ */
+test("a registry answer for chrome.exe is one install, not two brandings", () => {
+  const installs = windowsBrowserInstalls(
+    { ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" },
+    exe => exe === "chrome.exe" ? "D:\\Custom\\Chrome\\chrome.exe" : undefined);
+  expect(installs.map(install => install.id)).toEqual(["google-chrome"]);
+  expect(installs[0]!.executable).toBe("D:\\Custom\\Chrome\\chrome.exe");
+});
+
+test("a machine with only Edge registered reports only Edge", () => {
+  const installs = windowsBrowserInstalls(
+    { ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" },
+    exe => exe === "msedge.exe" ? "C:\\Edge\\msedge.exe" : undefined);
+  expect(installs.map(install => install.id)).toEqual(["microsoft-edge"]);
 });

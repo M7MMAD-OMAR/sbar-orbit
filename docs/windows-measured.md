@@ -533,6 +533,7 @@ but the commands and the connector. Run on the guest, in the interactive session
 | `sbar-orbit.cmd doctor --report` | the capability report, with the home directory redacted to `~` |
 | `cmd.exe /c sbar-orbit.cmd mcp` | initialize, 12 tools listed |
 | `sbar-orbit.cmd mcp` spawned verbatim, no shell | initialize answered, so the configuration is startable as written by a host that spawns the way Bun does |
+| `connector-config --no-launcher`, then that configuration spawned verbatim | emitted `bun.exe` plus `src\\mcp.ts`, and it answered initialize, so the escape hatch for a host that cannot spawn a `.cmd` is measured rather than assumed |
 | `orbit_create`, `orbit_act` navigate, `orbit_act` read, `orbit_observe`, `orbit_status`, `orbit_stop` | every one `isError: false`, the read returned the fixture's heading, observe returned the title, location and tab list |
 
 That is the whole path an agent host takes on Windows, with nothing imported by hand.

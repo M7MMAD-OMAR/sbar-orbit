@@ -25,16 +25,18 @@ import { join } from "node:path";
  * difference stated rather than smoothed over. A `.cmd` is not an image the kernel executes, so
  * whether a host can start it depends on how that host spawns. Measured on the guest: Bun's own
  * spawn started it both verbatim, exactly as this configuration reads, and through `cmd.exe`. A host
- * calling Node's `child_process.spawn` without `shell: true` cannot, and that host is pointed at the
- * interpreter and `src/mcp.ts` instead, which is the same entry point one level down.
- * `windowsFallback` is that switch, and `sbar-orbit connector-config --no-launcher` is how a person
- * reaches it. Nothing else in the project has to know the difference.
+ * calling Node's `child_process.spawn` without `shell: true` cannot.
+ *
+ * `preferInterpreter` is the way out for such a host, and it is honoured on EVERY platform rather
+ * than on Windows alone. The Linux launcher is a bash script with no extension, which is its own
+ * reason a host might refuse to spawn it, and a flag that silently did nothing there would be worse
+ * than no flag: the person would register the same configuration they already had and conclude the
+ * problem was elsewhere. `sbar-orbit connector-config --no-launcher` is how a person reaches it.
  */
-export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string; windowsFallback?: boolean }) {
+export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string; preferInterpreter?: boolean }) {
   const platform = options.platform ?? process.platform;
-  const windows = platform === "win32";
-  const launcher = windows ? windowsLauncher(options.launcher) : options.launcher;
-  if (launcher && !(windows && options.windowsFallback)) return { command: launcher, args: ["mcp"] };
+  const launcher = platform === "win32" ? windowsLauncher(options.launcher) : options.launcher;
+  if (launcher && !options.preferInterpreter) return { command: launcher, args: ["mcp"] };
   return { command: options.interpreter ?? process.execPath, args: [join(options.source, "src/mcp.ts")] };
 }
 

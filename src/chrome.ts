@@ -232,6 +232,10 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   let browser: Browser | undefined;
   let closing: Promise<void> | undefined;
   let closed = false;
+  // Whether the CALLER asked for this shutdown, which is not the same question as whether a shutdown
+  // is under way. Every path that notices a dead browser also calls `close()`, so `closing` is set by
+  // the death itself and cannot tell a stop apart from a crash.
+  let requested = false;
   let socket: WebSocket | undefined;
   const listeners: (() => void)[] = [];
   const close = () => closing ??= (async () => {
@@ -302,10 +306,20 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // journal the way an unexpected RPC error already does. Without this line the next failure is
     // attributed to whichever action happened to be in flight.
     void owner.exited.then(async () => {
-      if (!closing) console.error(JSON.stringify({ ownedBrowser: "exited while its session was open",
-        exitCode: owner.exitCode(), cause: await explain("Owned Chrome exited") }));
+      // `requested`, not `closing`. Playwright's `disconnected` fires from the same socket EOF that
+      // the process death produces and calls `close()` first more often than not, so a `closing`
+      // check silently suppressed this line in exactly the case it exists for. Only a caller's own
+      // `close()` sets `requested`, and the diagnostic is read BEFORE the job handle is closed.
+      if (!requested) {
+        const cause = await explain("Owned Chrome exited");
+        console.error(JSON.stringify({ ownedBrowser: "exited while its session was open", exitCode: owner.exitCode(), cause }));
+      }
       await close();
     });
-    return { context, browser, page, close, onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); } };
+    return {
+      context, browser, page,
+      close: () => { requested = true; return close(); },
+      onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); },
+    };
   } catch (error) { await close(); throw error; }
 }

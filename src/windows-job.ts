@@ -120,6 +120,8 @@ export class WindowsJob {
   private readonly api = kernel32();
   private readonly handle: Pointer;
   private closed = false;
+  /** The counters as they stood at `close()`, which is the last moment the handle was still ours. */
+  private final: JobAccounting | undefined;
   /** Whether the machine accepted a hard CPU cap. False means the budget is memory only, and it says so. */
   readonly cpuCapEnforced: boolean;
 
@@ -187,6 +189,7 @@ export class WindowsJob {
    * that ran once can never see the process created afterwards.
    */
   processIds(): number[] {
+    this.requireOpen();
     for (const capacity of [256, 1024, 4096]) {
       const size = 8 + 8 * capacity;
       const buffer = new Uint8Array(size);
@@ -213,6 +216,14 @@ export class WindowsJob {
    * the defect this file was written to avoid.
    */
   accounting(): JobAccounting {
+    // After `close()` the kernel may have handed this handle's VALUE to an entirely different object,
+    // and a query against it can SUCCEED and return that object's counters. The final snapshot taken
+    // at close is returned instead, which is also the figure a caller asking after a dead browser
+    // actually wants: what the job was charged when it died.
+    if (this.closed) {
+      if (this.final) return this.final;
+      throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "The job object is closed and no final snapshot was taken");
+    }
     // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION on x64: 0 user, 8 kernel, 16 and 24 this period,
     // 32 page faults, 36 total, 40 active, 44 terminated.
     const basic = new Uint8Array(48);
@@ -235,9 +246,17 @@ export class WindowsJob {
     };
   }
 
+  /** Every query refuses on a closed handle, because Windows recycles handle VALUES. */
+  private requireOpen() {
+    if (this.closed) throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "The job object is closed");
+  }
+
   /** Kill the tree. Idempotent, because both session stop and broker shutdown reach it. */
   close(): void {
     if (this.closed) return;
+    // Read the counters while the handle is still this job's, so a diagnostic written after the tree
+    // is reaped still has the numbers. This is the only moment they exist.
+    try { this.final = this.accounting(); } catch {}
     this.closed = true;
     this.api.CloseHandle(this.handle);
   }

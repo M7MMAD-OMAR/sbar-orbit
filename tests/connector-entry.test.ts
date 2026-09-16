@@ -33,8 +33,19 @@ test("Windows names its own launcher, and the suffix is added once", () => {
     .toBe("C:\\orbit\\bin\\sbar-orbit.cmd");
 });
 
-test("a Windows host that cannot spawn a .cmd is given the interpreter and the module", () => {
+test("a host that cannot spawn a .cmd is given the interpreter and the module", () => {
   expect(connectorEntry({ launcher: "C:\\orbit\\bin\\sbar-orbit", source: "C:\\orbit", platform: "win32",
-    interpreter: "C:\\orbit\\bun.exe", windowsFallback: true }))
+    interpreter: "C:\\orbit\\bun.exe", preferInterpreter: true }))
     .toEqual({ command: "C:\\orbit\\bun.exe", args: [join("C:\\orbit", "src/mcp.ts")] });
+});
+
+/**
+ * The flag is advertised by the Linux launcher's own help, so it has to do something there. It used
+ * to be honoured on win32 alone, which meant a Linux user following that help got back the launcher
+ * again, with no error and no note saying the flag had been ignored.
+ */
+test("the same escape hatch works on Linux, where the launcher is an extensionless script", () => {
+  expect(connectorEntry({ launcher: "/prefix/bin/sbar-orbit", source: "/opt/orbit", platform: "linux",
+    interpreter: "/usr/bin/bun", preferInterpreter: true }))
+    .toEqual({ command: "/usr/bin/bun", args: [join("/opt/orbit", "src/mcp.ts")] });
 });
