@@ -1114,7 +1114,73 @@ archive built by the git-dependent path.
 The git ones are an **environment gap, not a code defect**, and they are recorded as unmeasured rather
 than as passing or as harness noise. `not measured` is not a pass.
 
-## 19. The control channel, for whoever repeats this
+## 19. git installed, and the packaging bug that was hiding behind its absence
+
+Section 18 left six failures recorded as **not measured** because git is absent from the guest, and
+said plainly that `not measured` is not a pass. That gap is now closed: `winget` hung again, and the
+GitHub API is rate limited from both this host and the guest, so **MinGit** was fetched directly from
+the release URL. It is the portable Git for Windows build: a zip, no installer, no elevation.
+
+```
+git version 2.51.0.windows.1
+```
+
+Running the suite again moved it to 178 pass, and then two things appeared that the absence had been
+hiding.
+
+### A gate that checked for the binary while the test needed the repository
+
+`the registry tarball carries tracked source` was skipped by `needsCommand("git", ...)`. With git
+installed it ran, and failed with `fatal: not a git repository`: the guest runs the suite from an
+**unpacked tarball**, which has no `.git`. A gate asking whether the machine has git, guarding a test
+that needs a git **checkout**, is a gate that does not guard what it claims, and it turned an
+environment fact into what looked like a packaging failure. `needsGitCheckout` asks the real question.
+
+### The executable bit, which Windows does not have
+
+`readVerifiedSource` decided which files a release may mark executable with:
+
+```ts
+executable: Boolean(info.mode & 0o111)
+```
+
+Windows stores no execute bit. `lstat` reports `0o666` for every file, so on this platform that line
+calls **every file non executable**, including `bin/sbar-orbit`. A release verified and repackaged on
+a Windows machine would ship a launcher with mode `0644`: a release that installs and then cannot
+run, on the POSIX machine that receives it.
+
+The bit is a property of the **release**, not of the filesystem the release happens to be sitting on,
+so it now travels in `SOURCE-MANIFEST.json`. `scripts/package.ts` writes it, and `readVerifiedSource`
+prefers it and falls back to the filesystem where the manifest is silent, which keeps every release
+published so far verifying unchanged. Where the manifest is silent **and** the filesystem cannot
+answer, it is **refused** rather than guessed.
+
+Measured on the guest, on the machine that cannot hold the bit:
+
+| Question | Answer |
+|---|---|
+| `bin/sbar-orbit` executable, filesystem with no execute bit | **true**, from the manifest |
+| `NOTICE` executable | false |
+| a manifest with no bits recorded | **refused**: "must record executable bits to be read on a filesystem without them" |
+
+Note what the old code would have done with that last row: accepted it, and shipped `0644`.
+
+### The workspace fixture, fixed twice
+
+Section 18 replaced `chmod 0o500` with a held file handle. The guest showed that **was still wrong**:
+Node's `openSync` opens with delete sharing on Windows, so the handle did not block `rm` and the sweep
+still deleted both workspaces. A **running process with its working directory inside the folder** does
+block it, because a current directory is a reference the kernel enforces. Two attempts at the same
+fixture, and only the guest could tell them apart.
+
+### Where the count stands
+
+**176 pass, 5 distinct failures, 87 skip.** The five: the `plan` command spawns `install.sh`, which
+needs a shell this platform does not have; the systemd slice test; `/usr/bin/findmnt`; and two update
+tests that build a Linux release archive and check it against a Windows install. None is a Windows
+code path failing.
+
+## 20. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

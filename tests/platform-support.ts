@@ -64,3 +64,20 @@ export function needsCommand(command: string, reason: string) {
   if (!reason.trim()) throw new Error("A test that needs a command has to say what for");
   return Bun.which(command) ? test : test.skip;
 }
+
+/**
+ * A test that needs this source tree to be a git CHECKOUT, not merely a machine that has git.
+ *
+ * `needsCommand("git")` is not the same question, and the difference showed up the moment git was
+ * installed on the Windows guest: the suite runs there from an unpacked tarball, so `git ls-files`
+ * answered `not a git repository` and the test failed as though packaging were broken. A gate that
+ * checks for the binary while the test needs the repository is a gate that does not guard what it
+ * claims to, and it turns an environment fact into a fake product failure.
+ */
+export function needsGitCheckout(reason: string) {
+  if (!reason.trim()) throw new Error("A test that needs a git checkout has to say what for");
+  if (!Bun.which("git")) return test.skip;
+  const asked = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"],
+    { cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "ignore" });
+  return asked.stdout.toString().trim() === "true" ? test : test.skip;
+}

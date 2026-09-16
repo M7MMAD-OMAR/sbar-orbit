@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { needsCommand } from "./platform-support";
+import { needsCommand, needsGitCheckout } from "./platform-support";
 import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,7 +26,7 @@ async function run(command: string[], cwd: string) {
   return out;
 }
 
-needsCommand("git", "git ls-files")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
+needsGitCheckout("git ls-files, which needs the repository and not just the binary")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
   try {
     await run([process.execPath, "pm", "pack", "--destination", destination], project);

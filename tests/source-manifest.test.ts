@@ -13,7 +13,9 @@ async function fixture() {
   const files = [];
   for (const [path, text] of Object.entries(contents)) {
     await writeFile(join(root, path), text, { mode: path.startsWith("bin/") ? 0o755 : 0o644 });
-    files.push({ path, sha256: createHash("sha256").update(text).digest("hex") });
+    // The release records which of its files are executable, because the filesystem it is unpacked on
+    // may not be able to. Written on both platforms so the field is exercised, not just tolerated.
+    files.push({ path, sha256: createHash("sha256").update(text).digest("hex"), executable: path.startsWith("bin/") });
   }
   const manifest = { version: "0.1.0-alpha.1", files };
   const save = () => writeFile(join(root, "SOURCE-MANIFEST.json"), JSON.stringify(manifest));
@@ -24,7 +26,9 @@ async function fixture() {
 test("verified source retains exact bytes and rejects later content changes", async () => {
   const f = await fixture(), verified = await readVerifiedSource(f.root);
   expect(verified.files.length).toBe(4);
+  // True on every platform now: it comes from the manifest, not from a mode Windows never stored.
   expect(verified.files.find(file => file.path === "bin/sbar-orbit")?.executable).toBe(true);
+  expect(verified.files.find(file => file.path === "NOTICE")?.executable).toBe(false);
   await writeFile(join(f.root, "NOTICE"), "Changed");
   expect(verified.files.find(file => file.path === "NOTICE")?.bytes.toString()).toBe("Fixture notice");
   await expect(readVerifiedSource(f.root)).rejects.toThrow("content mismatch");
@@ -33,7 +37,7 @@ test("verified source retains exact bytes and rejects later content changes", as
 test("manifest rejects duplicate/private/traversal paths and mismatched versions", async () => {
   for (const path of ["LICENSE", "../outside", ".private/.env.example", "SOURCE-MANIFEST.json"]) {
     const f = await fixture();
-    f.manifest.files.push({ path, sha256: "0".repeat(64) }); await f.save();
+    f.manifest.files.push({ path, sha256: "0".repeat(64), executable: false }); await f.save();
     await expect(readVerifiedSource(f.root)).rejects.toThrow("Invalid source manifest entry");
   }
   const f = await fixture(); f.manifest.version = "0.1.0-alpha.2"; await f.save();

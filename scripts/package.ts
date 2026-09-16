@@ -46,7 +46,7 @@ const name = `sbar-orbit-${pkg.version}-source`;
 const staging = await mkdtemp("/tmp/orbit-package-");
 const root = join(staging, name);
 await mkdir(root);
-const manifest: { path: string; sha256: string }[] = [];
+const manifest: { path: string; sha256: string; executable: boolean }[] = [];
 for (const path of [...new Set(paths)].sort()) {
   let executable: boolean;
   if (fromIndex) {
@@ -61,7 +61,9 @@ for (const path of [...new Set(paths)].sort()) {
   const bytes = await bytesFor(path), target = join(root, path);
   await mkdir(resolve(target, ".."), { recursive: true });
   await writeFile(target, bytes); await chmod(target, executable ? 0o755 : 0o644);
-  manifest.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
+  // The executable bit travels IN the manifest, because the filesystem a release is unpacked on may
+  // not have one. Without this a repackage on Windows would silently ship a launcher with mode 0644.
+  manifest.push({ path, sha256: createHash("sha256").update(bytes).digest("hex"), executable });
 }
 await writeFile(join(root, "SOURCE-MANIFEST.json"), JSON.stringify({ version: pkg.version, files: manifest }, null, 2) + "\n");
 const output = join(project, "output/packages"); await mkdir(output, { recursive: true });

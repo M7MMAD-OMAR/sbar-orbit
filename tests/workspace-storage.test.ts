@@ -84,11 +84,19 @@ test("one workspace that will not go does not end the sweep", async () => {
   // Making a directory refuse removal is a different act on each kernel. POSIX drops write permission
   // on the parent record. Windows ignores that mode entirely, so the sweep would delete both and the
   // test would assert nothing: there a file is held OPEN inside it, which really does block removal.
-  let holder: number | undefined;
+  let holder: ReturnType<typeof Bun.spawn> | undefined;
   if (process.platform === "win32") {
-    await Bun.write(join(stuck, "held.lock"), "x");
-    const { openSync } = await import("node:fs");
-    holder = openSync(join(stuck, "held.lock"), "r+");
+    // Node's `openSync` opens with delete sharing on Windows, so a handle held that way does NOT
+    // block `rm`: the first attempt at this fix still deleted both workspaces. A running process with
+    // its working directory inside the folder does block it, because a current directory is a real
+    // reference the kernel enforces, and it needs no native call to arrange.
+    holder = Bun.spawn(["powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30"],
+      { cwd: stuck, stdout: "ignore", stderr: "ignore" });
+    // The directory is only pinned once the child is actually up, so this waits for it to answer
+    // rather than assuming a spawn is instant.
+    for (let i = 0; i < 100 && !Bun.spawnSync(["powershell", "-NoProfile", "-Command",
+      `(Get-CimInstance Win32_Process -Filter "ProcessId=${holder.pid}").ProcessId`]).stdout.toString().trim(); i++)
+      await Bun.sleep(50);
   } else {
     await chmod(stuck, 0o500);
   }
@@ -100,7 +108,7 @@ test("one workspace that will not go does not end the sweep", async () => {
     expect(result.refused[0]?.reason).toBeTruthy();
     expect(result.removed).toEqual([name(ordinary)]);
   } finally {
-    if (holder !== undefined) { const { closeSync } = await import("node:fs"); closeSync(holder); }
+    if (holder) { holder.kill(); await holder.exited; }
     else await chmod(stuck, 0o700);
     await rm(scratch, { recursive: true, force: true });
   }
