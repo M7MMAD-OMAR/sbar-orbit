@@ -773,7 +773,54 @@ not expect; `uv_spawn` of a Linux helper in the agent contract and session suite
 and workspace storage checking POSIX mode bits; and a browser crash case that counts processes the way
 Linux counts them.
 
-## 12. The control channel, for whoever repeats this
+## 12. Re-measured after the fixes, and a safety property I had traded away
+
+Section 11 triaged the count. This ran the suite again at HEAD afterwards, because the update
+pointer, the preflight platform gate, `claimSocket` and the CLI error all changed it without being
+re-run, and it re-reads the failures for product bugs rather than for a smaller number.
+
+| | Section 9 | Section 11 | Now |
+|---|---|---|---|
+| pass | 151 | not stated | **158** |
+| fail | 88 | 30 | **27** |
+| skip | 18 | 86 | **87** |
+
+### The safety property, which the suite caught and I had not
+
+The commit before this made `claimSocket` skip its shape test on Windows, because a Windows AF_UNIX
+socket file reports as a regular file and `isSocket()` is false for it. That was wrong in a way worth
+recording rather than quietly correcting: the test exists to refuse a path that is NOT a socket, so
+skipping it meant a file someone had left there would be **deleted instead of refused**. The guest
+said so directly, with `claiming refuses to remove a path that is not a socket` failing.
+
+The fix is not to drop the test but to ask something both platforms can answer: a socket file is
+empty, and a config or a note is not. `existing.size === 0` on Windows, `isSocket()` on Linux. This
+is the second time a Windows convenience branch in this file removed a guarantee instead of porting
+it, and both times the suite on the guest is what noticed.
+
+### Two product bugs and one assertion that had become false
+
+- **`install` and `update` spawned a bare `bun`.** Both launchers resolve Bun by location precisely
+  because a service or an agent host starts Orbit with its own PATH, and these two threw that away,
+  failing with `Executable not found in $PATH` on the guest where Bun lives outside PATH. Both use
+  `process.execPath` now, and so do the tests that spawn the CLI.
+- **The platform probe test asserted Windows cannot run browser sessions.** It required
+  `browserBackendSupported === false` for every non Linux platform. True when written, false now
+  that sessions are measured running through the broker's own RPC. Windows asserts `true` there and
+  still asserts `nativeDisplaySupported === false`, because the private display really is Linux only.
+- **A POSIX path assertion ran on Windows.** `the managed socket path lives under the runtime
+  directory` joins a POSIX runtime directory and compares POSIX separators, and `XDG_RUNTIME_DIR`
+  does not exist on Windows at all. Skipped there, with the Windows branch pinned separately.
+
+### What the remaining 27 are worth
+
+Counted from the log by surrounding error text: 14 assertions, 4 ENOENT, 3 symlink EPERM in test
+fixtures, 2 `/usr/bin/python3` helpers, 1 systemd probe, 1 remaining bare interpreter. That tally is
+approximate, classified by pattern rather than diagnosed one at a time, and one failure often prints
+several kinds of line. **No claim is made that what remains is only harness.** Three product bugs came
+out of the last two passes over exactly this kind of list.
+
+## 13. The control channel, for whoever repeats this
 
 There is no Windows CI on Linux without a VM. Wine is not Windows and Windows containers need a
 Windows host. What worked, with nothing on the person's screen at any point:

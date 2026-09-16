@@ -71,7 +71,11 @@ test("uninstalling an absent installation is not an error", async () => {
   expect(await uninstallService(units)).toEqual({ removed: [], sourceAndDataRetained: true });
 });
 
-test("the managed socket path lives under the runtime directory", () => {
+// The first assertion joins a POSIX runtime directory with POSIX separators, which is what Linux
+// does and what a Linux caller passes. On Windows `join` correctly returns backslashes, and
+// XDG_RUNTIME_DIR is unset there anyway, so this is a Linux statement rather than a portable one.
+// The Windows branch is pinned separately in tests/windows-host.test.ts.
+test.skipIf(process.platform === "win32")("the managed socket path lives under the runtime directory", () => {
   expect(serviceSocketPath("/run/user/1000")).toBe("/run/user/1000/sbar-orbit/broker.sock");
   // An empty runtime directory is the missing case; passing undefined would select the default. The
   // platform is named rather than inherited, because Windows has no runtime directory and answers

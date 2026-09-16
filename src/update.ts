@@ -372,7 +372,9 @@ export async function prepareVersion(candidate: Candidate, feed: Feed = {}, envi
     if (!await Bun.file(join(staging, launcherName())).exists())
       return { prepared: false, reason: `the archive carries no ${launcherName()}, so it is not an Orbit release for this platform` };
     const installed = await (environment.install ?? (async (target: string) => {
-      const child = Bun.spawn(["bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
+      // The running interpreter, not a bare "bun": a broker started by a service or an agent host has
+      // its own PATH, which need not carry Bun. Same reason `src/install.ts` resolves it this way.
+      const child = Bun.spawn([process.execPath || "bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
       const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
       return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
     }))(staging);

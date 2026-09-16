@@ -148,7 +148,14 @@ test("the platform probe answers without starting an application", async () => {
   expect(capabilities.platform).toBe(process.platform);
   expect(["wayland", "x11", "none"]).toContain(capabilities.sessionType);
   expect(["available", "absent", "unknown"]).toContain(capabilities.secretService);
-  if (process.platform !== "linux") {
+  // Windows is no longer in the "unverified adapter" bucket: browser sessions were measured running
+  // there through the broker's own RPC, so claiming the backend is unsupported would now be the
+  // false statement. macOS is still unverified and keeps the old assertion.
+  if (process.platform === "win32") {
+    expect(capabilities.browserBackendSupported).toBe(true);
+    // The private display is a different question, and it stays Linux only.
+    expect(capabilities.nativeDisplaySupported).toBe(false);
+  } else if (process.platform !== "linux") {
     expect(capabilities.browserBackendSupported).toBe(false);
     expect(capabilities.notes.join(" ")).toContain("unverified");
   }
@@ -193,7 +200,7 @@ test("a capability report can be produced with no broker, and carries nothing pr
   // runs it the way a reporter would: with no ORBIT_SOCKET set at all.
   const environment = { ...process.env };
   delete environment.ORBIT_SOCKET;
-  const cli = Bun.spawn(["bun", "src/cli.ts", "doctor", "--report"], { env: environment, stdout: "pipe", stderr: "pipe" });
+  const cli = Bun.spawn([process.execPath, "src/cli.ts", "doctor", "--report"], { env: environment, stdout: "pipe", stderr: "pipe" });
   const printed = await new Response(cli.stdout).text();
   expect(await cli.exited).toBe(0);
   const report = JSON.parse(printed) as Record<string, unknown>;

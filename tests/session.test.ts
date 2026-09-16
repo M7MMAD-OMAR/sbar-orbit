@@ -54,7 +54,7 @@ test("IPC socket is private and CLI talks to the running broker", async () => {
     expect((await stat(broker.socket)).mode & 0o777).toBe(0o600);
     expect(await call(broker.socket, "doctor")).toMatchObject({ backend: "browser", sessions: 0 });
     await expect(call(broker.socket, "unknown")).rejects.toMatchObject({ code: "UNSUPPORTED" });
-    const cli = Bun.spawn(["bun", "src/cli.ts", "doctor"], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe" });
+    const cli = Bun.spawn([process.execPath, "src/cli.ts", "doctor"], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe" });
     expect(JSON.parse(await new Response(cli.stdout).text())).toMatchObject({ ok: true, result: { sessions: 0 } });
     expect(await cli.exited).toBe(0);
   } finally { await broker.close(); }
@@ -82,7 +82,7 @@ test("CLI creates a session, acts on it, observes it and closes it", async () =>
   const broker = await startBroker();
   const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response('<p id="result">CLI connected</p>', { headers: { "Content-Type": "text/html" } }) });
   const cli = async (...args: string[]) => {
-    const child = Bun.spawn(["bun", "src/cli.ts", ...args], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe" });
     const result = JSON.parse(await new Response(child.stdout).text());
     expect(await child.exited).toBe(0);
     return result;

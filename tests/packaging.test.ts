@@ -29,7 +29,7 @@ async function run(command: string[], cwd: string) {
 needsCommand("git", "git ls-files")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
   try {
-    await run(["bun", "pm", "pack", "--destination", destination], project);
+    await run([process.execPath, "pm", "pack", "--destination", destination], project);
     // Read with readdir rather than shelling out to `bash -c ls`: a glob is not worth a shell, and
     // the shell was the only reason this test needed one at all.
     const packed = (await readdir(destination)).filter(entry => entry.endsWith(".tgz"));

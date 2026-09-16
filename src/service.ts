@@ -66,10 +66,12 @@ export async function claimSocket(socket: string, probe: (path: string) => Promi
     return { claimed: true, replacedStaleSocket: true };
   }
   // `isSocket()` is false for a Windows AF_UNIX socket file, which reports as a regular file, so the
-  // shape test is Linux only. On Windows the probe above is the thing that tells a live broker from
-  // a leftover, and a leftover is what the design already expects there because %LOCALAPPDATA% is
-  // not cleared at logout the way a runtime directory is.
-  if (process.platform !== "win32" && !existing.isSocket())
+  // shape test cannot be the same on both. What a socket is NOT, on either platform, is a file with
+  // contents: Bun's socket file is empty, and a config or a note someone left at this path is not.
+  // Dropping the test entirely on Windows would have let `claimSocket` delete a person's file, which
+  // is the thing this function exists to refuse.
+  const plausibleSocket = process.platform === "win32" ? existing.size === 0 : existing.isSocket();
+  if (!plausibleSocket)
     throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and is not a socket; remove it deliberately`);
   if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
   await unlink(socket);

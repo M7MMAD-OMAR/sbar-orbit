@@ -52,8 +52,20 @@ function remediesOf(checks: PrerequisiteCheck[]): Remedy[] {
   return found;
 }
 
+/**
+ * The Bun that is running this code, not whatever `bun` resolves to on PATH.
+ *
+ * Both launchers already resolve Bun by location, for the reason `bin/sbar-orbit` states: a service
+ * or an agent host starts Orbit with its own PATH, which need not carry Bun at all. Spawning a bare
+ * "bun" threw that away and failed with `Executable not found in $PATH`, measured on the Windows
+ * guest where Bun lives outside PATH. `process.execPath` is the interpreter already in hand.
+ */
+function bunExecutable() {
+  return process.execPath || Bun.which("bun") || "bun";
+}
+
 async function runBunInstall(source: string) {
-  const child = Bun.spawn(["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
+  const child = Bun.spawn([bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"],
     { cwd: source, stdout: "pipe", stderr: "pipe" });
   const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
