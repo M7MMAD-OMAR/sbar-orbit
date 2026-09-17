@@ -37,6 +37,15 @@ async function advisorScript(body: string) {
  * would produce a passing test that proves nothing. Anything unrecognised throws, so a new case fails
  * loudly here instead of quietly passing on Windows.
  */
+/**
+ * One `echo` line for cmd, with the quoting rule written once.
+ *
+ * `^` is cmd's escape character, so a double quote inside an echoed string has to carry one. This was
+ * spelled out at each of the three call sites below, each behind a `!`; taking the match group as
+ * possibly-undefined removes all three assertions at the source, the way AGENTS.md asks.
+ */
+const cmdEcho = (text = "") => `echo ${text.replace(/"/g, '^"')}`;
+
 function windowsBody(body: string): string {
   // `cat >/dev/null` is how these advisors drain the record on stdin before answering. cmd has no
   // cat, and `more` waits on a console, so the drain is simply dropped: the child exiting without
@@ -46,15 +55,15 @@ function windowsBody(body: string): string {
   // That one has to really read stdin, so it gets a genuine copy rather than a dropped drain:
   // `findstr` with a pattern that matches every line is cmd's `cat` and does not need a console.
   const captured = drained.match(/^cat\s*>(\S+);\s*echo '(.*)'$/);
-  if (captured) return `findstr "^" > "${captured[1]}"\r\necho ${captured[2]!.replace(/"/g, '^"')}`;
+  if (captured) return `findstr "^" > "${captured[1]}"\r\n${cmdEcho(captured[2])}`;
   const echoed = drained.match(/^echo '(.*)'$/);
   if (echoed) {
     // cmd has no single quoting, and JSON carries double quotes that must survive to stdout.
-    return `echo ${echoed[1]!.replace(/"/g, '^"')}`;
+    return cmdEcho(echoed[1]);
   }
   if (/^exit\s+(\d+)$/.test(drained)) return drained;
   const exited = drained.match(/^echo '(.*)';\s*exit\s+(\d+)$/);
-  if (exited) return `echo ${exited[1]!.replace(/"/g, '^"')}\r\nexit /b ${exited[2]}`;
+  if (exited) return `${cmdEcho(exited[1])}\r\nexit /b ${exited[2]}`;
   // `sleep N` is the hang case. cmd has no sleep; a ping to a routable address that never answers is
   // the standard stand in and needs no extra binary.
   const slept = drained.match(/^sleep\s+([\d.]+)$/);

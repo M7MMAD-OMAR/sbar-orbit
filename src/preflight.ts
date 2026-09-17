@@ -87,6 +87,11 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // person's own session, both measured on a Windows 11 guest. Checking for systemctl there would
   // fail an install for the absence of something the Windows path never calls.
   const windows = probe.platform === "win32";
+  // The native backend nests a Wayland compositor, which only Linux can do. Asking `!windows` was
+  // asking the wrong question: on macOS or a BSD it still emitted `./install.sh --native` and
+  // `sudo dnf install` remedies, the exact unactionable Fedora instructions the Windows gate was
+  // added to stop, and `preflight` is documented as the read-only check that runs anywhere.
+  const nativePossible = probe.platform === "linux";
   add("supported-platform", "common", probe.platform === "linux" || windows,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
       message: "This alpha runs on Linux and, at the Limited tier, on Windows. The macOS adapter is unverified, so nothing here can install it." });
@@ -125,12 +130,12 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // injected probe still decides everything. `in-source` means one built before 14 September 2026,
   // inside a source tree, still usable and adopted by `./install.sh --native`.
   // The native backend is a nested Wayland compositor: Linux only, by construction. Running these
-  // checks on Windows emitted three remedies telling an agent to run `./install.sh --native` and to
+  // checks elsewhere emitted three remedies telling an agent to run `./install.sh --native` and to
   // `sudo dnf install` Fedora packages, on a machine with no dnf, no sudo and no possible private
   // display. A remedy nobody can act on is worse than no remedy: the contract says an agent must
-  // report what it did not run, so it would faithfully report Fedora instructions to a Windows user.
+  // report what it did not run, so it would faithfully report Fedora instructions to that user.
   let runtimeSource: "shared" | "in-source" | "none" = "none";
-  if (!windows) {
+  if (nativePossible) {
     const locations = nativeRuntimeLocations(project);
     const built = async (paths: { executables: string; pointer: string }) =>
       await probe.file(join(paths.executables, "sway"), true) && await probe.file(paths.pointer, true);
@@ -164,12 +169,13 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
         { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
   }
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
-  // `every` on an empty list is true, so skipping the native checks on Windows would report
+  // `every` on an empty list is true, so skipping the native checks would report
   // `nativePrerequisitesFound: true` on a machine that cannot have a private display at all. That is a
   // worse answer than the Fedora remedies it replaced: one is noise, this would be a false capability
   // claim in the field an agent branches on. Not measured is not a pass, and here it is not even a
-  // possibility, so it is stated as false.
-  const nativePrerequisitesFound = windows ? false : available("native");
+  // possibility, so it is stated as false, for every platform that cannot nest a compositor rather
+  // than for Windows alone.
+  const nativePrerequisitesFound = nativePossible && available("native");
   return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound, checks,
     nativeRuntime: { source: runtimeSource },
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],

@@ -49,10 +49,25 @@ const staging = await mkdtemp("/tmp/orbit-package-");
 const root = join(staging, name);
 await mkdir(root);
 const manifest: { path: string; sha256: string; executable: boolean }[] = [];
+// One snapshot of the index, not one `git ls-files` per file. The per file form spawned git once for
+// every path in the release (361 of them, 386ms measured against 1ms for the batch), and the loop
+// below grew a second consumer when line endings were added, which made it the packager's hot path.
+// `-z` because a tracked path may contain anything a filesystem allows except NUL.
+const stagedModes = new Map<string, string>();
+if (fromIndex) {
+  const listing = await git("ls-files", "--stage", "-z");
+  if (listing.code) throw new Error("Cannot read the package index");
+  for (const entry of listing.bytes.toString().split("\0")) {
+    if (!entry) continue;
+    const [meta, path] = entry.split("\t");
+    const mode = meta?.split(" ")[0];
+    if (path && mode) stagedModes.set(path, mode);
+  }
+}
 for (const path of [...new Set(paths)].sort()) {
   let executable: boolean;
   if (fromIndex) {
-    const mode = (await git("ls-files", "--stage", "--", path)).bytes.toString().split(" ")[0];
+    const mode = stagedModes.get(path);
     if (!["100644", "100755"].includes(mode ?? "")) throw new Error("Package inputs must be regular files");
     executable = mode === "100755";
   } else {

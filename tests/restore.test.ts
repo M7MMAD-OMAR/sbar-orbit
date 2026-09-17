@@ -7,17 +7,11 @@ import {
   removeRestorePoint, restoreProfile, reversibilityOf, takeRestorePoint, undoCompleteness,
 } from "../src/restore";
 import { expectPrivatePath } from "./private-path";
+import { onBtrfs as onBtrfsPath } from "./platform-support";
 
 /** Snapshots need btrfs, so the filesystem tests run where the workspaces actually live. */
 const workspaceRoot = join(homedir(), ".cache");
-const onBtrfs = await (async () => {
-  // findmnt is Linux only. Spawning it elsewhere throws ENOENT at module load, which takes down every
-  // test in the file rather than the one that cares about snapshots: the answer there is simply "no
-  // btrfs", which is what every non Linux machine is.
-  if (process.platform !== "linux") return false;
-  const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", workspaceRoot], { stdout: "pipe", stderr: "ignore" });
-  return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
-})();
+const onBtrfs = await onBtrfsPath(workspaceRoot);
 
 test("what an action changed decides what taking it back would mean", () => {
   // A click can be a send, and Orbit cannot tell one from another, so it is the worst case.

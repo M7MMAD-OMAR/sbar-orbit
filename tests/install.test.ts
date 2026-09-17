@@ -119,10 +119,18 @@ test("the checks a dependency install can fix are separated from the ones it can
 });
 
 test("PATH membership is read, not guessed", () => {
-  expect(onPath("/opt/example/one/bin", "/usr/bin:/opt/example/one/bin")).toBe(true);
-  expect(onPath("/opt/example/one/bin/", "/usr/bin:/opt/example/one/bin")).toBe(true);
-  expect(onPath("/opt/example/one/bin", "/usr/bin:/opt/example/two/bin")).toBe(false);
-  expect(onPath("/opt/example/one/bin", "")).toBe(false);
+  // Both spellings on either host: the separator is stated rather than inherited, because a POSIX
+  // fixture cannot split on Windows and a Windows fixture cannot split on Linux, and the property is
+  // the same on both. The colon form is what shipped and it was wrong on every Windows install: a
+  // literal ":" also cuts `C:\Users\...` at the drive letter, so a prefix that was on PATH read as
+  // absent and the install printed a remedy for a problem that did not exist.
+  expect(onPath("/opt/example/one/bin", "/usr/bin:/opt/example/one/bin", ":")).toBe(true);
+  expect(onPath("/opt/example/one/bin/", "/usr/bin:/opt/example/one/bin", ":")).toBe(true);
+  expect(onPath("/opt/example/one/bin", "/usr/bin:/opt/example/two/bin", ":")).toBe(false);
+  expect(onPath("/opt/example/one/bin", "", ":")).toBe(false);
+  const prefix = "C:\\Users\\person\\AppData\\Local\\sbar-orbit\\bin";
+  expect(onPath(prefix, `C:\\Windows\\system32;${prefix};C:\\Windows`, ";")).toBe(true);
+  expect(onPath(prefix, "C:\\Windows\\system32;C:\\Windows", ";")).toBe(false);
 });
 
 test("the display prints one line per change without a terminal, and leaves the cursor alone", () => {

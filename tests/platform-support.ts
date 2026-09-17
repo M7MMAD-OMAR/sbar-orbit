@@ -57,10 +57,9 @@ export const linuxOnlyTest = linuxOnlySuite;
 /**
  * A test that needs a command this host may not have.
  *
- * `git` is the case that produced it: `tests/packaging.test.ts` and `tests/public-audit.test.ts` ask
- * git what is tracked, which is the right question and unanswerable on a machine without it. A host
- * with no git should say so rather than report the project broken, and the Windows guest is exactly
- * such a host.
+ * NOT the gate for anything that asks git about this tree: that is `needsGitCheckout` below, because
+ * having the binary and being inside a checkout are different questions and the difference produced a
+ * fake product failure once already. Use this one for a command whose mere presence is the question.
  */
 export function needsCommand(command: string, reason: string) {
   if (!reason.trim()) throw new Error("A test that needs a command has to say what for");
@@ -76,14 +75,32 @@ export function needsCommand(command: string, reason: string) {
  * checks for the binary while the test needs the repository is a gate that does not guard what it
  * claims to, and it turns an environment fact into a fake product failure.
  */
-export function needsGitCheckout(reason: string) {
-  if (!reason.trim()) throw new Error("A test that needs a git checkout has to say what for");
-  if (!Bun.which("git")) return test.skip;
+const insideCheckout = (() => {
+  if (!Bun.which("git")) return false;
   // `new URL("..", import.meta.url).pathname` yields `/C:/...` on Windows, which is not a path any
   // Windows API accepts: spawning with it threw between tests rather than failing one, taking down
   // every file that imports this module. `fileURLToPath` is the conversion that knows about drives.
   const here = dirname(fileURLToPath(import.meta.url));
   const asked = Bun.spawnSync(["git", "rev-parse", "--is-inside-work-tree"],
     { cwd: resolve(here, ".."), stdout: "pipe", stderr: "ignore" });
-  return asked.stdout.toString().trim() === "true" ? test : test.skip;
+  return asked.stdout.toString().trim() === "true";
+})();
+
+export function needsGitCheckout(reason: string) {
+  if (!reason.trim()) throw new Error("A test that needs a git checkout has to say what for");
+  return insideCheckout ? test : test.skip;
+}
+
+/**
+ * Whether `target` sits on btrfs, which is what workspace snapshots need.
+ *
+ * One copy, because there were two byte-identical ones and the Windows port had to patch the same
+ * guard into both. `findmnt` is Linux only and spawning it elsewhere throws ENOENT at module load,
+ * which takes down every test in the file rather than the one that cares about snapshots: the answer
+ * on any non Linux machine is simply "no btrfs".
+ */
+export async function onBtrfs(target: string) {
+  if (process.platform !== "linux") return false;
+  const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", target], { stdout: "pipe", stderr: "ignore" });
+  return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
 }

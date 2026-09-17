@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { needsCommand, needsGitCheckout } from "./platform-support";
+import { needsGitCheckout } from "./platform-support";
+import { bareLineFeeds } from "../scripts/package-endings";
 import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -98,7 +99,7 @@ needsGitCheckout("git cat-file reads the index, which is what stores LF")(
   expect(tracked.length).toBeGreaterThan(0);
   for (const path of tracked) {
     const staged = await run(["git", "show", `:${path}`], project);
-    const bare = staged.split("\n").filter(line => line.length && !line.endsWith("\r"));
+    const bare = bareLineFeeds(staged);
     // The index stores LF, and that is expected: this is what the packager must correct on the way
     // out. Recorded as the reason the packager has a line ending step at all.
     expect(bare.length).toBeGreaterThan(0);
@@ -108,7 +109,7 @@ needsGitCheckout("git cat-file reads the index, which is what stores LF")(
   for (const path of tracked) {
     const staged = await run(["git", "show", `:${path}`], project);
     const shipped = windowsLineEndings(path, Buffer.from(staged, "binary")).toString("binary");
-    expect({ path, bare: shipped.split("\n").filter(line => line.length && !line.endsWith("\r")).length })
+    expect({ path, bare: bareLineFeeds(shipped).length })
       .toEqual({ path, bare: 0 });
     // Idempotent, so a file already stored with CRLF is not doubled into blank lines.
     expect(windowsLineEndings(path, Buffer.from(shipped, "binary")).toString("binary")).toBe(shipped);

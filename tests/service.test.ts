@@ -162,18 +162,18 @@ test("the connector configuration follows each platform's own configuration dire
   // A stand-in for a roaming profile, built rather than written as a literal user path: the
   // publication audit refuses those, and a real one would be somebody's machine.
   const roaming = join(tmpdir(), "AppData", "Roaming");
-  const linux = connectorConfigDirectory({ XDG_CONFIG_HOME: join(tmpdir(), "config") } as NodeJS.ProcessEnv, "linux");
+  const linux = connectorConfigDirectory({ XDG_CONFIG_HOME: join(tmpdir(), "config") }, "linux");
   expect(linux).toBe(join(tmpdir(), "config", "sbar-orbit"));
 
   // %APPDATA%, not %LOCALAPPDATA%: this is configuration a person may want to follow them between
   // machines, which is the distinction Windows draws. The socket and the workspaces stay local
   // because they are machine state, and this asserts the two do not get confused.
-  const windows = connectorConfigDirectory({ APPDATA: roaming } as NodeJS.ProcessEnv, "win32");
+  const windows = connectorConfigDirectory({ APPDATA: roaming }, "win32");
   expect(windows).toBe(join(roaming, "sbar-orbit"));
   expect(windows).not.toContain(".config");
   expect(windows.toLowerCase()).not.toContain("local\\sbar-orbit");
 
   // A Windows machine with no APPDATA set still lands in the profile rather than at a relative path.
-  const bare = connectorConfigDirectory({} as NodeJS.ProcessEnv, "win32");
+  const bare = connectorConfigDirectory({}, "win32");
   expect(bare).toContain(join("AppData", "Roaming"));
 });

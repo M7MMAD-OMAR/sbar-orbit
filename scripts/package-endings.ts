@@ -19,3 +19,14 @@ export function windowsLineEndings(path: string, bytes: Buffer): Buffer {
   // Normalise first, so a file already stored with CRLF is not doubled into blank lines.
   return Buffer.from(bytes.toString("binary").replace(/\r\n/g, "\n").replace(/\n/g, "\r\n"), "binary");
 }
+
+/**
+ * The lines of `text` that end in a bare LF, which is what a batch file must not ship with.
+ *
+ * Here rather than in each test, because this is the same definition `windowsLineEndings` is written
+ * against, and a test that spells it out separately can drift from the rule it is checking.
+ */
+export function bareLineFeeds(text: string) {
+  return text.split("\n").filter(line => line.length && !line.endsWith("\r"));
+}
+

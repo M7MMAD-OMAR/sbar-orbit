@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Sessions } from "../src/session";
 import { startBroker, call } from "../src/ipc";
+import { onBtrfs as onBtrfsPath } from "./platform-support";
 
 test("broker owns concurrent sessions, deduplicates actions, pauses and cancels safely", async () => {
   const sessions = new Sessions(await createWorkspaceDirectory("session-test"));
@@ -143,11 +144,7 @@ test("a restore is refused far more often than it is granted, and says why", asy
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<output>page</output>", { headers: { "Content-Type": "text/html" } }) });
   const origin = `http://127.0.0.1:${server.port}`;
   const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
-  const onBtrfs = await (async () => {
-    if (process.platform !== "linux") return false;
-    const probe = Bun.spawn(["/usr/bin/findmnt", "-no", "FSTYPE", "--target", workspace], { stdout: "pipe", stderr: "ignore" });
-    return (await new Response(probe.stdout).text()).trim() === "btrfs" && await probe.exited === 0;
-  })();
+  const onBtrfs = await onBtrfsPath(workspace);
   try {
     const session = await run("session.create", {
       backend: "browser", policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },

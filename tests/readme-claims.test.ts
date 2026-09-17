@@ -28,9 +28,15 @@ test("the README does not claim Windows is unmeasured, and points at what was me
 
   // And it names the document that carries the evidence, so a reader can check rather than trust.
   expect(readme).toContain("docs/windows-measured.md");
-  // Including the skip count, which is the honest half of the figure: a green suite on a platform that
-  // skips 95 tests is not a port, and the README has to say so where it says the rest.
-  expect(readme).toMatch(/95 skip/);
+  // Including a skip count, which is the honest half of the figure: a green suite on a platform that
+  // skips most of a suite is not a port, and the README has to say so where it says the rest.
+  //
+  // The SHAPE, not the number. Pinning the literal count made this gate hold the README at a figure
+  // its own evidence document had already superseded, and it would have FAILED on the correction: the
+  // README said 95 while support-tiers.md and windows-measured.md both said 96 from the same commit.
+  // A gate that enforces a stale claim is worse than no gate, on a project whose rule is that a claim
+  // sits at the tier its evidence supports.
+  expect(readme).toMatch(/\d+ skips? is the honest half/);
 });
 
 test("the README names the Windows entry point wherever it names the Linux one", async () => {
@@ -50,7 +56,12 @@ test("the README names the Windows entry point wherever it names the Linux one",
 test("the README states what Windows does not carry, not only what it does", () => {
   // The three the support tiers call Linux only. A README that lists the wins without the limits is
   // how a `Limited` tier gets read as a full port.
-  const limits = readme.slice(readme.indexOf("docs/windows-measured.md") - 900);
+  const marker = readme.indexOf("docs/windows-measured.md");
+  expect(marker).toBeGreaterThan(-1);
+  // Clamped. A negative `slice` index counts from the end, so if the marker ever moved into the first
+  // 900 characters this assertion would quietly widen to the whole file and pass on a README that no
+  // longer states the limits anywhere near the evidence.
+  const limits = readme.slice(Math.max(0, marker - 900), marker + 900);
   for (const absent of ["private display", "systemd", "Linux capabilities"])
     expect(limits).toContain(absent);
 });

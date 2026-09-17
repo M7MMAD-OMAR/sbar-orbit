@@ -23,7 +23,11 @@ if (flag("--help") || flag("-h")) {
 function connectorCommand(report: { steps: { id: string; data?: Record<string, unknown> }[] }) {
   const written = report.steps.find(step => step.id === "connector")?.data as { configuration?: { mcpServers: { orbit: unknown } } } | undefined;
   const server = written?.configuration?.mcpServers.orbit;
-  if (server) return `claude mcp add-json orbit '${JSON.stringify(server)}'`;
+  // Quoting is asked of the platform once, for both branches. The Windows fix used to live only on
+  // the fallback below, which is the branch almost nobody reaches: every SUCCESSFUL install printed
+  // the line above it, wrapped in POSIX single quotes that cmd.exe does not process at all, so a
+  // person copying it handed the tool a literal `'{"command":...` with the JSON unparsed.
+  if (server) return `claude mcp add-json orbit ${quoteForShell(JSON.stringify(server))}`;
   // The fallback names the file this platform actually writes, and reads it the way this platform
   // reads one. A hardcoded `~/.config/...` and `$(cat ...)` printed on Windows would tell a person to
   // read a file that is not there with a shell they are not running.
@@ -34,6 +38,17 @@ function connectorCommand(report: { steps: { id: string; data?: Record<string, u
   return process.platform === "win32"
     ? `powershell -c "claude mcp add-json orbit (Get-Content -Raw '${path}')"`
     : `claude mcp add-json orbit "$(cat ${path})"`;
+}
+
+/**
+ * A JSON document as one pasteable argument, quoted for the shell this platform gives a person.
+ *
+ * POSIX single quotes are literal, so JSON's double quotes pass through untouched. cmd.exe has no
+ * single quoting at all and strips nothing, so the argument is wrapped in double quotes and the
+ * document's own double quotes are doubled, which is how cmd escapes one inside a quoted argument.
+ */
+function quoteForShell(value: string) {
+  return process.platform === "win32" ? `"${value.replace(/"/g, '""')}"` : `'${value}'`;
 }
 
 const json = flag("--json");

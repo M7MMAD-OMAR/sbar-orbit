@@ -28,9 +28,16 @@ const rows = () => {
   const command = process.platform === "win32"
     ? ["powershell", "-NoProfile", "-Command",
        "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe' OR Name='chrome.exe'\" | ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"]
-    : ["bash", "-lc", "ps -eo pid=,args= | grep -E 'chrome|chromium|msedge' | grep -v grep || true"];
+    // `ps` directly, and the filtering in TypeScript. This went through `bash -lc`, which sources the
+    // person's login profile before running anything: on this workstation that starts a static server
+    // in any interactive shell whose directory has an index.html, so a test about leaving the person's
+    // machine alone was running their shell startup three times per run. It also removes the
+    // `grep -v grep` hack, which existed only to hide the pipeline's own process from itself.
+    : ["ps", "-eo", "pid=,args="];
   const listed = Bun.spawnSync(command).stdout.toString().trim();
-  return listed ? listed.split(/\r?\n/).filter(Boolean) : [];
+  if (!listed) return [];
+  const lines = listed.split(/\r?\n/).filter(Boolean);
+  return process.platform === "win32" ? lines : lines.filter(line => /chrome|chromium|msedge/.test(line));
 };
 
 const pidOf = (row: string) => Number(process.platform === "win32" ? row.split("|")[0] : row.trim().split(/\s+/)[0]);

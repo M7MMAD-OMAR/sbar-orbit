@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, delimiter } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
 import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
@@ -140,8 +140,15 @@ export function blockingPrerequisites<T extends Pick<PrerequisiteCheck, "id" | "
 }
 
 /** Whether a directory is on PATH, which decides if the person can type the command by name. */
-export function onPath(directory: string, path = process.env.PATH ?? "") {
-  return path.split(":").filter(Boolean).map(entry => resolve(entry)).includes(resolve(directory));
+export function onPath(directory: string, path = process.env.PATH ?? "", separator = delimiter) {
+  // `delimiter`, not `":"`. A literal colon is the POSIX separator and also splits `C:\Users\...` at
+  // the drive letter, so on Windows every entry became a fragment and `onPath` returned false for a
+  // prefix that really was on PATH. The install then printed the `prefix-not-on-path` remedy telling
+  // a person to fix something that was not broken, and `data.onPath` is a field an agent branches on.
+  //
+  // The separator is a parameter so a test can state a POSIX PATH and a Windows PATH on either host,
+  // rather than only ever checking the shape the machine running the suite happens to use.
+  return path.split(separator).filter(Boolean).map(entry => resolve(entry)).includes(resolve(directory));
 }
 
 export const stepTitles: { id: string; title: string }[] = [
@@ -183,8 +190,12 @@ export async function runInstall(options: InstallOptions = {}) {
     return record;
   };
 
+  // Held here rather than read back out of the step's `data`: that field is the public report shape an
+  // agent parses, and the success branch deliberately publishes the summary rather than the whole
+  // sweep. A local keeps the second consumer below from making the report format load-bearing.
+  let swept: Awaited<ReturnType<typeof inspectPrerequisites>> | null = null;
   const prerequisites = await step("prerequisites", async () => {
-    const report = await inspectPrerequisites(source);
+    const report = swept = await inspectPrerequisites(source);
     const blocking = blockingPrerequisites(report.checks);
     if (blocking.length)
       return { state: "failed", detail: `${blocking.map(check => check.id).join(", ")} missing`, remedies: remediesOf(blocking), data: { report } };
@@ -201,7 +212,12 @@ export async function runInstall(options: InstallOptions = {}) {
   if (prerequisites.state === "failed") return finish();
 
   await step("dependencies", async () => {
-    const report = await inspectPrerequisites(source);
+    // The sweep the prerequisites step already ran, not a second one. Nothing has touched the machine
+    // between them (`install(source)` happens below), and on Windows the sweep spawns a `reg query`
+    // per browser location, so asking twice cost six subprocesses for an answer already in hand.
+    // The fallback is not decoration: the step records a failure rather than throwing if the sweep
+    // itself threw, and this step must not then read a null.
+    const report = swept ?? await inspectPrerequisites(source);
     const present = report.checks.filter(check => check.id.includes("playwright") || check.id === "zod" || check.id.includes("modelcontextprotocol")).every(check => check.available);
     if (present && !options.reinstallDependencies) return { state: "skipped", detail: "already resolved" };
     if (dryRun) return { state: "skipped", detail: "would run bun install --frozen-lockfile --ignore-scripts" };
@@ -241,7 +257,7 @@ export async function runInstall(options: InstallOptions = {}) {
   });
   if (linked.state === "failed") return finish();
 
-  await step("service", async () => {
+  const service = await step("service", async () => {
     if (!wantsService) return { state: "skipped", detail: "--no-service" };
     // Not a gap to fill later. A Chromium family browser will not run in Windows session 0, measured
     // on a Windows 11 guest, so the broker belongs in the person's own session and there is no
@@ -288,7 +304,11 @@ export async function runInstall(options: InstallOptions = {}) {
     // kind of thing that gets found years later and trusted. Said in the report rather than removed
     // silently: it is the person's file, and a step that deletes without saying so is worse than one
     // that leaves something behind.
-    const stale = process.platform === "win32" ? join(homedir(), ".config", "sbar-orbit", "mcp.json") : null;
+    // Asked of the function that owns the rule, not re-spelled here. The hand-written form dropped
+    // the `XDG_CONFIG_HOME` half of it, so a Windows machine with that variable set (Git Bash sets
+    // one) had its old connector written somewhere this check would never look, and the install
+    // would report nothing left behind while the stale file sat there.
+    const stale = process.platform === "win32" ? join(connectorConfigDirectory(process.env, "linux"), "mcp.json") : null;
     const leftBehind = stale && stale !== path && await readFile(stale, "utf8").then(() => true).catch(() => false);
     return { state: "done", data: { path, replaces, configuration, ...(leftBehind ? { stale } : {}) },
       detail: leftBehind ? `${path}, ${replaces}; an older ${stale} is still there and is no longer read` : `${path}, ${replaces}` };
@@ -296,15 +316,17 @@ export async function runInstall(options: InstallOptions = {}) {
 
   await step("verify", async () => {
     if (dryRun) return { state: "skipped", detail: "would ask the broker for a doctor report" };
-    if (!wantsService) return { state: "skipped", detail: "no managed broker was installed" };
-    // The service step above skips on Windows by design, so there is no managed broker to answer and
-    // nothing to verify. Without this the install waited 15 seconds for a broker nobody started, then
-    // reported `verify: failed` and exited 1 on a Windows machine where every step had actually
-    // succeeded: a correct install reporting itself as a failed one, with a remedy telling the person
-    // to read a systemd journal that does not exist here. Found by installing the published release
-    // on a Windows guest, not by the suite, because no test installs the real archive.
-    if (process.platform === "win32")
-      return { state: "skipped", detail: "no managed broker on Windows: start one with `sbar-orbit.cmd serve`, then `sbar-orbit.cmd status`" };
+    // Whether there is a broker to verify is a question the service step already answered, so it is
+    // read here rather than re-derived from `wantsService` and the platform. Both spellings were the
+    // same question: without them the install waited 15 seconds for a broker nobody started, then
+    // reported `verify: failed` and exited 1 on a Windows machine where every step had succeeded,
+    // with a remedy naming a systemd journal that does not exist there. Found by installing the
+    // published release on a Windows guest, not by the suite, because no test installs the real
+    // archive. Asking the step means the next reason to skip a service, a new platform or a policy,
+    // does not have to remember to add a third branch here. A FAILED service step still reaches the
+    // poll below, deliberately: that failure is worth reporting against the socket it names.
+    if (service.state === "skipped")
+      return { state: "skipped", detail: `no managed broker was installed: ${service.detail}` };
     const socket = serviceSocketPath();
     for (let attempt = 0; attempt < 60; attempt++) {
       try {

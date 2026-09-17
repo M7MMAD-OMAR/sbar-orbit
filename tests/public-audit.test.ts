@@ -1,6 +1,6 @@
 import { isPublicSourcePath } from "../scripts/public-paths";
 import { expect, test } from "bun:test";
-import { needsCommand, needsGitCheckout } from "./platform-support";
+import { needsGitCheckout } from "./platform-support";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";

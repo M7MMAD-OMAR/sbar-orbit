@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { inspectPrerequisites } from "../src/preflight";
 import { stepTitles } from "../src/install";
 import { launcherName } from "../src/update";
+import { bareLineFeeds } from "../scripts/package-endings";
 import { tmpdir } from "node:os";
 
 // docs/agent-install.md is a contract an agent is told to branch on, which makes it code that happens
@@ -113,5 +114,5 @@ test("both documented installers exist, delegate to the same installer, and are 
   // cmd.exe reads a batch file byte by byte and a multi line block in an LF-only file is where that
   // goes wrong, which is why .gitattributes pins *.cmd to CRLF. Asserted rather than trusted: a file
   // checked out with LF endings fails in a way that reads like a broken installer.
-  expect(windows.split("\n").filter(line => line.length && !line.endsWith("\r"))).toEqual([]);
+  expect(bareLineFeeds(windows)).toEqual([]);
 });

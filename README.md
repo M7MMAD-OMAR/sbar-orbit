@@ -209,9 +209,9 @@ alongside the image. CLI file output keeps base64 out of the text context.
 ## Scope
 
 The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. macOS remains unmeasured: there is no such machine in this project's reach. Windows is measured and
-`Limited`: the suite runs on a Windows 11 guest at 196 pass and 0 fail with 95 skipped, the published
+`Limited`: the suite runs on a Windows 11 guest at 201 pass and 0 fail with 96 skipped, the published
 release installs there, and an agent host reaches a browser session through the connector Orbit writes.
-95 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
+96 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
 keyring and btrfs snapshots are Linux capabilities and are not ported. See
 [what Windows measured](docs/windows-measured.md).
 
