@@ -94,7 +94,11 @@ ARABIC = {
     "Liquid motion": "حركة سائلة",
     "The card is pulled out of the capsule rather than appearing. Turning it off removes the animation, not the card.": "تسحب البطاقة من الكبسولة بدل أن تظهر فجأة. إيقافها يزيل الحركة لا البطاقة.",
     "How solid the card is": "مدى صلابة البطاقة",
-    "How much of the wallpaper shows through the glass, from mostly transparent to solid.": "كم تظهر خلفية سطح المكتب عبر الزجاج، من شبه شفاف إلى صلب.",
+    "How much of the wallpaper shows through the glass, from mostly transparent to solid. It sets the "
+    "capsule around the mark; the card below it stays solid enough for its rows to be read over a "
+    "window full of text, whatever this says.":
+    "كم تظهر خلفية سطح المكتب عبر الزجاج، من شبه شفاف إلى صلب. يضبط الكبسولة حول العلامة، أما البطاقة "
+    "تحتها فتبقى صلبة بما يكفي لقراءة سطورها فوق نافذة مليئة بالنص مهما كانت هذه القيمة.",
     "Desktop notifications": "إشعارات سطح المكتب",
     "A notification through the person's own daemon when a session or an application appears.": "إشعار عبر خدمة الإشعارات في جهازك عند ظهور جلسة أو تطبيق.",
     "Blink when something happens": "اومض عند حدوث شيء",
@@ -174,7 +178,9 @@ SCHEMA = (
             ["motion", "animation", "liquid", "morph", "smooth", "still", "performance", "cost",
              "حركة", "سائل", "انتقال", "سلاسة", "أداء", "تكلفة"]),
     setting("blend", "Motion and blending", "How solid the card is", 80, "number",
-            "How much of the wallpaper shows through the glass, from mostly transparent to solid.",
+            "How much of the wallpaper shows through the glass, from mostly transparent to solid. It sets the "
+            "capsule around the mark; the card below it stays solid enough for its rows to be read over a "
+            "window full of text, whatever this says.",
             ["blend", "opacity", "transparent", "translucent", "glass", "solid", "alpha", "blur",
              "شفافية", "زجاج", "معتم", "صلب", "مزج"],
             bounds=(30, 100)),

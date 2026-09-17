@@ -42,6 +42,29 @@ A wlr-layer-shell surface, so it works on Hyprland, sway and anything else that 
 
 Resting the pointer on it opens one card per session: agent, a state chip, task, what is on screen, which tab or window of how many, and the current action, with a Viewer and a Settings button under them. Clicking a card opens the viewer, a left click on the capsule opens the viewer, a right click opens the settings. Opening waits 220 ms and closing waits 320 ms, so a pointer crossing the edge of the screen on its way elsewhere does not flash the whole list. The surface is pinned to one end of its edge with a margin that puts the capsule where the person left it, because a surface anchored to a single edge is centred by the compositor and the capsule would then jump by half the height of the cards every time they opened. The card keeps its place in the layout even while closed, so the surface never resizes under the pointer; what changes is the surface's input region, which is tightened back onto the capsule so a closed panel swallows no clicks in the card-sized rectangle beside it.
 
+### The glass the cards sit on
+
+The body behind the mark and the cards is one Cairo outline, filled with a gradient rather than a flat
+colour. The capsule around the mark keeps the `blend` the person set, because that is where seeing the
+desktop through the panel is the point and there is nothing on it to read. Across the neck the gradient
+climbs to a near solid, so the rows of text below always sit on a surface they can be read against,
+including over a window full of high contrast text, which is the case a flat translucent fill fails at.
+What carries the glass is not what shows through it: a vertical gradient, a hairline of the person's own
+text colour around the edge, and a white sheen that is brightest along the top and gone before it reaches
+the card.
+
+There is no backdrop blur in it, and there cannot be a portable one: GTK cannot sample what is behind its
+own surface, and Wayland has no cross compositor protocol for it. Compositors that do offer one can blur
+the panel from the outside, because the surface names itself. On Hyprland:
+
+```
+layerrule = blur, sbar-orbit-panel
+layerrule = ignorealpha 0.2, sbar-orbit-panel
+```
+
+Nothing in Orbit depends on it. It is an addition for the desktops that have it, and the panel is legible
+without it everywhere else.
+
 ### Starting with the desktop, and one mark whoever starts it
 
 `sbar-orbit service install` enables both the broker and the mark. Two paths are installed because a

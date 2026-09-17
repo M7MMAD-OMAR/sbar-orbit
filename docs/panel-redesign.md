@@ -15,7 +15,7 @@ The panel is the mark on the edge of the screen, the card list it opens, and the
 | The mark | `style`, `size`, `hideWhenIdle`, `colors` (four of them) | What the dot looks like |
 | The viewer | `viewerBrowser`, `viewerAppWindow` | How the window opens |
 | Working glow | `frame`, `framePulse`, `frameColor` | Should the screen glow while something runs |
-| Motion and blending | `motion`, `blend` | How the card animates and how see-through it is |
+| Motion and blending | `motion`, `blend` | How the card animates and how see-through the capsule is |
 | Notifications | `notifications`, `blink` | Should I be told when something happens |
 
 Eighteen rows, and the right hand column has seven entries. That ratio is the problem in one line.

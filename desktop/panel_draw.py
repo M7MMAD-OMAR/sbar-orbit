@@ -29,6 +29,12 @@ NECK_SPAN = 26.0
 NECK_RADIUS = 15.0
 # Transparent room left around the capsule so the pointer has something to hit near the screen edge.
 MARK_PADDING = 7
+# How solid the part of the body with words on it is, whatever the blend setting says. Transparency
+# is worth having over a wallpaper, and it is unreadable over a terminal full of text; the card is
+# the half that is read, so it never drops below this. Nothing of the glass is lost by it, because
+# what makes this shape read as glass is the gradient down it and the light along its top edge,
+# not what shows through it.
+CARD_FLOOR = 0.97
 
 
 def shell_padding(settings):
@@ -198,12 +204,79 @@ def metaball(cr, first, second, spread=0.62, handle=2.3, reach=4.2):
     return True
 
 
-def glass(cr, build, fill, edge, shadow=1.0, lift=(0.0, 2.0)):
+def source(cr, paint):
+    """Set either a plain colour or a ready-made pattern on the context, so a caller that has a
+    gradient to lay down and a caller that has four numbers can both go through the same drawing."""
+    if isinstance(paint, cairo.Pattern):
+        cr.set_source(paint)
+    else:
+        cr.set_source_rgba(*paint)
+
+
+def body_paint(head, tail, fill):
+    """The gradient the body is filled with, built in the primed space where the card always grows
+    downward out of the capsule.
+
+    Two jobs in one pattern. Down the capsule it holds the blend the person set, which is where
+    seeing the wallpaper through the panel is the whole point and where there is nothing to read.
+    Over the card it climbs to `CARD_FLOOR`, so a row of text sits on a solid surface no matter what
+    is behind the panel. The climb happens across the neck, in the few pixels where the two shapes
+    are already narrowing into each other, so it reads as depth in one body of glass rather than as
+    a line drawn across it.
+    """
+    red, green, blue, base = fill
+    top = head[1]
+    bottom = (tail[1] + tail[3]) if tail is not None else (head[1] + head[3])
+    span = max(1.0, bottom - top)
+    pattern = cairo.LinearGradient(0.0, top, 0.0, bottom)
+    if tail is None:
+        pattern.add_color_stop_rgba(0.0, red, green, blue, base)
+        pattern.add_color_stop_rgba(1.0, red, green, blue, base)
+        return pattern
+    solid = max(base, CARD_FLOOR)
+    # A touch of light carried into the top of the card, the way a lit pane of glass is brightest
+    # where it catches the edge. Added to the colour rather than blended with white, so a light
+    # theme lifts as little as a dark one does.
+    lift = 0.05
+    neck_top = clamp((head[1] + head[3] - top) / span)
+    card_top = clamp((tail[1] + 3.0 - top) / span)
+    pattern.add_color_stop_rgba(0.0, red, green, blue, base)
+    pattern.add_color_stop_rgba(neck_top, red, green, blue, base)
+    pattern.add_color_stop_rgba(max(neck_top, card_top),
+                                min(1.0, red + lift), min(1.0, green + lift), min(1.0, blue + lift), solid)
+    pattern.add_color_stop_rgba(1.0, red, green, blue, solid)
+    return pattern
+
+
+def body_sheen(head, tail, fill):
+    """The light along the top edge, which is the half of the glass that transparency was carrying.
+
+    A hairline of white, brightest where the body meets the light and gone before it reaches the
+    card, stroked over the rim. It is what keeps a nearly solid card reading as a pane rather than
+    as a box. Its weight follows how dark the surface is: a highlight is what a dark pane is lit by,
+    and on a light theme the same stroke at the same strength would only wash the edge out.
+    """
+    red, green, blue = fill[0], fill[1], fill[2]
+    strength = 0.16 + 0.24 * clamp(1.0 - (0.2126 * red + 0.7152 * green + 0.0722 * blue))
+    top = head[1]
+    bottom = (tail[1] + tail[3]) if tail is not None else (head[1] + head[3])
+    fade = min(max(1.0, bottom - top), head[3] * 2.4)
+    pattern = cairo.LinearGradient(0.0, top, 0.0, top + fade)
+    pattern.add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, strength)
+    pattern.add_color_stop_rgba(0.55, 1.0, 1.0, 1.0, strength * 0.35)
+    pattern.add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.0)
+    return pattern
+
+
+def glass(cr, build, fill, edge, shadow=1.0, lift=(0.0, 2.0), sheen=None):
     """Fill an outline, over a soft shadow and under a hairline edge.
 
     Cairo has no blur, and a blur on this renderer would cost more than the whole panel does. Four
     strokes of the same outline, each wider and fainter than the last, give a shadow that is close
     enough at this size and stays inside a tenth of a millisecond.
+
+    `fill` is a colour or a pattern; `sheen`, when given, is a second hairline stroked over the edge
+    and is where the pane catches the light.
     """
     if shadow > 0:
         cr.save()
@@ -216,10 +289,15 @@ def glass(cr, build, fill, edge, shadow=1.0, lift=(0.0, 2.0)):
         cr.new_path()
         cr.restore()
     build(cr)
-    cr.set_source_rgba(*fill)
+    source(cr, fill)
     cr.fill_preserve()
     cr.set_line_width(1.0)
-    cr.set_source_rgba(*edge)
+    source(cr, edge)
+    if sheen is None:
+        cr.stroke()
+        return
+    cr.stroke_preserve()
+    cr.set_source(sheen)
     cr.stroke()
 
 
@@ -403,8 +481,12 @@ class Liquid(Gtk.Box):
         cr = snapshot.append_cairo(area)
         cr.save()
         self.orient(cr)
-        glass(cr, lambda ctx: body_path(ctx, head, tail, neck, head_radius, tail_radius), fill, rim,
-              lift=self.LIFT[self.panel.settings["edge"]])
+        # Built per frame rather than cached with the colours: both patterns are cut to the shape the
+        # morph is passing through, and a gradient over a few hundred pixels costs nothing next to
+        # the theme lookup the cache exists to avoid.
+        glass(cr, lambda ctx: body_path(ctx, head, tail, neck, head_radius, tail_radius),
+              body_paint(head, tail, fill), rim, lift=self.LIFT[self.panel.settings["edge"]],
+              sheen=body_sheen(head, tail, fill))
         cr.restore()
         self.snapshot_child(self.panel.mark, snapshot)
         if tail is None:
