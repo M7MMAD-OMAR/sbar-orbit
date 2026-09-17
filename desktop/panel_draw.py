@@ -255,6 +255,10 @@ def body_sheen(head, tail, fill):
     card, stroked over the rim. It is what keeps a nearly solid card reading as a pane rather than
     as a box. Its weight follows how dark the surface is: a highlight is what a dark pane is lit by,
     and on a light theme the same stroke at the same strength would only wash the edge out.
+
+    Only the open body gets one. A closed capsule is a few pixels of a shape the person recognises,
+    it is still at their own blend, and a bright lip along the top of it would read as a change to
+    the mark rather than as light on glass.
     """
     red, green, blue = fill[0], fill[1], fill[2]
     strength = 0.16 + 0.24 * clamp(1.0 - (0.2126 * red + 0.7152 * green + 0.0722 * blue))
@@ -486,7 +490,7 @@ class Liquid(Gtk.Box):
         # the theme lookup the cache exists to avoid.
         glass(cr, lambda ctx: body_path(ctx, head, tail, neck, head_radius, tail_radius),
               body_paint(head, tail, fill), rim, lift=self.LIFT[self.panel.settings["edge"]],
-              sheen=body_sheen(head, tail, fill))
+              sheen=body_sheen(head, tail, fill) if tail is not None else None)
         cr.restore()
         self.snapshot_child(self.panel.mark, snapshot)
         if tail is None:

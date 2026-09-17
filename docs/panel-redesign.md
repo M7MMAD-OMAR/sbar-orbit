@@ -24,7 +24,7 @@ Eighteen rows, and the right hand column has seven entries. That ratio is the pr
 
 **One question is spread across several rows.** "Should the screen glow while an assistant is working" is three settings: whether it glows, whether it breathes, and what colour it is. "Should I be told when something happens" is two. "Where does the dot sit" is four, and one of those four, `position`, is already set by dragging the mark, so the row is a second way to do something the person has done with their hand.
 
-**The words are Orbit's, not the reader's.** "The mark", "Working glow", "Liquid motion", "How solid the card is", "Blend". A person who has never read this repository cannot tell what a mark is, and "liquid motion" describes the implementation's feel rather than what turning it off does.
+**The words are Orbit's, not the reader's.** "The mark", "Working glow", "Liquid motion", "How see-through the panel is", "Blend". A person who has never read this repository cannot tell what a mark is, and "liquid motion" describes the implementation's feel rather than what turning it off does.
 
 **The state colours ask for knowledge of a state machine.** Four colour wells named idle, working, paused, and offline. To set them usefully you must first know that Orbit has exactly those four states, that offline means the broker rather than the session, and that the colours are also what the quickshell bar reads. That is a maintainer's control sitting in a person's window.
 
