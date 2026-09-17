@@ -34,7 +34,7 @@ MARK_PADDING = 7
 # the half that is read, so it never drops below this. Nothing of the glass is lost by it, because
 # what makes this shape read as glass is the gradient down it and the light along its top edge,
 # not what shows through it.
-CARD_FLOOR = 0.97
+CARD_FLOOR = 0.92
 
 
 def shell_padding(settings):
