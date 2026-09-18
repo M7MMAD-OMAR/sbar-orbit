@@ -1616,6 +1616,7 @@ account for this work is the throwaway one from section 27.
 | 5 | the last one, a test asserting a Linux path with the host's separator | 217 / 1 / 102 |
 | 6 | after that | **218 / 0 / 102, suite exit 0** |
 | 7 | with the API surface fixes in section 30 | **220 / 0 / 102, suite exit 0** |
+| 8 | with the review fixes in section 31 | **220 / 0 / 103, suite exit 0** |
 
 Round 1's eight were read one at a time rather than by pattern, and they were four different things:
 
@@ -1771,3 +1772,38 @@ Stated because a finding dismissed silently is indistinguishable from one that w
   person's logins, and the path is additionally gated by `requireBoundedOrigins` and a check that the
   source is a detected browser's own profile directory. Defence in depth, verified by reading, left
   alone.
+
+## 31. What a reuse and quality review found, and the two of its findings that were already wrong
+
+Two reviewers read the port's whole diff while the guest work ran. Their findings were checked
+against the code rather than applied, and that mattered: two of the loudest were already false by the
+time they arrived, which is the ordinary cost of reviewing a tree that several sessions are editing.
+
+**Falsified before acting on them.** One said `src/connector-config.ts` probes `bin/sbar-orbit`, a
+file a Windows checkout does not have, so the connector falls back to naming `process.execPath`. The
+archive answers it directly: `bin/sbar-orbit` and `bin/sbar-orbit.cmd` are BOTH tracked and both ship,
+so the probe finds the POSIX name and `windowsLauncher()` rewrites it to the `.cmd`. Another said
+`src/preflight.ts` still gates the systemd group on `!windows`, leaving macOS with Fedora remedies;
+the line reads `!windows && !darwin` and had already been fixed. Applying either would have been a
+change made against a description of the code rather than the code.
+
+**Three were real and are fixed.**
+
+| Finding | What it cost |
+|---|---|
+| `prepareVersion` spawned `process.execPath \|\| "bun"` while the install path uses `bunExecutable()` | Two spellings of "how Orbit finds its own Bun", and the update path silently lost the `Bun.which` fallback. The whole reason that resolution exists is that Bun is off PATH on Windows |
+| `kernel32()` called `dlopen` on every invocation | A fresh FFI symbol table per session launch and per status poll, because `sharedBudgetUsage()` is on both paths. Memoized, with the platform guard still on every call so a non Windows caller is refused rather than handed a cached handle |
+| `workspaceRoot(env)` read the global `process.platform` | The Windows branch was unreachable from a test on any other host, so the one path a Windows user depends on was verified by inference. `tests/workspace-storage.test.ts` said so in its own comment. It takes `platform` now, like its two siblings, and the test asserts all three platforms from any host |
+
+### And the fix to the last one immediately made the same mistake it was fixing
+
+Injecting `platform` made the POSIX branches reachable from Windows, where `join` produces
+backslashes, so the guest failed the new assertion at once: a POSIX answer about Linux compared
+against a backslash path. Both the function and the test use `posix.join` now.
+
+That is the fourth time in this document that a platform question was asked in the HOST's terms. It
+is worth naming as a rule rather than as four incidents: **the moment a function takes `platform` as
+an argument, every path it builds for a platform that is not this one has to be built with that
+platform's own `join`.** The compiler cannot see it, and on a single-platform CI it never fails.
+
+**220 pass, 0 fail, 103 skip** on the guest afterwards.
