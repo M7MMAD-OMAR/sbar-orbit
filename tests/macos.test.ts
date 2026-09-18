@@ -206,6 +206,30 @@ darwinOnly("the background class is inherited, so applying it twice costs a proc
   expect(inheritedBackgroundClass(0x7fffffff)).toBe(false);
 });
 
+test("the endpoint deadline scales to the machine, with both ends pinned", async () => {
+  const { endpointWaitMs } = await import("../src/chrome");
+  // The defect this replaced: a flat 15 s that a 3 core runner missed while a quiet launch on the
+  // same machine took 1.0 s. A small machine needs MORE time, not less, so the curve runs downward
+  // in cores.
+  expect(endpointWaitMs(2)).toBeGreaterThan(endpointWaitMs(24));
+  // The floor. A big machine keeps the old deadline rather than getting a shorter one, so this is
+  // never a regression for the host the project is measured on.
+  expect(endpointWaitMs(24)).toBe(15000);
+  expect(endpointWaitMs(64)).toBe(15000);
+  // The ceiling, which matters as much: a browser that is truly wedged must still fail, and fail
+  // while somebody is watching. Without this, a single core machine would wait a minute per launch.
+  expect(endpointWaitMs(1)).toBe(45000);
+  // The measured case: 3 cores, the runner where the flat deadline was missed.
+  expect(endpointWaitMs(3)).toBe(20000);
+  // Never zero, negative or NaN, whatever the platform reports. A deadline of zero would fail every
+  // launch instantly and read as a browser that cannot start.
+  for (const cores of [0, -1, Number.NaN]) {
+    const value = endpointWaitMs(cores);
+    expect(Number.isFinite(value)).toBe(true);
+    expect(value).toBeGreaterThanOrEqual(15000);
+  }
+});
+
 test("the budget registry root is not in a directory the system sweeps", () => {
   const root = budgetRegistryRoot({} as NodeJS.ProcessEnv, macHome);
   // Losing an entry under-reports the pool, which is the direction that hands out a session the

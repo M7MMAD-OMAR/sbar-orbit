@@ -53,6 +53,37 @@ export type ChromeLaunchOptions = {
  * and on the measured guest `msedge.exe` was registered there and `chrome.exe` was absent because
  * Chrome was not installed.
  */
+/**
+ * How long a browser gets to publish its CDP endpoint, scaled to the machine rather than fixed.
+ *
+ * This was a flat 15 seconds, which is generous on a 24 thread workstation and tight on a two or
+ * three core runner starting several Chrome trees at once. Measured on a macOS runner with 3 cores:
+ * a single quiet launch takes about 1.0 s, and under the suite's own concurrency the same launch
+ * missed 15 s and failed with "did not publish its local endpoint", which reads as a broken browser
+ * rather than as a busy machine.
+ *
+ * Scaled the same way `src/service.ts` scales the budget, and for the same reason: the number that is
+ * right for one machine is wrong for another, and a constant hides which. A small machine gets more
+ * time because its browser genuinely needs more, not to paper over a hang. The two CDP deadlines in
+ * `launchChrome` already allow 20 s each, so a 15 s cap on the most expensive step in the sequence
+ * was also the inconsistent one.
+ *
+ * The ceiling matters as much as the floor: a browser that is truly wedged must still fail, and fail
+ * while somebody is watching, so this tops out rather than growing without limit.
+ *
+ * Exported and taking its input as a parameter so the rule can be tested on any host, rather than
+ * only on whatever core count the machine running the suite happens to have.
+ */
+export function endpointWaitMs(cores = navigator.hardwareConcurrency) {
+  // `Math.max(1, NaN)` is NaN, not 1, so a platform that reports a non number would produce a NaN
+  // deadline, and `Date.now() + NaN` is NaN, which no comparison is ever true against: the launch
+  // loop would exit on its first pass and every browser would be reported as never having published
+  // its endpoint. Guarded explicitly rather than relying on `Math.max` to sanitise, which it does
+  // not. The test pins 0, -1 and NaN for exactly this reason.
+  const usable = Number.isFinite(cores) && cores >= 1 ? cores : 1;
+  return Math.max(15000, Math.min(45000, Math.round(60000 / usable)));
+}
+
 export function defaultChromeExecutable(): string | undefined {
   if (process.platform === "win32") return windowsBrowserInstalls()[0]?.executable;
   // macOS resolves bundles rather than fixed paths, and returns the Mach-O inside the bundle: the
@@ -369,8 +400,8 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     for (const listener of listeners) listener();
   })();
   try {
-    const endpointWaitMs = 15000;
-    const deadline = Date.now() + endpointWaitMs;
+    const waitMs = endpointWaitMs();
+    const deadline = Date.now() + waitMs;
     let endpoint: string | undefined;
     while (Date.now() < deadline && owner.exitCode() === null) {
       try {
@@ -386,7 +417,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // claim. Read once, then used.
     const code = owner.exitCode();
     if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(code === null
-      ? `Owned Chrome did not publish its local endpoint within ${endpointWaitMs / 1000} seconds and is still running`
+      ? `Owned Chrome did not publish its local endpoint within ${waitMs / 1000} seconds and is still running`
       : `Owned Chrome exited with code ${code} before publishing its endpoint`));
     socket = new WebSocket(endpoint);
     const connected = socket;
