@@ -9,8 +9,12 @@ import { OrbitError } from "./errors";
  * On Windows the equivalent of `$XDG_CACHE_HOME` is `%LOCALAPPDATA%`, which is per user and
  * deliberately non roaming, so a multi gigabyte browser profile is not synced to a domain share.
  */
-export function workspaceRoot(env = process.env) {
-  if (process.platform === "win32" && !env.XDG_CACHE_HOME)
+export function workspaceRoot(env = process.env, platform = process.platform) {
+  // `platform` is injected for the same reason `env` is: without it the Windows branch cannot be
+  // reached from a test on any other host, so the one path a Windows user depends on would be
+  // verified only by inference. That is this project's own "not measured" rule being bent inside a
+  // function it applies to. `serviceSocketPath` and `connectorConfigDirectory` already take it.
+  if (platform === "win32" && !env.XDG_CACHE_HOME)
     return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "workspaces");
   // `~/Library/Caches` is the documented place for regenerable per user data on macOS, which is
   // exactly what a session workspace is: it holds a fresh browser profile that is thrown away when
@@ -19,7 +23,7 @@ export function workspaceRoot(env = process.env) {
   //
   // Application Support would also work and is wrong for the same reason `$XDG_DATA_HOME` would be
   // on Linux: this is cache, and telling the system otherwise means backing it up.
-  if (process.platform === "darwin" && !env.XDG_CACHE_HOME)
+  if (platform === "darwin" && !env.XDG_CACHE_HOME)
     return join(homedir(), "Library", "Caches", "sbar-orbit", "workspaces");
   return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "sbar-orbit/workspaces");
 }

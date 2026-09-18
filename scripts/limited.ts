@@ -36,7 +36,13 @@ if (alreadyLimited) {
   // assumed: a machine without it runs the command unhinted rather than refusing to run it at all,
   // because the accounting half of the budget is in place either way and that is what the ceiling
   // is read from.
-  const background = await Bun.file("/usr/sbin/taskpolicy").exists() ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  //
+  // Skipped when this process is ALREADY in the background class, which happens whenever one
+  // budgeted command starts another. The class is inherited, so re-applying it spawns a process per
+  // nesting level and changes nothing.
+  const { inheritedBackgroundClass } = await import("../src/macos");
+  const background = !inheritedBackgroundClass() && await Bun.file("/usr/sbin/taskpolicy").exists()
+    ? ["/usr/sbin/taskpolicy", "-b"] : [];
   const child = Bun.spawn([...background, executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   // Signals go to the GROUP, not to the child: the point of the group is that everything the
   // command started is addressable, and forwarding to one pid would leave a browser tree behind.

@@ -60,7 +60,7 @@ function remediesOf(checks: PrerequisiteCheck[]): Remedy[] {
  * "bun" threw that away and failed with `Executable not found in $PATH`, measured on the Windows
  * guest where Bun lives outside PATH. `process.execPath` is the interpreter already in hand.
  */
-function bunExecutable() {
+export function bunExecutable() {
   return process.execPath || Bun.which("bun") || "bun";
 }
 

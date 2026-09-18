@@ -3,6 +3,11 @@ import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { call } from "./ipc";
 import { serviceSocketPath } from "./service";
+// One spelling of "how Orbit finds its own Bun". This path had `process.execPath || "bun"`, which
+// drops the `Bun.which` fallback the install path keeps, so a host where `execPath` is empty behaved
+// differently depending on which of the two ran. The whole point of resolving Bun by location is
+// that it is off PATH on Windows.
+import { bunExecutable } from "./install";
 
 /**
  * Changing which version of Orbit is the running one, without taking away a session.
@@ -397,7 +402,7 @@ export async function prepareVersion(candidate: Candidate, feed: Feed = {}, envi
     const installed = await (environment.install ?? (async (target: string) => {
       // The running interpreter, not a bare "bun": a broker started by a service or an agent host has
       // its own PATH, which need not carry Bun. Same reason `src/install.ts` resolves it this way.
-      const child = Bun.spawn([process.execPath || "bun", "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
+      const child = Bun.spawn([bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
       const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
       return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
     }))(staging);

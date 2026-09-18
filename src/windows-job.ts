@@ -21,10 +21,21 @@ import { OrbitError } from "./errors";
 
 const { i32, u32, u64, bool, ptr: pointer } = FFIType;
 
-/** Only ever opened on win32. Every caller goes through `requireWindows` first. */
+/**
+ * Only ever opened on win32. Every caller goes through `requireWindows` first.
+ *
+ * Memoized, because the symbols never change and this is on two hot paths: `sharedBudgetUsage()` is
+ * called from `budgetHeadroom()` on every session launch and from `resourceStatus()` on every status
+ * poll, and each call was building a fresh FFI symbol table. The platform guard stays on every call,
+ * so a non Windows caller is still refused rather than handed a cached handle.
+ */
+let loaded: ReturnType<typeof kernel32Symbols> | undefined;
 function kernel32() {
   if (process.platform !== "win32")
     throw new OrbitError("UNSUPPORTED", "The job object containment layer is Windows only");
+  return loaded ??= kernel32Symbols();
+}
+function kernel32Symbols() {
   return dlopen(`kernel32.${suffix}`, {
     CreateJobObjectW: { args: [pointer, pointer], returns: pointer },
     OpenJobObjectW: { args: [u32, bool, pointer], returns: pointer },

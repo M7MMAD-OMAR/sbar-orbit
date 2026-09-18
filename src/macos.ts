@@ -273,6 +273,32 @@ export function processStartedAtMs(pid: number): number | null {
 }
 
 /**
+ * Is this process already in the darwin-background scheduling class?
+ *
+ * Asked of the kernel rather than tracked in a variable, because the class is INHERITED and the
+ * process that set it may be two levels up: `scripts/limited.ts` puts the whole command in it, so a
+ * broker started that way is background, and so is every browser it spawns. Applying `taskpolicy -b`
+ * again on top of that buys nothing and costs a process per session.
+ *
+ * `PROC_PIDTBSDINFO` carries `pbi_flags`, and `PROC_FLAG_DARWINBG` is the bit that says the process
+ * is in the background class. Reading it is the same call `processStartedAtMs` already makes.
+ *
+ * False on any doubt, which is the safe direction: the cost of answering false when the class is
+ * already set is one redundant `taskpolicy` process, while answering true when it is NOT set would
+ * silently drop the only part of the macOS budget the system actually enforces.
+ */
+const PROC_FLAG_DARWINBG = 0x8000;
+
+export function inheritedBackgroundClass(pid = process.pid): boolean {
+  const buffer = new Uint8Array(PROC_BSDINFO_SIZE);
+  const written = system().proc_pidinfo(pid, PROC_PIDTBSDINFO, 0n, ptr(buffer), buffer.byteLength);
+  if (written !== PROC_BSDINFO_SIZE) return false;
+  // `pbi_flags` is a uint32 at offset 16 of struct proc_bsdinfo, from sys/proc_info.h.
+  const flags = read.u32(ptr(buffer), 16);
+  return (flags & PROC_FLAG_DARWINBG) !== 0;
+}
+
+/**
  * Is this still the process group Orbit created, or a different one wearing a reused number?
  *
  * The same question `ownsGroup()` answers on Linux by reading the leader's environment out of

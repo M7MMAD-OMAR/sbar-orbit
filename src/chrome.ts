@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 import { chromeExecutables, darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
+import { inheritedBackgroundClass } from "./macos";
 import { defaultViewport } from "./viewport";
 
 export type ChromeLaunchOptions = {
@@ -128,12 +129,24 @@ function launchOnLinux(executable: string, profile: string, argv: string[], env:
  * to `KILL_ON_JOB_CLOSE`. `docs/support-tiers.md` states the row at that tier.
  */
 function launchOnDarwin(executable: string, profile: string, argv: string[], env: Record<string, string>): OwnedBrowser {
-  // `taskpolicy -b` rather than a resource limit: the darwin-background class is a scheduling hint
-  // that on Apple silicon places the session's threads on the efficiency cluster, and it is the
-  // only part of the macOS budget the system itself applies. `RLIMIT_AS` is not used deliberately,
-  // and the reason is written down in docs/porting.md: V8 reserves hundreds of gigabytes of address
-  // space, so an address space limit either does nothing or kills a healthy browser outright.
-  const background = Bun.file("/usr/sbin/taskpolicy").size > 0 ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  // The scheduling half of the macOS budget, and the only half the system enforces. The
+  // darwin-background class is the nearest analogue of the Linux slice's `CPUWeight=10` and
+  // `IOWeight=10`: on Apple silicon it places threads on the efficiency cluster, and it also sets
+  // throttled low priority I/O.
+  //
+  // `RLIMIT_AS` is deliberately not used instead. It IS enforced on macOS 12 and later, contrary to
+  // the folklore, but it bounds address space rather than footprint, and V8 reserves hundreds of
+  // gigabytes of address space, so any value that would bound a browser's memory kills a healthy one.
+  //
+  // Applied ONCE. The class is inherited, so a broker already running under `scripts/limited.ts`
+  // has it and every browser it starts gets it for free; spawning `taskpolicy -b` again on top was
+  // a second process per session buying nothing. `alreadyBackground` is how this path knows, and
+  // `ORBIT_DARWIN_BACKGROUND=0` is the override `experiments/macos-qos-cost.ts` uses to measure
+  // what the class costs by running one arm without it.
+  const requested = process.env.ORBIT_DARWIN_BACKGROUND !== "0";
+  const alreadyBackground = process.env.ORBIT_DARWIN_BACKGROUND === "1" ? false : inheritedBackgroundClass();
+  const background = requested && !alreadyBackground && Bun.file("/usr/sbin/taskpolicy").size > 0
+    ? ["/usr/sbin/taskpolicy", "-b"] : [];
   const owner = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "native/supervise-darwin.ts"),
     join(profile, "owner.json"), ...background, executable, ...argv],
     { env, stdin: "pipe", stdout: "ignore", stderr: "pipe" });

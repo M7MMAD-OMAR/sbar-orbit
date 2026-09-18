@@ -168,6 +168,13 @@ jobs:
         continue-on-error: true
         run: |
           (bun run scripts/limited.ts bun run experiments/macos-reaping.ts; echo "reaping exit $?") 2>&1 | tee output/verify/reaping.log
+      # What the background scheduling class costs a session on a small machine. Five browser driven
+      # suites time out here, and the darwin-background class is the first suspect worth ruling in or
+      # out: it throttles I/O as well as CPU, and a fresh browser profile is mostly I/O.
+      - name: what the background scheduling class costs
+        continue-on-error: true
+        run: |
+          (bun run scripts/limited.ts bun run experiments/macos-qos-cost.ts 3; echo "qos exit $?") 2>&1 | tee output/verify/qos-cost.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:

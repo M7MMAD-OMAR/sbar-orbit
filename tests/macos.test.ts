@@ -189,6 +189,23 @@ darwinOnly("a registration must come from a group leader")("registering a group 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+darwinOnly("the background class is inherited, so applying it twice costs a process and buys nothing")(
+  "the scheduling class is read from the kernel, not assumed", async () => {
+  const { inheritedBackgroundClass } = await import("../src/macos");
+  // Whatever this process's class is, the answer has to be a real boolean read from the kernel and
+  // not a throw, because a launch path branches on it. The suite runs under `scripts/limited.ts`,
+  // which sets the class, so the expected answer here is true; asserting only the type keeps this
+  // honest if the suite is ever run another way.
+  expect(typeof inheritedBackgroundClass()).toBe("boolean");
+  // pid 1 is launchd, which is not in the background class. A function that answered true for
+  // everything would pass the check above and silently disable the only enforced half of the
+  // budget, so this is the assertion that catches a stub.
+  expect(inheritedBackgroundClass(1)).toBe(false);
+  // A pid that cannot exist reads false rather than throwing: the caller is deciding whether to add
+  // one argument, and an exception there would fail a session over a scheduling hint.
+  expect(inheritedBackgroundClass(0x7fffffff)).toBe(false);
+});
+
 test("the budget registry root is not in a directory the system sweeps", () => {
   const root = budgetRegistryRoot({} as NodeJS.ProcessEnv, macHome);
   // Losing an entry under-reports the pool, which is the direction that hands out a session the
