@@ -147,42 +147,51 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 2 | `9086484`, the same commit re-run | 213 | 14 | 85 | 313 s |
 | 3 | `a10b9cd`, after the fixes in section 4 | 223 | 8 | 85 | 356 s |
 | 4 | `0654b13`, after the enumeration fix | 229 | 5 | 86 | 334 s |
-| 5 | `3135b16`, after the scheduling class fix | 237 | **0** | 86 | **190 s** |
+| 5 | `3135b16`, after the scheduling class fix | 237 | **0** | 86 | 190 s |
 | 6 | `3135b16`, the same commit re-run | 236 | 1 | 86 | 185 s |
 | 7 | `4ceef2e`, after the endpoint deadline fix | 238 | **0** | 86 | 227 s |
+| 8 | `4ceef2e`, the same commit re-run | 237 | 1 | 86 | 259 s |
+| 9 | `ec1a060`, the audit fixes | 235 | 3 | 86 | 311 s |
 
-Runs 1 and 2 are the same code and disagree by two. Runs 5 and 6 are the same code and disagree by
-one. That pattern is the most useful thing in the table and it cuts both ways: it is why the five
-timeouts were not all blamed on one cause, and it is why **run 5's zero is not treated as proof.**
+**Read the whole column, not the best row.** Three commits were each run twice and each produced one
+green and one red: `9086484` gave 12 then 14, `3135b16` gave 0 then 1, `4ceef2e` gave 0 then 1. A
+single green run on this host does not mean the suite is green, and this table exists so nobody
+quotes run 5 or run 7 on its own.
 
-### The defect the timeouts were mostly hiding
+What the column does show is a real trend that is not noise: **12 failures down to between 0 and 3,
+and every failure after run 4 is a browser driven timeout rather than a failed assertion.** Six of
+the original twelve were assertions about wrong values, and each of those was a defect that is now
+fixed.
+
+### The two defects the early timeouts were hiding
 
 The darwin-background scheduling class is **inherited**, and Orbit was applying it twice: once to the
 whole command in `scripts/limited.ts`, and again per browser in `launchOnDarwin`. The second
-application spawned a `taskpolicy` process per session and changed nothing, because the browser had
-already inherited the class from the broker that started it.
+application spawned a `taskpolicy` process per session and changed nothing. Removing it took the
+suite from 5 failures in 334 seconds to 0 in 190.
 
-`inheritedBackgroundClass()` now asks the kernel, reading `PROC_FLAG_DARWINBG` out of
-`proc_bsdinfo`. The suite went from 5 failures in 334 seconds to 0 in 190, a 1.76x speedup, and four
-of the five timeouts went with it.
+Then run 6 failed once with a message specific enough to act on: **"Owned Chrome did not publish its
+local endpoint within 15 seconds and is still running."** A quiet launch on that runner takes about
+1.0 s, and the same launch under the suite's own concurrency missed a flat 15 s budget.
+`endpointWaitMs()` now scales with the core count the way `src/service.ts` already scales the budget:
+a 24 thread host keeps exactly the old 15 s, a three core host gets 20 s, capped at 45 s so a browser
+that is genuinely wedged still fails while somebody is watching.
 
-### The one that was left, and what it actually said
+### What the remaining timeouts are, and are not
 
-Run 6 failed once, and the message was specific rather than a bare timeout: **"Owned Chrome did not
-publish its local endpoint within 15 seconds and is still running."** That is a real deadline, not
-mystery flakiness. A quiet launch on that runner takes about 1.0 s; the same launch under the suite's
-own concurrency missed a flat 15 s budget.
+Runs 7 to 9 failed 0, 1 and 3 times, and never the same test twice: `browser scrolling works`, `the
+rail is the only session list`, `a tab that closes itself`, `an unbounded session is left exactly as
+it was`. All drive real browsers on a three core machine that also runs the broker, the viewer and
+several Chrome trees at once.
 
-The deadline was fixed rather than the test retried. `endpointWaitMs()` now scales with the core
-count the way `src/service.ts` already scales the budget: a 24 thread host keeps exactly the old
-15 s, a three core host gets 20 s, and it tops out at 45 s so a browser that is genuinely wedged
-still fails while somebody is watching. The two CDP deadlines further along already allowed 20 s
-each, so the most expensive step in the sequence had been the one with the tightest budget.
+The honest statement is that **the cause is not established**. The shape is consistent with
+contention rather than with a defect, because the set is unstable across identical code and every one
+is a clock expiring rather than a wrong value. That is a hypothesis with evidence behind it, not a
+conclusion, and it is the reason this row is not written as "known flaky" and closed.
 
-Writing the test for that rule found a second defect before it shipped: `Math.max(1, NaN)` is NaN,
-not 1, so a platform reporting a non number would have produced a NaN deadline, and `Date.now() +
-NaN` is NaN, which no comparison is ever true against. The launch loop would have exited on its first
-pass and reported every browser as never having started.
+What it does mean for a person: on a machine with two or three cores, expect a small number of
+browser tests to time out under the suite's own load. On the measured Fedora workstation the same
+suite runs 305 pass, 0 fail.
 
 ### The measurement that was designed to prove me wrong, and did
 
