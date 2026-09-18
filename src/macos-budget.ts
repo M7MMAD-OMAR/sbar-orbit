@@ -66,7 +66,7 @@ export function budgetRegistryRoot(env = process.env, home = homedir()) {
  * owned by this user with no group or other permissions. A symlink is refused rather than followed,
  * because following one is how a registry write lands in a directory somebody else chose.
  */
-async function privateRegistryRoot(root: string) {
+export async function assertPrivateRegistryRoot(root: string) {
   if (!isAbsolute(root))
     throw new OrbitError("INVALID_REQUEST", "The budget registry needs an absolute path");
   await mkdir(root, { recursive: true, mode: 0o700 });
@@ -93,7 +93,7 @@ export async function registerBudgetGroup(label: string, root = budgetRegistryRo
   const pgid = processGroupOf(process.pid);
   if (pgid === null || pgid !== process.pid)
     throw new OrbitError("RESOURCE_LIMIT_REQUIRED", "A budget registration has to come from a process group leader");
-  await privateRegistryRoot(root);
+  await assertPrivateRegistryRoot(root);
   // The leader's start time, recorded at the one moment it is known to be true. A pgid is reused, so
   // without it a stale entry whose number has been handed out again would charge the pool for a
   // process that is not Orbit's, and `liveBudgetGroups` would keep the entry alive forever because

@@ -145,11 +145,18 @@ export function processUsage(pid: number): ProcessUsage | null {
  * `complete: false` rather than as a short list that looks complete.
  *
  * `failed` is separate from `complete` and the distinction is the point. An empty group and a group
- * that could not be read are opposite facts, and this function returned `{pids: [], complete: true}`
+ * that could not be READ are different facts, and this function returned `{pids: [], complete: true}`
  * for both until an audit pointed it out. Every caller treats an empty group as success: the
- * supervisor's escalation tests `pids.length > 1` before sending SIGKILL, so a failed read made that
- * false and **no SIGKILL was ever sent to a tree that had ignored SIGTERM**, and the budget registry
- * reaped live registrations on the same mistake. A read that fails now says so, and callers decide.
+ * supervisor's escalation tests membership before sending SIGKILL, so a failed read made that false
+ * and **no SIGKILL was ever sent to a tree that had ignored SIGTERM**, and the budget registry reaped
+ * live registrations on the same mistake.
+ *
+ * Measured on a macOS runner, and narrower than first assumed: a pgid that simply does not exist
+ * returns **0 bytes**, not a negative, so the kernel calls that an empty group rather than an error.
+ * `failed` therefore means the kernel declined to answer at all, which is rarer than expected and
+ * still worth separating: it is the only case where "nothing came back" must not be read as "nothing
+ * is there". Callers treat it as "something may still be running", which costs a wasted signal to a
+ * group that was already gone and never the reverse.
  */
 export function processGroupMembers(pgid: number): { pids: number[]; complete: boolean; failed: boolean } {
   if (!Number.isInteger(pgid) || pgid <= 1) return { pids: [], complete: true, failed: false };

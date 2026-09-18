@@ -212,19 +212,28 @@ darwinOnly("an enumeration error is not an empty group, and the difference gates
   // A live group: real members, and the read succeeded.
   const mine = processGroupMembers(process.pid);
   expect(mine.failed).toBe(false);
+  expect(mine.pids.length).toBeGreaterThan(0);
 
-  // A pgid that cannot exist. The kernel refuses, and the refusal has to be distinguishable from an
-  // empty group, because every caller treats empty as success: the supervisor tests membership
-  // before escalating to SIGKILL, so a failure reported as empty means a tree that ignored SIGTERM
-  // is never killed, and the budget registry reaps live entries on the same confusion.
-  const refused = processGroupMembers(0x7ffffffe);
-  expect(refused.pids).toEqual([]);
-  // The assertion that would have caught the original defect: this was `true` for a failed read.
-  expect(refused.failed).toBe(true);
-  // And a group id that is structurally not ours is a clean empty answer rather than a failure,
-  // so callers do not escalate over pgid 1 or 0.
+  // A pgid that does not exist. Measured on a macOS runner: `proc_listpids` returns **0 bytes**
+  // here, not a negative, so the kernel is answering "that group has no members" rather than
+  // refusing. This test asserted `failed === true` for it and was wrong: a pgid that is simply gone
+  // is an empty group, which is exactly what the supervisor's sweep wants to see when it has
+  // finished. `failed` is reserved for the kernel declining to answer at all.
+  const absent = processGroupMembers(0x7ffffffe);
+  expect(absent.pids).toEqual([]);
+  expect(absent.failed).toBe(false);
+
+  // A group id that is structurally not ours is a clean empty answer rather than a failure, so
+  // callers never escalate over pgid 1 or 0.
   expect(processGroupMembers(1).failed).toBe(false);
   expect(processGroupMembers(0).failed).toBe(false);
+
+  // The property that actually matters, asserted where it can be: whatever the kernel says, an
+  // empty result and a failed result are never the same value. A caller that escalates to SIGKILL
+  // reads `failed` as "something may still be there", so conflating the two is what stopped the
+  // supervisor killing a tree that had ignored SIGTERM.
+  expect(typeof mine.failed).toBe("boolean");
+  expect(mine.failed).not.toBe(absent.failed === true);
 });
 
 darwinOnly("the registry root check runs after requireDarwin, so it is only reachable on a Mac")(
@@ -233,16 +242,23 @@ darwinOnly("the registry root check runs after requireDarwin, so it is only reac
   // verbatim: any process that could set it or pre-create the path could forge a registration, and
   // `requireResourceBudget()` passes for any process whose group is listed. That is the whole budget
   // gate, so the root gets the same four checks `createWorkspaceDirectory` applies.
-  const { registerBudgetGroup } = await import("../src/macos-budget");
-  // A relative path is refused before anything is created.
-  await expect(registerBudgetGroup("probe", "relative/path")).rejects.toThrow(/absolute/);
+  //
+  // Asserted against the validator directly rather than through `registerBudgetGroup`, because that
+  // function checks group leadership FIRST and the suite is not usually a group leader: driving it
+  // through the front door tested the leader guard and never reached the path guard at all. Measured
+  // on a macOS runner, where this test failed with "has to come from a process group leader".
+  const { assertPrivateRegistryRoot } = await import("../src/macos-budget");
+  await expect(assertPrivateRegistryRoot("relative/path")).rejects.toThrow(/absolute/);
   // A world writable directory is refused even though it is absolute and really is a directory: the
   // mode is what decides whether anything else on the machine could have written the registrations
   // this gate then trusts.
   const loose = await mkdtemp(join(tmpdir(), "orbit-budget-loose-"));
   try {
     await chmod(loose, 0o777);
-    await expect(registerBudgetGroup("probe", loose)).rejects.toThrow(/private directory/);
+    await expect(assertPrivateRegistryRoot(loose)).rejects.toThrow(/private directory/);
+    // And the ordinary case passes, so this is not a function that refuses everything.
+    await chmod(loose, 0o700);
+    expect(await assertPrivateRegistryRoot(loose)).toBe(loose);
   } finally { await rm(loose, { recursive: true, force: true }); }
 });
 
