@@ -208,17 +208,21 @@ darwinOnly("the background class is inherited, so applying it twice costs a proc
 
 darwinOnly("an enumeration error is not an empty group, and the difference gates a SIGKILL")(
   "a failed group read is reported as failed, never as empty", async () => {
-  const { processGroupMembers } = await import("../src/macos");
-  // A live group: real members, and the read succeeded.
-  const mine = processGroupMembers(process.pid);
+  const { processGroupMembers, processGroupOf } = await import("../src/macos");
+  // THIS PROCESS'S GROUP, asked of the kernel. Not `process.pid`: a pid is only a group id when the
+  // process happens to be a group leader, and a test runner started by a shell is not one. Asserting
+  // members for `process.pid` measured a group that does not exist and read 0, which is the same
+  // mistake in miniature as the one this test guards, so it is worth naming rather than quietly
+  // correcting.
+  const pgid = processGroupOf(process.pid);
+  expect(pgid).not.toBeNull();
+  const mine = processGroupMembers(pgid!);
   expect(mine.failed).toBe(false);
   expect(mine.pids.length).toBeGreaterThan(0);
 
   // A pgid that does not exist. Measured on a macOS runner: `proc_listpids` returns **0 bytes**
   // here, not a negative, so the kernel is answering "that group has no members" rather than
-  // refusing. This test asserted `failed === true` for it and was wrong: a pgid that is simply gone
-  // is an empty group, which is exactly what the supervisor's sweep wants to see when it has
-  // finished. `failed` is reserved for the kernel declining to answer at all.
+  // refusing. `failed` is reserved for the kernel declining to answer at all.
   const absent = processGroupMembers(0x7ffffffe);
   expect(absent.pids).toEqual([]);
   expect(absent.failed).toBe(false);
@@ -228,12 +232,10 @@ darwinOnly("an enumeration error is not an empty group, and the difference gates
   expect(processGroupMembers(1).failed).toBe(false);
   expect(processGroupMembers(0).failed).toBe(false);
 
-  // The property that actually matters, asserted where it can be: whatever the kernel says, an
-  // empty result and a failed result are never the same value. A caller that escalates to SIGKILL
-  // reads `failed` as "something may still be there", so conflating the two is what stopped the
-  // supervisor killing a tree that had ignored SIGTERM.
-  expect(typeof mine.failed).toBe("boolean");
-  expect(mine.failed).not.toBe(absent.failed === true);
+  // The property that matters: a live group and an absent one are distinguishable. A caller that
+  // escalates to SIGKILL reads membership to decide, so a live group reading as empty is what let a
+  // tree that ignored SIGTERM survive.
+  expect(mine.pids.length).toBeGreaterThan(absent.pids.length);
 });
 
 darwinOnly("the registry root check runs after requireDarwin, so it is only reachable on a Mac")(
