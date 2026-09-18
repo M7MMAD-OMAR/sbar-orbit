@@ -148,11 +148,13 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 3 | `a10b9cd`, after the fixes in section 4 | 223 | 8 | 85 | 356 s |
 | 4 | `0654b13`, after the enumeration fix | 229 | 5 | 86 | 334 s |
 | 5 | `3135b16`, after the scheduling class fix | 237 | **0** | 86 | **190 s** |
+| 6 | `3135b16`, the same commit re-run | 236 | 1 | 86 | 185 s |
 
-Runs 1 and 2 are the same code and disagree by two, which established early that some failures were
-flaky under load rather than deterministic. Run 5 is the one that explains the rest.
+Runs 1 and 2 are the same code and disagree by two. Runs 5 and 6 are the same code and disagree by
+one. That pattern is the most useful thing in the table and it cuts both ways: it is why the five
+timeouts were not all blamed on one cause, and it is why **run 5's zero is not treated as proof.**
 
-### The defect the timeouts were hiding
+### The defect the timeouts were mostly hiding
 
 The darwin-background scheduling class is **inherited**, and Orbit was applying it twice: once to the
 whole command in `scripts/limited.ts`, and again per browser in `launchOnDarwin`. The second
@@ -160,30 +162,43 @@ application spawned a `taskpolicy` process per session and changed nothing, beca
 already inherited the class from the broker that started it.
 
 `inheritedBackgroundClass()` now asks the kernel, reading `PROC_FLAG_DARWINBG` out of
-`proc_bsdinfo`. The suite went from 5 failures in 334 seconds to **0 failures in 190 seconds**, a
-1.76x speedup, and every remaining timeout disappeared with it.
+`proc_bsdinfo`. The suite went from 5 failures in 334 seconds to 0 in 190, a 1.76x speedup, and four
+of the five timeouts went with it.
+
+### The one that was left, and what it actually said
+
+Run 6 failed once, and the message was specific rather than a bare timeout: **"Owned Chrome did not
+publish its local endpoint within 15 seconds and is still running."** That is a real deadline, not
+mystery flakiness. A quiet launch on that runner takes about 1.0 s; the same launch under the suite's
+own concurrency missed a flat 15 s budget.
+
+The deadline was fixed rather than the test retried. `endpointWaitMs()` now scales with the core
+count the way `src/service.ts` already scales the budget: a 24 thread host keeps exactly the old
+15 s, a three core host gets 20 s, and it tops out at 45 s so a browser that is genuinely wedged
+still fails while somebody is watching. The two CDP deadlines further along already allowed 20 s
+each, so the most expensive step in the sequence had been the one with the tightest budget.
+
+Writing the test for that rule found a second defect before it shipped: `Math.max(1, NaN)` is NaN,
+not 1, so a platform reporting a non number would have produced a NaN deadline, and `Date.now() +
+NaN` is NaN, which no comparison is ever true against. The launch loop would have exited on its first
+pass and reported every browser as never having started.
 
 ### The measurement that was designed to prove me wrong, and did
 
-Before fixing it, the hypothesis was that the background class itself was starving sessions on a
-small runner. `experiments/macos-qos-cost.ts` was written to answer that with a number rather than an
-opinion, timing the same work in both arms, alternating per round. On the three core runner:
+Before any of that, the hypothesis was that the background class itself was starving sessions.
+`experiments/macos-qos-cost.ts` was written to answer that with a number, timing the same work in
+both arms, alternating per round. Two runs on the three core runner:
 
-| Arm | median launch | median navigate | median total |
+| Run | median inside the class | median outside | ratio |
 |---|---|---|---|
-| Background class | 1008 ms | 107 ms | **1215 ms** |
-| Foreground | 1873 ms | 123 ms | 2032 ms |
+| 5 | 1215 ms | 2032 ms | 0.60 |
+| 6 | 1760 ms | 1769 ms | 0.99 |
 
-`backgroundCostRatio: 0.6`. The background class is not merely cheap here, sessions were **faster**
-inside it, so the hypothesis was wrong and the experiment said so in its own verdict line: "the
-background class is close to free here, so it is not what makes sessions miss deadlines."
-
-The honest reading of 0.6 is that it is below 1.0 for a reason this experiment does not establish.
-Three rounds on a shared runner is a small sample, and the plausible cause is the redundant
-`taskpolicy` process and its spawn cost landing in the foreground arm, not the efficiency cluster
-being faster than the performance one. **The ratio is recorded, the cause is not claimed.** What the
-run does establish is the thing that mattered: the class was not the bottleneck, and the duplicate
-application was.
+The hypothesis was wrong both times: the class is not what makes sessions miss deadlines, and the
+experiment said so in its own verdict line. The two ratios also disagree by a lot, which is the
+honest reason this document never claimed the 0.60 meant the efficiency cluster is faster. Three
+rounds on a shared runner does not establish why a ratio sits below 1.0. **What both runs establish
+is the only thing that was claimed: the class was not the bottleneck.**
 
 ### What is still not measured
 
@@ -192,8 +207,7 @@ application was.
   real Chrome history has not been observed.
 - **The broker's own start-up sweep.** The reaping experiment kills the supervisor, not the
   supervisor and the broker together, so the second containment layer is unexercised.
-- **A second green run.** Run 5 is one run. A single green is weaker evidence than five reds, and
-  the flakiness in runs 1 and 2 is exactly why this document says so rather than declaring victory.
+- **A repeated green run after the deadline fix.** Runs 5 and 6 bracket the fix, not follow it.
 
 86 skips is the honest half of the pass count. Most are the private display, the systemd units,
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.

@@ -224,13 +224,14 @@ keyring and btrfs snapshots are Linux capabilities and are not ported. See
 
 macOS is measured and `Limited` as of 18 September 2026: the one command install, the launch agent,
 a browser session driven through the installed command, and a containment run where a supervisor was
-SIGKILLed and left **0 of 9 Chrome processes alive after 60 ms**. The suite there runs **237 pass, 0
-fail, 86 skip**. Getting there found five real defects, the last of which was Orbit applying the
-darwin-background scheduling class twice: the class is inherited, so the second application bought
-nothing, and removing it took the suite from 5 failures in 334 seconds to none in 190. Two things are
-openly not proven and are listed rather than buried: the budget is advisory rather than kernel
-enforced, and the no prompt guarantee has not been seen on a person's real account with a real Chrome
-history. See [what macOS measured](docs/macos-measured.md).
+SIGKILLed and left **0 of 9 Chrome processes alive after 60 ms**. The suite there went from 12
+failures on the first run to **0**, and getting there found seven real defects, the last two being a
+scheduling class applied twice (it is inherited, so the second application bought nothing) and a
+browser launch deadline that was a constant tuned for a 24 thread workstation. Two things are openly
+not proven and are listed rather than buried: the budget is advisory rather than kernel enforced, and
+the no prompt guarantee has not been seen on a person's real account with a real Chrome history. The
+run table, including a re-run of one commit that disagreed with itself by one test, is in
+[what macOS measured](docs/macos-measured.md).
 
 Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
 
