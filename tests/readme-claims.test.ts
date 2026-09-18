@@ -65,3 +65,28 @@ test("the README states what Windows does not carry, not only what it does", () 
   for (const absent of ["private display", "systemd", "Linux capabilities"])
     expect(limits).toContain(absent);
 });
+
+test("the README does not claim macOS is unmeasured, and points at what was measured", () => {
+  // The same stale denial in its macOS form. It survived several days on the Windows side after a
+  // guest was running the suite, and the macOS sentences had exactly the same shape.
+  for (const denial of [
+    "macOS remains unmeasured",
+    "There is no macOS machine in this\nproject's reach",
+    "no macOS machine in this project's reach",
+  ]) expect(readme).not.toContain(denial);
+  expect(readme).toContain("docs/macos-measured.md");
+});
+
+test("the README says the macOS budget is advisory wherever it claims macOS works", () => {
+  // The one thing a person could reasonably carry over from Linux and be wrong about. Orbit's whole
+  // rule is that a capability is claimed at the tier its evidence supports, and a budget that reads
+  // like the Linux one while enforcing nothing is the most expensive way to break it. So the word
+  // has to appear, and it has to appear near the macOS evidence rather than in a distant footnote.
+  const marker = readme.indexOf("docs/macos-measured.md");
+  expect(marker).toBeGreaterThan(-1);
+  const nearby = readme.slice(Math.max(0, marker - 900), marker + 900);
+  expect(nearby).toMatch(/advisory/);
+  // And the honest half of the containment figure: the number of processes it was measured against,
+  // not merely that nothing survived.
+  expect(readme).toMatch(/0 of \d+ Chrome processes/);
+});

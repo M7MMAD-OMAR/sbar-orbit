@@ -71,3 +71,21 @@ test("a machine with only Edge registered reports only Edge", () => {
     exe => exe === "msedge.exe" ? "C:\\Edge\\msedge.exe" : undefined);
   expect(installs.map(install => install.id)).toEqual(["microsoft-edge"]);
 });
+
+/**
+ * The registry probe is spawned absolutely, never through PATH.
+ *
+ * This spawn decides which binary Orbit launches as the session browser: a `reg.exe` earlier on PATH
+ * than System32 would choose the program on a machine where the agent host, not the person, set that
+ * PATH. Every Linux helper in this tree is already spawned absolutely for the same reason, and this
+ * one was the exception. `%SystemRoot%` rather than a literal, because Windows is not always on C:.
+ *
+ * Read as source, because the alternative is planting a `reg.exe` on the runner's PATH to prove it.
+ */
+test("the App Paths probe spawns an absolute reg.exe rather than resolving one through PATH", async () => {
+  const source = await Bun.file(join(import.meta.dir, "..", "src", "runtime-paths.ts")).text();
+  const probe = source.slice(source.indexOf("function registeredPath"), source.indexOf("\n}\n", source.indexOf("function registeredPath")));
+  expect(probe).not.toContain('Bun.spawnSync(["reg"');
+  expect(probe).toContain("SystemRoot");
+  expect(probe).toContain("reg.exe");
+});

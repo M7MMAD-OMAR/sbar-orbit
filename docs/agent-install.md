@@ -54,6 +54,22 @@ fields and the exit codes below are identical: nothing in this contract branches
 The Windows installer checks for Bun and nothing else, because the systemd user session `install.sh`
 requires has no analogue there; the shared budget is a named job object the process joins itself.
 
+**On macOS run `./install.sh`, the same command as Linux.** It is the same script and the same
+report, and it skips the systemd user session check there, because the shared budget on macOS is a
+registered process group rather than a slice and needs no session manager. Two things in the report
+differ from Linux and are stated in it rather than left to be discovered:
+
+- The `service` step installs a **LaunchAgent**, not systemd units, and it starts the broker at
+  LOGIN. There is no analogue of `loginctl enable-linger`, so nothing starts before a person logs
+  in, and `autostart.status.startsAtBoot` is `false` rather than absent.
+- `doctor` reports `limits.enforcement: "advisory"` with every dimension in `unbounded`. An agent
+  that branches on the budget must read that field: the numbers are real kernel readings and the
+  ceiling is not enforced. See [macos-measured.md](macos-measured.md).
+
+The `panel`, `settings` and `config` subcommands are GTK and **refuse on macOS** with exit 64. That
+is deliberate rather than missing: reaching them would spawn `/usr/bin/python3`, which on a Mac
+without the Command Line Tools raises an installer window on the person's screen.
+
 `--json` prints the report and nothing else, so it can be parsed directly. Without it the same run
 prints a step display for a person. `--plain` is the middle option: one line per step, no repainting.
 
@@ -134,7 +150,9 @@ measures. On another distribution the names are the person's to translate.
 
 | `id` | Cause | `needsElevation` | `agentMayRun` |
 |---|---|---|---|
-| `unsupported-platform` | Not Linux. The macOS and Windows adapters are unverified | No | No, and nothing can fix it here |
+| `unsupported-platform` | Not Linux, Windows or macOS. Those three have adapters; anything else has none | No | No, and nothing can fix it here |
+| `macos-base-system-missing` | A tool that ships with macOS (`/bin/launchctl`, `/bin/cp`, `/usr/sbin/sysctl`) is absent | No | No, a system missing these is not one Orbit can repair |
+| `no-taskpolicy` | `/usr/sbin/taskpolicy` is absent, so sessions cannot be placed in the background scheduling class. **Not fatal**: the budget's accounting half still works and sessions still run | No | No |
 | `system-tool-systemctl`, `system-tool-systemd-run`, `system-tool-nice`, `system-tool-python3` | A base system tool is missing | Yes | No |
 | `no-systemd-user-session` | No user manager is running for this account, so there is no slice to install into | No | No, it is a login or a host problem, not a package |
 | `incomplete-source` | This source tree is missing files a release carries | No | No, report it |

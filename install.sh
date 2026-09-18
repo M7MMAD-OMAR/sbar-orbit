@@ -21,10 +21,12 @@ MISSING
   exit 1
 fi
 
-# Orbit runs everything inside a shared systemd user slice, the installer included. Without a usable
-# systemd user session there is no slice to put it in, and the budget refusal that follows reads like a
-# crash to somebody who has just downloaded this. Say what is missing instead.
-if ! systemctl --user show-environment >/dev/null 2>&1; then
+# Orbit runs everything inside a shared resource budget, the installer included, and what provides
+# that budget differs by platform. On Linux it is a systemd user slice; without a usable user session
+# there is nothing to install into, and the budget refusal that follows reads like a crash to somebody
+# who has just downloaded this. On macOS it is a registered process group, which needs no session
+# manager and no configuration at all, so the check below does not apply there.
+if [ "$(uname -s)" != "Darwin" ] && ! systemctl --user show-environment >/dev/null 2>&1; then
   cat >&2 <<'NOSYSTEMD'
 This machine has no usable systemd user session.
 

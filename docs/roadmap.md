@@ -109,8 +109,12 @@
    `.github/workflows/platform-probes.yml`: G16, G17, G24 and G25 closed, G15 closed for the
    transport, G19, G21 and G22 measured on a runner, G23 not measurable on a virtual Mac, and on a
    stock Ubuntu 24.04 host the egress lease is `in-browser` because AppArmor refuses the namespace.
-   Every one of those is tier `Limited`; a person's machine, with a desktop session and their own
-   Keychain, is still what closes the rest. See [porting](porting.md) section 9.
+   Since 18 September 2026 a `macos-26-arm64` runner runs **Orbit's own code** rather than probes:
+   the one command install, the LaunchAgent, a browser session driven through the installed command,
+   and a containment experiment that SIGKILLed a supervisor and left 0 of 9 processes alive. The
+   macOS budget is `advisory` by construction and the tier table says so. Every one of those is tier
+   `Limited`; a person's machine, with a desktop session and their own Keychain, is still what closes
+   the rest. See [porting](porting.md) section 9 and [what macOS measured](macos-measured.md).
 5. Publish capabilities from evidence; unsupported closed tools remain explicit. The tier table,
    the local `doctor --report` and the issue forms now exist; what they need is a host this project
    does not have. See [support tiers](support-tiers.md).

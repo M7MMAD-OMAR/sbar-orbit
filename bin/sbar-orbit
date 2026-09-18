@@ -3,6 +3,28 @@ set -euo pipefail
 
 orbit_script=$(readlink -f -- "${BASH_SOURCE[0]}")
 orbit_root=$(dirname -- "$(dirname -- "$orbit_script")")
+orbit_uname=$(uname -s)
+
+# The three subcommands below are GTK and Python, and both are Linux only here. Spawning
+# `/usr/bin/python3` on macOS is not merely useless: that path is a stub that raises the Command Line
+# Tools installer dialog on a machine without them, which puts a system window on the person's screen.
+# docs/porting.md lists it among the calls Orbit will not make on darwin, so the refusal is explicit
+# and names what does exist instead.
+orbit_refuse_desktop() {
+  cat >&2 <<REFUSED
+sbar-orbit $1 is a Linux desktop surface and does not exist on $orbit_uname.
+
+The panel and the settings window are GTK, and Orbit will not spawn /usr/bin/python3 here: on macOS
+that path can raise the Command Line Tools installer as a window on your screen.
+
+Everything else works. Sessions, the viewer and the whole CLI do not need any of this:
+
+  sbar-orbit status
+  sbar-orbit preview
+  sbar-orbit doctor
+REFUSED
+  exit 64
+}
 
 # Bun by absolute location, not by the caller's PATH. A systemd user service starts this launcher with
 # the manager's own PATH, which has no ~/.bun/bin in it: measured on an Ubuntu runner on 14 September
@@ -108,11 +130,13 @@ HELP
     ;;
   config)
     shift
+    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop config
     # No GTK and no broker: this works over ssh, inside a service, and while the panel is not running.
     exec /usr/bin/python3 "$orbit_root/desktop/orbit_settings.py" "$@"
     ;;
   settings)
     shift
+    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop settings
     # Hands the request to the running panel when there is one, and starts one when there is not.
     exec /usr/bin/python3 "$orbit_root/desktop/panel.py" --settings "$@"
     ;;
@@ -127,6 +151,7 @@ HELP
     ;;
   panel)
     shift
+    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop panel
     # The panel is the person's own desktop surface, so it runs outside the shared budget.
     exec /usr/bin/python3 "$orbit_root/desktop/panel.py" "$@"
     ;;

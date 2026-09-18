@@ -50,13 +50,19 @@ export function windowsBrowserInstalls(env = process.env, registry: RegistryProb
 }
 
 function registeredPath(exe: string): string | undefined {
+  // Absolute, never through PATH. This spawn decides which binary Orbit launches as the session
+  // browser, and every Linux helper in this tree is already spawned absolutely for the same reason:
+  // resolving through PATH lets whatever the agent host exported choose the program. `%SystemRoot%`
+  // rather than a literal, because Windows is not always installed on C:.
+  const system32 = join(process.env.SystemRoot || process.env.windir || "C:\\Windows", "System32");
+  const registry = join(system32, "reg.exe");
   for (const hive of ["HKCU", "HKLM"]) {
     // `reg` is on every Windows install and is still spawned defensively: a host without it should
     // report no browser, not throw out of a capability probe that a person runs to find out why
     // nothing works.
     let output: string;
     try {
-      const probe = Bun.spawnSync(["reg", "query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`, "/ve"]);
+      const probe = Bun.spawnSync([registry, "query", `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exe}`, "/ve"]);
       output = probe.stdout.toString();
     } catch { return undefined; }
     const found = /REG_SZ\s+(.+?)\s*$/m.exec(output)?.[1]?.trim();

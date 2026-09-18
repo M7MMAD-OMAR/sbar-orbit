@@ -126,7 +126,9 @@ test("a journal line says where the boundary moved, not just that it moved", asy
       .rejects.toMatchObject({ code: "POLICY_DENIED" });
     const contained = (await journal()).at(-1);
     expect(contained).toMatchObject({ actionType: "navigate", outcome: "deny", immuneId: "oauth-grant" });
-    expect(contained?.afterAllow).toEqual(["read", "navigate"]);
+    // `read` alone, not `read` and `navigate`. The containment fires when the agent is either
+    // compromised or wrong, and leaving it able to choose the next page is the thing to stop.
+    expect(contained?.afterAllow).toEqual(["read"]);
     expect(contained?.afterOrigins).toEqual([origin]);
 
     // And the same for a narrowing the person asked for.

@@ -101,6 +101,78 @@ jobs:
         with:
           name: verify-windows-latest
           path: output/verify/
+  # The suite on a real Mac, which is the half the probe job above never covered: it answers gate
+  # questions and runs no tests. Every macOS claim before this came from `experiments/platform-probe/`
+  # on a runner, which launched a browser and never once ran Orbit's own code against it.
+  #
+  # Allowed to fail, and the log is the result. It is not a gate on merging: it is the thing that says
+  # a macOS claim stopped being true.
+  verify-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # The website is a separate workspace, exactly as the Windows job records: without it one test
+      # file fails to resolve react/jsx-dev-runtime, which is a missing dependency rather than a macOS
+      # result.
+      - run: cd website && bun install --frozen-lockfile --ignore-scripts
+      - name: typecheck, the documented plan command, and the suite inside the budget
+        run: |
+          mkdir -p output/verify
+          (bun run typecheck; echo "typecheck exit $?") 2>&1 | tee output/verify/typecheck.log
+          (./install.sh --dry-run --json; echo "install dry-run exit $?") 2>&1 | tee output/verify/install-dry-run.log
+          # `bun run verify`, not `bun test`: the whole point of the macOS budget work is that a bare
+          # `bun test` must refuse with RESOURCE_LIMIT_REQUIRED there exactly as it does on Linux, and
+          # running the suite through the budget is what proves the registry path works on a real Mac.
+          (bun run verify; echo "verify exit $?") 2>&1 | tee output/verify/verify.log
+      # A bare `bun test` has to REFUSE. If this exits 0 the budget is not being required on macOS,
+      # which is a defect in the thing the suite above just claimed to exercise.
+      - name: a bare suite run is refused without a budget
+        run: |
+          set +e
+          bun test tests/resources.test.ts > output/verify/unbudgeted.log 2>&1
+          echo "bare bun test exit $?" | tee -a output/verify/unbudgeted.log
+      # The real install, the launch agent, and one browser session driven through the installed
+      # command, the way a person would. This is the macOS half of gate 3.
+      - name: install, then drive a browser session through the installed command
+        continue-on-error: true
+        run: |
+          (./install.sh --json; echo "install exit $?") 2>&1 | tee output/verify/install.log
+          sleep 5
+          (set +e; launchctl print "gui/$(id -u)/com.sbar.orbit.broker"; echo "agent print $?"; \
+            ls -la "$HOME/Library/Application Support/sbar-orbit/" 2>&1; \
+            cat "$HOME/Library/LaunchAgents/com.sbar.orbit.broker.plist" 2>&1; \
+            cat "$HOME/Library/Logs/sbar-orbit/broker.log" 2>&1) 2>&1 | tee output/verify/service.log
+          export ORBIT_SOCKET="$HOME/Library/Application Support/sbar-orbit/broker.sock"
+          (bun run src/cli.ts doctor; echo "doctor exit $?") 2>&1 | tee output/verify/doctor.log
+          export ORBIT_AGENT_NAME=runner ORBIT_TASK_NAME="the macOS gate"
+          (set +e; ID=$(bun run src/cli.ts session create browser | tee output/verify/session-create.log | sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' | head -1); echo "session $ID"; \
+            bun run src/cli.ts act "$ID" '{"type":"navigate","url":"https://example.com/"}'; bun run src/cli.ts act "$ID" '{"type":"read","selector":"h1"}'; \
+            bun run src/cli.ts session observe "$ID" --output "$PWD/output/verify/frame.jpg"; \
+            bun run src/cli.ts session observe "$ID" --metadata | tee output/verify/observe.log; \
+            bun run src/cli.ts session stop "$ID"; echo "session exit $?") 2>&1 | tee output/verify/session.log
+          (bun run src/cli.ts status --json; echo "status exit $?") 2>&1 | tee output/verify/status.log
+          # A frame that exists is not a frame that rendered. The Windows job learned this from a blank
+          # 6758 byte JPEG that passed a byte count check while the navigation had never happened, so
+          # the floor is a floor and the metadata above says which page it is.
+          bytes=$(stat -f%z output/verify/frame.jpg 2>/dev/null || echo 0)
+          echo "frame bytes: $bytes" | tee -a output/verify/session.log
+          if [ "$bytes" -lt 10000 ]; then echo "the frame is too small to be a rendered page"; exit 1; fi
+      # Containment, measured rather than asserted: kill the broker outright and count what is left.
+      - name: nothing owned survives a killed broker
+        continue-on-error: true
+        run: |
+          (bun run scripts/limited.ts bun run experiments/macos-reaping.ts; echo "reaping exit $?") 2>&1 | tee output/verify/reaping.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-macos-latest
+          path: output/verify/
   # The suite itself, on a real Ubuntu host: the runner's user manager delegates cpu, memory and pids,
   # so scripts/limited.ts may be able to make the slice it needs. Allowed to fail; the log is the result.
   verify-ubuntu:

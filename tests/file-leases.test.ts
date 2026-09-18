@@ -1,11 +1,31 @@
 import { test, expect } from "bun:test";
-import { needsSymlink } from "./platform-support";
+import { linuxOnlySuite, needsSymlink } from "./platform-support";
 import { mkdtemp, writeFile, readFile, symlink, rename, link } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-needsSymlink("an alias beside the reserved file, so the lease is checked against a symlink to it")(
-  "supervised file reservations survive replacement and parent EOF until cleanup", async () => {
+/**
+ * File leases are the Linux supervisor's feature, and this suite spawns it directly.
+ *
+ * `src/native/supervise.py` needs `/usr/bin/python3`, `PR_SET_CHILD_SUBREAPER` and a POSIX `flock`
+ * helper, and none of the three exists on the macOS path: the darwin supervisor is
+ * `supervise-darwin.ts`, holds a process group rather than a subreaper, and has no lease mechanism
+ * at all. Spawning `/usr/bin/python3` on a Mac is also a thing `bin/sbar-orbit` deliberately
+ * refuses, because that path can raise the Command Line Tools installer on the person's screen.
+ *
+ * So this is a feature that does not exist on the other platform rather than one that happens to
+ * fail there, which is exactly the narrow case `linuxOnlySuite` is for. Marking it is not a way to
+ * make a red number smaller: the capability it guards is unported, and `docs/support-tiers.md` must
+ * not carry a macOS row for it until one is written.
+ */
+const supervisedLeases = linuxOnlySuite("file leases are the Python subreaper's feature; the darwin supervisor has no lease mechanism and must not spawn /usr/bin/python3");
+// Both gates apply and both are real: the feature is Linux only, AND the fixture needs a symlink,
+// which an unelevated Windows process cannot create. `test.skip` from either one wins.
+const leaseTest = supervisedLeases === test
+  ? needsSymlink("an alias beside the reserved file, so the lease is checked against a symlink to it")
+  : supervisedLeases;
+
+leaseTest("supervised file reservations survive replacement and parent EOF until cleanup", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-file-test-"));
   const file = join(root, "document.txt"), alias = join(root, "alias.txt"), other = join(root, "aaa-other.txt");
   await writeFile(file, "Original"); await writeFile(other, "Other"); await symlink(file, alias);

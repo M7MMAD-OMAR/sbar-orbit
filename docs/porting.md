@@ -493,45 +493,74 @@ in section 7.
 
 ## 6. macOS
 
+> **Status, 18 September 2026: this section is no longer a plan.** The design below was implemented
+> and run on a `macos-26-arm64` runner: `src/macos.ts`, `src/macos-budget.ts`,
+> `src/macos-autostart.ts` and `src/native/supervise-darwin.ts`. What was measured, what changed
+> because a real Mac disagreed with this page, and what is still open is in
+> [macos-measured.md](macos-measured.md). Three claims below were **wrong** and are corrected in
+> place: the launchd job per session became a supervisor per session, the `--password-store=basic`
+> advice was insufficient on its own, and the Crashpad handler escapes every mechanism named here.
+
 ### The design
 
-**Containment.** One `launchd` job per session, `launchctl bootstrap gui/$UID <plist>`, label
-`com.sbar.orbit.session.<id>`, `AbandonProcessGroup` absent so the documented default applies: when a
-job dies, launchd kills any remaining processes with the same process group ID. Chrome's helpers are
-`posix_spawn`ed children that inherit the group, so that sweep replaces the Linux subreaper walk. Stop
-is `launchctl bootout`, escalating through `launchctl kill SIGTERM` then `SIGKILL`. The broker is
-itself a persistent LaunchAgent in `gui/$UID` and boots out orphaned labels on start.
+**Containment.** One supervisor per session, `src/native/supervise-darwin.ts`, which calls `setsid()`
+to lead its own session and process group, spawns the browser as a child so every helper inherits
+that group, and sweeps with `killpg` when the broker's pipe closes. Chrome's helpers do inherit the
+group: `base/process/launch.h` defaults `new_process_group` to false and the mac child launcher never
+sets it.
+
+Two corrections to the original plan, both from vendor source:
+
+- **The Crashpad handler escapes all of it.** `crashpad/util/posix/spawn_subprocess.cc` double forks
+  and calls `setsid()`, with a comment saying the grandchild is expected to outlive its parent. It is
+  in neither the group nor the session and is reparented away, so `killpg` misses it and a descendant
+  walk misses it. Orbit passes `--disable-crash-reporter`, the same conclusion the Windows port
+  reached with `--disable-crashpad`.
+- **A pgid is reused.** Signalling a remembered group number can reach the person's own processes,
+  which is the one thing this project must never do. The supervisor records its start time and
+  executable at creation and `groupIsStillOurs()` verifies both before any sweep.
 
 Launch the Mach-O at `<bundle>/Contents/MacOS/<CFBundleExecutable>`, never `open -a`, because
 LaunchServices reuses and activates the person's already running Chrome and puts a window on their
-screen. State `--user-data-dir` explicitly for the same reason: with no profile argument, Chrome's
-process singleton in the default user data directory hands the command line to their running browser.
+screen. State `--user-data-dir` explicitly for the same reason.
 
-**The Keychain flag is not a Linux artifact and must not be dropped.** On macOS Chrome's default
-encryption store is the login Keychain. A fresh per session profile has no ACL entry for it, so Chrome
-requests the item and `securityd` posts an authorization panel in the person's Aqua session, which
-`--headless` does not suppress. Keep `--password-store=basic` or pass `--use-mock-keychain`. Also drop
-`--no-sandbox`, which is a straight security regression on darwin, drop `--password-store=gnome-libsecret`
-style Linux values, and add `--disable-features=MediaRouter` so Chrome's Cast discovery does not raise a
-Local Network alert attributed to Google Chrome on their screen.
+**The Keychain flag is not a Linux artifact, and `--password-store=basic` alone is not enough.**
+`components/os_crypt/keychain_password_mac.mm` looks the key up with
+`FindGenericPassword(service: "Chrome Safe Storage", account: "Chrome")`. Those are compile time
+constants and **nothing in that call mentions the profile directory**, so a fresh `--user-data-dir`
+does not produce a fresh item: on any Mac where Chrome has ever run, the item exists and a binary off
+its ACL raises a modal dialog. `--headless` does not suppress it. Orbit passes
+`--use-mock-keychain`, which `os_crypt_switches.h` documents as existing to prevent blocking
+dialogs, with `--password-store=basic` behind it. Also `--disable-features=MediaRouter`, so Cast
+discovery does not raise a Local Network alert attributed to Google Chrome, and `--disk-cache-dir`
+inside the session profile, because Chrome otherwise derives its cache from
+`~/Library/Caches/Google/Chrome`, which the person's own browser is writing to. `--no-sandbox` is
+NOT passed: the sandbox works on darwin and dropping it is a straight security regression.
 
-**The budget is advisory and must say so.** Three layers were proposed and the middle one is deleted.
+**The budget is advisory and says so.** Three layers were proposed and the middle one is deleted.
 
 | Layer | Status |
 |---|---|
-| `ProcessType Background`, `Nice 10`, `LowPriorityIO`, `LowPriorityBackgroundIO` | Keep. On Apple silicon the darwin-background class is what places threads on the efficiency cluster, which is the nearest analogue of `CPUWeight=10`. Chrome can promote its own threads with `pthread_set_qos_class_self_np`, which is a gate |
-| `HardResourceLimits {CPU: N}` | **Deleted.** It is `RLIMIT_CPU`, cumulative CPU seconds since exec with a `SIGKILL` on breach. It is not a rate or a share, so it kills a healthy long session that merely stayed alive while permitting a saturated core for minutes. No value of N does both jobs |
-| A broker side sampler over `proc_pid_rusage(RUSAGE_INFO_V4)`, summing `ri_phys_footprint`, `ri_user_time` and `ri_system_time` across the job's process group | Keep, as the only real governor. `resourceStatus()` must report `limits.enforcement: "advisory"` so nobody reads the Linux kernel guarantee into a macOS number |
+| `ProcessType Background`, `Nice 10`, `LowPriorityIO`, `LowPriorityBackgroundIO`, and `taskpolicy -b` per session | Kept. On Apple silicon the darwin-background class is what places threads on the efficiency cluster, the nearest analogue of `CPUWeight=10`. This is the only half the system enforces |
+| `HardResourceLimits {CPU: N}` | **Deleted.** It is `RLIMIT_CPU`, cumulative CPU seconds since exec with a `SIGKILL` on breach. It is not a rate, so it kills a healthy long session for staying alive while permitting a saturated core for minutes. No value of N does both jobs |
+| A broker side sampler over `proc_pid_rusage(RUSAGE_INFO_V4)` summing `ri_phys_footprint` across the session's process group | Kept, as the only real governor. `requireResourceBudget()` reports `enforcement: "advisory"` with every dimension in `unbounded` |
 
-So R4 on macOS rests on a scheduling hint plus a userspace sampler, with no kernel enforcement. Say that
-in the capability matrix rather than printing a 2 GiB number shaped like `memory.max`.
+There is no shared pool to be had. The one kernel object with the right shape is the task coalition,
+and it is closed: `coalition(COALITION_OP_CREATE)` is gated on `task_is_in_privileged_coalition()`,
+spawning into another needs the private `com.apple.private.coalition-spawn` entitlement, and
+`coalition_ledger()` is root only and caps disk writes rather than CPU or memory. So Orbit keeps a
+registry of its own process groups, sums live kernel readings across them, and refuses the NEXT
+session rather than stopping one already over. Say that in the capability matrix rather than printing
+a 2 GiB number shaped like `memory.max`.
 
-**Transport.** `AF_UNIX` under `~/Library/Application Support/sbar-orbit`, parent 0700, socket 0600 as
-today. Assert the path is at most 103 bytes, because Darwin's `sun_path` is 104 and a long user name
-plus a long label truncates silently. `XDG_RUNTIME_DIR` has no analogue and the directory is not wiped
-at logout, so the stale socket doctor path in `claimSocket()` becomes load bearing rather than a corner
-case. Peer UID verification with `LOCAL_PEERCRED` is the right check and `Bun.serve` does not expose
-the accepted descriptor, so it is a gate.
+**Transport.** `AF_UNIX` under `~/Library/Application Support/sbar-orbit`, parent 0700, socket 0600.
+The path length is asserted at 103 bytes, because Darwin's `sun_path` is 104 and a longer path binds
+elsewhere in silence. `XDG_RUNTIME_DIR` has no analogue and the directory is not wiped at logout, so
+the stale socket path in `claimSocket()` is load bearing rather than a corner case. `$TMPDIR` under
+`/var/folders` was considered and rejected: it is periodically swept, which would remove a live
+broker's socket. Peer UID verification with `LOCAL_PEERCRED` is the right check and `Bun.serve` does
+not expose the accepted descriptor, so the 0700 directory is the whole access control, exactly as on
+Windows and for a different reason.
 
 **The TCC refusal list.** This is the part that costs nothing and is worth keeping, because it is a
 list of calls Orbit will not make and it is checkable from this workstation today by extending

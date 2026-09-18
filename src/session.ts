@@ -328,7 +328,12 @@ export class Sessions {
       // session is left with. A reader following an autonomous run should not have to replay the rule to
       // know what was still permitted afterwards.
       if (decision.immuneId) {
-        session.policy = narrow(session.policy, { allow: ["read", "navigate"] });
+        // `read` only. It used to keep `navigate` too, which left a session that had just attempted
+        // a money movement or a credential change still able to walk the agent anywhere inside its
+        // origin allowlist. The containment fires precisely when the agent is either compromised or
+        // wrong, and a compromised agent choosing the next page is the thing to stop. Reading what
+        // is already on screen is what a person needs to see what happened.
+        session.policy = narrow(session.policy, { allow: ["read"] });
         record(decision, decidedBy, session.policy);
       } else record(decision, decidedBy);
       throw new OrbitError("POLICY_DENIED", decision.reason);
@@ -554,6 +559,23 @@ export class Sessions {
     }
     // Capture is read-only and must not wait behind a locator action. It is still page content
     // arriving in the session, so it taints on its own path as a read does on the action path.
+    //
+    // And it is policed. `classify("observe")` has always answered `read`, and `decide` was reached
+    // only from `act()`, so a session created with `allow: []`, or narrowed to nothing after an
+    // immune action fired, still answered `session.observe` with a full frame of the page. For a
+    // session started from a clone of the person's own profile that frame is the contents of their
+    // logged-in accounts, returned to an agent whose policy said it could do nothing. Reading is
+    // not free just because it changes nothing: it is the half of the boundary that protects the
+    // person rather than the machine. The refusal is journalled the way a denied action is, so a
+    // reader sees the attempt rather than a gap.
+    const decision = decide(session.policy, "observe");
+    if (decision.outcome === "deny") {
+      void this.record(session, journalEntry({
+        at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
+        actor: "agent", actionType: "observe", decision, after: session.policy,
+      }));
+      throw new OrbitError("POLICY_DENIED", decision.reason);
+    }
     session.observing ??= session.backend.observe().then(frame => {
       this.taintedBy(session, "observe");
       return frame;

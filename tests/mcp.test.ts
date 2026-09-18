@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { startBroker, call } from "../src/ipc";
+import { loopbackAddress } from "./platform-support";
 
 function payload(result: CallToolResult) {
   const block = result.content[0];
@@ -12,7 +13,7 @@ function payload(result: CallToolResult) {
 }
 test("MCP stdio negotiates, validates and controls the shared broker across clients", async () => {
   const broker = await startBroker();
-  const fixture = Bun.serve({ hostname: "127.0.0.2", port: 0, fetch: () => new Response('<input id="entry"><button onclick="document.querySelector(\'output\').textContent=document.querySelector(\'input\').value">Save</button><output>Empty</output>', { headers: { "Content-Type": "text/html" } }) });
+  const fixture = Bun.serve({ hostname: loopbackAddress, port: 0, fetch: () => new Response('<input id="entry"><button onclick="document.querySelector(\'output\').textContent=document.querySelector(\'input\').value">Save</button><output>Empty</output>', { headers: { "Content-Type": "text/html" } }) });
   const clients: Client[] = [];
   const connect = async () => {
     const transport = new StdioClientTransport({ command: process.execPath, args: ["src/mcp.ts"], cwd: process.cwd(), env: { ORBIT_SOCKET: broker.socket }, stderr: "pipe" });
@@ -30,7 +31,7 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     expect(payload(await tool(a, "orbit_diagnostics"))).toMatchObject({ schemaVersion: 1 });
     const session = payload(await tool(a, "orbit_create")) as { sessionId: string };
     const act = (action: unknown, requestId = crypto.randomUUID()) => tool(a, "orbit_act", { ...session, requestId, action });
-    expect((await act({ type: "navigate", url: `http://127.0.0.2:${fixture.port}` })).isError).not.toBe(true);
+    expect((await act({ type: "navigate", url: `http://${loopbackAddress}:${fixture.port}` })).isError).not.toBe(true);
     await act({ type: "fill", selector: "#entry", text: "MCP connected" });
     await act({ type: "click", selector: "button" });
     expect(payload(await act({ type: "read", selector: "output" }))).toEqual({ text: "MCP connected" });

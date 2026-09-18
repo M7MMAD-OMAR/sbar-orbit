@@ -59,13 +59,48 @@ for (const file of files) {
   }
   const content = bytes.toString("utf8");
   const rules: [string, RegExp][] = [
-    ["personal-home-path", /\/(?:home|Users)\/[a-zA-Z0-9._-]+\//],
+    // `example` is exempt, and only that exact name: it is the reserved documentation name, the same
+    // convention the email rule below already allows through `example.com`. A test that states a
+    // macOS path has to state SOME home directory, and the readable choice is the one that cannot
+    // belong to anybody. Every other name is still reported, including short ones.
+    ["personal-home-path", /\/(?:home|Users)\/(?!example\/)[a-zA-Z0-9._-]+\//],
     ["windows-user-path", /[A-Z]:\\Users\\[^\\\s]+\\/i],
     ["private-task-link", /thread:\/\/|\?hostId=[l]ocal/],
     ["private-network-address", /\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/],
     ["private-key-material", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ];
   for (const [rule, pattern] of rules) if (pattern.test(content)) findings.push({ file, rule });
+  // The macOS refusal list, checkable from any host, which is the whole reason it is worth having.
+  //
+  // Every one of these is a call that raises a TCC dialog on the person's screen, and each is a
+  // route Orbit does not need: frames come from CDP, input goes through CDP, and there is no reason
+  // to script another application. A source grep cannot see a dialog raised by a CHILD process, so
+  // this is necessary and not sufficient, and docs/porting.md says so beside the table. What it can
+  // do is fail the build the day somebody reaches for one of them.
+  //
+  // `sourceFile` narrows this to code: a documentation page that NAMES these symbols in order to
+  // promise Orbit does not call them is the rule working, not a violation of it, and the tables in
+  // docs/porting.md and docs/support-tiers.md do exactly that.
+  const sourceFile = /^(?:src|scripts|bin|desktop|viewer|experiments|tests)\//.test(file) && !file.endsWith(".md");
+  if (sourceFile) {
+    const forbidden: [string, RegExp][] = [
+      // Screen Recording. Frames come from CDP, so none of these is needed.
+      ["macos-screen-recording", /\bCGWindowListCreateImage\b|\bCGDisplayStream\b|\bScreenCaptureKit\b|\/usr\/sbin\/screencapture\b/],
+      // Accessibility, and posting synthetic input to another process.
+      ["macos-accessibility", /\bAXUIElement\w*\b|\bCGEventPostToPid\b|\bCGEventPost\b/],
+      // Input Monitoring: a listen only event tap, or raw HID.
+      ["macos-input-monitoring", /\bCGEventTapCreate\b|\bIOHIDManager\w*\b/],
+      // Automation and Apple Events. Driving another application is the thing this project refuses.
+      ["macos-automation", /\bNSAppleScript\b|\bosascript\b|\bAESendMessage\b/],
+      // Downloading a browser or a helper: first launch of a quarantined binary prompts.
+      ["macos-quarantine-risk", /com\.apple\.quarantine/],
+      // The Command Line Tools installer. `/usr/bin/python3` is a STUB on a Mac without them and
+      // raises the installer as a window on the person's screen, which is why `bin/sbar-orbit`
+      // refuses its Python subcommands on darwin rather than letting the path be reached.
+      ["macos-clt-installer-risk", /\bxcode-select\b/],
+    ];
+    for (const [rule, pattern] of forbidden) if (pattern.test(content)) findings.push({ file, rule });
+  }
   for (const email of content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? []) {
     // A systemd template unit has the shape of an address and is not one. `user@1000.service` is the
     // thing this project's own installer starts, so a rule that cannot write it down is a rule that

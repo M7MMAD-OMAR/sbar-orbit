@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { chromeExecutables, nativeRuntimeLocations, nativeRuntimePackages, windowsBrowserInstalls } from "./runtime-paths";
+import { chromeExecutables, darwinBrowserInstalls, nativeRuntimeLocations, nativeRuntimePackages, windowsBrowserInstalls } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -87,15 +87,45 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // person's own session, both measured on a Windows 11 guest. Checking for systemctl there would
   // fail an install for the absence of something the Windows path never calls.
   const windows = probe.platform === "win32";
+  const darwin = probe.platform === "darwin";
   // The native backend nests a Wayland compositor, which only Linux can do. Asking `!windows` was
   // asking the wrong question: on macOS or a BSD it still emitted `./install.sh --native` and
   // `sudo dnf install` remedies, the exact unactionable Fedora instructions the Windows gate was
   // added to stop, and `preflight` is documented as the read-only check that runs anywhere.
   const nativePossible = probe.platform === "linux";
-  add("supported-platform", "common", probe.platform === "linux" || windows,
+  add("supported-platform", "common", probe.platform === "linux" || windows || darwin,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
-      message: "This alpha runs on Linux and, at the Limited tier, on Windows. The macOS adapter is unverified, so nothing here can install it." });
-  if (!windows) {
+      message: "This alpha runs on Linux, and at the Limited tier on Windows and macOS. Nothing here can install it on another platform." });
+  if (darwin) {
+    // The macOS prerequisites, which are a short list because almost everything Orbit needs here is
+    // in the base system. Each one is checked at the path it really has, not at the path a POSIX
+    // habit suggests.
+    //
+    // `/bin/launchctl`, NOT `/usr/bin/launchctl`. Measured on the macOS 26.6.2 runner, 14 September
+    // 2026: the `/usr/bin` path does not exist, and a probe that looked there reported the tool
+    // missing on a machine where `launchctl print gui/501` answered perfectly well.
+    //
+    // There is no remedy that installs any of these, because they ship with the operating system.
+    // A Mac without them is a broken install, so the message says that rather than offering a
+    // package manager command that does not apply.
+    for (const [id, path] of [["launchctl", "/bin/launchctl"], ["cp", "/bin/cp"], ["sysctl", "/usr/sbin/sysctl"]] as const)
+      add(id, "common", await probe.file(path, true),
+        { id: "macos-base-system-missing", needsElevation: false, agentMayRun: false,
+          message: `Orbit uses ${path}, which ships with macOS. A system missing it is not one Orbit can repair.` });
+    // The scheduling half of the budget. Its absence is NOT fatal and the check says so: the
+    // accounting half still works, and a session runs without the background class at a slightly
+    // higher priority rather than not at all. It is reported so a person reading the report knows
+    // which half they have.
+    add("taskpolicy", "common", await probe.file("/usr/sbin/taskpolicy", true),
+      { id: "no-taskpolicy", needsElevation: false, agentMayRun: false,
+        message: "taskpolicy is missing, so sessions cannot be placed in the background scheduling class. The budget's accounting half still works and sessions still run." });
+    // The supervisor that holds a browser tree here is TypeScript run by this same Bun, not the
+    // Python one Linux uses, so its absence is an incomplete source tree in exactly the same way.
+    add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise-darwin.ts"), false),
+      { id: "incomplete-source", needsElevation: false, agentMayRun: false,
+        message: "This source tree is missing files a release carries. Extract a complete Orbit source release, or check out the repository again." });
+  }
+  if (!windows && !darwin) {
     for (const name of ["systemctl", "systemd-run", "nice", "python3"]) {
       const owner = name === "nice" ? { any: ["coreutils"] } : name === "python3" ? { any: ["python3"], apt: ["python3"], pacman: ["python"] } : { any: ["systemd"] };
       add(name, "common", await probe.file(`/usr/bin/${name}`, true),
@@ -120,7 +150,9 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // Still asked through `probe.file`, one path at a time, rather than by calling the resolver for a
   // yes or no: the probe is the seam every test injects, and answering from the real machine instead
   // made this check unmockable and silently ignored the caller's probe.
-  const browserCandidates = windows ? windowsBrowserInstalls().map(install => install.executable) : chromeExecutables;
+  const browserCandidates = windows ? windowsBrowserInstalls().map(install => install.executable)
+    : darwin ? darwinBrowserInstalls().map(install => install.executable)
+    : chromeExecutables;
   const browsers = await Promise.all(browserCandidates.map(path => probe.file(path, true)));
   add("chrome-or-chromium", "browser", browsers.some(Boolean),
     await systemPackages(probe, "no-browser",

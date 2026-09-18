@@ -1,12 +1,14 @@
 import { test, expect } from "bun:test";
-import { linuxOnlySuite } from "./platform-support";
+import { linuxOnlySuite, resolvedTmpdir } from "./platform-support";
 import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { activateLocal, deactivateLocal } from "../src/local-install";
 import { tmpdir } from "node:os";
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "orbit-install-test-"));
+  // Resolved, because `activateLocal` returns a `realpath` and macOS's `/var` is a symlink to
+  // `/private/var`. See `resolvedTmpdir`.
+  const root = await mkdtemp(join(await resolvedTmpdir(), "orbit-install-test-"));
   const prefix = join(root, "local prefix");
   async function source(version: string) {
     const path = join(root, version);

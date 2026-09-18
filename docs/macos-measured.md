@@ -142,27 +142,30 @@ Stated plainly, because an unknown measurement is `not measured` and never a pas
 
 ## 7. The suite on a Mac, and the failures that are still open
 
-Three runs, and the numbers moved the way fixing real defects moves numbers:
+Four runs, and the numbers moved the way fixing real defects moves numbers:
 
 | Run | Commit | pass | fail | skip |
 |---|---|---|---|---|
 | 1 | `9086484` | 215 | 12 | 85 |
 | 2 | `9086484`, the same commit re-run | 213 | 14 | 85 |
-| 3 | `a10b9cd`, after the fixes in section 4 | 223 | **8** | 85 |
+| 3 | `a10b9cd`, after the fixes in section 4 | 223 | 8 | 85 |
+| 4 | `0654b13`, after the enumeration fix | 229 | **5** | 86 |
 
 Runs 1 and 2 are the same code, and they disagree by two. That is the most useful number in the
 table: it establishes that some of these failures are **flaky under contention** on a small runner
-rather than deterministic defects, and it is why the remaining eight are not all being attributed to
-one cause.
+rather than deterministic defects, and it is why the remaining five are not all attributed to one
+cause.
 
-The eight still failing at `a10b9cd`, none of them hidden:
+**Every remaining failure is a timeout. Not one is a failed assertion.** That is a different kind of
+result from run 1, where six were assertions about wrong values, and each of those was a real defect
+now fixed.
 
 | Failure | What is known |
 |---|---|
-| `the rail is the only session list` (60 s), `broker owns concurrent sessions` (30 s), `observation stays available while an agent waits` (15 s), `an owned browser is its own` (37 s), `IPC socket is private` (8 s) | All time out, all drive real browsers, and the set is not stable between runs of identical code. Consistent with contention on a runner that starts several Chrome trees at once. **Cause not established**, so they are listed rather than explained |
-| `abrupt broker death reaps its browser tree` | The descendant walk returns 0 processes for a broker that demonstrably has a live browser under it. `experiments/macos-reaping.ts` measures the SAME property through the process group and passes, 9 processes and 0 survivors, so this is very likely the test's enumeration rather than a containment failure. **Not confirmed**, and until it is, the containment claim rests on the experiment and not on this test |
-| `supervised file reservations survive parent EOF` | The file lease helper is a Python supervisor and a POSIX `flock` path that has not been ported. Linux only in fact, not yet marked so in the suite |
-| `extensions are loaded only when the caller asks` | A Windows argument builder assertion, unrelated to darwin, failing from a stale file in the CI branch rather than in the source tree, where it passes |
+| `the rail is the only session list` (60 s), `pause drains accepted work` (30 s), `CLI creates a session` (30 s), `a journal line says where the boundary moved` (22 s) | All drive real browsers, and the set is not stable between runs of identical code. Consistent with contention on a runner that starts several Chrome trees at once, on hardware where one launch alone takes 1.4 s. **Cause not established**, so they are listed rather than explained away |
+| `abrupt broker death reaps its browser tree` | In run 3 this asserted `0` descendants for a browser that was demonstrably alive, which was the `proc_listchildpids` defect in section 4. With that fixed it now enumerates the tree and **times out** instead, which is the same contention shape as the four above rather than the containment failure it looked like. The containment claim rests on `experiments/macos-reaping.ts`, which passed in every run: 9 to 10 processes, 0 survivors, 86 to 480 ms |
 
-85 skips is the honest half of the pass count. Most are the private display, the systemd units,
+86 skips is the honest half of the pass count. Most are the private display, the systemd units,
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.
+One of them, the supervised file lease suite, was marked Linux only in run 4 because its subject is
+the Python subreaper and a POSIX `flock` helper, neither of which the darwin supervisor has.

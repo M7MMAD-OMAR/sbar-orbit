@@ -17,9 +17,17 @@ export type BudgetLimits = {
   swapBytes: number;
   /** Linux: `pids.max`, a thread count. Windows: the active PROCESS limit, which is not the same. */
   tasks: number;
-  /** `kernel-cgroup` on Linux, `job-object` on Windows. Never absent: a host with neither refuses. */
-  enforcement: "kernel-cgroup" | "job-object";
-  /** What this platform cannot bound. Empty on Linux. */
+  /**
+   * `kernel-cgroup` on Linux, `job-object` on Windows, `advisory` on macOS.
+   *
+   * The third one is a different kind of promise from the first two and the word says so. A cgroup
+   * and a job object are ceilings the kernel refuses to let a process pass. The macOS registry is an
+   * accounting boundary Orbit reads and a scheduling class Orbit sets: the numbers come from the
+   * kernel, and nothing stops a process that is over the line. A caller that prints a limit prints
+   * this field beside it.
+   */
+  enforcement: "kernel-cgroup" | "job-object" | "advisory";
+  /** What this platform cannot bound. Empty on Linux. Everything on macOS. */
   unbounded: string[];
 };
 
@@ -46,6 +54,7 @@ async function budgetRoot() {
 
 export async function requireResourceBudget(): Promise<BudgetLimits> {
   if (process.platform === "win32") return requireWindowsBudget();
+  if (process.platform === "darwin") return requireDarwinBudget();
   try {
     const root = await budgetRoot();
     const read = async (file: string) => (await readFile(join(root, file), "utf8")).trim();
@@ -96,12 +105,53 @@ async function requireWindowsBudget(): Promise<BudgetLimits> {
 }
 
 /**
+ * The macOS budget: be inside a registered Orbit process group.
+ *
+ * Deliberately the same SHAPE as the other two and deliberately a weaker PROMISE, with the word
+ * `advisory` carrying the difference. The ceilings are the same numbers `src/service.ts` computes
+ * for every platform, a quarter of the machine, so a person moving between hosts sees one policy.
+ * What differs is that here nothing enforces them: `unbounded` names every dimension rather than
+ * two, and `budgetHeadroom()` sums live kernel counters to refuse the NEXT session rather than to
+ * stop the current one.
+ *
+ * `tasks` is a PROCESS count on this platform, as on Windows, and not the thread count Linux bounds.
+ * There is no per group thread ceiling on macOS at all.
+ */
+async function requireDarwinBudget(): Promise<BudgetLimits> {
+  const { insideRegisteredGroup } = await import("./macos-budget");
+  const { cpuCores, memoryMiB } = await import("./service");
+  if (!await insideRegisteredGroup())
+    throw new OrbitError("RESOURCE_LIMIT_REQUIRED",
+      "Run through bun run serve or bun run verify; a shared CPU and memory budget is required");
+  return {
+    cpuCores, memoryBytes: memoryMiB * 1048576, swapBytes: 0, tasks: 1536,
+    enforcement: "advisory",
+    // Said here, once, so every caller that prints limits prints the gap too. This is the whole
+    // list, not a subset: macOS offers no per process group ceiling on any of them without a
+    // kernel extension or root, so the honest answer is that nothing is bounded and the numbers
+    // above are a policy Orbit applies to itself.
+    unbounded: ["cpu", "memory", "swap", "processes", "threads"],
+  };
+}
+
+/**
  * How much of the shared budget is still free, read from the kernel rather than from what this
  * broker believes it started. The budget is one pool for every Orbit process on the machine: a managed
  * broker's live sessions, a test run and an installer all draw on the same task count and 2 GB.
  */
 export async function budgetHeadroom() {
   const limits = await requireResourceBudget();
+  if (process.platform === "darwin") {
+    const { sharedBudgetUsage } = await import("./macos-budget");
+    const usage = await sharedBudgetUsage();
+    // A live gauge, unlike the Windows peak: `proc_pid_rusage` reports each process's current
+    // footprint, so the sum is what the pool is charged with now. It is still advisory, and the
+    // difference from Linux is not the freshness of the number but that nothing enforces it.
+    return {
+      tasks: { used: usage.processes, max: limits.tasks, free: limits.tasks - usage.processes },
+      memory: { usedBytes: usage.footprintBytes, maxBytes: limits.memoryBytes, freeBytes: limits.memoryBytes - usage.footprintBytes },
+    };
+  }
   if (process.platform === "win32") {
     const { sharedBudgetUsage } = await import("./windows-job");
     const usage = sharedBudgetUsage();
@@ -137,6 +187,22 @@ export async function requireHeadroom(need: { tasks: number; memoryBytes: number
 /** Kernel counters cover all Orbit scopes, not just this broker. */
 export async function resourceStatus() {
   const limits = await requireResourceBudget();
+  if (process.platform === "darwin") {
+    const { sharedBudgetUsage } = await import("./macos-budget");
+    const usage = await sharedBudgetUsage();
+    return {
+      scope: "all-orbit-groups", sampledAt: new Date().toISOString(), limits,
+      // `footprintBytes` is a live sum of `ri_phys_footprint` across every registered group, which
+      // is the figure Jetsam decides on and the one Activity Monitor calls Memory. Swap is null
+      // rather than zero: macOS compresses rather than swapping per process and reports no per
+      // group swap figure at all, so zero would be a measurement this platform cannot make.
+      current: { footprintBytes: usage.footprintBytes, swapBytes: null, tasks: usage.processes, groups: usage.groups },
+      // There are no limit events to report because there are no limits. A kernel that never
+      // refuses an allocation has nothing to count, and inventing a zero here would read as "the
+      // ceiling was never hit" rather than "there is no ceiling".
+      events: null,
+    };
+  }
   if (process.platform === "win32") {
     const { sharedBudgetUsage } = await import("./windows-job");
     const usage = sharedBudgetUsage();

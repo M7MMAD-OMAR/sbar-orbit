@@ -155,6 +155,16 @@ test("the platform probe answers without starting an application", async () => {
     expect(capabilities.browserBackendSupported).toBe(true);
     // The private display is a different question, and it stays Linux only.
     expect(capabilities.nativeDisplaySupported).toBe(false);
+  } else if (process.platform === "darwin") {
+    // macOS left the "unverified adapter" bucket the same way Windows did, and for the same kind of
+    // evidence: the suite and a browser session ran on a macOS runner. The backend claim is still
+    // conditional on a browser being installed, which is what `browserBackendSupported` means.
+    expect(typeof capabilities.browserBackendSupported).toBe("boolean");
+    // No second GUI session for one user, so there is nowhere private to put a native application.
+    expect(capabilities.nativeDisplaySupported).toBe(false);
+    // The one thing a person could reasonably expect here and not get is the kernel enforced
+    // budget, so the report has to say so in its own notes rather than only in the documentation.
+    expect(capabilities.notes.join(" ")).toContain("advisory");
   } else if (process.platform !== "linux") {
     expect(capabilities.browserBackendSupported).toBe(false);
     expect(capabilities.notes.join(" ")).toContain("unverified");

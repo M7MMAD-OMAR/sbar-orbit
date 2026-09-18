@@ -1615,6 +1615,7 @@ account for this work is the throwaway one from section 27.
 | 4 | after the fixes below | 217 / 1 / 102 |
 | 5 | the last one, a test asserting a Linux path with the host's separator | 217 / 1 / 102 |
 | 6 | after that | **218 / 0 / 102, suite exit 0** |
+| 7 | with the API surface fixes in section 30 | **220 / 0 / 102, suite exit 0** |
 
 Round 1's eight were read one at a time rather than by pattern, and they were four different things:
 
@@ -1705,3 +1706,62 @@ guest were correct product code failing a fixture that had quietly asked about t
 The tier stays `Limited`. One guest, virtual hardware, Edge only, a throwaway account and no person
 at it. The private display, the profile clone, the systemd units and the keyring work are Linux
 capabilities and are skipped here, and 102 skips are not 102 passes.
+
+## 30. Three findings from the API surface, which were never about Windows
+
+An audit of the agent-facing surface ran beside the platform work. Three of its findings were real and
+are fixed here. None is a Windows defect; all three were measured on the Windows guest afterwards
+because that is where the whole surface now runs, at **220 pass, 0 fail, 102 skip**.
+
+### Observation was never policed
+
+`classify("observe")` has always answered `read`, which reads as though capture were subject to the
+policy. It was not. `decide()` was reached from `act()` alone, and `session.observe` is dispatched on
+its own path, so a session created with `allow: []` still answered with a full frame.
+
+That is the security half of the boundary rather than a tidiness one. A frame is the page's CONTENT:
+for a session started from a clone of the person's own profile it is the contents of their logged-in
+accounts, returned to an agent whose policy said it could do nothing. `session.observe` consults the
+policy now and journals the refusal the way a denied action is journalled, so a reader of an
+autonomous run sees the attempt rather than a gap. `session.presence` deliberately stays available,
+because it is metadata a desktop indicator polls and carries no page content: losing it would blind
+the person rather than the agent.
+
+The test was shown to FAIL against the unpoliced code before being trusted.
+
+### The immune containment left navigation open
+
+When an immune action fires, the session is contained by narrowing it. It narrowed to
+`["read", "navigate"]`, which left a session that had just attempted a credential change or a money
+movement still able to walk the agent anywhere inside its origin allowlist. The containment fires
+precisely when the agent is either compromised or wrong, and a compromised agent choosing the next
+page is the thing to stop. It narrows to `["read"]` now, and with observation policed that is a real
+restriction rather than a nominal one.
+
+### The registry probe resolved `reg` through PATH
+
+`windowsBrowserInstalls()` falls back to the `App Paths` registry key to find a browser, and spawned
+a bare `reg`. That spawn decides which binary Orbit launches as the session browser, so a `reg.exe`
+earlier on PATH than System32 would choose the program on a machine where the agent host, not the
+person, set that PATH. Every Linux helper in this tree is already spawned absolutely for exactly this
+reason and this one was the exception. It resolves through `%SystemRoot%` now, rather than a literal
+`C:\\Windows`, because Windows is not always installed on C:.
+
+### What the audit found and was NOT changed
+
+Stated because a finding dismissed silently is indistinguishable from one that was missed:
+
+- **`launch` is classified `write` and the default policy allows `write`.** On a Fedora session that
+  lets an agent run any binary the person can run. The code already says the native launcher is not
+  permission containment, and narrowing it is a Linux behaviour change that belongs in its own commit
+  with its own measurement, not in a Windows port. Recorded rather than quietly widened or quietly
+  left.
+- **`session.control` has no caller authentication.** It is excluded from both the MCP tool list and
+  the CLI, so an agent cannot reach it through either adapter, but the broker socket's only boundary
+  is its ACL, so any same-user process can post to it and have the input journalled as `actor:
+  "human"`. Same-user trust is a stated assumption of this project; that the JOURNAL can be made to
+  attribute an action to the person is a real weakness in the record, and it is written down here.
+- **`cloneOf` is absent from both adapters' schemas**, so an untrusted agent cannot ask for the
+  person's logins, and the path is additionally gated by `requireBoundedOrigins` and a check that the
+  source is a detected browser's own profile directory. Defence in depth, verified by reading, left
+  alone.

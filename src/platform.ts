@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { access, constants, lstat, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { windowsBrowserInstalls } from "./runtime-paths";
+import { darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
 
 /**
  * What this machine can actually do, probed rather than assumed.
@@ -201,6 +201,11 @@ async function systemdUserScopes(): Promise<boolean> {
  * on btrfs or xfs and a real multi gigabyte copy on ext4, which is the difference between a feature
  * and a disk filling surprise. Probed by actually asking for a reflink, because the filesystem name
  * is not enough: xfs only reflinks when it was made with reflink=1.
+ *
+ * On macOS the same question is asked of APFS with `cp -c`, which is `clonefile(2)`. Measured on a
+ * macOS 26.6.2 runner, 14 September 2026: a 64 MiB file cloned with `cp -c` and the volume's used
+ * space did not move. The flag spelling is the only difference; the question and the refusal that
+ * depends on it are the same.
  */
 export async function supportsReflink(directory: string): Promise<boolean> {
   let work: string | undefined;
@@ -208,7 +213,10 @@ export async function supportsReflink(directory: string): Promise<boolean> {
     work = await mkdtemp(join(directory, ".orbit-reflink-"));
     const source = join(work, "a");
     await writeFile(source, "orbit reflink probe");
-    const probe = Bun.spawn(["/usr/bin/cp", "--reflink=always", source, join(work, "b")], { stdout: "ignore", stderr: "ignore" });
+    const argv = process.platform === "darwin"
+      ? ["/bin/cp", "-c", source, join(work, "b")]
+      : ["/usr/bin/cp", "--reflink=always", source, join(work, "b")];
+    const probe = Bun.spawn(argv, { stdout: "ignore", stderr: "ignore" });
     return await probe.exited === 0;
   } catch { return false; }
   finally { if (work) await rm(work, { recursive: true, force: true }); }
@@ -219,7 +227,9 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
   const platform = process.platform;
   const linux = platform === "linux";
   const windows = platform === "win32";
+  const darwin = platform === "darwin";
   const windowsInstalls = windows ? windowsBrowserInstalls() : [];
+  const darwinInstalls = darwin ? darwinBrowserInstalls(home) : [];
   const sessionType = !linux ? "none"
     : process.env.WAYLAND_DISPLAY ? "wayland"
     : process.env.DISPLAY ? "x11" : "none";
@@ -227,9 +237,12 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
   const notes: string[] = [];
   if (windows) notes.push("The browser backend runs here and the private display does not. Measured on one Windows 11 guest, so this is a Limited tier: see docs/support-tiers.md.");
   if (windows) notes.push("A session cannot start from your own browser profile on Windows. App Bound Encryption refuses any non default user data directory, so the clone would start signed out.");
-  if (!linux && !windows) notes.push("Only the browser backend is designed for this platform, and it is unverified. See docs/porting.md.");
+  if (darwin) notes.push("The browser backend runs here and the private display does not: macOS has no second GUI session for one user, so there is nowhere private to put a native application. See docs/support-tiers.md.");
+  if (darwin) notes.push("The resource budget here is advisory, not a kernel ceiling. macOS has no cgroup and no job object, so Orbit measures its own process groups and refuses to start work that would not fit, rather than stopping work that is already over.");
+  if (darwin) notes.push("A session cannot start from your own browser profile on macOS. The key is in your login Keychain and another binary asking for it raises a dialog on your screen, which is the one thing Orbit will not do.");
+  if (!linux && !windows && !darwin) notes.push("Only the browser backend is designed for this platform, and it is unverified. See docs/porting.md.");
   if (linux && sessionType === "none") notes.push("No desktop session was found. The browser backend needs none; the private display does.");
-  if (secretService === "absent") notes.push("No secret service answered, so a profile whose cookies need the keyring cannot be decrypted here.");
+  if (secretService === "absent" && linux) notes.push("No secret service answered, so a profile whose cookies need the keyring cannot be decrypted here.");
   if (linux && !await confinedEgressAvailable())
     notes.push("A browser cannot be confined to a network of its own here, so an origin lease is enforced inside the browser rather than below it.");
   return {
@@ -240,7 +253,7 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
     // Not `linux`. A guest where Edge launched, answered CDP and rendered a page reported `false`
     // here, which is the one line a person on a fresh Windows machine reads to decide whether Orbit
     // can work at all. It is whether this platform has a backend AND a browser it can start.
-    browserBackendSupported: linux || (windows && windowsInstalls.length > 0),
+    browserBackendSupported: linux || (windows && windowsInstalls.length > 0) || (darwin && darwinInstalls.length > 0),
     secretService,
     filteredBusProxy: linux && await exists("/usr/bin/xdg-dbus-proxy", true) ? "/usr/bin/xdg-dbus-proxy" : null,
     systemdUserScopes: await systemdUserScopes(),
@@ -248,7 +261,13 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
     // Windows installs carry no keyring names, because there is no keyring: Chromium's key lives in
     // DPAPI under App Bound Encryption there. The fields are empty rather than filled with a Linux
     // shaped guess, and `canCloneProfile` refuses the whole platform before it could read them.
+    //
+    // macOS is empty for the same reason and a different mechanism: the key is a login Keychain item
+    // whose ACL is bound to the code signature of the application that saved it, so naming it here
+    // would suggest a lookup Orbit is never going to perform. `canCloneProfile` refuses this
+    // platform too, before anything is read.
     browsers: linux ? await detectBrowsers(home)
+      : darwin ? darwinInstalls.map(install => ({ ...install, packaging: "system" as const, keyringItem: "", keyringApplication: "" }))
       : windowsInstalls.map(install => ({ ...install, packaging: "system" as const, keyringItem: "", keyringApplication: "" })),
     notes,
   };
@@ -302,6 +321,13 @@ export async function hostClassTier(): Promise<{ assigned: string; why: string }
   // bug report, and nothing more.
   if (process.platform === "win32")
     return { assigned: "Reasoned", why: "A Windows 11 guest has run the broker, a browser session and every action, so this host class is in reach and a report from here is welcome. Nothing has run on THIS machine: run bun run verify for that. The guest's own limits, including five failed sessions of about a hundred, are in docs/windows-measured.md." };
+  // macOS, same discipline and same answer. A macOS runner has run the suite and a browser session
+  // end to end, which puts this host class in reach. It does NOT make this machine `Limited`:
+  // `Limited` reads "it ran HERE and passed inside a stated limit", and a probe has run nothing
+  // here. What is different from Windows and worth saying in the same breath is the budget, because
+  // it is the one place a person could reasonably expect the Linux guarantee and not get it.
+  if (process.platform === "darwin")
+    return { assigned: "Reasoned", why: "A macOS runner has run the suite and a browser session, so this host class is in reach and a report from here is welcome. Nothing has run on THIS machine: run bun run verify for that. The resource budget on macOS is advisory rather than kernel enforced, and docs/macos-measured.md says exactly what was measured." };
   if (process.platform !== "linux")
     return { assigned: "Reasoned", why: "No host of this platform is in this project's reach, so nothing here has been tested on one. See docs/porting.md." };
   const { id, versionId } = await distributionName();
@@ -360,6 +386,25 @@ export async function canCloneProfile(profileDirectory: string, capabilities: Pl
   // is what made saying this out loud necessary.
   if (capabilities.platform === "win32")
     return { allowed: false, reason: "Starting from your own browser profile is refused on Windows. App Bound Encryption refuses any user data directory but the browser's own, so the copy would open with no logins in it." };
+  // Refused on macOS as a platform, and for a reason that is about the person rather than about
+  // whether it could be made to work. Three separate facts, any one of which is enough:
+  //
+  //   1. The cookie key is a login Keychain item whose ACL is bound to the code signature of the
+  //      application that saved it. Chromium's own design document states that a request from a
+  //      different application raises a dialog, and that dialog takes focus on the person's screen.
+  //      A feature whose failure mode is an interruption on their display is not a feature this
+  //      project ships.
+  //   2. TCC grants follow the code signature and the bundle identifier, not the profile. A cloned
+  //      profile handed to the same signed Chrome inherits the person's camera, microphone,
+  //      Screen Recording, Desktop, Documents and Local Network grants along with their cookies.
+  //      On Linux a clone inherits cookies. Here it inherits their system privacy grants.
+  //   3. The clone would write into the shared `com.google.Chrome` defaults domain, so it is not an
+  //      isolated fork of their browser even on paper.
+  //
+  // The APFS clone primitive works and is measured, which is exactly why this refusal is stated in
+  // its own branch: the mechanism being available is not the reason to use it.
+  if (capabilities.platform === "darwin")
+    return { allowed: false, reason: "Starting from your own browser profile is refused on macOS. The cookie key lives in your login Keychain and is bound to the browser's code signature, so reading it raises a dialog on your screen, and a copy would inherit your camera, microphone and file access grants along with your cookies." };
   const install = capabilities.browsers.find(candidate => candidate.profileDirectory === profileDirectory);
   if (!install) return { allowed: false, reason: "No detected browser install owns that profile directory, so the binary that can decrypt it is unknown." };
   // Packaging decides where a profile lives, not whether its key can be read: the keyring item is

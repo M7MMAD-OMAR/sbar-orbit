@@ -20,13 +20,16 @@ test("doctor exposes the enforced aggregate limits this platform can actually pr
       resources: {
         scope: string; sampledAt: string;
         limits: { cpuCores: number; memoryBytes: number; swapBytes: number; tasks: number;
-          enforcement: "kernel-cgroup" | "job-object"; unbounded: string[] };
-        current: { memoryBytes?: number; peakMemoryBytes?: number; swapBytes: number | null; tasks: number };
+          enforcement: "kernel-cgroup" | "job-object" | "advisory"; unbounded: string[] };
+        current: { memoryBytes?: number; peakMemoryBytes?: number; footprintBytes?: number; swapBytes: number | null; tasks: number; groups?: number };
         events: { memory: Record<string, number>; tasks: Record<string, number> } | null;
       };
     };
     expect(result.sessions).toBe(0);
-    expect(result.resources.scope).toBe("all-orbit-jobs");
+    // The scope name says what the pool IS on this platform, and the three are different objects:
+    // one cgroup slice, one named job object, or every registered process group. A single expected
+    // string here would be asserting that one platform's mechanism is the only one.
+    expect(result.resources.scope).toBe(process.platform === "darwin" ? "all-orbit-groups" : "all-orbit-jobs");
     expect(result.resources.limits.cpuCores).toBeLessThanOrEqual(4);
     expect(result.resources.limits.memoryBytes).toBeLessThanOrEqual(8589934592);
     expect(result.resources.limits.tasks).toBeLessThanOrEqual(1536);
@@ -42,6 +45,25 @@ test("doctor exposes the enforced aggregate limits this platform can actually pr
       expect(result.resources.current.swapBytes).toBeNull();
       // Job objects deliver limit hits on a completion port rather than as readable counters, and
       // Orbit attaches none to the shared pool, so there is nothing honest to report.
+      expect(result.resources.events).toBeNull();
+      return;
+    }
+    if (process.platform === "darwin") {
+      // The weakest guarantee of the three, named rather than dressed in either stronger one's
+      // shape. Every dimension is unbounded here, which is a statement about macOS and not about
+      // Orbit being lazy: there is no per process group ceiling to set.
+      expect(result.resources.limits.enforcement).toBe("advisory");
+      expect(result.resources.limits.unbounded).toContain("memory");
+      expect(result.resources.limits.unbounded).toContain("cpu");
+      // A live sum of `ri_phys_footprint` over every registered group, unlike the Windows peak.
+      expect(result.resources.current.footprintBytes!).toBeGreaterThan(0);
+      // At least this broker's own group is registered, or the pool is not being accounted at all.
+      expect(result.resources.current.groups!).toBeGreaterThan(0);
+      // Not zero: NOT MEASURED. macOS compresses rather than swapping per process and reports no
+      // per group swap figure, so a zero would be a measurement this platform cannot make.
+      expect(result.resources.current.swapBytes).toBeNull();
+      // No limits means no limit events to count. A zero here would read as "the ceiling was never
+      // hit" rather than "there is no ceiling".
       expect(result.resources.events).toBeNull();
       return;
     }

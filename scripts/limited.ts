@@ -14,6 +14,39 @@ if (alreadyLimited) {
   process.on("SIGTERM", terminate); process.on("SIGINT", interrupt);
   try { process.exitCode = await child.exited; }
   finally { process.off("SIGTERM", terminate); process.off("SIGINT", interrupt); }
+} else if (process.platform === "darwin") {
+  // macOS has no cgroup and no named job object, so the budget is a registered process group and
+  // this is where a command joins one. Three steps, in this order:
+  //
+  //   1. This process becomes a group leader, so the command and everything it starts inherit one
+  //      group id the kernel can enumerate.
+  //   2. The group is written into the shared registry, which is what makes the pool shared across
+  //      independently started Orbit processes.
+  //   3. The command runs under `taskpolicy -b`, the darwin-background class, which on Apple
+  //      silicon places its threads on the efficiency cluster. That is the scheduling half of the
+  //      budget and the only half the system enforces.
+  //
+  // Step 3 is a hint and steps 1 and 2 are accounting. Nothing here is a ceiling, which is why
+  // `requireResourceBudget()` reports `enforcement: "advisory"` on this platform.
+  const { becomeGroupLeader, signalProcessGroup, SIGNAL } = await import("../src/macos");
+  const { registerBudgetGroup, unregisterBudgetGroup } = await import("../src/macos-budget");
+  const pgid = becomeGroupLeader();
+  await registerBudgetGroup("limited");
+  // `taskpolicy` is in the base system on every supported version and is still resolved rather than
+  // assumed: a machine without it runs the command unhinted rather than refusing to run it at all,
+  // because the accounting half of the budget is in place either way and that is what the ceiling
+  // is read from.
+  const background = await Bun.file("/usr/sbin/taskpolicy").exists() ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  const child = Bun.spawn([...background, executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  // Signals go to the GROUP, not to the child: the point of the group is that everything the
+  // command started is addressable, and forwarding to one pid would leave a browser tree behind.
+  const forward = () => { signalProcessGroup(pgid, SIGNAL.TERM); };
+  process.on("SIGTERM", forward); process.on("SIGINT", forward);
+  try { process.exitCode = await child.exited; }
+  finally {
+    process.off("SIGTERM", forward); process.off("SIGINT", forward);
+    await unregisterBudgetGroup(pgid);
+  }
 } else {
   const settings = Bun.spawn(["/usr/bin/systemctl", "--user", "set-property", "--runtime", "sbarorbit.slice",
     ...Object.entries(budget).map(([key, value]) => `${key}=${value}`)], { stdout: "inherit", stderr: "inherit" });

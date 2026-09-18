@@ -74,9 +74,17 @@ test("a systemd tool with no user manager behind it is not availability", async 
 });
 
 test("unsupported OS and absent executable checks cannot claim availability", async () => {
-  const platform = await inspectPrerequisites("/fixture", { ...complete, platform: "darwin" });
+  // `freebsd` rather than `darwin`. This test used macOS as its stand-in for an unsupported
+  // platform, which stopped being true the day the macOS adapter landed: the check now passes
+  // there, and the test would have been asserting that a supported platform is unsupported. The
+  // rule under test is about ANY platform Orbit has no adapter for, so it names one.
+  const platform = await inspectPrerequisites("/fixture", { ...complete, platform: "freebsd" });
   expect(platform.browserPrerequisitesFound).toBe(false);
   expect(platform.nativePrerequisitesFound).toBe(false);
+  const unsupported = platform.checks.find(entry => entry.id === "supported-platform");
+  expect(unsupported?.available).toBe(false);
+  // No remedy an agent may run, because there is nothing to install: the adapter does not exist.
+  expect(unsupported?.remedy?.agentMayRun).toBe(false);
   const permissions: boolean[] = [];
   const missing = await inspectPrerequisites("/fixture", { ...complete, file: async (_path, executable) => {
     permissions.push(executable); return !executable;
