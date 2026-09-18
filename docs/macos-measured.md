@@ -153,18 +153,25 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 8 | `4ceef2e`, the same commit re-run | 237 | 1 | 86 | 259 s |
 | 9 | `ec1a060`, the audit fixes | 235 | 3 | 86 | 311 s |
 | 10 | `d8ee400`, the five audit defects fixed | 238 | 4 | 86 | 331 s |
+| 11 | `3b4a8ee`, two of my own test assumptions corrected | 241 | 2 | 86 | 223 s |
 
 **Read the whole column, not the best row.** Three commits were each run twice and each produced one
 green and one red: `9086484` gave 12 then 14, `3135b16` gave 0 then 1, `4ceef2e` gave 0 then 1. A
 single green run on this host does not mean the suite is green, and this table exists so nobody
 quotes run 5 or run 7 on its own.
 
-Run 10's four are worth separating, because two of them were **not** the product: they were two tests
-written in the previous commit that asserted behaviour macOS does not have. `proc_listpids` returns 0
-bytes for a group that does not exist rather than a negative, so an absent group is EMPTY and not an
-error; and `registerBudgetGroup` checks group leadership before it checks its path, so driving the
-new root validation through the front door never reached it. Both tests were wrong and the code was
-right, which is the useful direction for a test to be wrong in, and both are corrected.
+Runs 10 and 11 are worth separating, because three of their six failures were **not the product**:
+they were tests written in the preceding commit asserting things macOS does not do. In order of
+discovery: `proc_listpids` returns 0 bytes for a group that does not exist rather than a negative, so
+an absent group is EMPTY and not an error; `registerBudgetGroup` checks group leadership before it
+checks its path, so driving the new root validation through the front door never reached it; and
+`processGroupMembers(process.pid)` asks about the group whose id equals this pid, which exists only
+for a group leader, so it measured a group that is not there and read zero.
+
+That last one is worth stating plainly rather than filing quietly: it is the same pid against pgid
+confusion the test was written to guard against, committed inside the test. Every other caller in the
+tree, in both experiments and in the budget registry, already resolves a real pgid or reads one out of
+`owner.json`, so the mistake was confined to the assertion.
 
 What the column does show is a real trend that is not noise: **12 failures down to between 0 and 3
 product failures, and every one of those after run 4 is a browser driven timeout rather than a failed
