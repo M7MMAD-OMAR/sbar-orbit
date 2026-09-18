@@ -246,6 +246,30 @@ darwinOnly("the registry root check runs after requireDarwin, so it is only reac
   } finally { await rm(loose, { recursive: true, force: true }); }
 });
 
+darwinOnly("the viewer must never open in the person's own browser profile")(
+  "macOS lists real browser bundles, so the viewer never falls through to open(1)", async () => {
+  const { listHostBrowsers, openViewer } = await import("../src/host-browsers");
+  const browsers = await listHostBrowsers();
+  // The defect this closes: `listHostBrowsers` scanned `.desktop` files, which do not exist on
+  // macOS, so it returned [] on EVERY Mac and `openViewer` fell through to `open`. LaunchServices
+  // then handed the viewer's access token to whichever browser the person was already using, in
+  // their real profile. That is not a corner case, it was the only macOS path.
+  for (const browser of browsers) {
+    // The Mach-O inside the bundle, never `open` and never the bundle directory.
+    expect(browser.command[0]).toMatch(/\/Contents\/MacOS\//);
+    expect(browser.command[0]).not.toBe("open");
+    // Chromium family, which is what makes `--user-data-dir` work and earns the viewer its own
+    // profile. A browser listed without that would be a browser the viewer cannot isolate.
+    expect(browser.appWindow).toBe(true);
+  }
+  // And when there is genuinely no usable browser, the viewer is REFUSED rather than opened in
+  // theirs. Asserted through the real function with an id that cannot match anything installed.
+  if (!browsers.length) {
+    const result = await openViewer("http://127.0.0.1:1/viewer?token=fixture");
+    expect(result.opened).toBe(false);
+  }
+});
+
 test("the endpoint deadline scales to the machine, with both ends pinned", async () => {
   const { endpointWaitMs } = await import("../src/chrome");
   // The defect this replaced: a flat 15 s that a 3 core runner missed while a quiet launch on the

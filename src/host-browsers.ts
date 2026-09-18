@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, basename } from "node:path";
+import { darwinBrowserInstalls } from "./runtime-paths";
 
 /**
  * Which browser on the person's own desktop the viewer opens in, and whether that browser can give it
@@ -128,7 +129,43 @@ async function defaultEntry(): Promise<string> {
  * when it opens a link. A hardcoded list of binary paths was the alternative and it misses every flatpak,
  * which on this machine is the default browser.
  */
+/**
+ * The browsers a Mac can open the viewer in, as bundles rather than desktop entries.
+ *
+ * Built from the same `darwinBrowserInstalls()` the session launcher uses, so the viewer and a
+ * session agree about what is installed and where. The command is the Mach-O INSIDE the bundle,
+ * never `open`, for the reason the launcher documents: `open` activates the person's running
+ * browser and hands it the URL.
+ *
+ * `appWindow: true` for all of them, because every entry here is Chromium family and therefore
+ * takes `--user-data-dir`. That is what earns the viewer a profile of its own, which is the whole
+ * point of listing them.
+ *
+ * Deliberately NOT a LaunchServices query. `mdfind` and `lsregister` would find more browsers, and
+ * both are slower, undocumented or both, and neither is needed: the viewer needs one browser that
+ * accepts a private profile, not an inventory.
+ */
+function darwinHostBrowsers(): HostBrowser[] {
+  return darwinBrowserInstalls().map(install => ({
+    id: install.id,
+    name: install.bundle.split("/").pop()?.replace(/\.app$/, "") ?? install.id,
+    command: [install.executable],
+    appWindow: true,
+    // No notion of a default here: LaunchServices knows which browser owns http, and asking it means
+    // `lsregister` or a Launch Services API this project does not link. The first install wins, which
+    // is the Chrome first order `darwinBrowserInstalls` already documents.
+    isDefault: false,
+  }));
+}
+
 export async function listHostBrowsers(env: Record<string, string | undefined> = process.env): Promise<HostBrowser[]> {
+  // macOS has no `.desktop` files, so every scan below finds nothing and every viewer open fell
+  // through to `fallbackCommand`, which is `open`: LaunchServices hands the URL to the person's
+  // already running browser, in their real profile. That is the viewer's access token landing in the
+  // browser this project exists to leave alone, and it happened on EVERY Mac rather than in a corner
+  // case. The bundles are listed here instead, so `openViewer` can give the viewer a profile of its
+  // own exactly as it does on Linux.
+  if (process.platform === "darwin") return darwinHostBrowsers();
   const preferred = await defaultEntry();
   const found = new Map<string, HostBrowser>();
   for (const directory of applicationDirectories(env)) {
@@ -253,6 +290,13 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   const browsers = await listHostBrowsers(env);
   const browser = pickBrowser(browsers, choice, appWindow);
   const failure = { opened: false, browser: browser?.id ?? "", appWindow: false };
+  // The fallback opens the URL with whatever the platform hands links to, which means the person's
+  // own browser in their own profile. On Linux and Windows the viewer's token going there is a
+  // deliberate last resort for a machine with no recognised browser. On macOS it is refused, because
+  // `open` does not merely use their profile: LaunchServices activates the browser they are already
+  // using and hands it the command line, which is the one thing this project promises never to do.
+  // A Mac with no Chromium family bundle gets no viewer rather than a viewer in their window.
+  if (!browser && process.platform === "darwin") return failure;
   let profile: string | undefined;
   if (browser) {
     profile = viewerProfileDirectory(browser, env);
