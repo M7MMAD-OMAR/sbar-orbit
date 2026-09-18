@@ -23,6 +23,7 @@
  */
 
 import { readdir, readFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { groupIsStillOurs, processGroupMembers, requireDarwin, SIGNAL } from "./macos";
 import { workspaceRoot } from "./workspace-storage";
@@ -93,31 +94,64 @@ async function sweepGroup(pgid: number, graceMs = 2000) {
 export async function sweepOrphanedSessions(root = workspaceRoot()): Promise<OrphanSweep> {
   requireDarwin();
   const result: OrphanSweep = { inspected: 0, swept: [], refused: [] };
-  let workspaces: string[];
-  try { workspaces = await readdir(root); } catch { return result; }
-  for (const workspace of workspaces.sort()) {
-    // A session's profile directory, which is where the supervisor wrote its record. Sessions live
-    // one level down, so both shapes are tried rather than assuming a layout.
-    for (const candidate of [join(root, workspace, "owner.json"), join(root, workspace, "profile", "owner.json")]) {
-      let owner: OwnerRecord;
-      try { owner = JSON.parse(await readFile(candidate, "utf8")); } catch { continue; }
-      if (!Number.isInteger(owner.pgid) || owner.pgid! <= 1) continue;
-      result.inspected++;
-      const pgid = owner.pgid!;
-      // Nothing left in the group is the ordinary case: the supervisor swept it properly and this
-      // workspace is simply finished. Not reported as swept, because nothing was.
-      const members = processGroupMembers(pgid);
-      if (!members.failed && !members.pids.length) continue;
-      if (typeof owner.leaderStartedAtMs !== "number") {
-        result.refused.push({ workspace, pgid, reason: "no leader start time was recorded, so the group cannot be proved Orbit's" });
-        continue;
-      }
-      if (!groupIsStillOurs(pgid, { startedAtMs: owner.leaderStartedAtMs, executable: owner.leaderExecutable })) {
-        result.refused.push({ workspace, pgid, reason: "the process group id no longer belongs to the process Orbit started" });
-        continue;
-      }
-      result.swept.push({ workspace, pgid, ...await sweepGroup(pgid) });
+  for (const record of await ownerRecords(root)) {
+    const { workspace, owner } = record;
+    result.inspected++;
+    const pgid = owner.pgid!;
+    // Nothing left in the group is the ordinary case: the supervisor swept it properly and this
+    // workspace is simply finished. Not reported as swept, because nothing was.
+    const members = processGroupMembers(pgid);
+    if (!members.failed && !members.pids.length) continue;
+    if (typeof owner.leaderStartedAtMs !== "number") {
+      result.refused.push({ workspace, pgid, reason: "no leader start time was recorded, so the group cannot be proved Orbit's" });
+      continue;
     }
+    if (!groupIsStillOurs(pgid, { startedAtMs: owner.leaderStartedAtMs, executable: owner.leaderExecutable })) {
+      result.refused.push({ workspace, pgid, reason: "the process group id no longer belongs to the process Orbit started" });
+      continue;
+    }
+    result.swept.push({ workspace, pgid, ...await sweepGroup(pgid) });
   }
   return result;
+}
+
+/**
+ * Every `owner.json` under the workspace root, found by walking rather than by guessing a shape.
+ *
+ * The first version of this listed two hardcoded candidates, `<root>/<ws>/owner.json` and
+ * `<root>/<ws>/profile/owner.json`, and **neither is where a real session puts one**. A broker makes
+ * `<root>/broker-XXXX/` and each session makes `<root>/broker-XXXX/profile-XXXX/`, so the record sits
+ * two levels down and the sweep would have found nothing on a real machine while passing any test
+ * that built the fixture to match the guess. That is the same defect this whole layer exists to
+ * correct: something written, wired, and never exercised against the real thing.
+ *
+ * Bounded to three levels, which covers the real layout with room to spare, because an unbounded
+ * walk of a directory a person can point at is a different kind of mistake.
+ */
+async function ownerRecords(root: string, depth = 3): Promise<{ workspace: string; owner: OwnerRecord }[]> {
+  const found: { workspace: string; owner: OwnerRecord }[] = [];
+  const visit = async (directory: string, workspace: string, remaining: number) => {
+    let entries: Dirent[];
+    try { entries = await readdir(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      // Never followed: a symlink under the workspace root could point anywhere, and this function's
+      // output decides what gets signalled.
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isFile() && entry.name === "owner.json") {
+        try {
+          const owner = JSON.parse(await readFile(join(directory, entry.name), "utf8")) as OwnerRecord;
+          if (Number.isInteger(owner.pgid) && owner.pgid! > 1) found.push({ workspace, owner });
+        } catch {}
+        continue;
+      }
+      if (entry.isDirectory() && remaining > 0) await visit(join(directory, entry.name), workspace, remaining - 1);
+    }
+  };
+  let top: Dirent[];
+  try { top = await readdir(root, { withFileTypes: true }); } catch { return found; }
+  for (const entry of top.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    await visit(join(root, entry.name), entry.name, depth);
+  }
+  return found;
 }

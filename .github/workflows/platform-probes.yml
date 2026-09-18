@@ -175,6 +175,12 @@ jobs:
         continue-on-error: true
         run: |
           (bun run scripts/limited.ts bun run experiments/macos-qos-cost.ts 3; echo "qos exit $?") 2>&1 | tee output/verify/qos-cost.log
+      # The SECOND containment layer, which the first experiment cannot reach: kill the SUPERVISOR
+      # and check the broker's start-up sweep finds and reaps the orphaned tree.
+      - name: an orphaned tree is reaped by the broker sweep
+        continue-on-error: true
+        run: |
+          (bun run scripts/limited.ts bun run experiments/macos-orphan-sweep.ts; echo "orphan exit $?") 2>&1 | tee output/verify/orphan-sweep.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
