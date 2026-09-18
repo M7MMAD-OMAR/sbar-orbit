@@ -149,6 +149,7 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 4 | `0654b13`, after the enumeration fix | 229 | 5 | 86 | 334 s |
 | 5 | `3135b16`, after the scheduling class fix | 237 | **0** | 86 | **190 s** |
 | 6 | `3135b16`, the same commit re-run | 236 | 1 | 86 | 185 s |
+| 7 | `4ceef2e`, after the endpoint deadline fix | 238 | **0** | 86 | 227 s |
 
 Runs 1 and 2 are the same code and disagree by two. Runs 5 and 6 are the same code and disagree by
 one. That pattern is the most useful thing in the table and it cuts both ways: it is why the five
@@ -204,10 +205,18 @@ is the only thing that was claimed: the class was not the bottleneck.**
 
 - **The no prompt guarantee on a person's Mac.** A runner's Keychain and TCC state are not a
   person's. The flags are correct by vendor source; that no dialog appears on a real account with a
-  real Chrome history has not been observed.
+  real Chrome history has not been observed. This is the one row a person's machine closes and a
+  runner never can.
 - **The broker's own start-up sweep.** The reaping experiment kills the supervisor, not the
   supervisor and the broker together, so the second containment layer is unexercised.
-- **A repeated green run after the deadline fix.** Runs 5 and 6 bracket the fix, not follow it.
+- **A third green run.** Run 7 is one green run after the deadline fix, and run 6 is why that
+  distinction is worth keeping: the same commit had already produced one green and one red. Two
+  greens at `4ceef2e` would be better evidence than one, and this line stays until there are two.
+
+Run 7 also re-measured the two things that matter most, and both held: a supervisor SIGKILLed with 9
+Chrome processes under it left **0 survivors after 80 ms**, and a bare `bun test` still exited 1 with
+`RESOURCE_LIMIT_REQUIRED`. The QoS ratio came back 0.93 there, a third different figure from the same
+experiment, which is exactly why no claim was ever built on it.
 
 86 skips is the honest half of the pass count. Most are the private display, the systemd units,
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.
