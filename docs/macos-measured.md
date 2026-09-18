@@ -52,13 +52,37 @@ survivorsAfterSweep:      0
 clearedAfterMs:         105
 ```
 
-**Ten processes, the supervisor killed outright, zero survivors after 105 ms.** For comparison the
-Windows guest measured 12 processes and 0 survivors after 236 ms, and the mechanisms are different:
-there the kernel does it, here a supervisor does.
+**Ten processes, the supervisor killed outright, zero survivors after 105 ms.** Repeated in every
+run since, 9 to 10 processes and 0 survivors in 60 to 137 ms. For comparison the Windows guest
+measured 12 processes and 0 survivors after 236 ms, and the mechanisms are different: there the
+kernel does it, here a supervisor does.
 
-What this does NOT show, and must not be read as showing: the supervisor itself was alive to run the
-sweep. A supervisor that is SIGKILLed runs nothing, and the second layer, the broker's own sweep on
-start, is not exercised by this experiment. Two best effort layers are not one kernel guarantee.
+### The second layer, and why it is reported as not measured
+
+A supervisor that is itself SIGKILLed runs no sweep, so `src/macos-orphans.ts` exists to reap what is
+left when a broker next starts. `experiments/macos-orphan-sweep.ts` was written to prove it: start a
+real session, SIGKILL the SUPERVISOR rather than the browser, confirm the tree is genuinely still
+running, then call the sweep the way the broker calls it.
+
+On the runner it returned **`not measured`**, and the reason is the interesting part:
+
+```
+processesAtLaunch:      10
+orphanedProcesses:       0
+verdict: "not measured: the tree did not survive the supervisor, so there was no orphan to sweep"
+```
+
+**The browser tree did not survive its supervisor's death at all.** Chrome noticed its parent was
+gone and exited on its own, so there was no orphan for the second layer to find. That is a better
+outcome than the one being tested for, and it is still not evidence that the sweep works: the
+experiment refuses to report a pass for a tree that died by itself, because crediting the sweep for
+that would be exactly the kind of claim this project does not make.
+
+So the second containment layer is **implemented, unit tested for its refusals, and unproven end to
+end**. `tests/macos.test.ts` pins the part that can be tested without an orphan: given a record whose
+process group cannot be proved Orbit's, the sweep refuses to signal it, and the test runner surviving
+its own group is the direct evidence of that refusal. What remains unproven is the happy path, and it
+needs a browser that outlives its supervisor, which this host would not produce.
 
 ## 3. The budget, and the word that carries the difference
 
@@ -157,6 +181,13 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 9 | `ec1a060`, the audit fixes | 235 | 3 | 86 | 311 s |
 | 10 | `d8ee400`, the five audit defects fixed | 238 | 4 | 86 | 331 s |
 | 11 | `3b4a8ee`, two of my own test assumptions corrected | 241 | 2 | 86 | 223 s |
+| 12 | `666f5b0`, the pid against pgid fix | 235 | 8 | 86 | 377 s |
+
+Run 12 is the clearest evidence in the table that these failures are load and not code. It carries
+the same product as run 11 plus one corrected test assertion, and it failed eight times instead of
+two while taking **377 seconds against 223**. All eight are browser driven timeouts, none is an
+assertion about a wrong value, and the suite that produced two failures in 223 seconds produced eight
+in 377. A runner that is 69% slower fails more clocks.
 
 **Read the whole column, not the best row.** Three commits were each run twice and each produced one
 green and one red: `9086484` gave 12 then 14, `3135b16` gave 0 then 1, `4ceef2e` gave 0 then 1. A
@@ -234,16 +265,15 @@ is the only thing that was claimed: the class was not the bottleneck.**
   person's. The flags are correct by vendor source; that no dialog appears on a real account with a
   real Chrome history has not been observed. This is the one row a person's machine closes and a
   runner never can.
-- **The broker's own start-up sweep.** The reaping experiment kills the supervisor, not the
-  supervisor and the broker together, so the second containment layer is unexercised.
-- **A third green run.** Run 7 is one green run after the deadline fix, and run 6 is why that
-  distinction is worth keeping: the same commit had already produced one green and one red. Two
-  greens at `4ceef2e` would be better evidence than one, and this line stays until there are two.
+- **The second containment layer's happy path.** Implemented, unit tested for its refusals, and
+  unproven end to end, because the browser tree does not survive its supervisor on this host and so
+  no orphan is ever produced to sweep. See section 2.
+- **The cause of the browser driven timeouts.** The correlation with suite time is strong, runs 11
+  and 12 being the clearest case, but correlation on two points is a hypothesis.
 
-Run 7 also re-measured the two things that matter most, and both held: a supervisor SIGKILLed with 9
-Chrome processes under it left **0 survivors after 80 ms**, and a bare `bun test` still exited 1 with
-`RESOURCE_LIMIT_REQUIRED`. The QoS ratio came back 0.93 there, a third different figure from the same
-experiment, which is exactly why no claim was ever built on it.
+Run 12 re-measured the two things that matter most, and both held: a supervisor SIGKILLed with 10
+Chrome processes under it left **0 survivors**, and a bare `bun test` still exited 1 with
+`RESOURCE_LIMIT_REQUIRED`.
 
 86 skips is the honest half of the pass count. Most are the private display, the systemd units,
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.

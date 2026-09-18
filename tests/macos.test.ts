@@ -288,6 +288,49 @@ darwinOnly("the viewer must never open in the person's own browser profile")(
   }
 });
 
+darwinOnly("the orphan sweep decides what to signal, so its refusals have to be tested")(
+  "the sweep refuses a group it cannot prove is Orbit's, and finds records at the real depth", async () => {
+  const { sweepOrphanedSessions } = await import("../src/macos-orphans");
+  const { processGroupOf } = await import("../src/macos");
+  const root = await mkdtemp(join(tmpdir(), "orbit-orphan-test-"));
+  try {
+    // The REAL layout, which is what the first version of this sweep got wrong: a broker makes
+    // `<root>/broker-XXXX/` and a session makes `<root>/broker-XXXX/profile-XXXX/`, so the record
+    // sits two levels down. A fixture written one level down would have passed against a sweep that
+    // finds nothing on a real machine.
+    const workspace = await mkdtemp(join(root, "broker-"));
+    const profile = await mkdtemp(join(workspace, "profile-"));
+
+    // A live group, this process's own, with a start time that is deliberately wrong. That is the
+    // shape of a reused process group id: the number is real and currently belongs to somebody, and
+    // the facts recorded when Orbit created its group do not match. Signalling it would reach
+    // whatever holds the number now, which on a person's Mac could be their own browser.
+    const pgid = processGroupOf(process.pid)!;
+    await writeFile(join(profile, "owner.json"), JSON.stringify({
+      pid: process.pid, pgid,
+      leaderStartedAtMs: Date.now() - 3_600_000,
+      leaderExecutable: "/usr/bin/true",
+    }));
+
+    const swept = await sweepOrphanedSessions(root);
+    // Found at the real depth: the whole point of the walk.
+    expect(swept.inspected).toBe(1);
+    // And REFUSED rather than signalled. This is the assertion that matters: nothing was killed.
+    expect(swept.swept).toEqual([]);
+    expect(swept.refused).toHaveLength(1);
+    expect(swept.refused[0]!.pgid).toBe(pgid);
+    // This process is still here, which is the direct proof that the refusal was honoured: a sweep
+    // that signalled its own group would have taken the test runner with it.
+    expect(processGroupOf(process.pid)).toBe(pgid);
+
+    // A record with no start time at all is refused for the same reason, rather than trusted.
+    await writeFile(join(profile, "owner.json"), JSON.stringify({ pid: process.pid, pgid }));
+    const second = await sweepOrphanedSessions(root);
+    expect(second.swept).toEqual([]);
+    expect(second.refused[0]!.reason).toMatch(/start time/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("the endpoint deadline scales to the machine, with both ends pinned", async () => {
   const { endpointWaitMs } = await import("../src/chrome");
   // The defect this replaced: a flat 15 s that a 3 core runner missed while a quiet launch on the
