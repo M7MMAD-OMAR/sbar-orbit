@@ -1709,6 +1709,12 @@ capabilities and are skipped here, and 102 skips are not 102 passes.
 
 ## 30. Three findings from the API surface, which were never about Windows
 
+> A note on where these live in the history: they were staged while a concurrent session in the same
+> checkout committed, so they landed inside `feat(macos): the macOS port` rather than under a message
+> of their own. The code and the tests are in that commit; this section is the record of what they
+> were and why, since the commit message does not say. In a tree with more than one agent in it,
+> `git add` and `git commit` are not one operation.
+
 An audit of the agent-facing surface ran beside the platform work. Three of its findings were real and
 are fixed here. None is a Windows defect; all three were measured on the Windows guest afterwards
 because that is where the whole surface now runs, at **220 pass, 0 fail, 102 skip**.
