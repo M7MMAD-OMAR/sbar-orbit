@@ -77,6 +77,21 @@ void (async () => {
 while (!stopping && child.exitCode === null && child.signalCode === null) await Bun.sleep(50);
 
 /**
+ * Is the group still holding anything besides this supervisor?
+ *
+ * `failed` is treated as YES, deliberately. A read that did not answer is not an empty group, and the
+ * two used to be indistinguishable here: the escalation below tests this before sending SIGKILL, so a
+ * failed enumeration reported "nothing left" and the tree that had just ignored SIGTERM was never
+ * killed at all. Erring toward "something is still there" costs one wasted SIGKILL to a group that
+ * was already gone, which is harmless, against leaving a browser running on the person's machine.
+ */
+function groupStillHoldsSomething() {
+  const members = processGroupMembers(pgid);
+  if (members.failed) return true;
+  return members.pids.filter(pid => pid !== process.pid).length > 0;
+}
+
+/**
  * Sweep the group WITHOUT signalling this process.
  *
  * `killpg` on one's own group delivers to the caller too, and for SIGTERM that is merely untidy: the
@@ -100,15 +115,15 @@ function sweepGroupExceptSelf(signal: number) {
 const graceMs = 4000;
 sweepGroupExceptSelf(SIGNAL.TERM);
 const deadline = Date.now() + graceMs;
-// `pids.length <= 1` and not `=== 0`: this supervisor is itself in the group it is sweeping, so an
-// empty group is impossible while this loop is running and waiting for one would always time out.
-while (Date.now() < deadline && processGroupMembers(pgid).pids.length > 1) await Bun.sleep(25);
-if (processGroupMembers(pgid).pids.length > 1) {
+while (Date.now() < deadline && groupStillHoldsSomething()) await Bun.sleep(25);
+if (groupStillHoldsSomething()) {
   sweepGroupExceptSelf(SIGNAL.KILL);
-  for (let attempt = 0; attempt < 80 && processGroupMembers(pgid).pids.length > 1; attempt++) await Bun.sleep(25);
+  for (let attempt = 0; attempt < 80 && groupStillHoldsSomething(); attempt++) await Bun.sleep(25);
 }
 // What is left after both passes, reported on stderr so the broker's `diagnostics()` can attribute a
 // failed reap rather than leaving it to be noticed later. Silent on the ordinary path.
-const survivors = processGroupMembers(pgid).pids.filter(pid => pid !== process.pid);
-if (survivors.length) console.error(`orbit supervisor: ${survivors.length} process(es) survived the sweep`);
+const final = processGroupMembers(pgid);
+const survivors = final.pids.filter(pid => pid !== process.pid);
+if (survivors.length || final.failed)
+  console.error(`orbit supervisor: ${final.failed ? "could not enumerate the group after the sweep" : `${survivors.length} process(es) survived the sweep`}`);
 process.exit(child.exitCode ?? 0);

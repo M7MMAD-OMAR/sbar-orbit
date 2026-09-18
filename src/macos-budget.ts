@@ -32,9 +32,9 @@
  * efficiency cluster. That is the nearest analogue of `CPUWeight=10` and it is a hint, not a cap.
  */
 
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, posix } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { processGroupMembers, processGroupOf, processGroupUsage, processStartedAtMs, requireDarwin } from "./macos";
 import { OrbitError } from "./errors";
 
@@ -50,7 +50,31 @@ import { OrbitError } from "./errors";
  * stale entries by asking the kernel rather than trusting what is on disk.
  */
 export function budgetRegistryRoot(env = process.env, home = homedir()) {
-  return env.ORBIT_BUDGET_ROOT || posix.join(home, "Library", "Application Support", "sbar-orbit", "budget");
+  return env.ORBIT_BUDGET_ROOT || join(home, "Library", "Application Support", "sbar-orbit", "budget");
+}
+
+/**
+ * The registry directory, created private and verified private before anything is read from it.
+ *
+ * `ORBIT_BUDGET_ROOT` exists so tests can point the registry somewhere disposable, and it was taken
+ * verbatim: not checked for absoluteness, not `lstat`ed, no owner or mode check. That is weaker than
+ * `createWorkspaceDirectory` already is about a directory holding far less consequence, and it made
+ * the budget gate forgeable by anything that could set the variable or pre-create the path, since
+ * `requireResourceBudget()` passes for any process whose group appears here.
+ *
+ * Four checks, the same set the workspace path applies: absolute, a real directory, not a symlink,
+ * owned by this user with no group or other permissions. A symlink is refused rather than followed,
+ * because following one is how a registry write lands in a directory somebody else chose.
+ */
+async function privateRegistryRoot(root: string) {
+  if (!isAbsolute(root))
+    throw new OrbitError("INVALID_REQUEST", "The budget registry needs an absolute path");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const info = await lstat(root);
+  const foreign = info.uid !== process.getuid?.() || (info.mode & 0o077) !== 0;
+  if (!info.isDirectory() || info.isSymbolicLink() || foreign)
+    throw new OrbitError("INVALID_REQUEST", "The budget registry must be a private directory owned by this user");
+  return root;
 }
 
 export type Registration = { pgid: number; label: string; startedAt: string; leaderStartedAtMs?: number | null };
@@ -69,12 +93,20 @@ export async function registerBudgetGroup(label: string, root = budgetRegistryRo
   const pgid = processGroupOf(process.pid);
   if (pgid === null || pgid !== process.pid)
     throw new OrbitError("RESOURCE_LIMIT_REQUIRED", "A budget registration has to come from a process group leader");
-  await mkdir(root, { recursive: true, mode: 0o700 });
+  await privateRegistryRoot(root);
   // The leader's start time, recorded at the one moment it is known to be true. A pgid is reused, so
   // without it a stale entry whose number has been handed out again would charge the pool for a
   // process that is not Orbit's, and `liveBudgetGroups` would keep the entry alive forever because
   // the group it names has members.
-  const entry: Registration = { pgid, label, startedAt: new Date().toISOString(), leaderStartedAtMs: processStartedAtMs(pgid) };
+  //
+  // Refused rather than written as null when the kernel will not say. A registration with no start
+  // time cannot be checked against pgid reuse later, and `groupIsStillOurs` treats an absent time as
+  // nothing to verify, so writing one would create exactly the unverifiable entry the field exists
+  // to prevent. Failing here is loud and immediate; the alternative fails silently much later.
+  const leaderStartedAtMs = processStartedAtMs(pgid);
+  if (leaderStartedAtMs === null)
+    throw new OrbitError("BACKEND_FAILED", "Could not read this process group's start time, so its registration could not be verified against process group reuse");
+  const entry: Registration = { pgid, label, startedAt: new Date().toISOString(), leaderStartedAtMs };
   await writeFile(join(root, `${pgid}.json`), JSON.stringify(entry), { mode: 0o600 });
   return entry;
 }
@@ -101,8 +133,14 @@ export async function liveBudgetGroups(root = budgetRegistryRoot()) {
     let entry: Registration;
     try { entry = JSON.parse(await readFile(join(root, name), "utf8")); } catch { continue; }
     if (!Number.isInteger(entry?.pgid) || entry.pgid <= 1) continue;
+    const members = processGroupMembers(entry.pgid);
+    // A read that FAILED is not an empty group, and conflating them here reaped live registrations:
+    // the entry would be deleted while its processes were still charging the machine, so the pool
+    // under-reported itself and handed out a session it could not afford. Kept on failure, which is
+    // the conservative direction: an entry kept one sweep too long only refuses work.
+    if (members.failed) { live.push(entry); continue; }
     // Gone, whatever the file says.
-    if (!processGroupMembers(entry.pgid).pids.length) { await rm(join(root, name), { force: true }).catch(() => {}); continue; }
+    if (!members.pids.length) { await rm(join(root, name), { force: true }).catch(() => {}); continue; }
     // Present, but is it still OUR group? A pgid is reused, and an entry whose number now belongs to
     // somebody else would charge the pool for their processes and never be reaped, because the group
     // it names does have members. Entries written before this field existed carry no start time and

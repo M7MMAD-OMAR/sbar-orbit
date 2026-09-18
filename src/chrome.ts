@@ -208,15 +208,25 @@ function launchOnDarwin(executable: string, profile: string, argv: string[], env
       const { processGroupMembers, groupIsStillOurs } = await import("./macos");
       // The group has to still BE our group, not merely have members. A pgid is reused, so a
       // containment check that only counts processes would report a healthy session while looking
-      // at a group that belongs to somebody else. The supervisor recorded its own start time and
-      // executable when it created the group, and both are checked here.
-      if (typeof owner.leaderStartedAtMs === "number"
-        && !groupIsStillOurs(owner.pgid!, { startedAtMs: owner.leaderStartedAtMs, executable: owner.leaderExecutable }))
+      // at a group that belongs to somebody else.
+      //
+      // Fails CLOSED when the supervisor recorded no start time. This used to skip the check in that
+      // case, which inverted it: the one situation where ownership cannot be proved was the one
+      // where nothing was verified. The supervisor refuses to start without the timestamp, so an
+      // owner.json lacking it is either truncated or not ours, and both are boundary losses.
+      if (typeof owner.leaderStartedAtMs !== "number")
+        throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group cannot be verified: no leader start time was recorded");
+      if (!groupIsStillOurs(owner.pgid!, { startedAtMs: owner.leaderStartedAtMs, executable: owner.leaderExecutable }))
         throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group is no longer the one Orbit created");
       // Asked of the kernel every time rather than checked once at launch, for the same reason the
       // Windows path walks the job's process list: Chrome keeps starting helpers for the life of
       // the session, so a single check at launch can never see the process created afterwards.
       const members = processGroupMembers(owner.pgid!);
+      // A read that failed is not an empty group. Reporting the boundary as lost on an unreadable
+      // group is the conservative direction: it ends a session that may be fine, rather than
+      // reporting a contained session that may not be.
+      if (members.failed)
+        throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group could not be read");
       if (!members.pids.length)
         throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group is empty");
     },

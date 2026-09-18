@@ -79,8 +79,10 @@ const PATH_MAX_BYTES = 4096;
  * the footprint. It is the smaller and the more honest of the two.
  */
 const RUSAGE = {
-  userTimeNs: 16,
-  systemTimeNs: 24,
+  /** `ri_user_time`: mach absolute time units, NOT nanoseconds. See `processUsage`. */
+  userTimeMachTicks: 16,
+  /** `ri_system_time`: same unit, same caveat. */
+  systemTimeMachTicks: 24,
   residentBytes: 64,
   /** What Activity Monitor calls Memory, and what Jetsam decides on. */
   physFootprintBytes: 72,
@@ -91,8 +93,12 @@ export type ProcessUsage = {
   /** Physical footprint in bytes: compressed and wired memory this process is charged for. */
   footprintBytes: number;
   residentBytes: number;
-  /** User plus system CPU, in nanoseconds since this process was executed. */
-  cpuNs: number;
+  /**
+   * User plus system CPU since exec, in MACH ABSOLUTE TIME units, which are not nanoseconds on
+   * Apple silicon: the timebase there is 125/3, so treating these as nanoseconds understates by
+   * about 24x. Named for what it is, because the previous name was the lie.
+   */
+  cpuMachTicks: number;
 };
 
 /**
@@ -101,6 +107,17 @@ export type ProcessUsage = {
  * A dead process is not an error here. Sampling a browser tree races every renderer Chrome starts
  * and stops, and treating a pid that vanished between the enumeration and the read as a failure
  * would make the sampler fail under exactly the load it exists to measure.
+ *
+ * A dead process is not an error here. Sampling a browser tree races every renderer Chrome starts
+ * and stops, and treating a pid that vanished between the enumeration and the read as a failure
+ * would make the sampler fail under exactly the load it exists to measure.
+ *
+ * `cpuNs` is a deliberate misnomer corrected: `ri_user_time` and `ri_system_time` are MACH ABSOLUTE
+ * TIME units, not nanoseconds. On Intel the two happen to coincide, which is why the mistake
+ * survives review; on Apple silicon the timebase is 125/3, so the figure was about 24 times too
+ * small. Converting needs `mach_timebase_info`, and this field gates nothing today, so it is
+ * reported in its real unit under its real name rather than converted with an unmeasured constant.
+ * A caller that wants seconds must divide by the timebase, and none does yet.
  */
 export function processUsage(pid: number): ProcessUsage | null {
   const buffer = new Uint8Array(512);
@@ -110,7 +127,7 @@ export function processUsage(pid: number): ProcessUsage | null {
     pid,
     footprintBytes: at(RUSAGE.physFootprintBytes),
     residentBytes: at(RUSAGE.residentBytes),
-    cpuNs: at(RUSAGE.userTimeNs) + at(RUSAGE.systemTimeNs),
+    cpuMachTicks: at(RUSAGE.userTimeMachTicks) + at(RUSAGE.systemTimeMachTicks),
   };
 }
 
@@ -126,21 +143,29 @@ export function processUsage(pid: number): ProcessUsage | null {
  * exactly full is indistinguishable from one that overflowed. So it is sized generously and grown
  * once if it comes back full, and a group that still does not fit is reported as what was seen with
  * `complete: false` rather than as a short list that looks complete.
+ *
+ * `failed` is separate from `complete` and the distinction is the point. An empty group and a group
+ * that could not be read are opposite facts, and this function returned `{pids: [], complete: true}`
+ * for both until an audit pointed it out. Every caller treats an empty group as success: the
+ * supervisor's escalation tests `pids.length > 1` before sending SIGKILL, so a failed read made that
+ * false and **no SIGKILL was ever sent to a tree that had ignored SIGTERM**, and the budget registry
+ * reaped live registrations on the same mistake. A read that fails now says so, and callers decide.
  */
-export function processGroupMembers(pgid: number): { pids: number[]; complete: boolean } {
-  if (!Number.isInteger(pgid) || pgid <= 1) return { pids: [], complete: true };
+export function processGroupMembers(pgid: number): { pids: number[]; complete: boolean; failed: boolean } {
+  if (!Number.isInteger(pgid) || pgid <= 1) return { pids: [], complete: true, failed: false };
   for (const capacity of [1024, 8192]) {
     const buffer = new Int32Array(capacity);
     const bytes = system().proc_listpids(PROC_PGRP_ONLY, pgid, ptr(buffer), buffer.byteLength);
-    if (bytes < 0) return { pids: [], complete: true };
+    // Negative is the kernel refusing to answer, which is not the same as a group with nothing in it.
+    if (bytes < 0) return { pids: [], complete: false, failed: true };
     const count = Math.floor(bytes / 4);
     // A full buffer means the answer may have been truncated, so try the larger one.
     if (count === capacity && capacity !== 8192) continue;
     // The kernel leaves zeroes in the tail of the region it wrote.
     const pids = [...buffer.subarray(0, count)].filter(pid => pid > 0);
-    return { pids, complete: count < capacity };
+    return { pids, complete: count < capacity, failed: false };
   }
-  return { pids: [], complete: false };
+  return { pids: [], complete: false, failed: true };
 }
 
 /**
@@ -288,13 +313,28 @@ export function processStartedAtMs(pid: number): number | null {
  * silently drop the only part of the macOS budget the system actually enforces.
  */
 const PROC_FLAG_DARWINBG = 0x8000;
+/**
+ * `pbi_flags` is the FIRST field of `struct proc_bsdinfo`, at offset 0.
+ *
+ * This read offset 16 until an audit checked it field by field. Offset 16 is `pbi_ppid`, so the
+ * function was testing bit 0x8000 of the PARENT PID: true for any ppid at or above 32768 and false
+ * below it, which is a coin flip that depends on how busy the machine was when the broker started.
+ * Both outcomes are wrong in a way that matters. A false negative spawns a redundant `taskpolicy`,
+ * which is merely wasteful. A false positive SKIPS the background class, which silently drops the
+ * only half of the macOS budget the system actually enforces.
+ *
+ * The test that was supposed to catch this asserted `inheritedBackgroundClass(1) === false` and
+ * passed for the wrong reason: pid 1's parent is 0, so the garbage read happened to be zero. A
+ * negative control that can pass against broken code is not a control, which is why the case below
+ * now pins a process whose ppid has the 0x8000 bit SET.
+ */
+const BSDINFO_FLAGS = 0;
 
 export function inheritedBackgroundClass(pid = process.pid): boolean {
   const buffer = new Uint8Array(PROC_BSDINFO_SIZE);
   const written = system().proc_pidinfo(pid, PROC_PIDTBSDINFO, 0n, ptr(buffer), buffer.byteLength);
   if (written !== PROC_BSDINFO_SIZE) return false;
-  // `pbi_flags` is a uint32 at offset 16 of struct proc_bsdinfo, from sys/proc_info.h.
-  const flags = read.u32(ptr(buffer), 16);
+  const flags = read.u32(ptr(buffer), BSDINFO_FLAGS);
   return (flags & PROC_FLAG_DARWINBG) !== 0;
 }
 
@@ -347,17 +387,17 @@ export function signalOwnedProcessGroup(pgid: number, signal: number, expected: 
  */
 export function processGroupUsage(pgid: number) {
   const { pids, complete } = processGroupMembers(pgid);
-  let footprintBytes = 0, cpuNs = 0, counted = 0;
+  let footprintBytes = 0, cpuMachTicks = 0, counted = 0;
   for (const pid of pids) {
     const usage = processUsage(pid);
     if (!usage) continue;
     footprintBytes += usage.footprintBytes;
-    cpuNs += usage.cpuNs;
+    cpuMachTicks += usage.cpuMachTicks;
     counted++;
   }
   // `processes` is what the kernel listed and `counted` is what could still be read, and they differ
   // whenever a renderer exits mid sample. Both are reported rather than one standing in for the
   // other, because a caller deciding whether a tree is contained needs the kernel's list and a
   // caller deciding whether there is headroom needs the figure that was actually summed.
-  return { pgid, processes: pids.length, counted, footprintBytes, cpuNs, complete };
+  return { pgid, processes: pids.length, counted, footprintBytes, cpuMachTicks, complete };
 }

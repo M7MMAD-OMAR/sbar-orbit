@@ -71,12 +71,26 @@ try {
     // A managed broker binds the fixed path a service unit and generated host configuration expect.
     const managed = process.argv.includes("--managed-socket");
     const broker = await startBroker(managed ? { socketPath: serviceSocketPath() } : {});
+    // On macOS, reap browser trees whose supervisor was killed before it could sweep its own group.
+    // This is the second containment layer, and it runs BEFORE the workspace sweep below rather than
+    // after: `cleanWorkspaces` decides a workspace is abandoned because no broker answers for it and
+    // deletes the directory, so cleaning first would delete the profile of a browser that is still
+    // running out of it. Ownership is proved from the recorded leader start time and executable
+    // before anything is signalled, so a reused process group id is reported and left alone.
+    const orphans = managed && process.platform === "darwin"
+      ? await (await import("./macos-orphans")).sweepOrphanedSessions().catch(() => undefined)
+      : undefined;
     // Measured 13 September 2026: 417 workspaces and 7.2 GB left behind by brokers that were
     // stopped or killed, because the only thing that reclaimed them was a command nobody ran. A
     // managed broker is the one that outlives them all, so it sweeps when it starts. Only directories
     // whose owner does not answer go; a private broker started by a test keeps its own.
     const swept = managed ? await (await import("./workspace-storage")).cleanWorkspaces().catch(() => undefined) : undefined;
-    console.log(JSON.stringify({ socket: broker.socket, managed, ...(swept ? { swept: swept.removed.length } : {}) }));
+    console.log(JSON.stringify({ socket: broker.socket, managed,
+      ...(swept ? { swept: swept.removed.length } : {}),
+      // Reported rather than silent: a reaped orphan means a supervisor died badly, and a refusal
+      // means a group could not be proved Orbit's, which somebody should be able to see.
+      ...(orphans && (orphans.swept.length || orphans.refused.length)
+        ? { orphansReaped: orphans.swept.length, orphansRefused: orphans.refused.length } : {}) }));
     let stopping = false;
     const stop = async () => {
       if (stopping) return;

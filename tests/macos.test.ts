@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { darwinBrowserInstalls } from "../src/runtime-paths";
@@ -204,6 +204,46 @@ darwinOnly("the background class is inherited, so applying it twice costs a proc
   // A pid that cannot exist reads false rather than throwing: the caller is deciding whether to add
   // one argument, and an exception there would fail a session over a scheduling hint.
   expect(inheritedBackgroundClass(0x7fffffff)).toBe(false);
+});
+
+darwinOnly("an enumeration error is not an empty group, and the difference gates a SIGKILL")(
+  "a failed group read is reported as failed, never as empty", async () => {
+  const { processGroupMembers } = await import("../src/macos");
+  // A live group: real members, and the read succeeded.
+  const mine = processGroupMembers(process.pid);
+  expect(mine.failed).toBe(false);
+
+  // A pgid that cannot exist. The kernel refuses, and the refusal has to be distinguishable from an
+  // empty group, because every caller treats empty as success: the supervisor tests membership
+  // before escalating to SIGKILL, so a failure reported as empty means a tree that ignored SIGTERM
+  // is never killed, and the budget registry reaps live entries on the same confusion.
+  const refused = processGroupMembers(0x7ffffffe);
+  expect(refused.pids).toEqual([]);
+  // The assertion that would have caught the original defect: this was `true` for a failed read.
+  expect(refused.failed).toBe(true);
+  // And a group id that is structurally not ours is a clean empty answer rather than a failure,
+  // so callers do not escalate over pgid 1 or 0.
+  expect(processGroupMembers(1).failed).toBe(false);
+  expect(processGroupMembers(0).failed).toBe(false);
+});
+
+darwinOnly("the registry root check runs after requireDarwin, so it is only reachable on a Mac")(
+  "the budget registry refuses a root that is not a private directory of this user", async () => {
+  // `ORBIT_BUDGET_ROOT` is how a test points the registry somewhere disposable, and it was taken
+  // verbatim: any process that could set it or pre-create the path could forge a registration, and
+  // `requireResourceBudget()` passes for any process whose group is listed. That is the whole budget
+  // gate, so the root gets the same four checks `createWorkspaceDirectory` applies.
+  const { registerBudgetGroup } = await import("../src/macos-budget");
+  // A relative path is refused before anything is created.
+  await expect(registerBudgetGroup("probe", "relative/path")).rejects.toThrow(/absolute/);
+  // A world writable directory is refused even though it is absolute and really is a directory: the
+  // mode is what decides whether anything else on the machine could have written the registrations
+  // this gate then trusts.
+  const loose = await mkdtemp(join(tmpdir(), "orbit-budget-loose-"));
+  try {
+    await chmod(loose, 0o777);
+    await expect(registerBudgetGroup("probe", loose)).rejects.toThrow(/private directory/);
+  } finally { await rm(loose, { recursive: true, force: true }); }
 });
 
 test("the endpoint deadline scales to the machine, with both ends pinned", async () => {
