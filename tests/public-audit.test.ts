@@ -78,3 +78,57 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
   expect(mixed.output).toContain("email-needs-publication-review");
   expect(mixed.output).not.toContain(address);
 });
+
+/**
+ * The macOS refusal list has to catch the call somebody would really write, not the one spelling that
+ * happened to get typed into the rule.
+ *
+ * This exists because an adversarial probe fed the original rules sixteen realistic TCC triggering
+ * calls and they caught **two**. `CGWindowListCreateImageFromArray` is a different symbol from
+ * `CGWindowListCreateImage`; `CGDisplayCreateImage` was not in the list at all; `screencapture` was
+ * anchored to `/usr/sbin/` so a bare spawn walked past; and the cursor warp calls are input even
+ * though their names say display. Every one of those is a dialog on the person's screen.
+ *
+ * Driven through the real script against a real staged file, so this tests the audit rather than a
+ * copy of its regexes that could drift away from it.
+ */
+needsGitCheckout("git ls-files, which needs the repository and not just the binary")(
+  "the macOS refusal list catches every realistic spelling, not one", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-tcc-audit-"));
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
+    const output = await new Response(child.stdout).text();
+    return { code: await child.exited, output };
+  };
+  await run(["git", "init", "-q"]);
+  await mkdir(join(root, "src"));
+  const command = [process.execPath, resolve("scripts/public-audit.ts")];
+
+  const forbidden: [string, string][] = [
+    ["CGWindowListCreateImageFromArray(list)", "macos-screen-recording"],
+    ["CGDisplayCreateImage(CGMainDisplayID())", "macos-screen-recording"],
+    ["const c = new SCStreamConfiguration()", "macos-screen-recording"],
+    ['Bun.spawn(["screencapture", "-x", out])', "macos-screen-recording"],
+    ["AXIsProcessTrustedWithOptions(options)", "macos-accessibility"],
+    ["CGWarpMouseCursorPosition(point)", "macos-accessibility"],
+    ["CGDisplayMoveCursorToPoint(display, point)", "macos-accessibility"],
+    ["CGEventTapCreateForPid(pid, place)", "macos-input-monitoring"],
+    ["IOHIDPostEvent(service, type)", "macos-input-monitoring"],
+    ["NSWorkspace.shared.open(url)", "macos-automation"],
+  ];
+  for (const [source, rule] of forbidden) {
+    await writeFile(join(root, "src/probe.ts"), `export const probe = () => { ${source}; };\n`);
+    await run(["git", "add", "src/probe.ts"]);
+    const report = JSON.parse((await run(command)).output);
+    // Named per case, so a failure says WHICH call slipped through rather than that something did.
+    expect(report.findings, `${source} must be refused`).toContainEqual({ file: "src/probe.ts", rule });
+  }
+
+  // And the other half of a useful rule: it must not fire on ordinary code. A rule that cries wolf is
+  // one people learn to ignore, which is how a real finding gets scrolled past.
+  await writeFile(join(root, "src/probe.ts"),
+    "export const fine = (symbols: number[]) => symbols[0] === 1 && \"display\".length > 2;\n");
+  await run(["git", "add", "src/probe.ts"]);
+  const clean = JSON.parse((await run(command)).output);
+  expect(clean.findings).toEqual([]);
+});

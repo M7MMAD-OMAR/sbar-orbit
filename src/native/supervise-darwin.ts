@@ -28,7 +28,7 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { becomeSessionLeader, processGroupMembers, processStartedAtMs, signalProcessGroup, SIGNAL } from "../macos";
+import { becomeSessionLeader, processGroupMembers, processStartedAtMs, SIGNAL } from "../macos";
 
 const [reportPath, executable, ...argv] = process.argv.slice(2);
 if (!reportPath || !executable) {
@@ -76,17 +76,39 @@ void (async () => {
 
 while (!stopping && child.exitCode === null && child.signalCode === null) await Bun.sleep(50);
 
-// The group, not the child. Chrome's helpers are separate processes in the same group, and
-// signalling one pid leaves the rest of them running, which is the exact failure this file exists
-// to prevent.
+/**
+ * Sweep the group WITHOUT signalling this process.
+ *
+ * `killpg` on one's own group delivers to the caller too, and for SIGTERM that is merely untidy: the
+ * handler above sets a flag that is already set. For SIGKILL it is a defect, because SIGKILL cannot
+ * be handled or blocked, so this supervisor would die mid sweep. Everything after the kill, the poll
+ * that confirms the group actually emptied and the exit code that tells the broker how the browser
+ * ended, would never run. The tree would still be reaped, so the bug is invisible in the one
+ * measurement anybody looks at, which is exactly why it is worth fixing rather than tolerating.
+ *
+ * So the members are enumerated from the kernel and signalled one at a time, skipping this pid. A
+ * process that exits between the enumeration and the signal is an ESRCH that means success, which is
+ * why the throw is swallowed rather than reported.
+ */
+function sweepGroupExceptSelf(signal: number) {
+  for (const pid of processGroupMembers(pgid).pids) {
+    if (pid === process.pid) continue;
+    try { process.kill(pid, signal); } catch {}
+  }
+}
+
 const graceMs = 4000;
-signalProcessGroup(pgid, SIGNAL.TERM);
+sweepGroupExceptSelf(SIGNAL.TERM);
 const deadline = Date.now() + graceMs;
 // `pids.length <= 1` and not `=== 0`: this supervisor is itself in the group it is sweeping, so an
 // empty group is impossible while this loop is running and waiting for one would always time out.
 while (Date.now() < deadline && processGroupMembers(pgid).pids.length > 1) await Bun.sleep(25);
 if (processGroupMembers(pgid).pids.length > 1) {
-  signalProcessGroup(pgid, SIGNAL.KILL);
+  sweepGroupExceptSelf(SIGNAL.KILL);
   for (let attempt = 0; attempt < 80 && processGroupMembers(pgid).pids.length > 1; attempt++) await Bun.sleep(25);
 }
+// What is left after both passes, reported on stderr so the broker's `diagnostics()` can attribute a
+// failed reap rather than leaving it to be noticed later. Silent on the ordinary path.
+const survivors = processGroupMembers(pgid).pids.filter(pid => pid !== process.pid);
+if (survivors.length) console.error(`orbit supervisor: ${survivors.length} process(es) survived the sweep`);
 process.exit(child.exitCode ?? 0);

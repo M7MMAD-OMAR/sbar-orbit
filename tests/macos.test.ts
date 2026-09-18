@@ -230,6 +230,48 @@ test("the endpoint deadline scales to the machine, with both ends pinned", async
   }
 });
 
+test("no launcher or home path can inject plist structure", async () => {
+  const { brokerAgentPlist } = await import("../src/macos-autostart");
+  // Checked as STRUCTURE, not by grepping for dangerous words. A keyword check is how an audit probe
+  // convinced itself this was broken: its detector matched the legitimate KeepAlive block that every
+  // plist carries. What an injection has to achieve is a changed shape, so that is what is asserted.
+  const expected = ["Label", "ProgramArguments", "RunAtLoad", "KeepAlive", "ProcessType", "Nice",
+    "LowPriorityIO", "LowPriorityBackgroundIO", "EnvironmentVariables", "StandardErrorPath"];
+  for (const attack of [
+    // The ordinary case first, so the assertions below are known to hold for a normal path before
+    // any attack is tried. `example` is the reserved documentation name the audit exempts; any other
+    // name here reads as a real person's home directory and is reported, correctly.
+    "/Users/example/bin/sbar-orbit",
+    // The worst case, and the reason this test exists: AbandonProcessGroup absent from the plist is
+    // what makes `launchctl bootout` sweep the job's process group. An input that could add it as
+    // true would silently disable a containment layer.
+    "/Users/x</string><key>AbandonProcessGroup</key><true/><string>y",
+    // Replacing the argv array outright, which would make launchd run something else entirely. The
+    // payload names a harmless binary on purpose: writing a real Automation trigger here would be a
+    // finding in `scripts/public-audit.ts`, and widening that audit's exemption to cover this file
+    // would blind it to a genuine call. The injection being tested is structural, so the target does
+    // not matter.
+    "/Users/x</string></array><key>ProgramArguments</key><array><string>/usr/bin/true",
+    '/Users/x"/><key>RunAtLoad</key><false/><string x="',
+    "/Users/x]]><!--",
+    // An ampersand is the ordinary case rather than an attack: a real account can be named this way,
+    // and an unescaped one makes launchd refuse the whole file with a byte offset.
+    "/Users/a&b/c",
+  ]) {
+    const plist = brokerAgentPlist(attack, "/tmp/s.sock", attack);
+    const keys = [...plist.matchAll(/^ {2}<key>([^<]+)<\/key>$/gm)].map(match => match[1]);
+    expect(keys).toEqual(expected);
+    // The ProgramArguments array alone, so the EnvironmentVariables strings are not counted.
+    const block = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(plist)?.[1] ?? "";
+    const argv = [...block.matchAll(/<string>([\s\S]*?)<\/string>/g)].map(match => match[1]);
+    expect(argv).toHaveLength(3);
+    expect(argv[1]).toBe("serve");
+    expect(argv[2]).toBe("--managed-socket");
+    // Whatever the path was, it arrives as TEXT: no element survives inside it.
+    expect(argv[0]).not.toMatch(/<(key|array|dict|true|false)\b/);
+  }
+});
+
 test("the budget registry root is not in a directory the system sweeps", () => {
   const root = budgetRegistryRoot({} as NodeJS.ProcessEnv, macHome);
   // Losing an entry under-reports the pool, which is the direction that hands out a session the

@@ -81,17 +81,39 @@ for (const file of files) {
   // `sourceFile` narrows this to code: a documentation page that NAMES these symbols in order to
   // promise Orbit does not call them is the rule working, not a violation of it, and the tables in
   // docs/porting.md and docs/support-tiers.md do exactly that.
-  const sourceFile = /^(?:src|scripts|bin|desktop|viewer|experiments|tests)\//.test(file) && !file.endsWith(".md");
+  //
+  // This file is excluded for the same reason and it is not a loophole: the rules have to spell the
+  // symbols they forbid, so an audit that scanned itself would always fail. Its test is excluded on
+  // the same ground, because a test that proves the rules fire has to contain the strings that make
+  // them fire. `tests/public-audit.test.ts` is what guards these rules instead, by feeding them
+  // known-bad sources through the real script and asserting each one is refused by name.
+  //
+  // The exemption is by exact path, never by pattern: `scripts/public-audit*` would let anybody
+  // silence a finding by naming a file to match, which is the one way this list could be defeated
+  // from inside the repository.
+  const selfReferential = file === "scripts/public-audit.ts" || file === "tests/public-audit.test.ts";
+  const sourceFile = /^(?:src|scripts|bin|desktop|viewer|experiments|tests)\//.test(file)
+    && !file.endsWith(".md") && !selfReferential;
   if (sourceFile) {
     const forbidden: [string, RegExp][] = [
       // Screen Recording. Frames come from CDP, so none of these is needed.
-      ["macos-screen-recording", /\bCGWindowListCreateImage\b|\bCGDisplayStream\b|\bScreenCaptureKit\b|\/usr\/sbin\/screencapture\b/],
-      // Accessibility, and posting synthetic input to another process.
-      ["macos-accessibility", /\bAXUIElement\w*\b|\bCGEventPostToPid\b|\bCGEventPost\b/],
-      // Input Monitoring: a listen only event tap, or raw HID.
-      ["macos-input-monitoring", /\bCGEventTapCreate\b|\bIOHIDManager\w*\b/],
-      // Automation and Apple Events. Driving another application is the thing this project refuses.
-      ["macos-automation", /\bNSAppleScript\b|\bosascript\b|\bAESendMessage\b/],
+      //
+      // Written as PREFIXES rather than exact symbol names, because an audit probe showed the exact
+      // form missing every realistic spelling: `CGWindowListCreateImageFromArray` is a different
+      // symbol from `CGWindowListCreateImage`, `CGDisplayCreateImage` was not in the list at all,
+      // and `screencapture` was anchored to `/usr/sbin/` so a bare spawn of it walked straight past.
+      // A rule that only catches the one spelling somebody happened to write down is a rule that
+      // fails the first time anybody writes the call for real.
+      ["macos-screen-recording", /\bCGWindowList\w*|\bCGDisplay(?:Create|Stream)\w*|\bSC(?:Stream|ShareableContent|Display|Window|ContentFilter)\w*|\bscreencapture\b/],
+      // Accessibility, and posting synthetic input to another process. `AX` covers the whole API
+      // surface rather than `AXUIElement` alone, and the cursor warp calls are input even though
+      // their names say display.
+      ["macos-accessibility", /\bAX[A-Z]\w*|\bCGEventPost\w*|\bCGWarpMouseCursorPosition\b|\bCGDisplayMoveCursorToPoint\b/],
+      // Input Monitoring: an event tap of any flavour, or raw HID in either direction.
+      ["macos-input-monitoring", /\bCGEventTap\w*|\bIOHID\w*/],
+      // Automation and Apple Events. Driving another application is the thing this project refuses,
+      // and `NSWorkspace` open is the quiet way to do it.
+      ["macos-automation", /\bNSAppleScript\b|\bosascript\b|\bAESend\w*|\bNSWorkspace\b/],
       // Downloading a browser or a helper: first launch of a quarantined binary prompts.
       ["macos-quarantine-risk", /com\.apple\.quarantine/],
       // The Command Line Tools installer. `/usr/bin/python3` is a STUB on a Mac without them and
@@ -100,6 +122,18 @@ for (const file of files) {
       ["macos-clt-installer-risk", /\bxcode-select\b/],
     ];
     for (const [rule, pattern] of forbidden) if (pattern.test(content)) findings.push({ file, rule });
+    // A grep cannot see a symbol assembled at runtime, and saying so in the audit is better than
+    // letting the audit's silence be read as proof. A `dlopen` whose argument is not a plain string
+    // literal, or a bun:ffi `.symbols[...]` lookup by expression, is reported for a person to look
+    // at rather than failed: both are legitimate in this codebase, and the point is that the TCC
+    // claim rests on review here rather than on this scan. docs/porting.md states the same limit.
+    //
+    // Scoped to TypeScript and to `.symbols[`, not any `symbols[`: the first version matched an
+    // ordinary C array index in `experiments/fedora-display/pointer.c`, which is a Linux keyboard
+    // helper with no dynamic loading in it at all. A rule that cries wolf on unrelated code is a
+    // rule people learn to ignore, which is worse than not having it.
+    if (/\.tsx?$/.test(file) && (/\bdlopen\s*\(\s*[^"'`)]/.test(content) || /\.symbols\s*\[\s*[^"'`\]]/.test(content)))
+      findings.push({ file, rule: "macos-dynamic-symbol-needs-review" });
   }
   for (const email of content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) ?? []) {
     // A systemd template unit has the shape of an address and is not one. `user@1000.service` is the

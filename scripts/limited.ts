@@ -46,7 +46,20 @@ if (alreadyLimited) {
   const child = Bun.spawn([...background, executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   // Signals go to the GROUP, not to the child: the point of the group is that everything the
   // command started is addressable, and forwarding to one pid would leave a browser tree behind.
-  const forward = () => { signalProcessGroup(pgid, SIGNAL.TERM); };
+  //
+  // `killpg` to one's OWN group delivers to this process too, which re-enters this handler and
+  // signals the group again. An audit probe reproduced the re-entry, and the only thing that kept it
+  // from being an unbounded loop is that a signal arriving during handler execution is not queued.
+  // Relying on that is relying on a coincidence of delivery semantics, so the handler is made
+  // idempotent instead and detached after the first pass: one sweep of the group is the whole
+  // intent, and the second and later passes were never doing anything but re-signalling the dead.
+  let forwarded = false;
+  const forward = () => {
+    if (forwarded) return;
+    forwarded = true;
+    process.off("SIGTERM", forward); process.off("SIGINT", forward);
+    signalProcessGroup(pgid, SIGNAL.TERM);
+  };
   process.on("SIGTERM", forward); process.on("SIGINT", forward);
   try { process.exitCode = await child.exited; }
   finally {
