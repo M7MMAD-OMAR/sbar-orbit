@@ -1,6 +1,15 @@
 import { totalmem, homedir } from "node:os";
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
+/**
+ * A macOS path is a POSIX path, whatever host computed it.
+ *
+ * `node:path`'s `join` is bound to the HOST platform, so on Windows it produces backslashes. Every
+ * function here takes an explicit `platform` argument precisely so the rule can be asked from any
+ * host, and building a darwin answer with the host's separator makes that simulation answer about
+ * the runner rather than about macOS. Measured: six darwin path tests failed on the Windows guest
+ * for exactly this, against product code that is correct on a Mac.
+ */
 import { OrbitError } from "./errors";
 
 /**
@@ -45,14 +54,80 @@ export const budget = { CPUQuota: `${cpuCores * 100}%`, MemoryHigh: `${memoryMiB
 export function connectorConfigDirectory(env = process.env, platform = process.platform) {
   if (platform === "win32")
     return join(env.APPDATA || join(homedir(), "AppData", "Roaming"), "sbar-orbit");
-  return join(env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "sbar-orbit");
+  // macOS has no XDG layout, and `~/Library/Application Support` is the documented place a per user
+  // application keeps its own configuration. `XDG_CONFIG_HOME` is still honoured when the person has
+  // set one, because somebody who has deliberately configured an XDG layout on a Mac means it.
+  if (platform === "darwin" && !env.XDG_CONFIG_HOME)
+    return posix.join(homedir(), "Library", "Application Support", "sbar-orbit");
+  // Linux and darwin only: win32 returned above, and both of these are POSIX platforms, so the
+  // separator is theirs rather than the host's. See the note above.
+  return posix.join(env.XDG_CONFIG_HOME ?? posix.join(homedir(), ".config"), "sbar-orbit");
+}
+
+/**
+ * Darwin's `sun_path` is 104 bytes where Linux gives 108, and the failure mode is silent truncation
+ * rather than an error: a socket path one byte too long binds SOMEWHERE ELSE, and the broker then
+ * serves a path no client will ever dial. A long user name plus a long label reaches it.
+ *
+ * So the length is asserted rather than hoped for, with the limit and the actual length in the
+ * message, because the remedy depends on which it is. 103 rather than 104: the terminating NUL is
+ * inside the field.
+ */
+export const DARWIN_SOCKET_PATH_MAX = 103;
+
+export function assertDarwinSocketPath(path: string) {
+  const bytes = Buffer.byteLength(path);
+  if (bytes > DARWIN_SOCKET_PATH_MAX)
+    throw new OrbitError("CONFIG_REQUIRED",
+      `The broker socket path is ${bytes} bytes and macOS allows ${DARWIN_SOCKET_PATH_MAX}. Set ORBIT_SOCKET to a shorter path; a path over the limit is truncated silently rather than refused.`);
+  return path;
+}
+
+/**
+ * Machine state that is not a socket and not a workspace: the diagnostics journal and the usage
+ * switch. Same branch as `serviceSocketPath` and `workspaceRoot` for the same reason, and local
+ * rather than roaming because none of it should follow a person to another machine. Without this,
+ * both landed in `%USERPROFILE%\.config`-shaped POSIX dot directories on Windows, which is the
+ * mistake `connectorConfigDirectory` was already fixed for: a file nothing on Windows looks in, and
+ * in the usage case a person's opt-out left behind when they clear `%LOCALAPPDATA%`.
+ */
+export function stateDirectory(env = process.env, platform = process.platform) {
+  if (platform === "win32" && !env.XDG_STATE_HOME)
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
+  // macOS keeps a per user application's own records under `~/Library/Application Support`, and the
+  // diagnostics journal is exactly that: state the person may want to read and paste into an issue,
+  // not a cache that can be regenerated and not configuration. The same branch as the socket, for
+  // the same reason `connectorConfigDirectory` has one.
+  if (platform === "darwin" && !env.XDG_STATE_HOME)
+    return posix.join(homedir(), "Library", "Application Support", "sbar-orbit");
+  return posix.join(env.XDG_STATE_HOME ?? posix.join(homedir(), ".local/state"), "sbar-orbit");
 }
 
 /**
  * A fixed socket path for a managed broker. Brokers started by tests and experiments keep their own
  * private directories, so only the managed one uses this path and they cannot collide.
  */
-export function serviceSocketPath(runtimeDirectory = process.env.XDG_RUNTIME_DIR, env = process.env, platform = process.platform) {
+export function serviceSocketPath(runtimeDirectory?: string, env = process.env, platform = process.platform) {
+  // Resolved from the env the CALLER stated, rather than from a default parameter evaluated against
+  // this machine. The two disagree exactly when a caller asks about another platform, which is every
+  // test of this rule and the reason the macOS branch below was unreachable from any host that has a
+  // runtime directory of its own. An explicit directory still wins over both, including one that
+  // happens to equal this host's.
+  const runtime = runtimeDirectory ?? env.XDG_RUNTIME_DIR;
+  // macOS has no XDG_RUNTIME_DIR either, and the obvious substitute is wrong: the per user
+  // `$TMPDIR` under /var/folders is periodically swept, so a socket there can be removed out from
+  // under a live broker. `~/Library/Application Support` is not swept, is per user, and is not
+  // synced to iCloud, which are the three properties the Linux runtime directory was chosen for
+  // apart from being cleared at logout.
+  //
+  // Not being cleared at logout is the one real difference, and it is the same difference the
+  // Windows path already records: a socket FILE can outlive the broker that bound it, so the stale
+  // socket path in `claimSocket` is load bearing here rather than a corner case.
+  //
+  // The length is asserted, not assumed. Darwin's `sun_path` is 104 bytes and a longer path binds
+  // somewhere else in silence rather than failing.
+  if (!runtime && platform === "darwin")
+    return assertDarwinSocketPath(posix.join(homedir(), "Library", "Application Support", "sbar-orbit", "broker.sock"));
   // Windows has no XDG_RUNTIME_DIR and no tmpfs to put one in, and `Bun.serve({unix})` was measured
   // serving an AF_UNIX socket on an ordinary Windows filesystem path, so the fixed socket goes where
   // every other per user Orbit path already goes there. %LOCALAPPDATA% is the precedent
@@ -62,10 +137,10 @@ export function serviceSocketPath(runtimeDirectory = process.env.XDG_RUNTIME_DIR
   // It differs from the Linux path in one way worth stating: a runtime directory is cleared when the
   // person logs out and this is not, so a socket file can outlive the broker that bound it. That is
   // what `claimSocket` already handles, by probing the socket before replacing it.
-  if (!runtimeDirectory && platform === "win32")
+  if (!runtime && platform === "win32")
     return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "broker.sock");
-  if (!runtimeDirectory) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
-  return join(runtimeDirectory, "sbar-orbit", "broker.sock");
+  if (!runtime) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
+  return join(runtime, "sbar-orbit", "broker.sock");
 }
 
 /** Refuse to displace a broker that still answers; clear only a socket file nothing is serving. */
@@ -81,6 +156,22 @@ export async function claimSocket(socket: string, probe: (path: string) => Promi
     // inspected, so it is probed rather than assumed away.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { claimed: true, replacedStaleSocket: false };
     if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
+    // Below here the path exists, could not be inspected, and nobody answers on it. The shape test
+    // further down exists to refuse a path that is NOT a socket rather than delete it, and this
+    // branch used to unlink whatever it found without asking anything at all.
+    //
+    // What to ask depends on why `stat` failed, and the two platforms fail differently. Measured on
+    // the Windows guest: a LIVE AF_UNIX socket answers `stat` with EACCES and a read with EACCES,
+    // and Bun removes the file when the server stops, so a stale one is ENOENT rather than EACCES.
+    // EACCES on an existing path is therefore the socket's own shape there, and refusing it would
+    // refuse the live-file case this function has to handle. On Linux a socket answers `stat`
+    // perfectly well and never reaches this branch at all, so an unreadable path here is somebody
+    // else's file and deleting it is the thing to refuse.
+    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EACCES") {
+      const readable = await Bun.file(socket).arrayBuffer().catch(() => null);
+      if (readable === null || readable.byteLength > 0)
+        throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and could not be shown to be a socket; remove it deliberately`);
+    }
     await unlink(socket).catch(() => {});
     return { claimed: true, replacedStaleSocket: true };
   }

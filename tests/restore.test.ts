@@ -7,10 +7,12 @@ import {
   removeRestorePoint, restoreProfile, reversibilityOf, takeRestorePoint, undoCompleteness,
 } from "../src/restore";
 import { expectPrivatePath } from "./private-path";
-import { onBtrfs as onBtrfsPath } from "./platform-support";
+import { onBtrfs as onBtrfsPath, fixtureRoot } from "./platform-support";
 
 /** Snapshots need btrfs, so the filesystem tests run where the workspaces actually live. */
-const workspaceRoot = join(homedir(), ".cache");
+// `~/.cache` does not exist on Windows, and `tmpdir()` there answers with the profile's 8.3 short
+// name, so the fixtures go through `fixtureRoot`, which creates and canonicalises. See its comment.
+const workspaceRoot = process.platform === "win32" ? tmpdir() : join(homedir(), ".cache");
 const onBtrfs = await onBtrfsPath(workspaceRoot);
 
 test("what an action changed decides what taking it back would mean", () => {
@@ -53,7 +55,7 @@ test("a restore point is refused when something already left the machine", () =>
 });
 
 test("no restore point is taken for an action a snapshot could not undo", async () => {
-  const root = await mkdtemp(join(workspaceRoot, "orbit-restore-none-"));
+  const root = await fixtureRoot("orbit-restore-none-", workspaceRoot);
   try {
     // Taking one before a send would record a promise the filesystem cannot keep.
     expect(await takeRestorePoint(root, join(root, "points"), 1, "click")).toBeNull();
@@ -64,7 +66,7 @@ test("no restore point is taken for an action a snapshot could not undo", async 
 });
 
 test.if(onBtrfs)("a restore point is taken, restores the files, and can always be removed", async () => {
-  const root = await mkdtemp(join(workspaceRoot, "orbit-restore-"));
+  const root = await fixtureRoot("orbit-restore-", workspaceRoot);
   const profile = join(root, "profile");
   const store = join(root, "points");
   try {
@@ -108,7 +110,7 @@ test.if(onBtrfs)("a restore point is taken, restores the files, and can always b
 });
 
 test.if(onBtrfs)("a snapshot costs no additional disk, which is what makes one per action affordable", async () => {
-  const root = await mkdtemp(join(workspaceRoot, "orbit-restore-cost-"));
+  const root = await fixtureRoot("orbit-restore-cost-", workspaceRoot);
   const profile = join(root, "profile");
   const store = join(root, "points");
   try {
@@ -154,7 +156,7 @@ test("a filesystem that cannot make a subvolume leaves the directory exactly as 
 });
 
 test.if(onBtrfs)("a new subvolume is no looser than the directory it replaces", async () => {
-  const root = await mkdtemp(join(workspaceRoot, "orbit-subvol-mode-"));
+  const root = await fixtureRoot("orbit-subvol-mode-", workspaceRoot);
   const profile = join(root, "profile");
   await mkdir(profile, { recursive: true, mode: 0o700 });
   try {
@@ -169,7 +171,7 @@ test.if(onBtrfs)("a new subvolume is no looser than the directory it replaces", 
 });
 
 test.if(onBtrfs)("a restore swaps the profile for the point, and what happened after it is gone", async () => {
-  const root = await mkdtemp(join(workspaceRoot, "orbit-restore-swap-"));
+  const root = await fixtureRoot("orbit-restore-swap-", workspaceRoot);
   const profile = join(root, "profile");
   const store = join(root, "points");
   try {

@@ -79,8 +79,13 @@ export class BrowserBackend {
       // fetched a hop at a time so each destination is checked before the browser sees it.
       if (route.request().resourceType() !== "document") return route.continue();
       let hop: Awaited<ReturnType<typeof route.fetch>>;
+      // Fail CLOSED. `route.continue()` here handed the request back to the browser to follow the
+      // redirect chain itself, which is the exact thing this hop at a time fetch exists to prevent,
+      // and a page that can make the fetch fail (a slow upstream against the 5 s default, a response
+      // shape the driver rejects) got the hole back. A refused load is recoverable; a followed
+      // redirect off the leased origin is not.
       try { hop = await route.fetch({ maxRedirects: 0 }); }
-      catch { return route.continue(); }
+      catch { onBlocked(origin); return route.abort("blockedbyclient"); }
       const location = hop.headers()["location"];
       if (hop.status() < 300 || hop.status() > 399 || !location) return route.fulfill({ response: hop });
       let target: string;

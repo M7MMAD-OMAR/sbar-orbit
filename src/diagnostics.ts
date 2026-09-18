@@ -1,9 +1,9 @@
 import { mkdir, open, rename, lstat, chmod } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { OrbitError } from "./errors";
+import { stateDirectory } from "./service";
 import { version } from "../package.json";
 
 const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write']);
@@ -11,7 +11,7 @@ const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'selec
 const codes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'SESSION_LIMIT', 'RESOURCE_LIMIT', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;
-export const diagnosticRoot = () => join(process.env.XDG_STATE_HOME ?? join(homedir(), '.local/state'), 'sbar-orbit', 'diagnostics');
+export const diagnosticRoot = () => join(stateDirectory(), 'diagnostics');
 export interface DiagnosticEvent {
   at: string; traceId: string; method: string; action?: string; session?: string; request?: string;
   outcome: 'started' | 'ok' | 'error'; durationMs?: number; code?: string; backend?: string;
@@ -31,7 +31,17 @@ export class Diagnostics {
     await chmod(this.root, 0o700);
   }
   private async read(name: string) {
-    const file = await open(join(this.root, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+    const path = join(this.root, name);
+    // `O_NOFOLLOW` is only defined where the platform header defines it, and Windows does not, so
+    // `constants.O_NOFOLLOW` is undefined there and `flags | undefined` coerces to 0: the flag
+    // vanishes with no error and the open follows a reparse point. The write path below already
+    // asks the portable question with `lstat`, and the read path had nothing, while its post-open
+    // checks (`isFile`, `nlink === 1`) are both true of a Windows symlink to a regular file. This
+    // is the report a person is told to paste into a public issue, so it asks first on every
+    // platform and keeps the flag where the kernel honours it.
+    const link = await lstat(path);
+    if (link.isSymbolicLink()) throw new Error('Unsafe diagnostic file');
+    const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const info = await file.stat();
       if (!info.isFile() || info.nlink !== 1 || info.size > this.maxBytes + 4096) throw new Error('Invalid diagnostic file');
@@ -48,7 +58,7 @@ export class Diagnostics {
       if (info && (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1)) throw new Error('Unsafe diagnostic file');
       const line = JSON.stringify(event) + '\n';
       if (info && info.size + Buffer.byteLength(line) > this.maxBytes) await rename(path, join(this.root, 'events.previous.jsonl'));
-      const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | constants.O_NOFOLLOW, 0o600);
+      const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0), 0o600);
       try { await file.chmod(0o600); await file.writeFile(line); } finally { await file.close(); }
     }).catch(() => { this.failedWrites++; });
     return this.tail;

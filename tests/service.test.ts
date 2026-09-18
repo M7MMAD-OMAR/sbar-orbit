@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { installService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
 import { tmpdir } from "node:os";
 
@@ -135,6 +135,26 @@ test("a socket that cannot be inspected is probed, not assumed absent", async ()
 });
 
 /**
+ * The uninspectable branch must not DELETE either. It used to unlink whatever it found once the
+ * probe said nobody was serving, with no shape test at all, which is the same guarantee the test
+ * above pins on the other branch: refuse a person's file rather than remove it.
+ */
+test("a path that cannot be inspected is refused, not deleted", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-claim-opaque-"));
+  try {
+    const locked = join(root, "locked");
+    await mkdir(locked, { recursive: true });
+    const socket = join(locked, "broker.sock");
+    await writeFile(socket, "someone's own file");
+    await chmod(locked, 0o000);
+    try {
+      await expect(claimSocket(socket, async () => false)).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+    } finally { await chmod(locked, 0o700); }
+    expect(await readFile(socket, "utf8")).toBe("someone's own file");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+/**
  * A missing path is still the ordinary case and must not be probed or unlinked.
  */
 test("an absent socket path is claimed without probing anything", async () => {
@@ -162,8 +182,12 @@ test("the connector configuration follows each platform's own configuration dire
   // A stand-in for a roaming profile, built rather than written as a literal user path: the
   // publication audit refuses those, and a real one would be somebody's machine.
   const roaming = join(tmpdir(), "AppData", "Roaming");
-  const linux = connectorConfigDirectory({ XDG_CONFIG_HOME: join(tmpdir(), "config") }, "linux");
-  expect(linux).toBe(join(tmpdir(), "config", "sbar-orbit"));
+  // Asked in the SIMULATED platform's terms, not the host's: `join` is bound to the running machine,
+  // so on Windows this compared a POSIX answer about Linux against a backslash path. The product is
+  // right to answer POSIX for a POSIX platform whatever host computes it.
+  const linuxConfig = posix.join(tmpdir().replace(/\\/g, "/"), "config");
+  const linux = connectorConfigDirectory({ XDG_CONFIG_HOME: linuxConfig }, "linux");
+  expect(linux).toBe(posix.join(linuxConfig, "sbar-orbit"));
 
   // %APPDATA%, not %LOCALAPPDATA%: this is configuration a person may want to follow them between
   // machines, which is the distinction Windows draws. The socket and the workspaces stay local

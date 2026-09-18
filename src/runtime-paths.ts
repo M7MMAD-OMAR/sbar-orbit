@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 export const chromeExecutables = ["/opt/google/chrome/chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
 
@@ -63,6 +63,57 @@ function registeredPath(exe: string): string | undefined {
     if (found && Bun.file(found).size > 0) return found;
   }
   return undefined;
+}
+
+/**
+ * The same question on macOS, where a browser is an application BUNDLE and the thing Orbit runs is
+ * the Mach-O inside it.
+ *
+ * Two rules decide this whole function, and both are the difference between a private session and a
+ * window appearing on the person's screen:
+ *
+ *   1. Orbit launches `<bundle>/Contents/MacOS/<executable>` DIRECTLY, never `open -a`. LaunchServices
+ *      treats a bundle as a single instance application: `open` on a bundle the person is already
+ *      running activates THEIR window and hands it the command line, which is the exact thing this
+ *      project exists not to do.
+ *   2. The executable name inside the bundle is not derivable from the bundle name and contains
+ *      spaces. It is written out literally per browser, because guessing it wrong is a browser that
+ *      does not start, and deriving it from `Info.plist` would mean reading a file per candidate on
+ *      a path that runs during `doctor` on a machine with no browser at all.
+ *
+ * `/Applications` first, then `~/Applications`, because a per user install of the same branding is
+ * the less common case and the order has to be stable for the profile a session is handed.
+ *
+ * Chrome before Edge before the rest, for the same reason the Windows list uses that order: a
+ * profile is tied to the branding that wrote it, and Chrome is what Orbit's measurements were taken
+ * against.
+ */
+export type DarwinBrowser = { id: string; executable: string; profileDirectory: string; bundle: string };
+
+export function darwinBrowserInstalls(home = homedir(), present = (path: string) => Bun.file(path).size > 0): DarwinBrowser[] {
+  // A macOS path is POSIX whatever host computes it: `join` is bound to the host platform, so on
+  // Windows it would answer with backslashes about a Mac. See the note in `src/service.ts`.
+  const support = posix.join(home, "Library", "Application Support");
+  const known = [
+    { id: "google-chrome", bundle: "Google Chrome.app", binary: "Google Chrome", data: posix.join(support, "Google", "Chrome") },
+    { id: "chromium", bundle: "Chromium.app", binary: "Chromium", data: posix.join(support, "Chromium") },
+    { id: "microsoft-edge", bundle: "Microsoft Edge.app", binary: "Microsoft Edge", data: posix.join(support, "Microsoft Edge") },
+    { id: "brave", bundle: "Brave Browser.app", binary: "Brave Browser", data: posix.join(support, "BraveSoftware", "Brave-Browser") },
+  ];
+  const found: DarwinBrowser[] = [];
+  for (const candidate of known) {
+    for (const root of ["/Applications", posix.join(home, "Applications")]) {
+      const bundle = posix.join(root, candidate.bundle);
+      const executable = posix.join(bundle, "Contents", "MacOS", candidate.binary);
+      // `Bun.file(...).size > 0` rather than an access check: the Mach-O inside a bundle is a real
+      // file with real bytes, and a bundle whose executable is missing is a broken install that
+      // should be reported as absent rather than as a browser that will fail to start later.
+      if (!present(executable)) continue;
+      found.push({ id: candidate.id, executable, profileDirectory: candidate.data, bundle });
+      break;
+    }
+  }
+  return found;
 }
 
 /**

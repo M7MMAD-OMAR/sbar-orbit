@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { fixtureRoot } from "./platform-support";
 import { join } from "node:path";
 import { summarize } from "../src/status";
 import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus, linkTarget } from "../src/update";
@@ -40,7 +41,7 @@ async function packFixture(root: string, version: string) {
 }
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "orbit-update-"));
+  const root = await fixtureRoot("orbit-update-");
   return { root, close: () => rm(root, { recursive: true, force: true }) };
 }
 
@@ -377,7 +378,7 @@ async function asWindows<T>(work: () => Promise<T>): Promise<T> {
 }
 
 test("on Windows the current version is a pointer file swapped by rename, not a symlink", async () => {
-  const root = await mkdtemp(join(tmpdir(), "orbit-winptr-"));
+  const root = await fixtureRoot("orbit-winptr-");
   try {
     const paths = layout(root);
 
@@ -415,7 +416,7 @@ test("on Windows the current version is a pointer file swapped by rename, not a 
 // Skipped rather than made conditional inside, so a Windows run reports it as not applicable instead
 // of as a pass it never earned.
 test.skipIf(process.platform === "win32")("the Linux install stays a symlink, so the Windows branch did not leak into it", async () => {
-  const root = await mkdtemp(join(tmpdir(), "orbit-linptr-"));
+  const root = await fixtureRoot("orbit-linptr-");
   try {
     await prepared(root, "1.0.0");
     const paths = layout(root);

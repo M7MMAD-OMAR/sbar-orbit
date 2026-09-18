@@ -376,8 +376,14 @@ export function sharedBudgetUsage(): { processes: number; peakMemoryBytes: numbe
  * `--disable-crashpad` is containment, not tidiness. Measured on the guest: Chrome starts
  * `--type=crashpad-handler` within the first 76 ms, and with spawn-then-assign that handler is
  * outside the job. It is the one process that escaped, every run.
+ *
+ * `src/chrome.ts` calls this rather than building the list again beside it. That is not tidiness
+ * either: the two lists had already drifted, this one hardcoding `--disable-extensions` while the
+ * launcher honoured `options.extensions`, and `tests/windows-job.test.ts` was asserting the
+ * containment flags of a function nothing in production called. A test standing over an unused
+ * builder proves nothing about the browser Orbit actually launches.
  */
-export function windowsChromeArguments(profile: string, extra: string[] = []): string[] {
+export function windowsChromeArguments(profile: string, extra: string[] = [], options: { extensions?: boolean } = {}): string[] {
   return [
     `--user-data-dir=${profile}`,
     "--headless",
@@ -386,7 +392,7 @@ export function windowsChromeArguments(profile: string, extra: string[] = []): s
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-background-networking",
-    "--disable-extensions",
+    ...(options.extensions ? [] : ["--disable-extensions"]),
     // The handler that escapes the job in the assign window. Orbit reads Chrome's exit through the
     // job rather than through a crash report, so nothing is lost by refusing it.
     "--disable-crashpad",

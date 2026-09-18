@@ -1,13 +1,13 @@
 import { test, expect } from "bun:test";
 import { connect, listen } from "bun";
 import { mkdtemp, rm, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { leasedAuthorities, openEgressLease } from "../src/egress";
 import { detectPlatform } from "../src/platform";
 import { Sessions } from "../src/session";
 import { expectPrivatePath } from "./private-path";
+import { fixtureRoot } from "./platform-support";
 
 const confinable = (await detectPlatform()).confinedEgress;
 
@@ -39,7 +39,7 @@ test("what a lease on an origin means to a proxy that is only told an authority"
 });
 
 test("a host that cannot confine a browser says so instead of pretending", async () => {
-  const root = await mkdtemp(join(homedir(), ".cache", "orbit-egress-tier-"));
+  const root = await fixtureRoot("orbit-egress-tier-");
   try {
     const lease = await openEgressLease({
       directory: join(root, "egress"), executable: "/opt/google/chrome/chrome",
@@ -58,7 +58,7 @@ test("a host that cannot confine a browser says so instead of pretending", async
 });
 
 test("a path too long for a unix socket drops the tier instead of truncating it", async () => {
-  const root = await mkdtemp(join(homedir(), ".cache", "orbit-egress-long-"));
+  const root = await fixtureRoot("orbit-egress-long-");
   // 108 bytes is the kernel's limit, and past it the path is silently shortened: the relay binds one
   // path, nothing dials it, and the session waits out its deadline on a browser that started perfectly.
   const tooLong = join(root, "a".repeat(120));
@@ -74,7 +74,7 @@ test("a path too long for a unix socket drops the tier instead of truncating it"
 });
 
 test.if(confinable)("the lease forwards the authorities it holds and refuses the rest", async () => {
-  const root = await mkdtemp(join(homedir(), ".cache", "orbit-egress-proxy-"));
+  const root = await fixtureRoot("orbit-egress-proxy-");
   let reached = 0;
   const target = listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: { open: socket => { reached++; socket.end(); }, data: () => {}, close: () => {} } });
   let origins = [`https://127.0.0.1:${target.port}`];

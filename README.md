@@ -67,14 +67,21 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 ## What is actually supported
 
 Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.
-The browser backend is measured on three: that host, a GitHub Ubuntu 24.04 runner where `bun run verify`
-passed 233 tests on 14 September 2026, and a Windows 11 guest where the published release archive
-installs and an agent host drives a browser session through MCP. There is no macOS machine in this
-project's reach, so every statement about it is reasoning about vendor documentation and not a test, as
-it is for non Fedora Linux beyond what containers of Debian, Ubuntu, Arch and openSUSE on that one host
-could show, which the tier table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
+The browser backend is measured on four: that host, a GitHub Ubuntu 24.04 runner where `bun run verify`
+passed 233 tests on 14 September 2026, a Windows 11 guest where the published release archive
+installs and an agent host drives a browser session through MCP, and a GitHub `macos-26-arm64` runner
+where the one command install, the launch agent, a browser session and the containment experiment all
+ran on 18 September 2026. Every statement about non Fedora Linux beyond what containers of Debian,
+Ubuntu, Arch and openSUSE on that one host could show is reasoning rather than a test, which the tier
+table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
 [support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
 paste into an issue.
+
+One thing to read before trusting a number on macOS: **the resource budget there is advisory, not a
+kernel ceiling.** macOS has no cgroup and no job object, so Orbit measures its own process groups
+from the kernel and refuses work that would not fit, rather than stopping work that is already over.
+`enforcement` reads `advisory` and every dimension is listed as unbounded.
+[What macOS measured](docs/macos-measured.md) has the numbers and the limits.
 
 `Reasoned` means installing here produces a test report, not a bug report. `Refused` means a primary
 source says it cannot work, so Orbit throws `UNSUPPORTED` rather than degrading quietly, and the tracker
@@ -208,12 +215,20 @@ alongside the image. CLI file output keeps base64 out of the text context.
 
 ## Scope
 
-The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. macOS remains unmeasured: there is no such machine in this project's reach. Windows is measured and
-`Limited`: the suite runs on a Windows 11 guest at 201 pass and 0 fail with 96 skipped, the published
+The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. Windows is measured and
+`Limited`: the suite runs on a Windows 11 guest at 218 pass and 0 fail with 102 skipped, the published
 release installs there, and an agent host reaches a browser session through the connector Orbit writes.
-96 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
+102 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
 keyring and btrfs snapshots are Linux capabilities and are not ported. See
 [what Windows measured](docs/windows-measured.md).
+
+macOS is measured and `Limited` as of 18 September 2026: the one command install, the launch agent,
+a browser session driven through the installed command, and a containment run where a supervisor was
+SIGKILLed and left **0 of 10 Chrome processes alive after 105 ms**. Three things are openly not
+proven there and are listed rather than buried: the budget is advisory rather than kernel enforced,
+the no prompt guarantee has not been seen on a person's real account with a real Chrome history, and
+three browser driven suites time out on a small runner for reasons not yet established. See
+[what macOS measured](docs/macos-measured.md).
 
 Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
 
@@ -233,6 +248,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Separate workspace review](docs/separate-workspace-review.md) | Whether this is the best approach, what was refuted, and what a real session costs |
 | [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
 | [What Windows measured](docs/windows-measured.md) | Every Windows result on a live guest, including the defects only a real machine found |
+| [What macOS measured](docs/macos-measured.md) | Every macOS result on a real host: the numbers, the advisory budget, and what is still not proven |
 | [Support tiers](docs/support-tiers.md) | What is known to work, on which host class, on what evidence, and which report to file |
 | [Autonomy](docs/autonomy.md) | Running without a human checkpoint: the policy, the prior art it borrows from, and what bounds it |
 | [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |

@@ -161,16 +161,31 @@ export const stepTitles: { id: string; title: string }[] = [
   { id: "verify", title: "Verify the installed broker answers" },
 ];
 
+/**
+ * Where a default install goes, per platform, because `~/.local` is a POSIX convention and nothing on
+ * Windows looks there. `%LOCALAPPDATA%\sbar-orbit` is the prefix `defaultLauncherPath()` in
+ * `src/update.ts` already names, and the two disagreeing is what made every default Windows install
+ * unupdatable: `updatableInstall()` resolved a launcher that had been written somewhere else.
+ */
+export function defaultPrefix(env = process.env, platform = process.platform) {
+  if (platform === "win32")
+    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
+  return join(homedir(), ".local");
+}
+
 export async function runInstall(options: InstallOptions = {}) {
   const source = resolve(options.source ?? project);
-  const prefix = resolve(options.prefix ?? join(homedir(), ".local"));
+  const prefix = resolve(options.prefix ?? defaultPrefix());
   const unitDirectory = options.unitDirectory ?? process.env.ORBIT_UNIT_DIR ?? join(homedir(), ".config/systemd/user");
   const wantsService = options.service !== false;
   const dryRun = options.dryRun === true;
   const install = options.install ?? runBunInstall;
   const records: StepRecord[] = [];
   const remedies: Remedy[] = [];
-  let launcher = join(source, "bin/sbar-orbit");
+  // `commandName()`, not the literal bash launcher: a run that returns before the launcher step, a
+  // failed prerequisites check for instance, reports this path, and on Windows the other name is a
+  // bash script cmd.exe cannot execute.
+  let launcher = join(source, "bin", commandName());
 
   const step = async (id: string, work: () => Promise<StepOutcome>) => {
     const title = stepTitles.find(entry => entry.id === id)?.title ?? id;
@@ -265,6 +280,25 @@ export async function runInstall(options: InstallOptions = {}) {
     if (process.platform === "win32")
       return { state: "skipped", detail: "Windows has no user service for this: a browser cannot run in session 0, so the broker runs in your session. Start it with `sbar-orbit.cmd serve`" };
     if (dryRun) return { state: "skipped", detail: "would write units and enable the broker" };
+    // macOS has a real per user service and it is a LaunchAgent, not a systemd unit. The autostart
+    // promise it can make is narrower and the report says so rather than borrowing the Linux
+    // wording: an agent starts with the person's LOGIN, and there is no lingering equivalent that
+    // would bring the broker up at boot before one.
+    if (process.platform === "darwin") {
+      const { enableLaunchAgent } = await import("./macos-autostart");
+      const socket = serviceSocketPath();
+      const agent = await enableLaunchAgent(launcher, socket);
+      return {
+        state: agent.status.running ? "done" : agent.bootstrapped ? "done" : "failed",
+        detail: agent.status.running ? "running, and starts when you log in"
+          : agent.bootstrapped ? "installed and starts when you log in"
+          : `launchctl bootstrap refused the agent: ${agent.output ?? "no output"}`,
+        remedies: agent.bootstrapped ? [] : [{ id: "launch-agent-refused", needsElevation: false, agentMayRun: true,
+          command: `launchctl bootstrap gui/$(id -u) ${agent.wrote[0]}`,
+          message: "The launch agent was written and launchd would not load it. Run the bootstrap by hand and read its own output." }],
+        data: { agent: agent.wrote, status: agent.status },
+      };
+    }
     const units = await installService(launcher, unitDirectory);
     const autostart = await enableAutostart(launcher);
     const status = await autostartStatus();

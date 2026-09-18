@@ -155,6 +155,19 @@ test("the budget says which mechanism enforces it and what it cannot bound", asy
     expect(limits.unbounded).toContain("threads");
     return;
   }
+  if (process.platform === "darwin") {
+    // The weakest of the three, and the one where saying so matters most: a cgroup and a job object
+    // are ceilings the kernel refuses to let a process pass, and this is an accounting boundary
+    // Orbit reads. If `enforcement` ever reads `kernel-cgroup` here, a macOS number is being
+    // printed in a Linux shape, which is the exact confusion this assertion exists to prevent.
+    const limits = await requireResourceBudget();
+    expect(limits.enforcement).toBe("advisory");
+    // Every dimension, not a subset: macOS bounds none of them for a process group without a kernel
+    // extension or root, so a short list here would be a false claim about the rest.
+    for (const dimension of ["cpu", "memory", "swap", "processes", "threads"])
+      expect(limits.unbounded).toContain(dimension);
+    return;
+  }
   const limits = await requireResourceBudget();
   expect(limits.enforcement).toBe("kernel-cgroup");
   // The kernel bounds everything Orbit asks it to, so the honest list is empty rather than absent.
@@ -218,4 +231,32 @@ test("the guest suite count is the re-measured one, with the superseded figure s
   expect(doc).toContain("**Re-measured at HEAD in section 9: 151 pass, 88 fail.**");
   // The closure has a named cause rather than being attributed to general progress.
   expect(doc).toContain("appears **zero** times in the new log");
+});
+
+/**
+ * The builder is the launcher's, not the test suite's.
+ *
+ * Every assertion above describes a command line that the browser only really gets if `src/chrome.ts`
+ * builds it with this function. It used to build its own list beside it, and the two had already
+ * drifted: this one hardcoded `--disable-extensions` while the launcher honoured `options.extensions`.
+ * So the containment assertions were standing over a function nothing in production called, which is
+ * a test that proves nothing about the browser Orbit actually launches.
+ *
+ * Read as source rather than executed, because launching a browser is not what this file is for and
+ * the Windows launch path cannot run on the measured host at all.
+ */
+test("the production launcher builds its Windows command line with this function", async () => {
+  const source = await Bun.file(join(import.meta.dir, "..", "src", "chrome.ts")).text();
+  const windowsBranch = source.slice(source.indexOf("if (windows) {"), source.indexOf("} else if (darwin)"));
+  expect(windowsBranch).toContain("windowsChromeArguments(");
+  // And it does not build a second list of its own: the flags live in one place or they drift again.
+  expect(windowsBranch).not.toContain("--disable-crashpad\",");
+  expect(windowsBranch).not.toContain("about:blank");
+});
+
+/** The switch the launcher honours has to survive the move, or a caller silently loses extensions. */
+test("extensions are loaded only when the caller asks, in the builder the launcher uses", () => {
+  expect(windowsChromeArguments("C:\\orbit\\session")).toContain("--disable-extensions");
+  expect(windowsChromeArguments("C:\\orbit\\session", [], { extensions: false })).toContain("--disable-extensions");
+  expect(windowsChromeArguments("C:\\orbit\\session", [], { extensions: true })).not.toContain("--disable-extensions");
 });

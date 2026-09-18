@@ -3,6 +3,7 @@ import { runInstall, stepTitles, type StepRecord } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { requireResourceBudget } from "../src/resource-budget";
 import { connectorConfigDirectory } from "../src/service";
+import { commandName } from "../src/local-install";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -85,7 +86,7 @@ display.stop();
 if (json) {
   console.log(JSON.stringify(report, null, 2));
 } else {
-  const command = report.steps.find(step => step.id === "launcher")?.state === "done" ? report.launcher : join(report.source, "bin/sbar-orbit");
+  const command = report.steps.find(step => step.id === "launcher")?.state === "done" ? report.launcher : join(report.source, "bin", commandName());
   if (report.installed) {
     display.summary(report.dryRun ? "Nothing was changed. This is what the run would do." : "Orbit is installed.", [
       `  Browser sessions:  ${report.capabilities.browserSessions ? "ready" : "not available on this machine yet"}`,

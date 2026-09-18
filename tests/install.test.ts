@@ -5,6 +5,7 @@ import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, ru
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { nativeRuntimeLocations } from "../src/runtime-paths";
 import { commandName } from "../src/local-install";
+import { resolvedTmpdir } from "./platform-support";
 import { tmpdir } from "node:os";
 
 const project = resolve(import.meta.dir, "..");
@@ -13,8 +14,12 @@ const project = resolve(import.meta.dir, "..");
 const refuse = async () => { throw new Error("A test must not run a package manager"); };
 
 async function sandbox() {
-  const prefix = await mkdtemp(join(tmpdir(), "orbit-install-prefix-"));
-  const config = await mkdtemp(join(tmpdir(), "orbit-install-config-"));
+  // The resolved temporary root, because the installer calls `realpath` and macOS's `/var` is a
+  // symlink to `/private/var`: without this, the fixture and the product name the same directory
+  // with different strings and every path assertion here fails on a Mac.
+  const root = await resolvedTmpdir();
+  const prefix = await mkdtemp(join(root, "orbit-install-prefix-"));
+  const config = await mkdtemp(join(root, "orbit-install-config-"));
   // Both variables, because `connectorConfigDirectory` reads `XDG_CONFIG_HOME` on Linux and `APPDATA`
   // on Windows. Setting only the POSIX one left the Windows run writing into the real roaming profile
   // while the test read the sandbox: the test failed with ENOENT, and had it passed it would have

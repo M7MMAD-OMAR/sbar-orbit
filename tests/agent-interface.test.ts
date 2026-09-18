@@ -69,6 +69,13 @@ test("MCP opt-out is local, rejects all broker access and can be re-enabled", as
   } finally { await h.close(); }
 });
 
+/**
+ * Each `h.cli(...)` and each `h.connect(...)` is a real process spawn, and a Bun start costs about
+ * 330 ms on the Windows guest against about 30 ms here. Measured there, this test's own steps sum to
+ * roughly 2.4 s standalone and every one of them returns the right answer; under suite contention it
+ * then overran bun's 5000 ms default and was reported as a hang. The budget is stated rather than the
+ * spawns being removed, because spawning the real adapters is the thing this test exists to check.
+ */
 test("explicit conversation scope survives adapter restart and is shared with CLI only for that ID", async () => {
   const h = await harness();
   try {
@@ -85,7 +92,7 @@ test("explicit conversation scope survives adapter restart and is shared with CL
     expect((await tool(restarted, "orbit_status")).isError).not.toBe(true);
     expect((await h.cli(["usage", "off"])).data.error.code).toBe("CONVERSATION_REQUIRED");
   } finally { await h.close(); }
-});
+}, 30000);
 
 test("CLI metadata avoids capture; image files preserve bytes and refuse overwrite", async () => {
   const h = await harness();
@@ -106,6 +113,13 @@ test("CLI metadata avoids capture; image files preserve bytes and refuse overwri
   } finally { await h.close(); }
 });
 
+/**
+ * Each `h.cli(...)` and each `h.connect(...)` is a real process spawn, and a Bun start costs about
+ * 330 ms on the Windows guest against about 30 ms here. Measured there, this test's own steps sum to
+ * roughly 2.4 s standalone and every one of them returns the right answer; under suite contention it
+ * then overran bun's 5000 ms default and was reported as a hang. The budget is stated rather than the
+ * spawns being removed, because spawning the real adapters is the thing this test exists to check.
+ */
 test("corrupt conversation state fails closed and explicit choice repairs it", async () => {
   const h = await harness();
   try {
@@ -123,4 +137,4 @@ test("corrupt conversation state fails closed and explicit choice repairs it", a
     await tool(client, "orbit_usage", { mode: "on" });
     expect((await tool(client, "orbit_status")).isError).not.toBe(true);
   } finally { await h.close(); }
-});
+}, 30000);

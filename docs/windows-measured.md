@@ -1534,3 +1534,174 @@ Windows host. What worked, with nothing on the person's screen at any point:
 One trap worth writing down: the guest agent payload travels as a single argv entry and Linux caps
 one argument at 128 KiB, `MAX_ARG_STRLEN`, independently of the 2 MiB `ARG_MAX`. Neither a shell nor
 a temporary file gets around it. Chunk below the ceiling instead.
+
+## 27. The guest with nobody logged on, and the probes that quietly measured nothing
+
+Every browser result above was taken in an interactive session. On 18 September 2026 the guest was
+found at the **lock screen with no session at all**: `query session` showed console `Conn` with no
+user, `Win32_ComputerSystem.UserName` was empty, `explorer` had zero processes, and the only account,
+`micro`, reported `Last logon: Never` since the boot.
+
+What that does to `vmexec_user.py` is the part worth recording. It registers its task with
+`/RU <interactive user> /IT`, and `/IT` means **run only when that user is logged on**. With nobody
+logged on the task is created, `schtasks /Run` reports success, and the payload never executes. The
+poll then waits for a log file that is never written and returns an **empty string**, which a caller
+reads as a probe that produced no output rather than as a probe that never ran.
+
+| Question | Answer on the guest |
+|---|---|
+| `(Get-CimInstance Win32_ComputerSystem).UserName` | empty |
+| `query session` | console, `Conn`, no user name |
+| `explorer` processes | 0 |
+| a `/IT` scheduled task | created, `/Run` returns success, payload never runs, log never written |
+| what the caller receives | an empty string, exit 0 |
+
+So an empty probe result is not a measurement, and this is the second time in this document that a
+probe reporting nothing looked like a result. `virsh screenshot` is what settled it in one image: the
+lock screen clock, no session behind it.
+
+### What was done about it, and what was deliberately not
+
+A **throwaway `orbittest` account** now carries these measurements: created in the guest, password
+generated in the guest and written straight to the Winlogon registry so it never leaves the machine,
+and `AutoLogonCount` set to **1** so the guest does not sit permanently auto-logging on afterwards.
+`experiments/windows-vm/arm-test-session.ps1` is that step, and
+`experiments/windows-vm/remove-test-session.ps1` is its undo: it removes the account, its profile and
+the Winlogon values, so the guest does not keep an administrator that exists only for one day's work.
+
+The owner's own account was not touched, and its password was neither read nor set. That is the same
+rule this project applies to the person's browser and screen, applied to their account.
+
+A session-0 run was **not** substituted for the interactive one to make the probes pass. Section 1
+measured that a Chromium family browser will not run in session 0 at all, so a measurement taken
+there would be a different thing wearing the same name.
+
+## 28. A torn snapshot, and why the packager reads the index
+
+Round two of the guest suite came back **42 failures and a typecheck exit 1**, on a tree that
+typechecked and passed 298 tests on the measured host minutes earlier. The failure named itself:
+
+```
+tests/windows-job.test.ts(164,37): error TS2769: No overload matches this call.
+    Argument of type '"advisory"' is not assignable to parameter of type '"job-object" | "kernel-cgroup"'.
+```
+
+Nothing about Windows. `scripts/package.ts` builds a release from the **git index**, deliberately, so
+that a release is the reviewed content rather than whatever happens to be in a working tree. Another
+session was editing the same checkout, and at the moment the archive was built its *test* change was
+staged while the `src/` change that test depends on was not. The archive was internally inconsistent,
+and every failure downstream of it was a measurement of that, not of the platform.
+
+**A count taken from a torn snapshot is not a measurement of anything.** The archive was rebuilt from
+an index made consistent first, and the same suite then answered the way the host does.
+
+The rule for whoever repeats this: before packaging for a guest, check `git diff --stat` is empty
+against the index, not just that the tests pass in the tree. In a checkout with more than one agent in
+it, those two are different questions.
+
+## 29. The whole thing again, from the published archive, on 18 September 2026
+
+Sections 1 to 25 were taken against a working tree pushed as a tarball. This is the published
+packager's own output, unpacked in a directory with nothing carried over, on a guest whose only
+account for this work is the throwaway one from section 27.
+
+### The suite, and what four rounds of it cost
+
+| Round | What it measured | pass / fail / skip |
+|---|---|---|
+| 1 | the archive at HEAD | 193 / **8** / 96 |
+| 2 | a torn index, section 28 | 123 / **42** / 62, typecheck exit 1 |
+| 3 | a consistent index | 208 / **8** / 100 |
+| 4 | after the fixes below | 217 / 1 / 102 |
+| 5 | the last one, a test asserting a Linux path with the host's separator | 217 / 1 / 102 |
+| 6 | after that | **218 / 0 / 102, suite exit 0** |
+
+Round 1's eight were read one at a time rather than by pattern, and they were four different things:
+
+| What failed | What it was |
+|---|---|
+| 3 egress and restore tests | `mkdtemp` under `~/.cache`, which does not exist on Windows, so they died building a fixture before reaching a line of product code |
+| 3 install and update tests | an 8.3 SHORT path compared against a long one, below |
+| 2 agent interface tests | a 5000 ms budget. Driven step by step on the guest every step returns the right value and they sum to about 2.4 s, because a Bun spawn costs about 330 ms there against about 30 ms on the measured host. The budget is stated rather than the real spawns removed, since spawning the adapters is what those tests exist to check |
+
+### The 8.3 short name, and the call that actually expands it
+
+`%TEMP%` is handed out in the SHORT form whenever the account name is over eight characters, while
+`USERPROFILE` and `LOCALAPPDATA` are long. So the product reports one spelling of a directory and an
+uncanonicalised fixture expects the other. Measured on the guest:
+
+```
+tmpdir():            <profiles>/<SHORT~1>/AppData/Local/Temp
+realpathSync:        <profiles>/<SHORT~1>/AppData/Local/Temp   <- unchanged
+realpathSync.native: <profiles>/<the account>/AppData/Local/Temp <- expanded
+```
+
+**libuv's `realpath` does not expand a short name.** Only `realpath.native`, which goes through
+`GetFinalPathNameByHandleW`, does. An account of eight characters or fewer hides this completely,
+which is why every earlier run missed it.
+
+### A live socket answers EACCES, and that is its shape rather than a fault
+
+`claimSocket` grew a check that refused to delete a path it could not inspect, because the branch
+Windows takes was unlinking whatever it found once the probe said nobody was serving. That check was
+too strict, and the guest said so. Measured:
+
+| | `stat` | read |
+|---|---|---|
+| live AF_UNIX socket | **EACCES** | **EACCES** |
+| after the server stops | ENOENT: Bun removes the file | ENOENT |
+
+So on Windows EACCES on an existing path IS the socket, and a stale one is simply absent. The
+refusal now applies where it means an unreadable foreign file, and the delete-rather-than-refuse hole
+stays closed. The test for it was shown to FAIL against the unfixed code before being trusted.
+
+### A macOS path is POSIX whatever host computes it
+
+Six darwin tests failed here against product code that is correct on a Mac. `node:path`'s `join` is
+bound to the HOST, so a Windows runner building a darwin answer got backslashes. Every one of those
+functions takes an explicit `platform` argument precisely so the rule can be asked from any host, and
+using the host's separator made the simulation answer about the runner instead. `src/service.ts`,
+`src/runtime-paths.ts`, `src/macos-budget.ts` and `src/macos-autostart.ts` build darwin paths with
+`posix.join` now, **including the log path written into the launch agent plist**, which would have
+been a wrong path in a real plist had one ever been generated off a Mac.
+
+### The end to end run, through the installed command
+
+Not the source tree: `install.cmd` as `docs/agent-install.md` names it, then the installed `.cmd`.
+
+| Step | Result on the guest |
+|---|---|
+| `install.cmd --dry-run --json` | `installed: true`, 0 unactionable remedies, `browser: true` |
+| `install.cmd --json` | `installed: true`, launcher and connector written |
+| connector location | `%APPDATA%\sbar-orbit\mcp.json`, naming the installed `.cmd` and the local socket |
+| connector ACL | SYSTEM, Administrators, the owning user. **No Everyone, no Anonymous, no BUILTIN\Users** |
+| `serve --managed-socket`, `status --json` | bound, `Orbit idle` |
+| `session create browser` | `running`, `egressTier: in-browser` |
+| `act` navigate `https://example.com/` | ok |
+| `session observe --output` | **17719 byte JPEG, decoded 1280x800**, and the image was carried off the guest and LOOKED AT: the rendered Example Domain page, not a blank frame |
+| browser processes with the session open | 13 |
+| after `session stop` | **0** |
+| journal ACL | the same three principals, nothing exposed, and no `params` field anywhere in it |
+| broker killed with `taskkill /F`, no cleanup handler | **0 browser survivors** |
+
+The last row is the guarantee the project exists for, re-measured on this build: an agent's browser
+does not outlive the broker that owned it, even when the broker is killed outright.
+
+### The last two, which were the same mistake from opposite sides
+
+Rounds 4 and 5 each ended on one failure, and both were a test asking a question in the HOST's terms
+about another platform. `macOS per user paths are Library paths` built its expectation from
+`process.env.HOME` and the host's `join`, which on Windows is often unset and always backslashes;
+`the connector configuration follows each platform's own configuration directory` did the same for
+its Linux arm. Both now ask with `homedir()` and `posix.join`, which is the same correction the
+product took in section 29's `posix.join` paragraph.
+
+Worth stating plainly, because it is the trap this whole document keeps rediscovering: a test that
+simulates a platform is only as good as the terms it asks in. Four of the last ten failures on this
+guest were correct product code failing a fixture that had quietly asked about the runner.
+
+### What this round does not claim
+
+The tier stays `Limited`. One guest, virtual hardware, Edge only, a throwaway account and no person
+at it. The private display, the profile clone, the systemd units and the keyring work are Linux
+capabilities and are skipped here, and 102 skips are not 102 passes.

@@ -141,9 +141,21 @@ async function brokerSessions(): Promise<number | null> {
 }
 
 async function restartService() {
-  const child = Bun.spawn(["systemctl", "--user", "restart", "sbar-orbit.service"], { stdout: "pipe", stderr: "pipe" });
-  const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
+  // Windows installs no service at all, by design: a Chromium family browser does not run in
+  // session 0, so the broker lives in the person's own session and there is no analogue of
+  // `loginctl enable-linger`. See docs/support-tiers.md. Spawning a bare `systemctl` there THROWS
+  // rather than exiting non zero, and it threw after `point()` had already moved the pointer, so a
+  // Windows activation left the machine on an unverified version with the rollback never reached.
+  if (process.platform === "win32")
+    return { ok: true, output: "no managed broker on Windows; start it with `sbar-orbit.cmd serve`" };
+  try {
+    const child = Bun.spawn(["systemctl", "--user", "restart", "sbar-orbit.service"], { stdout: "pipe", stderr: "pipe" });
+    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
+  }
+  // A missing binary is a failed restart, not an exception out of the middle of an activation: the
+  // rollback below is what has to run, and it only runs if this returns.
+  catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 300) : "systemctl could not be started" }; }
 }
 
 /** The broker answering is the only evidence a version works on this machine. */
@@ -182,7 +194,13 @@ export async function activateVersion(version: string, environment: ActivationEn
   if (previous) await point(paths.previous, join(paths.versions, previous));
   await point(paths.current, target);
   const restarted = await (environment.restart ?? restartService)();
-  const healthy = restarted.ok && await (environment.healthy ?? brokerAnswers)();
+  // On Windows nothing restarts a broker, because nothing installed one: the person starts it with
+  // `sbar-orbit.cmd serve` in their own session. Asking `brokerAnswers` there would poll a socket
+  // nobody is serving for ten seconds and then roll back a correct activation. When a broker IS
+  // serving, it is still asked, because that answer is real evidence on any platform.
+  const health = environment.healthy
+    ?? (process.platform === "win32" ? (async () => await brokerAnswers(1, 0) || openSessions === null) : brokerAnswers);
+  const healthy = restarted.ok && await health();
   if (healthy) return { activated: true, version, previous };
   // The rollback is the reason `previous` exists. Nothing here deletes the version that failed: it is
   // the evidence, and `doctor` on the restored broker is what says the machine is working again.
@@ -412,9 +430,18 @@ export async function setAutomaticUpdates(on: boolean, root = updateRoot(), time
 }
 
 async function systemdTimer(on: boolean) {
-  const child = Bun.spawn(["systemctl", "--user", on ? "enable" : "disable", "--now", "sbar-orbit-update.timer"], { stdout: "pipe", stderr: "pipe" });
-  const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-1).join(" ").slice(0, 200) };
+  // Same reason as `restartService`: there is no user service on Windows, so there is no timer to
+  // enable. The switch FILE above is the real kill switch and is already written by the time this
+  // runs, and a bare `systemctl` spawn throws there, which made `update off` report failure on a
+  // machine where it had just succeeded.
+  if (process.platform === "win32")
+    return { ok: false, output: "no update timer on Windows: there is no user service, so run `sbar-orbit.cmd update run` yourself" };
+  try {
+    const child = Bun.spawn(["systemctl", "--user", on ? "enable" : "disable", "--now", "sbar-orbit-update.timer"], { stdout: "pipe", stderr: "pipe" });
+    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-1).join(" ").slice(0, 200) };
+  }
+  catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 200) : "systemctl could not be started" }; }
 }
 
 export type RunEnvironment = ActivationEnvironment & Feed & {

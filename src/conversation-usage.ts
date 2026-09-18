@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
+import { stateDirectory } from "./service";
 
 export type UsageMode = "on" | "off";
 
@@ -11,7 +11,7 @@ export class ConversationUsage {
   private enabled = true;
   private readonly path?: string;
   constructor(readonly conversationId = process.env.ORBIT_CONVERSATION_ID,
-    private readonly root = process.env.ORBIT_USAGE_DIR ?? join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "sbar-orbit/usage")) {
+    private readonly root = process.env.ORBIT_USAGE_DIR ?? join(stateDirectory(), "usage")) {
     if (conversationId !== undefined) {
       if (!conversationId.trim() || conversationId.length > 256 || /[\x00-\x1f\x7f]/.test(conversationId))
         throw new OrbitError("INVALID_REQUEST", "Conversation ID must contain 1 to 256 characters without control characters");

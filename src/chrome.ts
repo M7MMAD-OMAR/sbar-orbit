@@ -4,7 +4,7 @@ import { readFile, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { OrbitError } from "./errors";
-import { chromeExecutables, windowsBrowserInstalls } from "./runtime-paths";
+import { chromeExecutables, darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
 import { defaultViewport } from "./viewport";
 
 export type ChromeLaunchOptions = {
@@ -54,6 +54,10 @@ export type ChromeLaunchOptions = {
  */
 export function defaultChromeExecutable(): string | undefined {
   if (process.platform === "win32") return windowsBrowserInstalls()[0]?.executable;
+  // macOS resolves bundles rather than fixed paths, and returns the Mach-O inside the bundle: the
+  // bundle directory itself is not executable, and handing it to `open` is the one launch route
+  // that would reach the person's own running browser.
+  if (process.platform === "darwin") return darwinBrowserInstalls()[0]?.executable;
   return chromeExecutables.find(path => Bun.file(path).size > 0);
 }
 
@@ -105,6 +109,72 @@ function launchOnLinux(executable: string, profile: string, argv: string[], env:
       const { pid } = JSON.parse(await readFile(join(profile, "owner.json"), "utf8"));
       if (await readFile(`/proc/${pid}/cgroup`, "utf8") !== await readFile("/proc/self/cgroup", "utf8"))
         throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome moved outside its resource scope");
+    },
+    get stderrTail() { return diagnostics; },
+  } as OwnedBrowser & { stderrTail: string };
+}
+
+/**
+ * macOS: a process group held by a supervisor, which is the third answer to the same question.
+ *
+ * Linux has a subreaper the kernel honours and Windows has a job object the kernel enforces. macOS
+ * has neither, so containment here is a process group plus a supervisor plus a sweep, and every
+ * layer of it is best effort. `assertContained` asks the kernel for the group's membership, which
+ * is exact, and that is the part that is as strong as the other platforms: whether the browser is in
+ * the group Orbit owns is a question with a real answer.
+ *
+ * What is weaker is the guarantee that nothing survives. A supervisor that is SIGKILLed runs no
+ * sweep. The broker's start-up sweep is the second layer, and two best effort layers do not add up
+ * to `KILL_ON_JOB_CLOSE`. `docs/support-tiers.md` states the row at that tier.
+ */
+function launchOnDarwin(executable: string, profile: string, argv: string[], env: Record<string, string>): OwnedBrowser {
+  // `taskpolicy -b` rather than a resource limit: the darwin-background class is a scheduling hint
+  // that on Apple silicon places the session's threads on the efficiency cluster, and it is the
+  // only part of the macOS budget the system itself applies. `RLIMIT_AS` is not used deliberately,
+  // and the reason is written down in docs/porting.md: V8 reserves hundreds of gigabytes of address
+  // space, so an address space limit either does nothing or kills a healthy browser outright.
+  const background = Bun.file("/usr/sbin/taskpolicy").size > 0 ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  const owner = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "native/supervise-darwin.ts"),
+    join(profile, "owner.json"), ...background, executable, ...argv],
+    { env, stdin: "pipe", stdout: "ignore", stderr: "pipe" });
+  let diagnostics = "";
+  void (async () => {
+    try { for await (const chunk of owner.stderr) diagnostics = (diagnostics + new TextDecoder().decode(chunk)).slice(-4096); }
+    catch {}
+  })();
+  return {
+    exitCode: () => owner.exitCode,
+    exited: owner.exited,
+    diagnostics: () => {
+      try { return String(JSON.parse(readFileSync(join(profile, "owner.json"), "utf8")).error?.message ?? ""); } catch { return ""; }
+    },
+    async stop() {
+      // Closing the pipe is the stop signal the supervisor waits on, and it is what a broker that
+      // dies produces for free. Using the same route for both means the ordinary path is the one
+      // that has been exercised, rather than the crash path being the untested one.
+      owner.stdin.end();
+      const kill = setTimeout(() => owner.kill("SIGKILL"), 6000);
+      try { await owner.exited; } finally { clearTimeout(kill); }
+    },
+    async assertContained() {
+      const owner = JSON.parse(await readFile(join(profile, "owner.json"), "utf8")) as
+        { pgid?: number; leaderStartedAtMs?: number | null; leaderExecutable?: string };
+      if (!Number.isInteger(owner.pgid))
+        throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome did not record a process group");
+      const { processGroupMembers, groupIsStillOurs } = await import("./macos");
+      // The group has to still BE our group, not merely have members. A pgid is reused, so a
+      // containment check that only counts processes would report a healthy session while looking
+      // at a group that belongs to somebody else. The supervisor recorded its own start time and
+      // executable when it created the group, and both are checked here.
+      if (typeof owner.leaderStartedAtMs === "number"
+        && !groupIsStillOurs(owner.pgid!, { startedAtMs: owner.leaderStartedAtMs, executable: owner.leaderExecutable }))
+        throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group is no longer the one Orbit created");
+      // Asked of the kernel every time rather than checked once at launch, for the same reason the
+      // Windows path walks the job's process list: Chrome keeps starting helpers for the life of
+      // the session, so a single check at launch can never see the process created afterwards.
+      const members = processGroupMembers(owner.pgid!);
+      if (!members.pids.length)
+        throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome's process group is empty");
     },
     get stderrTail() { return diagnostics; },
   } as OwnedBrowser & { stderrTail: string };
@@ -192,8 +262,9 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   await requireHeadroom({ tasks: 140, memoryBytes: 200 * 1048576 }, "A browser session");
   const executable = options.executable ?? defaultChromeExecutable();
   const windows = process.platform === "win32";
-  if ((process.platform !== "linux" && !windows) || !executable)
-    throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher requires Linux or Windows with Chrome, Chromium or Edge");
+  const darwin = process.platform === "darwin";
+  if ((process.platform !== "linux" && !windows && !darwin) || !executable)
+    throw new OrbitError("UNSUPPORTED", "Owned Chrome launcher requires Linux, Windows or macOS with Chrome, Chromium or Edge");
   if (options.executable && !(Bun.file(options.executable).size > 0)) throw new OrbitError("UNSUPPORTED", "The requested browser executable is not present");
   // A profile that already holds one of these is a profile that held a browser: a restore point is a
   // snapshot of a running browser, and a clone is a copy of the person's. The poll below waits for this
@@ -210,7 +281,46 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // No --password-store: that switch is the Linux keyring selector and means nothing here, where a
     // private user data directory already puts App Bound Encryption out of the picture.
     // --disable-crashpad: the crash handler is the process measured escaping the assign window.
-    owner = await launchOnWindows(executable, profile, [...common, "--disable-crashpad",
+    //
+    // Built by `windowsChromeArguments`, which is where the containment flags are documented and
+    // tested. Building the list again here is what let the two drift apart.
+    const { windowsChromeArguments } = await import("./windows-job");
+    owner = await launchOnWindows(executable, profile,
+      windowsChromeArguments(profile, options.extraArgs ?? [], { extensions: options.extensions }), env);
+  } else if (darwin) {
+    // Five macOS specific flags, and every one of them is about not touching the person's machine.
+    //
+    // --use-mock-keychain is the one that matters most, and the reason is in Chromium's own source
+    // rather than in a guess. `components/os_crypt/keychain_password_mac.mm` looks the key up with
+    // `FindGenericPassword(service: "Chrome Safe Storage", account: "Chrome")`, and NOTHING in that
+    // call mentions the profile directory: a fresh `--user-data-dir` does not give a fresh item. On
+    // any Mac where the person has ever run Chrome the item already exists, so a binary that is not
+    // on its ACL raises the "wants to use your confidential information" dialog on their screen,
+    // and `--headless` does not suppress it. `os_crypt_switches.h` documents this switch as
+    // existing precisely to prevent "blocking dialogs". `--password-store=basic` is the second line
+    // of defence behind it. The cost is that this profile's cookies are encrypted with a throwaway
+    // key, which is correct for a session profile that is deleted when the session ends.
+    //
+    // --disable-crash-reporter stops the Crashpad handler, which is the one process that genuinely
+    // escapes containment here. `third_party/crashpad/.../util/posix/spawn_subprocess.cc` calls
+    // `setsid()` in the child, so the handler leaves the process group AND the session and is
+    // reparented to launchd: `killpg` misses it, a descendant walk misses it, and it is designed to
+    // outlive the browser it served. This is the same process the Windows port removes with
+    // `--disable-crashpad`, found there by measuring 13 of 14 processes inside the job.
+    //
+    // --disable-features=MediaRouter stops Chrome's Cast discovery, which on macOS 15 and later
+    // raises a Local Network alert attributed to Google Chrome on the person's screen. Orbit has
+    // no use for Cast and the alert is the exact class of interruption this project refuses.
+    //
+    // --disk-cache-dir is forced inside the session profile because Chrome on macOS otherwise
+    // derives its cache from ~/Library/Caches/Google/Chrome, which is the directory the person's
+    // OWN browser is writing to. A session that shared it would be writing into their browser's
+    // state, which is the promise this project is built on.
+    //
+    // No --no-sandbox: the Chrome sandbox works on macOS and dropping it would be a straight
+    // security regression, the same reasoning the Windows branch already records.
+    owner = launchOnDarwin(executable, profile, [...common, "--use-mock-keychain", "--password-store=basic",
+      "--disable-crash-reporter", "--disable-features=MediaRouter", `--disk-cache-dir=${join(profile, "cache")}`,
       ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"], env);
   } else {
     // Chrome can use the desktop bus to move itself into an uncapped systemd scope.
