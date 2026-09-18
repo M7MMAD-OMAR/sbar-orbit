@@ -1,6 +1,6 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { OrbitError } from "./errors";
 
 /**
@@ -23,9 +23,14 @@ export function workspaceRoot(env = process.env, platform = process.platform) {
   //
   // Application Support would also work and is wrong for the same reason `$XDG_DATA_HOME` would be
   // on Linux: this is cache, and telling the system otherwise means backing it up.
+  //
+  // `posix.join` for both POSIX branches, because `join` is bound to the HOST platform: with the
+  // `platform` argument now injectable, a Windows host asking for the macOS or Linux answer would
+  // otherwise get backslashes in it. The same correction the darwin path builders in
+  // `src/service.ts` and `src/runtime-paths.ts` took.
   if (platform === "darwin" && !env.XDG_CACHE_HOME)
-    return join(homedir(), "Library", "Caches", "sbar-orbit", "workspaces");
-  return join(env.XDG_CACHE_HOME || join(homedir(), ".cache"), "sbar-orbit/workspaces");
+    return posix.join(homedir(), "Library", "Caches", "sbar-orbit", "workspaces");
+  return posix.join(env.XDG_CACHE_HOME || posix.join(homedir(), ".cache"), "sbar-orbit/workspaces");
 }
 
 export async function createWorkspaceDirectory(prefix: string, root = workspaceRoot()) {

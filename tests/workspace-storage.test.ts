@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { linuxOnlyTest, needsSymlink } from "./platform-support";
 import { chmod, lstat, mkdir, mkdtemp, symlink } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, posix } from "node:path";
 import { createWorkspaceDirectory, workspaceRoot } from "../src/workspace-storage";
 import { tmpdir } from "node:os";
 
@@ -123,11 +123,11 @@ test("one workspace that will not go does not end the sweep", async () => {
  */
 test("the workspace root follows the platform's own private per user location", () => {
   // Linux, and anything else POSIX: the XDG cache home, or its documented default.
-  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache" } as NodeJS.ProcessEnv))
-    .toBe(join("/data/cache", "sbar-orbit/workspaces"));
+  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache" } as NodeJS.ProcessEnv, "linux"))
+    .toBe(posix.join("/data/cache", "sbar-orbit/workspaces"));
   // An explicit XDG_CACHE_HOME wins on every platform, which is what keeps the tests above portable.
-  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache", LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv))
-    .toBe(join("/data/cache", "sbar-orbit/workspaces"));
+  expect(workspaceRoot({ XDG_CACHE_HOME: "/data/cache", LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv, "linux"))
+    .toBe(posix.join("/data/cache", "sbar-orbit/workspaces"));
   // The Windows branch is asked DIRECTLY now, on any host. It used to be reachable only on win32, so
   // on Linux this test asserted the absence of the branch rather than its result, and the one path a
   // Windows user depends on was verified by inference. That is this project's own "not measured"
@@ -135,8 +135,11 @@ test("the workspace root follows the platform's own private per user location", 
   expect(workspaceRoot({ LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv, "win32"))
     .toBe(join("C:\\Users\\x\\AppData\\Local", "sbar-orbit", "workspaces"));
   // And LOCALAPPDATA alone must still not divert a POSIX host, which is the other half of the rule.
+  // Asked with `posix.join`, not `join`: the host's separator would compare a backslash path against
+  // a POSIX answer about Linux, which is the same mistake the darwin path builders made and the same
+  // one this file's Windows branch exists to avoid asserting by inference.
   expect(workspaceRoot({ LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local", XDG_CACHE_HOME: "/data/cache" } as NodeJS.ProcessEnv, "linux"))
-    .toBe(join("/data/cache", "sbar-orbit/workspaces"));
+    .toBe(posix.join("/data/cache", "sbar-orbit/workspaces"));
   // macOS keeps regenerable per user data in ~/Library/Caches, asked in its own terms for the same reason.
   expect(workspaceRoot({} as NodeJS.ProcessEnv, "darwin")).toContain("Library/Caches");
 });

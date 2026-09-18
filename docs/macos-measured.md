@@ -125,45 +125,75 @@ before the budget registry counts an entry. `tests/macos.test.ts` proves the gua
 correct pgid with a start time an hour off is rejected, and so is a correct pgid with the wrong
 executable.
 
-## 6. What is still not measured here
+## 6. What macOS refuses outright
 
-Stated plainly, because an unknown measurement is `not measured` and never a pass.
+Not gaps to fill later. Each is a capability the platform does not offer, with the deciding fact:
 
-- **The no prompt guarantee on a person's Mac.** A runner's Keychain and TCC state are not a
-  person's. The flags above are correct by vendor source; that no dialog appears on a real account
-  with a real Chrome history has not been observed.
-- **The broker's own start-up sweep.** The reaping experiment kills the supervisor, not the
-  supervisor and the broker together, so the second containment layer is unexercised.
-- **The private display.** Refused on macOS, not missing: there is no second concurrent GUI session
-  for one user, so there is nowhere private to put a native application.
+- **The private display.** There is no second concurrent GUI session for one user, so there is
+  nowhere private to put a native application. Acting in place would drive the person's own windows.
 - **An origin lease below the browser.** No network namespaces. `pf` is system wide and root only,
   and a per process filter means a Network Extension, an entitlement and a signed installer. macOS
   is `in-browser` by design and the tier table says so.
+- **Starting from the person's own profile.** Three independent reasons, in section 5 of
+  [support-tiers.md](support-tiers.md), any one of them sufficient.
 
-## 7. The suite on a Mac, and the failures that are still open
+## 7. The suite on a Mac, and what the timeouts actually were
 
-Four runs, and the numbers moved the way fixing real defects moves numbers:
+Five runs, and the numbers moved the way fixing real defects moves numbers:
 
-| Run | Commit | pass | fail | skip |
-|---|---|---|---|---|
-| 1 | `9086484` | 215 | 12 | 85 |
-| 2 | `9086484`, the same commit re-run | 213 | 14 | 85 |
-| 3 | `a10b9cd`, after the fixes in section 4 | 223 | 8 | 85 |
-| 4 | `0654b13`, after the enumeration fix | 229 | **5** | 86 |
+| Run | Commit | pass | fail | skip | suite time |
+|---|---|---|---|---|---|
+| 1 | `9086484` | 215 | 12 | 85 | 314 s |
+| 2 | `9086484`, the same commit re-run | 213 | 14 | 85 | 313 s |
+| 3 | `a10b9cd`, after the fixes in section 4 | 223 | 8 | 85 | 356 s |
+| 4 | `0654b13`, after the enumeration fix | 229 | 5 | 86 | 334 s |
+| 5 | `3135b16`, after the scheduling class fix | 237 | **0** | 86 | **190 s** |
 
-Runs 1 and 2 are the same code, and they disagree by two. That is the most useful number in the
-table: it establishes that some of these failures are **flaky under contention** on a small runner
-rather than deterministic defects, and it is why the remaining five are not all attributed to one
-cause.
+Runs 1 and 2 are the same code and disagree by two, which established early that some failures were
+flaky under load rather than deterministic. Run 5 is the one that explains the rest.
 
-**Every remaining failure is a timeout. Not one is a failed assertion.** That is a different kind of
-result from run 1, where six were assertions about wrong values, and each of those was a real defect
-now fixed.
+### The defect the timeouts were hiding
 
-| Failure | What is known |
-|---|---|
-| `the rail is the only session list` (60 s), `pause drains accepted work` (30 s), `CLI creates a session` (30 s), `a journal line says where the boundary moved` (22 s) | All drive real browsers, and the set is not stable between runs of identical code. Consistent with contention on a runner that starts several Chrome trees at once, on hardware where one launch alone takes 1.4 s. **Cause not established**, so they are listed rather than explained away |
-| `abrupt broker death reaps its browser tree` | In run 3 this asserted `0` descendants for a browser that was demonstrably alive, which was the `proc_listchildpids` defect in section 4. With that fixed it now enumerates the tree and **times out** instead, which is the same contention shape as the four above rather than the containment failure it looked like. The containment claim rests on `experiments/macos-reaping.ts`, which passed in every run: 9 to 10 processes, 0 survivors, 86 to 480 ms |
+The darwin-background scheduling class is **inherited**, and Orbit was applying it twice: once to the
+whole command in `scripts/limited.ts`, and again per browser in `launchOnDarwin`. The second
+application spawned a `taskpolicy` process per session and changed nothing, because the browser had
+already inherited the class from the broker that started it.
+
+`inheritedBackgroundClass()` now asks the kernel, reading `PROC_FLAG_DARWINBG` out of
+`proc_bsdinfo`. The suite went from 5 failures in 334 seconds to **0 failures in 190 seconds**, a
+1.76x speedup, and every remaining timeout disappeared with it.
+
+### The measurement that was designed to prove me wrong, and did
+
+Before fixing it, the hypothesis was that the background class itself was starving sessions on a
+small runner. `experiments/macos-qos-cost.ts` was written to answer that with a number rather than an
+opinion, timing the same work in both arms, alternating per round. On the three core runner:
+
+| Arm | median launch | median navigate | median total |
+|---|---|---|---|
+| Background class | 1008 ms | 107 ms | **1215 ms** |
+| Foreground | 1873 ms | 123 ms | 2032 ms |
+
+`backgroundCostRatio: 0.6`. The background class is not merely cheap here, sessions were **faster**
+inside it, so the hypothesis was wrong and the experiment said so in its own verdict line: "the
+background class is close to free here, so it is not what makes sessions miss deadlines."
+
+The honest reading of 0.6 is that it is below 1.0 for a reason this experiment does not establish.
+Three rounds on a shared runner is a small sample, and the plausible cause is the redundant
+`taskpolicy` process and its spawn cost landing in the foreground arm, not the efficiency cluster
+being faster than the performance one. **The ratio is recorded, the cause is not claimed.** What the
+run does establish is the thing that mattered: the class was not the bottleneck, and the duplicate
+application was.
+
+### What is still not measured
+
+- **The no prompt guarantee on a person's Mac.** A runner's Keychain and TCC state are not a
+  person's. The flags are correct by vendor source; that no dialog appears on a real account with a
+  real Chrome history has not been observed.
+- **The broker's own start-up sweep.** The reaping experiment kills the supervisor, not the
+  supervisor and the broker together, so the second containment layer is unexercised.
+- **A second green run.** Run 5 is one run. A single green is weaker evidence than five reds, and
+  the flakiness in runs 1 and 2 is exactly why this document says so rather than declaring victory.
 
 86 skips is the honest half of the pass count. Most are the private display, the systemd units,
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.

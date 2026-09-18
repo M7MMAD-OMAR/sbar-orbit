@@ -216,20 +216,21 @@ alongside the image. CLI file output keeps base64 out of the text context.
 ## Scope
 
 The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. Windows is measured and
-`Limited`: the suite runs on a Windows 11 guest at 220 pass and 0 fail with 102 skipped, the published
+`Limited`: the suite runs on a Windows 11 guest at 220 pass and 0 fail with 103 skipped, the published
 release installs there, and an agent host reaches a browser session through the connector Orbit writes.
-102 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
+103 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
 keyring and btrfs snapshots are Linux capabilities and are not ported. See
 [what Windows measured](docs/windows-measured.md).
 
 macOS is measured and `Limited` as of 18 September 2026: the one command install, the launch agent,
 a browser session driven through the installed command, and a containment run where a supervisor was
-SIGKILLed and left **0 of 9 Chrome processes alive after 86 ms**. The suite there runs 229 pass, 5
-fail, 86 skip, and every one of the five is a timeout on browser-driven work rather than a failed
-assertion. Three things are openly not proven and are listed rather than buried: the budget is
-advisory rather than kernel enforced, the no prompt guarantee has not been seen on a person's real
-account with a real Chrome history, and the cause of those timeouts is not established. See
-[what macOS measured](docs/macos-measured.md).
+SIGKILLed and left **0 of 9 Chrome processes alive after 60 ms**. The suite there runs **237 pass, 0
+fail, 86 skip**. Getting there found five real defects, the last of which was Orbit applying the
+darwin-background scheduling class twice: the class is inherited, so the second application bought
+nothing, and removing it took the suite from 5 failures in 334 seconds to none in 190. Two things are
+openly not proven and are listed rather than buried: the budget is advisory rather than kernel
+enforced, and the no prompt guarantee has not been seen on a person's real account with a real Chrome
+history. See [what macOS measured](docs/macos-measured.md).
 
 Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
 
