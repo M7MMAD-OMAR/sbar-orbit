@@ -253,6 +253,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
 | [What Windows measured](docs/windows-measured.md) | Every Windows result on a live guest, including the defects only a real machine found |
 | [What macOS measured](docs/macos-measured.md) | Every macOS result on a real host: the numbers, the advisory budget, and what is still not proven |
+| [macOS research](docs/research/macos/) | The sourced groundwork behind the macOS adapter, and the adversarial audit of it |
 | [Support tiers](docs/support-tiers.md) | What is known to work, on which host class, on what evidence, and which report to file |
 | [Autonomy](docs/autonomy.md) | Running without a human checkpoint: the policy, the prior art it borrows from, and what bounds it |
 | [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |

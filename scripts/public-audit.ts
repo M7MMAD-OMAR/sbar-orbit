@@ -63,7 +63,11 @@ for (const file of files) {
     // convention the email rule below already allows through `example.com`. A test that states a
     // macOS path has to state SOME home directory, and the readable choice is the one that cannot
     // belong to anybody. Every other name is still reported, including short ones.
-    ["personal-home-path", /\/(?:home|Users)\/(?!example\/)[a-zA-Z0-9._-]+\//],
+    //
+    // `linuxbrew` is exempt for a different reason: `/home/linuxbrew/.linuxbrew` is Homebrew's own
+    // documented prefix on Linux, a fixed system path rather than a person, and documentation that
+    // cannot write it down is documentation that has to paraphrase a real installation path.
+    ["personal-home-path", /\/(?:home|Users)\/(?!example\/|linuxbrew\/)[a-zA-Z0-9._-]+\//],
     ["windows-user-path", /[A-Z]:\\Users\\[^\\\s]+\\/i],
     ["private-task-link", /thread:\/\/|\?hostId=[l]ocal/],
     ["private-network-address", /\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/],

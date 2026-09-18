@@ -12,9 +12,12 @@
 > questions with standalone probes and never ran a line of Orbit. This document is the other half:
 > Orbit's own broker, budget, launcher and containment, on a Mac.
 
-The tooling is `.github/workflows/platform-probes.yml` (`verify-macos`) and
-`experiments/macos-reaping.ts`. The adapter this shaped is `src/macos.ts`, `src/macos-budget.ts`,
-`src/macos-autostart.ts` and `src/native/supervise-darwin.ts`.
+The tooling is `.github/workflows/platform-probes.yml` (`verify-macos`),
+`experiments/macos-reaping.ts`, `experiments/macos-orphan-sweep.ts` and
+`experiments/macos-qos-cost.ts`. The adapter this shaped is `src/macos.ts`, `src/macos-budget.ts`,
+`src/macos-autostart.ts`, `src/macos-orphans.ts` and `src/native/supervise-darwin.ts`. The sourced
+research the design came from, and the adversarial audit of the result, are in
+[research/macos/](research/macos/).
 
 ## 1. What a Mac does, end to end
 

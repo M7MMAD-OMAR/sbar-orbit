@@ -17,6 +17,7 @@
     "bun.lock",
     "install.sh",
     "docs/*.md",
+    "docs/research/**/*.md",
     "AGENTS.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
