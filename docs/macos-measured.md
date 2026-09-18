@@ -83,8 +83,8 @@ one kernel object with the right shape is the task coalition, and creating one i
 
 ## 4. Defects a real Mac found that no amount of reading would have
 
-Nine of these came out of the first run. They are listed because a port's value is largely in what
-running it turned up.
+Six from the first run, listed because a port's value is largely in what running it turned up. The
+eight an adversarial audit found afterwards are in section 8.
 
 | Found | Cause | Fix |
 |---|---|---|
@@ -152,16 +152,24 @@ Five runs, and the numbers moved the way fixing real defects moves numbers:
 | 7 | `4ceef2e`, after the endpoint deadline fix | 238 | **0** | 86 | 227 s |
 | 8 | `4ceef2e`, the same commit re-run | 237 | 1 | 86 | 259 s |
 | 9 | `ec1a060`, the audit fixes | 235 | 3 | 86 | 311 s |
+| 10 | `d8ee400`, the five audit defects fixed | 238 | 4 | 86 | 331 s |
 
 **Read the whole column, not the best row.** Three commits were each run twice and each produced one
 green and one red: `9086484` gave 12 then 14, `3135b16` gave 0 then 1, `4ceef2e` gave 0 then 1. A
 single green run on this host does not mean the suite is green, and this table exists so nobody
 quotes run 5 or run 7 on its own.
 
-What the column does show is a real trend that is not noise: **12 failures down to between 0 and 3,
-and every failure after run 4 is a browser driven timeout rather than a failed assertion.** Six of
-the original twelve were assertions about wrong values, and each of those was a defect that is now
-fixed.
+Run 10's four are worth separating, because two of them were **not** the product: they were two tests
+written in the previous commit that asserted behaviour macOS does not have. `proc_listpids` returns 0
+bytes for a group that does not exist rather than a negative, so an absent group is EMPTY and not an
+error; and `registerBudgetGroup` checks group leadership before it checks its path, so driving the
+new root validation through the front door never reached it. Both tests were wrong and the code was
+right, which is the useful direction for a test to be wrong in, and both are corrected.
+
+What the column does show is a real trend that is not noise: **12 failures down to between 0 and 3
+product failures, and every one of those after run 4 is a browser driven timeout rather than a failed
+assertion.** Six of the original twelve were assertions about wrong values, and each of those was a
+defect that is now fixed.
 
 ### The two defects the early timeouts were hiding
 
@@ -231,3 +239,34 @@ experiment, which is exactly why no claim was ever built on it.
 D-Bus, the keyring and btrfs snapshots: Linux capabilities that are refused here rather than broken.
 One of them, the supervised file lease suite, was marked Linux only in run 4 because its subject is
 the Python subreaper and a POSIX `flock` helper, neither of which the darwin supervisor has.
+
+## 8. What an adversarial audit found
+
+An audit agent was pointed at the macOS adapter with instructions to attack it rather than read it.
+It wrote live exploit probes, and eight landed. They are listed separately from section 4 because
+they are a different kind of finding: section 4 is a machine refusing to behave as assumed, this is
+code that behaved exactly as written and was written wrong.
+
+| Severity | Defect | Why it mattered |
+|---|---|---|
+| High | The second containment layer was documented in three comments and had **no implementation**: `signalOwnedProcessGroup` had zero callers | A SIGKILLed supervisor orphaned its browser tree permanently, and `cleanWorkspaces()` then deleted the profile directory out from under the browser still running from it |
+| High | `processGroupMembers` returned the same value for "empty" and "the kernel declined to answer" | Every caller reads empty as success. The supervisor tests membership before escalating, so **no SIGKILL was ever sent to a tree that had ignored SIGTERM**, and the budget registry reaped live registrations on the same confusion |
+| High | `ORBIT_BUDGET_ROOT` was taken verbatim: no absoluteness, `lstat`, owner or mode check | The budget gate passes for any process whose group is listed there, so the whole gate was forgeable by anything that could set the variable or pre-create the path |
+| Medium | `pbi_flags` was read at offset 16, which is `pbi_ppid` | It tested bit 0x8000 of the PARENT PID: a coin flip on machine load. A false positive skips the background class, dropping the only enforced half of the macOS budget |
+| Medium | A null `leaderStartedAtMs` silently DISABLED the process group reuse check | The one case where ownership cannot be proved was the case where nothing was verified |
+| Medium | The viewer opened in the person's own browser **on every Mac** | `listHostBrowsers` scans `.desktop` files, which macOS does not have, so it returned nothing and `openViewer` fell through to `open`. LaunchServices then handed the viewer's access token to the browser the person was already using, in their real profile |
+| Medium | `cpuNs` was mach absolute time units, not nanoseconds | About 24x low on Apple silicon. Gates nothing today, so it was renamed rather than converted with an unmeasured timebase |
+| Low | `killpg` to one's own group re-entered its own SIGTERM handler | Finite only because signals are not queued during handler execution, which is a delivery coincidence rather than a design |
+
+**One reported defect was not one.** The audit said plist injection succeeded. Five payloads were
+tried against the real `brokerAgentPlist`, including one adding `AbandonProcessGroup`, the key whose
+absence makes `launchctl bootout` sweep the job's group, and all five were escaped. The audit's own
+detector had matched the legitimate `KeepAlive` block that every plist carries. The regression test
+that now guards this asserts STRUCTURE, the exact key list and a three element argv, rather than
+grepping for dangerous words, and was shown to FAIL against a deliberately broken escaper before
+being trusted.
+
+**One was correct and deliberately not fixed.** A TOCTOU window exists in `groupIsStillOurs` between
+the check and the signal. Closing it properly needs a kernel handle to a process group, which macOS
+does not give unprivileged code, so it is documented here rather than engineered around. The window
+is bounded by the two facts already checked, the leader's start time and its executable path.
