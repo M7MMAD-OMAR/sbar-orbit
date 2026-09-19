@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Continue'
-$Root = 'C:\orbit\wa7'
+$Root = 'C:\orbit\wz'
 if (Test-Path $Root) { Remove-Item -Recurse -Force $Root -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
 $env:Path = 'C:\orbit;C:\orbit\git\cmd;' + $env:Path
 
 Push-Location $Root
-& tar.exe -xzf C:\orbit\rel-a7.tar.gz 2>&1 | Out-String | ForEach-Object { Say $_ }
+& tar.exe -xzf C:\orbit\rel-z.tar.gz 2>&1 | Out-String | ForEach-Object { Say $_ }
 Say "unpack exit: $LASTEXITCODE"
 $Tree = (Get-ChildItem $Root -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'package.json') } | Select-Object -First 1).FullName
 if (-not $Tree) { Say "FATAL: no unpacked source tree under $Root"; exit 1 }
@@ -34,7 +34,7 @@ if (Test-Path (Join-Path $Tree 'website\package.json')) {
 Say "typecheck exit: $LASTEXITCODE"
 
 Say "--- the suite ---"
-$out = 'C:\orbit\suite-a7.log'
+$out = 'C:\orbit\suite-z.log'
 & C:\orbit\bun.exe test 2>&1 | Out-File -FilePath $out -Encoding utf8
 Say "suite exit: $LASTEXITCODE"
 $text = Get-Content $out -Raw

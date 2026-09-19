@@ -19,6 +19,10 @@
  * project's developer host is not.
  */
 import { test, expect } from "bun:test";
+// `bunExecutable()`, not the string "bun": on the Windows guest Bun is NOT on PATH, so a bare spawn
+// failed and the launcher's error text was then parsed as JSON, reporting a JSON syntax error for what
+// was really a missing program. The install path has resolved Bun by location since the port began.
+import { bunExecutable } from "../src/install";
 import { captureTimeoutMs } from "../src/browser";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -56,7 +60,7 @@ test("act reads its action document from a file, which no shell can mangle", asy
     // unfixed code hands `@path` straight to JSON.parse, which throws, which the CLI reports as
     // CLI_ERROR, and that assertion stayed green against code that cannot read a file at all. So
     // the parser's own message is what must be absent.
-    const run = Bun.spawnSync(["bun", "run", cli, "act", "some-session", `@${path}`],
+    const run = Bun.spawnSync([bunExecutable(), "run", cli, "act", "some-session", `@${path}`],
       { env: { ...process.env, ORBIT_SOCKET: join(directory, "absent.sock") }, stdout: "pipe", stderr: "pipe" });
     const reply = JSON.parse(run.stderr.toString().trim() || run.stdout.toString().trim());
     expect(reply.ok).toBe(false);
@@ -68,7 +72,7 @@ test("act reads its action document from a file, which no shell can mangle", asy
 test("act reads its action document from standard input", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orbit-act-"));
   try {
-    const run = Bun.spawnSync(["bun", "run", cli, "act", "some-session", "-"],
+    const run = Bun.spawnSync([bunExecutable(), "run", cli, "act", "some-session", "-"],
       { env: { ...process.env, ORBIT_SOCKET: join(directory, "absent.sock") },
         stdin: new TextEncoder().encode(JSON.stringify({ type: "navigate", url: "https://example.com/" })),
         stdout: "pipe", stderr: "pipe" });
@@ -83,7 +87,7 @@ test("a mangled action document says what it could not parse and where it came f
   const directory = await mkdtemp(join(tmpdir(), "orbit-act-"));
   try {
     // Exactly what the runner delivered: the closing quote eaten by the shell.
-    const run = Bun.spawnSync(["bun", "run", cli, "act", "some-session", '{"type":"navigate","url":"https://example.com/'],
+    const run = Bun.spawnSync([bunExecutable(), "run", cli, "act", "some-session", '{"type":"navigate","url":"https://example.com/'],
       { env: { ...process.env, ORBIT_SOCKET: join(directory, "absent.sock") }, stdout: "pipe", stderr: "pipe" });
     const reply = JSON.parse(run.stderr.toString().trim() || run.stdout.toString().trim());
     expect(reply.ok).toBe(false);
@@ -98,7 +102,7 @@ test("a missing action document is refused by name rather than read as null", as
   const directory = await mkdtemp(join(tmpdir(), "orbit-act-"));
   try {
     const absent = join(directory, "not-here.json");
-    const run = Bun.spawnSync(["bun", "run", cli, "act", "some-session", `@${absent}`],
+    const run = Bun.spawnSync([bunExecutable(), "run", cli, "act", "some-session", `@${absent}`],
       { env: { ...process.env, ORBIT_SOCKET: join(directory, "absent.sock") }, stdout: "pipe", stderr: "pipe" });
     const reply = JSON.parse(run.stderr.toString().trim() || run.stdout.toString().trim());
     expect(reply.ok).toBe(false);
