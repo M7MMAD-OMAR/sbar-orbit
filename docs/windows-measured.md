@@ -2056,11 +2056,32 @@ five new tests, naming the hijacked path.
 
 Running the guest is worth it for what it catches beside the change you went in for.
 
-**A sibling session's new CLI tests spawned bare `"bun"`.** `Bun.spawnSync(["bun", "run", cli, ...])`
-resolves through PATH, and Bun is not on PATH on the guest. The spawn failed, the test then parsed the
-launcher's error text as JSON, and the failure was reported as `SyntaxError: JSON Parse error` for what
-was really a missing program. Four tests, all reading as a parser bug. They use `bunExecutable()` now,
-which is the resolver the install path has used since this port began, for exactly this reason.
+**A sibling session's new CLI tests used a file URL's `.pathname` as a path.** Four tests failed with
+`SyntaxError: JSON Parse error: Unexpected identifier "error"`, which reads as the CLI emitting
+something that is not JSON.
+
+The first diagnosis was wrong, and worth recording as such: the tests also spawned bare `"bun"`, which
+does not resolve on the guest, so that was fixed and the suite was run again. The four failed again,
+identically. Fixing a real defect that is not THE defect produces a green local run and an unchanged
+guest, and the only thing that separates the two is running the guest again rather than assuming.
+
+Asked directly on the guest, the CLI was fine:
+
+```
+EXIT: 1
+STDOUT_RAW: ""
+STDERR_RAW: "{\"ok\":false,\"error\":{\"code\":\"CLI_ERROR\",\"message\":\"Command failed: Was there a typo in the url or port?\"}}\n"
+```
+
+Valid JSON on stderr, and a message about a URL from a command given no URL. `new URL("../src/cli.ts",
+import.meta.url).pathname` is `/C:/orbit/.../src/cli.ts` on Windows, with a LEADING SLASH, which is not
+a path Windows can open. `bun run` treated it as a URL, said so, and the test parsed that reply while
+expecting the CLI's own.
+
+This project had already met this trap and written it down: `tests/platform-support.ts` carries a
+comment saying the pathname form "yields `/C:/...` on Windows, which is not a path any Windows API
+accepts". A grep for the pattern found it still live in two more files. Both use `fileURLToPath` now.
+The bare `"bun"` spawns were a real defect too and stay fixed, via `bunExecutable()`.
 
 **`serviceSocketPath` built the Linux arm with the host's `join`.** Caught by my own test asserting
 `/run/user/1000` and receiving `\run\user\1000` on the guest. Two existing tests then failed on Linux
@@ -2071,6 +2092,49 @@ That is the sixth occurrence of one rule, so it is now asserted directly rather 
 `tests/windows-xdg.test.ts` checks that no POSIX answer contains a backslash and no Windows answer
 contains a forward slash, asked from whatever host is running. The four earlier occurrences were each
 found by the guest, and this one would have been too.
+
+
+### The budget launcher had no Windows branch, so the suite had never run budgeted there
+
+The last round returned 34 failures across unrelated areas: the viewer rail, workspace sweeps, restore
+refusals, the private display, and my own socket ACL test. A failure pattern that wide is an
+environment fact, not thirty-four defects, and the message said so:
+
+```
+error: A shared CPU and memory budget is required; the Windows job object could not be joined:
+       This process is not inside the shared Orbit job object
+   code: "RESOURCE_LIMIT_REQUIRED"
+```
+
+`scripts/limited.ts` is how a command gets the shared budget, and it branched on `alreadyLimited`, then
+`darwin`, then an `else` that spawns `/usr/bin/systemctl`. Windows fell into that `else`. There is no
+`/usr/bin/systemctl` on Windows, so `bun run verify` could not work there at all, and every earlier
+guest run had used bare `bun test`, which the project refuses by design.
+
+So the Windows job object machinery, which this port built and measured in sections 12 through 15, was
+never the thing the suite ran inside. It is now: `limited.ts` has a win32 branch that calls
+`joinSharedBudget` with the same two numbers `requireWindowsBudget` checks, and assignment is inherited
+so the command and everything it starts are in the job without being assigned individually.
+
+Unlike the macOS arm this is a real ceiling rather than a scheduling hint, which is why
+`requireResourceBudget()` reports `job-object` on Windows and `advisory` on macOS.
+
+**270 pass, 0 fail, 113 skip**, inside the budget, from the published archive.
+
+### And three environment failures that were not product failures
+
+Each of these presented as a product defect and was none:
+
+| Presented as | Actually |
+|---|---|
+| `SyntaxError: JSON Parse error` from the CLI, four tests | `new URL(...).pathname` is `/C:/...` on Windows. The project had already documented this trap in `tests/platform-support.ts`; a grep found it live in two more files |
+| The core-promise test failing: "a launched session's browser does not name the person's own Chrome directory" | The test shells out to `ps`, which Windows does not have. Gated with `needsCommand`, which exists for exactly this |
+| 34 failures across the whole suite | The budget launcher above |
+
+The first of those was misdiagnosed once: the same tests also spawned bare `"bun"`, which does not
+resolve on the guest, so that was fixed and the suite run again. They failed again, identically. Fixing
+a real defect that is not THE defect produces a green local run and an unchanged guest, and only
+re-running the guest tells you which you did.
 
 ### The lock screen came back, by a different route
 

@@ -66,6 +66,31 @@ if (alreadyLimited) {
     process.off("SIGTERM", forward); process.off("SIGINT", forward);
     await unregisterBudgetGroup(pgid);
   }
+} else if (process.platform === "win32") {
+  // Windows has no cgroup and no systemd, and its ceiling is a named JOB OBJECT: a kernel object that
+  // carries a committed-memory limit and a process limit, which every process assigned to it counts
+  // against. `joinSharedBudget` creates it on first use and joins it afterwards, so independently
+  // started Orbit processes share one pool the same way the cgroup and the process group do.
+  //
+  // This branch did not exist. On Windows the code fell through to the Linux arm below and spawned
+  // `/usr/bin/systemctl`, which is not a path Windows has, so `bun run verify` could not work there at
+  // all: the suite ran unbudgeted, and every test that starts a broker failed with
+  // RESOURCE_LIMIT_REQUIRED. That reads as 34 unrelated product failures rather than as one missing
+  // branch, which is exactly how it presented.
+  //
+  // Unlike the macOS arm this is a real ceiling, not a hint: the kernel refuses the allocation rather
+  // than scheduling it later, which is why `requireResourceBudget()` reports `job-object` here and
+  // `advisory` there.
+  const { joinSharedBudget } = await import("../src/windows-job");
+  // The same two numbers `requireWindowsBudget` joins with, so the pool this creates is the pool that
+  // check then accepts. Stated once in `src/service.ts`, as on the other two platforms.
+  const { memoryMiB } = await import("../src/service");
+  joinSharedBudget({ memoryBytes: memoryMiB * 1048576, processes: 1536 });
+  // Assignment is INHERITED, so the command and everything it starts are inside the job without
+  // being assigned individually, and killing the job takes the tree.
+  const child = Bun.spawn([executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+  try { process.exitCode = await child.exited; }
+  finally { /* The job object is released when the last handle closes, which is this process exiting. */ }
 } else {
   const settings = Bun.spawn(["/usr/bin/systemctl", "--user", "set-property", "--runtime", "sbarorbit.slice",
     ...Object.entries(budget).map(([key, value]) => `${key}=${value}`)], { stdout: "inherit", stderr: "inherit" });

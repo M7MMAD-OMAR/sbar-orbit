@@ -1,11 +1,11 @@
 $ErrorActionPreference = 'Continue'
-$Root = 'C:\orbit\wz'
+$Root = 'C:\orbit\wjob'
 if (Test-Path $Root) { Remove-Item -Recurse -Force $Root -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
 $env:Path = 'C:\orbit;C:\orbit\git\cmd;' + $env:Path
 
 Push-Location $Root
-& tar.exe -xzf C:\orbit\rel-z.tar.gz 2>&1 | Out-String | ForEach-Object { Say $_ }
+& tar.exe -xzf C:\orbit\rel-job.tar.gz 2>&1 | Out-String | ForEach-Object { Say $_ }
 Say "unpack exit: $LASTEXITCODE"
 $Tree = (Get-ChildItem $Root -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'package.json') } | Select-Object -First 1).FullName
 if (-not $Tree) { Say "FATAL: no unpacked source tree under $Root"; exit 1 }
@@ -34,8 +34,12 @@ if (Test-Path (Join-Path $Tree 'website\package.json')) {
 Say "typecheck exit: $LASTEXITCODE"
 
 Say "--- the suite ---"
-$out = 'C:\orbit\suite-z.log'
-& C:\orbit\bun.exe test 2>&1 | Out-File -FilePath $out -Encoding utf8
+$out = 'C:\orbit\suite-job.log'
+# Through `scripts/limited.ts`, which is how this project's rules say a command gets the shared
+# resource budget. Bare `bun test` refuses with RESOURCE_LIMIT_REQUIRED by design, and on Windows that
+# refusal reached every test that starts a broker: 34 failures across unrelated areas, which reads as
+# widespread breakage rather than as one missing branch in the budget launcher.
+& C:\orbit\bun.exe run scripts/limited.ts C:\orbit\bun.exe test 2>&1 | Out-File -FilePath $out -Encoding utf8
 Say "suite exit: $LASTEXITCODE"
 $text = Get-Content $out -Raw
 foreach ($line in ($text -split "`r?`n")) {
