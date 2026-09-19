@@ -155,7 +155,8 @@ export function egressRoot(): string {
  */
 async function leaseIsLive(directory: string): Promise<boolean> {
   const socket = join(directory, "lease.sock");
-  if (!(await lstat(socket).catch(() => undefined))?.isSocket()) return false;
+  // Windows can refuse lstat on a bound AF_UNIX socket. Only an actual
+  // connection tells us whether the lease is live; a failed stat is not absence.
   try {
     const connection = await Bun.connect({ unix: socket, socket: { data() {}, error() {} } });
     connection.end();

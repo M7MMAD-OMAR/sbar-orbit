@@ -63,3 +63,13 @@ module path. The same executable and paths succeeded after removing only
 `PSModulePath` from the child environment. The broker now applies that isolation
 to its ACL reader and refuses nonzero exits as well as empty reads. ACL assertions
 remain enabled. Remote verification of the correction is pending.
+
+## Windows lease cleanup correction
+
+The Windows 11 ordinary-account guest reproduced two failures in the seven
+`egress-sweep` checks: a live AF_UNIX listener was treated as dead because its
+`lstat` result could not establish a socket. Cleanup now probes the connection
+instead of treating failed inspection as absence. The same guest and tests then
+returned seven passes, zero failures. Linux cleanup coverage returned eleven
+passes across egress and workspace tests; typecheck passed. This establishes the
+cleanup primitive on Windows, not namespace confinement on that platform.
