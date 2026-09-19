@@ -25,7 +25,7 @@ installation and generated MCP registration probe on all three platforms. That
 probe configures Claude Code, Codex and Hermes, then negotiates each actual entry;
 it does not claim the native host CLI exists when it is absent.
 
-The macOS full suite in that run is still pending. The earlier run at `3af9051`
+The macOS full suite in that run failed. The earlier run at `3af9051`
 passed, but the subsequent run at `0b11302` failed with timeouts in viewer frame
 visibility and browser resize. Those intermittent failures remain open until
 explained; a successful rerun alone will not establish performance acceptance.
@@ -37,7 +37,7 @@ recorded 147 samples and preserved exit status 0. Minimum host free memory was
 observations, not resource use attributable to Orbit or a limit guarantee.
 
 Managed installation plus installed browser acceptance and resource artifacts are
-now defined in CI. Their first remote results are pending. The native host remains
+now defined in CI. Their remote results are recorded below. The native host remains
 Fedora; the Windows guest and CI runners do not establish physical-device support.
 
 ## Investigation history
@@ -139,3 +139,21 @@ The macOS installed flow also reports its specific failure now: Chrome remains
 running but does not publish its endpoint within 20 seconds. Failure diagnostics
 now distinguish a supervisor that recorded browser startup from one that has not
 written its startup report, without exposing profile paths. Deadlines remain unchanged.
+
+## Current acceptance at c759570
+
+[Run 35452033353](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35452033353)
+passed the full bounded suites on Ubuntu and Windows, and generated MCP host
+registration checks on all three platforms. Managed installation followed by the
+installed browser flow passed on both Ubuntu and Windows. The Windows acceptance
+now runs its driver inside the shared resource ancestor; the previous run failed
+job assignment with error 5. This result supports the corrected process hierarchy
+for this runner, without broadening Windows containment claims.
+
+The macOS managed installation flow still failed, this time while producing a
+frame within the default 3000 ms capture budget. Unlike the previous endpoint
+startup failure, this run reached frame capture. Neither increasing the timeout
+nor a successful rerun alone establishes acceptable performance. The next
+investigation must distinguish capture latency from browser startup latency and
+retain evidence for the failing operation. The macOS full suite was still running
+when this entry was recorded.
