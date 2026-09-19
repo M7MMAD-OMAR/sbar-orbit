@@ -1,0 +1,39 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install website test dependencies
+        working-directory: website
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check types
+        run: bun run typecheck
+      # Use the same bounded entry point on every platform. The command's exit
+      # status is the job result, with no echo or tolerated failure masking it.
+      - name: Run the bounded suite
+        run: bun run verify
