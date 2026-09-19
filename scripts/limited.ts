@@ -5,6 +5,36 @@ const args = process.argv.slice(2);
 if (!args.length) throw new Error("Usage: bun run scripts/limited.ts COMMAND [ARGS]");
 const executable = Bun.which(args[0]!);
 if (!executable) throw new Error("Command executable not found");
+
+/*
+ * The website is a SEPARATE workspace with its own bun.lock, and `bun test` from the repository root
+ * walks the whole tree and finds `website/tests/locale.test.tsx` whether or not that workspace was
+ * installed. Those tests contain JSX, so Bun injects `react/jsx-dev-runtime` at TRANSPILE time,
+ * before a single line of the file runs: no lazy import and no `test.skip` can prevent it, which I
+ * confirmed by trying exactly that and watching it fail anyway. The run reports
+ * `Cannot find module 'react/jsx-dev-runtime'` and reads as a platform failure.
+ *
+ * Three machines have paid for that now. The Windows 11 guest, where it cost a debugging round and
+ * is recorded in docs/windows-measured.md line 1248. The CI runners, where both workflows carry an
+ * explicit website install step with a comment saying why. And the Fedora gate 3 VM, where it was
+ * the one red line in an otherwise clean suite and had to be explained before the number could be
+ * published.
+ *
+ * So the condition is NAMED here, in the one place every budgeted command passes through, rather
+ * than being rediscovered on the next machine. This does not hide the failure and does not skip the
+ * tests: it prints the cause and the one command that fixes it, before the run starts.
+ */
+if (args.slice(1).includes("test")) {
+  const site = new URL("../website/", import.meta.url);
+  const hasTests = await Bun.file(new URL("tests/locale.test.tsx", site)).exists();
+  const installed = await Bun.file(new URL("node_modules/react/package.json", site)).exists();
+  if (hasTests && !installed) {
+    console.error("note: website/ is a separate workspace and is not installed here, so website/tests/locale.test.tsx");
+    console.error("      will fail to resolve react/jsx-dev-runtime. That is a missing dependency, not a platform result.");
+    console.error("      Run `cd website && bun install --frozen-lockfile --ignore-scripts` to make those tests runnable.");
+  }
+}
+
 let alreadyLimited = false;
 try { await requireResourceBudget(); alreadyLimited = true; } catch {}
 if (alreadyLimited) {
