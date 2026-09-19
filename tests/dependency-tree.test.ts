@@ -124,7 +124,10 @@ test("the project never asks Playwright to download a browser", () => {
   // several hundred MB of browser binaries that nothing launches, so the absence of that command is
   // load-bearing and not an omission. This test exists so a future contributor does not add it as a
   // perceived fix for a skipped postinstall.
-  const roots = ["src", "scripts", "bin", "docs"];
+  // Executable trees only. `docs` is deliberately NOT scanned: prose explaining that this command must
+  // never be run is the warning itself, and a test that forbids documenting a hazard would delete the
+  // reason the hazard is known. The rule is "no file RUNS it", not "no file mentions it".
+  const roots = ["src", "scripts", "bin"];
   const hits: string[] = [];
   const walk = (dir: string) => {
     let entries: string[];
@@ -139,7 +142,7 @@ test("the project never asks Playwright to download a browser", () => {
         walk(path);
         continue;
       }
-      if (!/\.(ts|js|mjs|cmd|sh|md)$/.test(entry)) continue;
+      if (!/\.(ts|js|mjs|cmd|sh)$/.test(entry)) continue;
       const text = readFileSync(path, "utf8");
       // The string as a command, not as prose about it: a doc line saying it must never be run is
       // fine, a line that actually invokes it is not.

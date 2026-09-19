@@ -107,3 +107,54 @@ test('IPC preserves diagnostic IDs and authenticated preview can prepare reports
     expect(denied.status).toBe(403);
   } finally { await broker.close(); }
 });
+
+/**
+ * The report the CLI calls safe to paste into a public issue contains no home directory, in ANY field.
+ *
+ * `executable` used to be emitted verbatim while only `profileDirectory` was redacted. Chrome's default
+ * Windows install is per user under `%LOCALAPPDATA%`, so that put `C:\\Users\\<real account name>` into
+ * the report, and on a domain machine the account name is often the person's identity. The report's own
+ * `redacted:` list claimed the home directory was collapsed to `~`, which was true of one field.
+ *
+ * Asserted over EVERY string in the structure rather than over the two fields known to hold paths, so a
+ * field added later cannot reintroduce the leak without failing here.
+ */
+test("no field of the capability report carries the home directory", async () => {
+  const { describeMachine } = await import("../src/platform");
+  // A fake home that cannot appear by coincidence, so a hit is the report echoing THIS value.
+  const home = "/tmp/orbit-fake-home-8f3a1c";
+  const report = await describeMachine(home);
+
+  const strings: string[] = [];
+  const walk = (value: unknown) => {
+    if (typeof value === "string") strings.push(value);
+    else if (Array.isArray(value)) value.forEach(walk);
+    else if (value && typeof value === "object") Object.values(value).forEach(walk);
+  };
+  walk(report);
+  expect(strings.length).toBeGreaterThan(5);
+  for (const text of strings) expect(text).not.toContain(home);
+});
+
+/**
+ * The same rule, asserted on the REDACTION ITSELF rather than on a live machine's install list.
+ *
+ * The test above cannot catch the defect on Linux: no browser installs under a fake home there, so the
+ * report has no per user executable to leak and it passes against unfixed code too. A test that cannot
+ * fail is not evidence. This one drives the redaction over the paths a Windows install actually
+ * produces, so it fails whenever a field stops being redacted, on any host.
+ */
+test("every path field of a per user Windows install is redacted", async () => {
+  const { redactInstallPaths } = await import("../src/platform");
+  const home = "C:\\Users\\someone";
+  // Chrome's default Windows install is per user: both the executable AND the profile sit under the
+  // home directory, which is why redacting only one of them still published the account name.
+  const redacted = redactInstallPaths({
+    id: "google-chrome",
+    executable: `${home}\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe`,
+    profileDirectory: `${home}\\AppData\\Local\\Google\\Chrome\\User Data`,
+  }, home);
+  for (const value of Object.values(redacted)) expect(value).not.toContain(home);
+  expect(redacted.executable).toStartWith("~");
+  expect(redacted.profileDirectory).toStartWith("~");
+});

@@ -111,7 +111,7 @@ test("CLI metadata avoids capture; image files preserve bytes and refuse overwri
     expect((await h.cli(["session", "observe", "s", "--output"])).code).toBe(1);
     expect(await Bun.file(path).text()).toBe("fixture image bytes");
   } finally { await h.close(); }
-});
+}, 30000);
 
 /**
  * Each `h.cli(...)` and each `h.connect(...)` is a real process spawn, and a Bun start costs about

@@ -56,7 +56,13 @@ function registeredPath(exe: string): string | undefined {
   // rather than a literal, because Windows is not always installed on C:.
   const system32 = join(process.env.SystemRoot || process.env.windir || "C:\\Windows", "System32");
   const registry = join(system32, "reg.exe");
-  for (const hive of ["HKCU", "HKLM"]) {
+  // HKLM BEFORE HKCU, and the per user hive is consulted only as a last resort. `App Paths` under HKCU
+  // is writable by an unprivileged process running as the person, and is a well known persistence
+  // location: whoever writes one value there chose the binary Orbit launches and calls the session
+  // browser, which then inherits Orbit's environment and job object and sits between the agent and every
+  // page. That is the same defect class as resolving `reg` itself through PATH, with a registry key in
+  // place of PATH, so it gets the same answer: prefer the hive an unprivileged process cannot write.
+  for (const hive of ["HKLM", "HKCU"]) {
     // `reg` is on every Windows install and is still spawned defensively: a host without it should
     // report no browser, not throw out of a capability probe that a person runs to find out why
     // nothing works.

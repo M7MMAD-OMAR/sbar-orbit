@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, basename } from "node:path";
-import { darwinBrowserInstalls } from "./runtime-paths";
+import { join, basename, posix, win32 } from "node:path";
+import { darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
+import { stateDirectory } from "./service";
 
 /**
  * Which browser on the person's own desktop the viewer opens in, and whether that browser can give it
@@ -158,6 +159,34 @@ function darwinHostBrowsers(): HostBrowser[] {
   }));
 }
 
+/**
+ * The Windows browsers the viewer can have a private window in.
+ *
+ * Same shape and same reason as `darwinHostBrowsers`: Windows has no `.desktop` files either, so every
+ * scan below found nothing, `pickBrowser` returned undefined, and the viewer fell through to
+ * `fallbackCommand`, which on win32 is `cmd /c start`. That hands the URL to the shell's default
+ * browser association, in the profile the person is logged into, and the viewer URL carries the bearer
+ * token that can observe, drive and stop sessions. The token then lives in that profile's history and
+ * session restore. It happened on EVERY Windows machine rather than in a corner case, exactly as it
+ * did on every Mac, and the macOS fix was simply never extended here.
+ *
+ * `windowsBrowserInstalls` already finds Chrome, Chromium and Edge and is the same list the session
+ * launcher uses, so this reuses it rather than probing again. Only `.executable` is taken: the
+ * `profileDirectory` field it also carries is the PERSON's profile, and handing that to the viewer is
+ * the failure being fixed, not the fix.
+ */
+function windowsHostBrowsers(env: Record<string, string | undefined> = process.env): HostBrowser[] {
+  return windowsBrowserInstalls(env as NodeJS.ProcessEnv).map(install => ({
+    id: install.id,
+    name: basename(install.executable).replace(/\.exe$/i, ""),
+    command: [install.executable],
+    appWindow: true,
+    // No notion of a default: the shell association is what `cmd /c start` would have used, and using
+    // it is the defect. The first install wins, which is the Chrome first order the prober documents.
+    isDefault: false,
+  }));
+}
+
 export async function listHostBrowsers(env: Record<string, string | undefined> = process.env): Promise<HostBrowser[]> {
   // macOS has no `.desktop` files, so every scan below finds nothing and every viewer open fell
   // through to `fallbackCommand`, which is `open`: LaunchServices hands the URL to the person's
@@ -166,6 +195,8 @@ export async function listHostBrowsers(env: Record<string, string | undefined> =
   // case. The bundles are listed here instead, so `openViewer` can give the viewer a profile of its
   // own exactly as it does on Linux.
   if (process.platform === "darwin") return darwinHostBrowsers();
+  // Windows has none either, for the same reason and with the same consequence.
+  if (process.platform === "win32") return windowsHostBrowsers(env);
   const preferred = await defaultEntry();
   const found = new Map<string, HostBrowser>();
   for (const directory of applicationDirectories(env)) {
@@ -218,9 +249,23 @@ export function viewerCommand(browser: HostBrowser, url: string, appWindow = tru
  * that wrote it, under the state directory, since it is worth keeping between runs: window size, zoom
  * and the like, and nothing else, because the viewer keeps no state of its own in it.
  */
-export function viewerProfileDirectory(browser: Pick<HostBrowser, "id">, env: Record<string, string | undefined> = process.env): string {
-  const home = env.HOME || homedir();
-  return join(env.XDG_STATE_HOME || join(home, ".local/state"), "sbar-orbit", "viewer", browser.id.replace(/[^A-Za-z0-9._-]/g, "_"));
+export function viewerProfileDirectory(browser: Pick<HostBrowser, "id">, env: Record<string, string | undefined> = process.env,
+  platform = process.platform): string {
+  // Through `stateDirectory`, which is the module that already answers "where does this platform keep
+  // a per user application's own records": `%LOCALAPPDATA%\sbar-orbit` on Windows, `~/Library/
+  // Application Support` on macOS, `$XDG_STATE_HOME` on Linux. Built here it was `~/.local/state`
+  // unconditionally, so on Windows the viewer's profile went to a POSIX path under the home directory,
+  // which is neither where Windows keeps such a thing nor covered by the ACL reasoning that protects
+  // the rest of Orbit's state.
+  // `posix.join` for the POSIX platforms, because `join` is bound to the HOST: with `platform`
+  // injectable, a Windows host asking for the Linux or macOS answer got backslashes inside a path that
+  // is only ever used there. `stateDirectory` already makes this distinction internally, and building
+  // on top of it with the host's separator threw that away. The rule this port keeps relearning: the
+  // moment a function takes `platform`, every path it builds for another platform needs that
+  // platform's own join.
+  const leaf = ["viewer", browser.id.replace(/[^A-Za-z0-9._-]/g, "_")];
+  const root = stateDirectory(env as NodeJS.ProcessEnv, platform);
+  return platform === "win32" ? win32.join(root, ...leaf) : posix.join(root, ...leaf);
 }
 
 /**
@@ -291,12 +336,17 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   const browser = pickBrowser(browsers, choice, appWindow);
   const failure = { opened: false, browser: browser?.id ?? "", appWindow: false };
   // The fallback opens the URL with whatever the platform hands links to, which means the person's
-  // own browser in their own profile. On Linux and Windows the viewer's token going there is a
-  // deliberate last resort for a machine with no recognised browser. On macOS it is refused, because
-  // `open` does not merely use their profile: LaunchServices activates the browser they are already
-  // using and hands it the command line, which is the one thing this project promises never to do.
-  // A Mac with no Chromium family bundle gets no viewer rather than a viewer in their window.
-  if (!browser && process.platform === "darwin") return failure;
+  // own browser in their own profile. On Linux the viewer's token going there is a deliberate last
+  // resort for a machine with no recognised browser, because `xdg-open` may well reach a browser that
+  // takes no private profile and the person chose that association themselves.
+  //
+  // macOS and Windows are refused instead. `open` does not merely use their profile: LaunchServices
+  // activates the browser they are already using and hands it the command line. `cmd /c start` hands
+  // the URL to the shell association, in the profile they are logged into. Both put a token that can
+  // observe, drive and stop sessions into the browser this project promises never to touch, and both
+  // now enumerate their own installs above, so reaching the fallback means the machine genuinely has
+  // no Chromium family browser. Such a machine gets no viewer rather than a viewer in their window.
+  if (!browser && process.platform !== "linux") return failure;
   let profile: string | undefined;
   if (browser) {
     profile = viewerProfileDirectory(browser, env);

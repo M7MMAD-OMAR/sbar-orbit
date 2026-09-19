@@ -338,14 +338,32 @@ export async function hostClassTier(): Promise<{ assigned: string; why: string }
   return { assigned: "Reasoned", why: "Linux, and not the one class this project measures. The primitives are documented; no host of this class has run the suite. See docs/support-tiers.md." };
 }
 
+/**
+ * The path fields of one install, with the home directory collapsed to `~`.
+ *
+ * Extracted from `describeMachine` so the rule can be driven directly by a test: on Linux no browser
+ * installs under a fake home, so a test that only calls `describeMachine` cannot fail when a field stops
+ * being redacted. Chrome's default Windows install is per user, so BOTH paths sit under the home
+ * directory there, and redacting only the profile still published the account name.
+ */
+export function redactInstallPaths<T extends { executable: string; profileDirectory: string }>(install: T, home: string) {
+  const redact = (path: string) => path.startsWith(home) ? `~${path.slice(home.length)}` : path;
+  return { ...install, executable: redact(install.executable), profileDirectory: redact(install.profileDirectory) };
+}
+
 export async function describeMachine(home = homedir()): Promise<Record<string, unknown>> {
   const capabilities = await detectPlatform(home);
   const redact = (path: string) => path.startsWith(home) ? `~${path.slice(home.length)}` : path;
   const browsers = await Promise.all(capabilities.browsers.map(async install => {
     const scheme = await profileCookieScheme(install.profileDirectory);
     return {
-      id: install.id, packaging: install.packaging, executable: install.executable,
-      profileDirectory: redact(install.profileDirectory),
+      // Both paths through the one redaction. `executable` used to be emitted verbatim while only
+      // `profileDirectory` was collapsed, and Chrome's default Windows install is PER USER under
+      // `%LOCALAPPDATA%`, so the report the CLI calls safe to paste into a public issue carried
+      // `C:\Users\<real account name>`. On a domain machine that name is often their identity, and the
+      // `redacted:` list below claimed the home directory was collapsed, which was true of one field.
+      id: install.id, packaging: install.packaging,
+      ...(({ executable, profileDirectory }) => ({ executable, profileDirectory }))(redactInstallPaths(install, home)),
       // The store and the row count are the two facts that decide whether a clone can work. Neither
       // identifies a site the person visited.
       cookieScheme: scheme?.scheme ?? "none", cookieRows: scheme?.rows ?? 0,

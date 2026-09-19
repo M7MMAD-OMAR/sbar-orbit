@@ -34,7 +34,7 @@
 
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { processGroupMembers, processGroupOf, processGroupUsage, processStartedAtMs, requireDarwin } from "./macos";
 import { OrbitError } from "./errors";
 
@@ -50,7 +50,10 @@ import { OrbitError } from "./errors";
  * stale entries by asking the kernel rather than trusting what is on disk.
  */
 export function budgetRegistryRoot(env = process.env, home = homedir()) {
-  return env.ORBIT_BUDGET_ROOT || join(home, "Library", "Application Support", "sbar-orbit", "budget");
+  // `posix.join`, not `join`. This builds a macOS path, and `join` is bound to the HOST platform, so
+  // computing it from Windows produced backslashes inside a path that is only ever used on a Mac. The
+  // same correction the other darwin path builders in this tree already carry.
+  return env.ORBIT_BUDGET_ROOT || posix.join(home, "Library", "Application Support", "sbar-orbit", "budget");
 }
 
 /**

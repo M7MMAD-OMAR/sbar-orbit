@@ -1617,6 +1617,7 @@ account for this work is the throwaway one from section 27.
 | 6 | after that | **218 / 0 / 102, suite exit 0** |
 | 7 | with the API surface fixes in section 30 | **220 / 0 / 102, suite exit 0** |
 | 8 | with the review fixes in section 31 | **220 / 0 / 103, suite exit 0** |
+| 9 | with the security fixes in section 33 | **236 / 0 / 109, suite exit 0** |
 
 Round 1's eight were read one at a time rather than by pattern, and they were four different things:
 
@@ -1869,3 +1870,118 @@ offender. The manifest was restored afterwards.
   the one function used. That is a real supply-chain reduction and an untested change, so it is
   recorded as a recommendation and not applied.
 - Whether any dependency reaches the network at import time: not instrumented.
+
+## 33. A security audit of the Windows surface, and the one finding that broke the whole promise
+
+A reviewer was sent at the Windows attack surface with the five already-fixed defects named up front,
+so it had to find new ones. It returned eight findings and a long list of things it checked and found
+already defended. Four were real and are fixed here. The rest of this section is what they were, and
+what was measured rather than argued.
+
+### The viewer opened in the person's own browser, on every Windows machine
+
+This is the product's core promise, and it was broken on the ordinary path.
+
+`listHostBrowsers` enumerates XDG `.desktop` files. macOS has none, so it got its own branch
+(`darwinHostBrowsers`) after exactly this failure was found there. Windows has none either, and never
+got one. So on Windows the scan found nothing, `pickBrowser` returned undefined, and `openViewer` fell
+through to `fallbackCommand`, which on win32 is `cmd /c start`. That hands the URL to the shell's
+default browser association, in the profile the person is logged into. The viewer URL carries a bearer
+token that can call `session.observe`, `session.control` and `session.stop`, so the token landed in
+their browser's history and session restore.
+
+The refusal that catches this on macOS read `if (!browser && process.platform === "darwin")`. Windows
+was not refused. Both halves are fixed: Windows enumerates its own installs through
+`windowsBrowserInstalls`, and the refusal is now `!== "linux"`, since Linux is the one platform where
+`xdg-open` reaching a browser the person chose is a defensible last resort.
+
+`viewerProfileDirectory` was wrong in the same place: it hand-built `~/.local/state` on every platform,
+so on Windows the viewer's profile went to a POSIX path under the home directory. It goes through
+`stateDirectory` now, the module that already answers that question per platform.
+
+### The report labelled safe to paste in public carried the real account name
+
+`describeMachine` defined a `redact()` that collapses the home directory to `~`, and applied it to
+`profileDirectory` only. `executable` went out verbatim. Chrome's default Windows install is PER USER
+under `%LOCALAPPDATA%`, so the report the CLI introduces with "This report is safe to paste into a
+public issue" contained `C:\Users\<real account name>`. On a domain machine that is often the person's
+identity. The report's own `redacted:` list claimed "home directory collapsed to ~", which was true of
+one field.
+
+The first test written for this passed against the unfixed code, because on Linux no browser installs
+under a fake home and there is nothing to leak. **A test that cannot fail is not evidence.** The
+redaction was extracted into `redactInstallPaths` and the test now drives it with the paths a per-user
+Windows install actually produces, so it fails on any host when a field stops being redacted.
+
+### The registry fallback preferred the hive an unprivileged process can write
+
+`registeredPath` queried `HKCU` before `HKLM` and returned the first hit. `App Paths` under HKCU is
+writable by an unprivileged process running as the person and is a well known persistence location, so
+one registry value chose the binary Orbit launches and calls the session browser. That binary inherits
+Orbit's environment and job object and sits between the agent and every page.
+
+This is the same defect class as the bare `reg` resolved through PATH that was fixed earlier in this
+port: the program is chosen by user-writable state. Same answer, so the order is now `HKLM` first.
+
+### What `open(path, "wx")` accepts on Windows, measured rather than reasoned
+
+The entire output path validator was `resolve()` plus `open(path, "wx")`. That refuses an existing file
+and refuses to follow a symlink. The auditor listed what it lets through and marked the alternate data
+stream half as reasoned from NTFS behaviour rather than executed, which was the right call to flag. So
+it was executed, on the guest:
+
+```
+ACCEPTED: "C:\orbit\adstest\notes.txt:hidden"
+ACCEPTED: "NUL"
+ACCEPTED: "CON"
+ACCEPTED: "C:\orbit\adstest\trail.png "
+ACCEPTED: "C:\orbit\adstest\dot.png."
+```
+
+and afterwards:
+
+```
+Get-Item notes.txt -Stream *   ->   :$DATA len=22
+                                    hidden len=8
+Get-ChildItem                  ->   notes.txt          (one file, no sign of the stream)
+```
+
+All five accepted. The stream was written onto an existing file that the caller does not own the right
+to modify, `wx` was satisfied because the STREAM is new even though the host file is not, and `dir`
+shows nothing. `NUL` and `CON` reach devices, so Orbit reported a byte count for a capture that was
+discarded. A trailing dot or space is stripped by Windows, so the file created is not the path that was
+validated or the path reported back.
+
+None of this is remote code execution. It is stealth storage under the person's identity and a false
+success report, on a path the caller names. `assertWritableTarget` now refuses a colon past the drive
+prefix, the reserved device names with or without an extension, and a trailing dot or space, on win32
+only: a colon is a legal POSIX file name and refusing it on Linux would break real paths.
+
+### Two findings were left alone on purpose, and said so
+
+The auditor also reported the broker socket's DACL and the XDG variables being honoured on Windows.
+Both are real observations and neither is fixed here. `chmod(socket, 0o600)` genuinely does not write a
+DACL on Windows, and `XDG_CACHE_HOME` genuinely relocates the workspace root ahead of the Windows
+branch. Tightening either is a behaviour change to the trust model that deserves its own commit and its
+own measurement, not a change smuggled in beside four others. They are recorded here so the next person
+finds them stated rather than discovers them.
+
+
+### And the rule got broken once more, by the test written to enforce it
+
+The first guest run of these fixes failed on ONE test, and it was mine: `viewerProfileDirectory`
+asserting a Linux answer with `join`, which on the Windows guest returned
+`\data\state\sbar-orbit\viewer\chromium`. Section 31 named this rule after the fourth occurrence.
+This is the fifth, committed by the person who wrote the rule down, in the test meant to enforce it.
+The compiler cannot see it and a single-platform CI never fails on it, which is the entire reason the
+guest exists.
+
+### Still not measured
+
+- Bun's argv-to-command-string quoting on Windows. Every spawn in the tree passes an argv array, which
+  was verified, but `CreateProcess` takes one string and Bun composes it. No input here can contain a
+  quote, so there is nothing to report, and that is different from having proven the quoting correct.
+- The socket's effective DACL as `Bun.serve({unix})` creates it, as opposed to the ACL measured on an
+  ordinary file under `%LOCALAPPDATA%`.
+- Whether `%LOCALAPPDATA%` on a domain-joined or roaming-profile machine inherits only the three ACEs
+  measured on this one guest.

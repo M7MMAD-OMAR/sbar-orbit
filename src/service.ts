@@ -52,16 +52,18 @@ export const budget = { CPUQuota: `${cpuCores * 100}%`, MemoryHigh: `${memoryMiB
  * The socket and the workspaces stay local because they are machine state.
  */
 export function connectorConfigDirectory(env = process.env, platform = process.platform) {
+  // The declared `HOME` rather than this process's, for the reason spelled out on `stateDirectory`.
+  const home = env.HOME || env.USERPROFILE || homedir();
   if (platform === "win32")
-    return join(env.APPDATA || join(homedir(), "AppData", "Roaming"), "sbar-orbit");
+    return join(env.APPDATA || join(home, "AppData", "Roaming"), "sbar-orbit");
   // macOS has no XDG layout, and `~/Library/Application Support` is the documented place a per user
   // application keeps its own configuration. `XDG_CONFIG_HOME` is still honoured when the person has
   // set one, because somebody who has deliberately configured an XDG layout on a Mac means it.
   if (platform === "darwin" && !env.XDG_CONFIG_HOME)
-    return posix.join(homedir(), "Library", "Application Support", "sbar-orbit");
+    return posix.join(home, "Library", "Application Support", "sbar-orbit");
   // Linux and darwin only: win32 returned above, and both of these are POSIX platforms, so the
   // separator is theirs rather than the host's. See the note above.
-  return posix.join(env.XDG_CONFIG_HOME ?? posix.join(homedir(), ".config"), "sbar-orbit");
+  return posix.join(env.XDG_CONFIG_HOME ?? posix.join(home, ".config"), "sbar-orbit");
 }
 
 /**
@@ -92,15 +94,21 @@ export function assertDarwinSocketPath(path: string) {
  * in the usage case a person's opt-out left behind when they clear `%LOCALAPPDATA%`.
  */
 export function stateDirectory(env = process.env, platform = process.platform) {
+  // `HOME` from the env the CALLER stated, falling back to this process's own. `homedir()` reads the
+  // real process every time, so a caller describing another machine, which is every platform test and
+  // every dry run, got this host's home spliced into an otherwise hypothetical path. The same reason
+  // `serviceSocketPath` resolves its runtime directory from the declared env rather than a default
+  // parameter: the two disagree exactly when the answer matters.
+  const home = env.HOME || env.USERPROFILE || homedir();
   if (platform === "win32" && !env.XDG_STATE_HOME)
-    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
+    return join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "sbar-orbit");
   // macOS keeps a per user application's own records under `~/Library/Application Support`, and the
   // diagnostics journal is exactly that: state the person may want to read and paste into an issue,
   // not a cache that can be regenerated and not configuration. The same branch as the socket, for
   // the same reason `connectorConfigDirectory` has one.
   if (platform === "darwin" && !env.XDG_STATE_HOME)
-    return posix.join(homedir(), "Library", "Application Support", "sbar-orbit");
-  return posix.join(env.XDG_STATE_HOME ?? posix.join(homedir(), ".local/state"), "sbar-orbit");
+    return posix.join(home, "Library", "Application Support", "sbar-orbit");
+  return posix.join(env.XDG_STATE_HOME ?? posix.join(home, ".local/state"), "sbar-orbit");
 }
 
 /**
@@ -108,6 +116,8 @@ export function stateDirectory(env = process.env, platform = process.platform) {
  * private directories, so only the managed one uses this path and they cannot collide.
  */
 export function serviceSocketPath(runtimeDirectory?: string, env = process.env, platform = process.platform) {
+  // The declared `HOME`, for the reason spelled out on `stateDirectory`.
+  const home = env.HOME || env.USERPROFILE || homedir();
   // Resolved from the env the CALLER stated, rather than from a default parameter evaluated against
   // this machine. The two disagree exactly when a caller asks about another platform, which is every
   // test of this rule and the reason the macOS branch below was unreachable from any host that has a
@@ -127,7 +137,7 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
   // The length is asserted, not assumed. Darwin's `sun_path` is 104 bytes and a longer path binds
   // somewhere else in silence rather than failing.
   if (!runtime && platform === "darwin")
-    return assertDarwinSocketPath(posix.join(homedir(), "Library", "Application Support", "sbar-orbit", "broker.sock"));
+    return assertDarwinSocketPath(posix.join(home, "Library", "Application Support", "sbar-orbit", "broker.sock"));
   // Windows has no XDG_RUNTIME_DIR and no tmpfs to put one in, and `Bun.serve({unix})` was measured
   // serving an AF_UNIX socket on an ordinary Windows filesystem path, so the fixed socket goes where
   // every other per user Orbit path already goes there. %LOCALAPPDATA% is the precedent
@@ -138,7 +148,7 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
   // person logs out and this is not, so a socket file can outlive the broker that bound it. That is
   // what `claimSocket` already handles, by probing the socket before replacing it.
   if (!runtime && platform === "win32")
-    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "broker.sock");
+    return join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "sbar-orbit", "broker.sock");
   if (!runtime) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
   return join(runtime, "sbar-orbit", "broker.sock");
 }
