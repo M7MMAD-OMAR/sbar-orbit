@@ -35,6 +35,13 @@ const reviewedBinaries = new Map([
   ["docs/images/viewer-window.jpg", "4b6f7af5a2ef21bd3a36dbff9377712e5fee189ce43e8602c34079503b8b0875"],
   // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
   ["docs/images/writer-in-private-display.jpg", "33af88f1c9337bb12b9786da3950f3be14e6d6304d8773898677219bb82ed643"],
+  // Reviewed 19 September 2026, and the one exception to the line above: this frame is the person's
+  // own desktop, published at their request, because the panel is the one part of Orbit that lives
+  // there and no private display can show it. What is in it was looked at rather than assumed: a
+  // wallpaper, a clock, and one session card carrying an agent name and a task the person wrote.
+  // No window contents, no account, no file path, no address bar, and the metadata was stripped at
+  // export rather than trusted to be absent.
+  ["docs/images/panel-card-on-desktop.jpg", "716fd377ea867250b1314767f583b6dbde7c77ca65acb9775205f835720617e5"],
   ["website/public/brand/logo-white.png", "8f503621e67e794946247dac93ae0f12b4d2d12946376c19c27b7da6d6a9c07e"],
   ["website/public/brand/logo.png", "9f2fd99fdc6f92921d73a515c15199b652d741d35038ea776c7160298b020277"],
   ["website/public/fonts/dm-sans-latin.woff2", "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543"],

@@ -33,6 +33,17 @@ flowchart LR
     Viewer -.->|"watch, pause, take over, resume"| Broker
 ```
 
+## What it puts on your own screen
+
+<img src="docs/images/panel-card-on-desktop.jpg" alt="A session card open against the right edge of the desktop: the agent name, a running chip, the task, the application with its window count and the pointer, and the three actions under it" width="640">
+
+One mark against an edge of the screen, and nothing else. Resting the pointer on it opens one card per
+session: who is working, on what, which window or tab of how many is open, and where the pointer is
+inside the session, with one row of actions under the list. Clicking opens the viewer; the middle action
+opens a browser that is yours rather than an agent's, paused, so you can type in it. The card is cheap
+by construction, because it reads titles and a window tree rather than capturing a frame. Taken on the
+development host on 19 September 2026. [Desktop presence](docs/desktop-presence.md).
+
 ## What it costs an agent
 
 Measured 14 September 2026 on the development host, through the broker's own socket, one browser

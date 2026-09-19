@@ -61,6 +61,11 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ### Changed
 
+- The README and [desktop presence](docs/desktop-presence.md) show the panel card rather than only
+  describing it: `docs/images/panel-card-on-desktop.jpg`, one open card on the development host on
+  19 September 2026. The doc's description of the card was stale while it was prose only, promising
+  two buttons under the cards where the panel has shown three since `A browser of my own` landed, and
+  that button had no description anywhere. Both are now written from the code.
 - The guest test suite names which of its suites are Linux only instead of reporting them as
   failures. Measured on the Windows 11 guest across one session: 107 failures, then 76 once the port
   landed, then 48, 39 and 30, with 86 skips each stating a reason at the call site.
