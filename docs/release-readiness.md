@@ -217,3 +217,18 @@ scheduler or resource boundary is changed.
 The local native-enabled full suite at f3e099f passed 443 tests, skipped 26 and
 failed none across 469 tests in 91 files, in 131.78 seconds. This includes the
 archive contents and local-dependency regression tests added above.
+
+## Viewer test setup cleanup
+
+The private viewer test helper did not close its Sessions owner or remove its
+workspace when setup rejected before returning the page. A real browser trial
+with an invalid viewport reproduced a remaining workspace before the fix. The
+helper now closes its owner and removes the workspace on setup failure, as well
+as on ordinary teardown. The regression and the full viewer-layout test both
+passed locally afterward, and typecheck passed. This fixes a demonstrated cleanup
+defect; it does not establish the cause of every macOS timeout.
+
+GitHub verify is temporarily disabled at the user's request after repeated failed
+runs generated unwanted notifications. Run 35476489102 was cancelled. No new
+pushes or CI runs are authorized until the outstanding failures are addressed and
+verified. Disabling the workflow is operational containment, not a passing gate.
