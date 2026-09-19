@@ -147,10 +147,21 @@ darwinOnly("reading a real browser's command line needs a real browser")(
         if (await ps.exited === 0 && text) lines.push(text);
       }
       await session.close().catch(() => {});
-      // At least one process, and every process that names this profile, carries the switch.
       const ours = lines.filter(line => line.includes(profile));
       expect(ours.length).toBeGreaterThan(0);
-      for (const line of ours) expect(line).toContain("--use-mock-keychain");
+      // The BROWSER process, which is the one without a `--type=`. Measured on a macOS 26.6.2 arm64
+      // runner: of 10 processes in the group, 2 carry the switch and 8 do not, and the 8 are
+      // renderers, the GPU process and utilities. That is correct and this assertion was WRONG
+      // before it ran on a Mac: it demanded the switch on every process naming the profile, and
+      // renderers inherit `--user-data-dir` while never touching OSCrypt, so it failed against a
+      // perfectly contained browser. The switch belongs on the process that reads the Keychain.
+      const browserProcess = ours.find(line => !line.includes("--type="));
+      expect(browserProcess).toBeDefined();
+      expect(browserProcess!).toContain("--use-mock-keychain");
+      expect(browserProcess!).toContain("--password-store=basic");
+      // And no process in the tree carries a CONTRADICTING store, which is the way the guarantee
+      // could be lost without the browser process itself losing its switch.
+      for (const line of ours) expect(line).not.toContain("--password-store=gnome-libsecret");
     } finally {
       await rm(profile, { recursive: true, force: true }).catch(() => {});
     }

@@ -239,6 +239,12 @@ try {
   for (const [name, mutate] of [["flagged", (a: string[]) => a], ["stripped", strip]] as const) {
     const profile = await mkdtemp(join(tmpdir(), `orbit-keychain-${name}-`));
     cleanups.push(async () => { await rm(profile, { recursive: true, force: true }); });
+    // Each arm starts from an ABSENT item, so `itemCreatedByThisLaunch` is a fact about the arm and
+    // not about which arm ran first. Without this the second arm always reads "already present" and
+    // the contrast the whole experiment rests on disappears. This is a CI runner's throwaway
+    // keychain: on a person's Mac this experiment is not run, and deleting their item would be the
+    // exact kind of reaching into their machine the project refuses.
+    await run(["/usr/bin/security", "delete-generic-password", "-s", SERVICE, "-a", ACCOUNT], 10000);
     const before = await safeStorageItem();
     const result = await launchDirectly(executable, profile, mutate(withFlagsFor(profile)), LAUNCH_TIMEOUT_MS);
     const after = await safeStorageItem();

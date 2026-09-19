@@ -72,17 +72,10 @@ jobs:
         run: |
           set +e
           (bun run scripts/limited.ts bun test tests/macos-keychain.test.ts; echo "suite exit $?") 2>&1 | tee output/keychain/suite.log
-      # The measurement. Exit code is recorded and not acted on: a harness exits 0 for completing its
-      # steps, and the verdict inside the JSON is what says anything.
-      - name: the experiment
-        continue-on-error: true
-        run: |
-          set +e
-          (bun run scripts/limited.ts bun run experiments/macos-keychain.ts; echo "experiment exit $?") 2>&1 | tee output/keychain/experiment.log
-      # The negative control, run as its own step as well as inside the experiment, because the
-      # experiment's two arms share one process and one keychain state. This one strips the switches
-      # from a launch and records what a person would see: whether the browser starts, how long it
-      # takes, and whether the Safe Storage item changed. If nothing differs, that is the finding.
+      # The negative control, in plain shell, run BEFORE the experiment so the item is absent when it
+      # starts. Two arms differing only by the two switches, each starting from a deleted item, so
+      # "this arm created Chrome Safe Storage" is a fact about the arm rather than about step order.
+      # If nothing differs between the arms, that is the finding and it is recorded as one.
       - name: a launch with the mock keychain switch stripped
         continue-on-error: true
         run: |
@@ -95,6 +88,12 @@ jobs:
                 PROFILE="$(mktemp -d)"
                 if [ "$arm" = "flagged" ]; then KEYS="--use-mock-keychain --password-store=basic"; else KEYS=""; fi
                 echo "== arm $arm, switches: ${KEYS:-none}"
+                # Each arm starts from an ABSENT item, so "created by this arm" is unambiguous. The
+                # first version of this step ran after the experiment, which had already created the
+                # item in its own stripped arm, so both arms read "present" and the control proved
+                # nothing. This is a runner's throwaway keychain and nobody's real one.
+                security delete-generic-password -s "Chrome Safe Storage" >/dev/null 2>&1
+                echo "-- item before this arm"; security find-generic-password -s "Chrome Safe Storage" >/dev/null 2>&1; echo "present before: $? (44 is absent)"
                 START=$(date +%s)
                 "$CHROME" --user-data-dir="$PROFILE" --headless --remote-debugging-port=0 \
                   --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check \
@@ -115,6 +114,13 @@ jobs:
               done
             fi
           } 2>&1 | tee output/keychain/negative-control.log
+      # The measurement. Exit code is recorded and not acted on: a harness exits 0 for completing its
+      # steps, and the verdict inside the JSON is what says anything.
+      - name: the experiment
+        continue-on-error: true
+        run: |
+          set +e
+          (bun run scripts/limited.ts bun run experiments/macos-keychain.ts; echo "experiment exit $?") 2>&1 | tee output/keychain/experiment.log
       - name: the machine, after
         if: always()
         run: |
