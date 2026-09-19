@@ -4,6 +4,39 @@ import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
 import { observationOptions, saveObservation } from "./observation-output";
 
+/**
+ * The action document for `act`, from an argument, a file, or standard input.
+ *
+ * `act ID '{"type":"navigate",...}'` is the documented form and still works. It is also the form
+ * that cannot be typed reliably on Windows: PowerShell strips the inner quotes before the process
+ * sees them, so the CI job that drives this had to route the whole command back through `cmd /c`
+ * with doubled quotes, and the first runner it ran on still produced
+ * `CLI_ERROR: JSON Parse error: Unterminated string`. Quoting is the host shell's business and not
+ * something a caller should have to defeat, so two shell independent forms are accepted:
+ *
+ *   act ID @path/to/action.json     read the document from a file
+ *   act ID -                        read the document from standard input
+ *
+ * A malformed document now says what it could not parse and where it came from, rather than
+ * surfacing Bun's parser message with no context.
+ */
+async function actionDocument(argument: string | undefined): Promise<unknown> {
+  let source = "the command line";
+  let raw = argument ?? "null";
+  if (argument === "-") { source = "standard input"; raw = await new Response(Bun.stdin.stream()).text(); }
+  else if (argument?.startsWith("@")) {
+    const path = argument.slice(1);
+    source = path;
+    try { raw = await Bun.file(path).text(); }
+    catch { throw new OrbitError("INVALID_REQUEST", `No action document at ${path}`); }
+  }
+  try { return JSON.parse(raw); }
+  catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new OrbitError("INVALID_REQUEST", `The action document from ${source} is not JSON: ${detail}. Where a shell eats quotes, pass it as a file with @path or on standard input with a bare -.`);
+  }
+}
+
 // The fourth word means whatever the verb needs: an account name to create with, a restore point to
 // return to. Named for its position rather than for one of its meanings.
 const [command, verb, arg, fourth] = process.argv.slice(2);
@@ -119,8 +152,8 @@ try {
         : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
-      params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: JSON.parse(arg ?? "null") };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON");
+      params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
     console.log(JSON.stringify({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result }));
   }

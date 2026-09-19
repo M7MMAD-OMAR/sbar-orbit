@@ -6,6 +6,23 @@ import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
 
+/**
+ * How long a single frame capture may take, in milliseconds.
+ *
+ * The default is the 3000 this used to hardcode, kept because it is a sane cadence on a machine
+ * with a desktop. It is a variable rather than a constant because the number is a property of the
+ * HOST, not of the product: a 2 vCPU runner, a loaded workstation with three agents on one budget,
+ * or a software rendered virtio-gpu guest all take longer to paint the same page. A floor of 500
+ * and a ceiling of 120000 keep a typo from turning capture into either a permanent failure or a
+ * permanent hang, and a value that is not a number is ignored rather than silently read as NaN,
+ * which Playwright treats as no timeout at all.
+ */
+export function captureTimeoutMs(raw = process.env.ORBIT_CAPTURE_TIMEOUT_MS): number {
+  const requested = Number(raw);
+  if (!raw || !Number.isFinite(requested)) return 3000;
+  return Math.min(120_000, Math.max(500, Math.round(requested)));
+}
+
 export type Action = { type: "navigate"; url: string } | { type: "fill"; selector: string; text: string }
   | { type: "click" | "read"; selector: string } | { type: "select-tab" | "close-tab"; tab: number }
   | { type: "open-tab"; url?: string } | { type: "resize"; width: number; height: number } | ScrollInput;
@@ -235,7 +252,22 @@ export class BrowserBackend {
     const page = this.page;
     // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
     // which matters because every frame is captured, base64 encoded and decoded again per poll.
-    const image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: 3000 })).toString("base64");
+    //
+    // The budget was a bare 3000, chosen against the viewer's 1000 ms cadence on the development
+    // host. A 2 vCPU GitHub Windows runner beat it on the very first capture after a cold navigate,
+    // while Playwright was still waiting for fonts, and what an agent read back was
+    // `BACKEND_ERROR: Request failed` with the real cause only in the broker's own stderr. That is
+    // the unattributable failure ipc.ts already names: a timeout is attributable, so it says so
+    // here, with the budget it exceeded and the knob that raises it.
+    const budget = captureTimeoutMs();
+    let image: string;
+    try { image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: budget })).toString("base64"); }
+    catch (error) {
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms. A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
+      }
+      throw error;
+    }
     return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   async control(value: unknown) {
