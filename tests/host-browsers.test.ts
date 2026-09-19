@@ -111,8 +111,14 @@ test("an unset choice prefers a browser that can give the viewer a window", asyn
   const chrome = { id: "chrome", name: "Chrome", command: ["chrome"], appWindow: true, isDefault: false };
   // The desktop default cannot open an app window, so the first browser that can takes its place.
   expect(pickBrowser([zen, chrome])!.id).toBe("chrome");
-  // Unless app windows are switched off, when the desktop's own default is the right answer again.
-  expect(pickBrowser([zen, chrome], "", false)!.id).toBe("zen");
+  // Switching app windows OFF used to hand the viewer back to the desktop default, and this line
+  // asserted it. That was the defect reported from a real desktop: Zen is the browser the person
+  // lives in, and the viewer opened inside it, carrying a token that can observe and drive sessions.
+  //
+  // A window of its own and a profile of its own are separate promises. Turning off the first must
+  // not give up the second, so a Chromium browser is still preferred; it just opens a plain tab now,
+  // in Orbit's own profile, rather than a tab in the person's browser.
+  expect(pickBrowser([zen, chrome], "", false)!.id).toBe("chrome");
   // An explicit choice is always honoured, and a choice that is gone falls back rather than failing.
   expect(pickBrowser([zen, chrome], "zen")!.id).toBe("zen");
   expect(pickBrowser([zen, chrome], "removed")!.id).toBe("chrome");

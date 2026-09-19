@@ -387,14 +387,17 @@ class Panel(Gtk.Application):
         viewer = Gtk.Button(label="Open the viewer")
         viewer.add_css_class("flat")
         viewer.connect("clicked", lambda *_: self.open_viewer())
-        mine = Gtk.Button(label="A browser of my own")
-        mine.add_css_class("flat")
-        mine.connect("clicked", lambda *_: self.open_own_session())
+        # "A browser of my own" is gone. It read as a choice between the viewer and the person's own
+        # browser, next to a button that opens the viewer, and that is not what it did: it created an
+        # Orbit session, paused it, and opened the viewer on it. Two buttons that both end in the
+        # viewer, one of them named after the thing this project exists NOT to touch.
+        #
+        # A private browser to drive by hand is still one click away, from inside the viewer where
+        # every other session action already lives, so nothing was removed except the ambiguity.
         settings = Gtk.Button(label="Settings")
         settings.add_css_class("flat")
         settings.connect("clicked", lambda *_: self.open_settings())
         row.append(viewer)
-        row.append(mine)
         row.append(settings)
         return row
 
@@ -1165,26 +1168,6 @@ class Panel(Gtk.Application):
             self.relocate()
         self.apply_style()
         self.sync_frame(force=True)
-
-    def open_own_session(self):
-        """A private browser the person drives themselves, from a button rather than a terminal.
-
-        Paused before the viewer opens, because manual control is what a paused session allows and a
-        person who opened a browser expects to be able to type in it. It carries their name, not an
-        agent's: the whole premise of the mark is that you can tell whose work you are watching.
-        """
-        def run():
-            try:
-                created = rpc(self.path, "session.create", {
-                    "backend": "browser", "agentName": "You", "taskName": "Opened from the panel",
-                })
-                rpc(self.path, "session.pause", {"sessionId": created["sessionId"]})
-            except Exception as error:
-                print(f"panel: could not open a session: {error}", file=sys.stderr)
-                GLib.idle_add(lambda: (notify("Orbit", "Could not open a browser session. Is the broker running?"), False)[1])
-                return
-            GLib.idle_add(self.open_viewer)
-        threading.Thread(target=run, daemon=True).start()
 
     def schedule_save(self):
         """A drag along the size slider fires on every pixel. Writing the file once when the hand

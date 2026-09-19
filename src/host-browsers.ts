@@ -282,8 +282,30 @@ export function viewerProfileDirectory(browser: Pick<HostBrowser, "id">, env: Re
  * no Firefox build is installed on the development host. A family nothing recognised gets no flags,
  * because a flag a browser does not know is a browser that exits, and the fallback caller sees that.
  */
+function browserFamily(browser: HostBrowser): "chromium" | "firefox" | "unknown" {
+  if (browser.appWindow) return "chromium";
+  return FIREFOX_TOKENS.some(token => `${browser.command.join(" ")} ${browser.name}`.toLowerCase().includes(token))
+    ? "firefox" : "unknown";
+}
+
+/**
+ * Whether this browser can be handed a profile that is Orbit's rather than the person's.
+ *
+ * The Chromium family takes `--user-data-dir` and the Firefox family takes `--profile`. A family
+ * nothing recognises gets no flags at all, which means opening the viewer in it opens the viewer in
+ * whatever profile that browser is already running: the person's cookies, history and sign-ins around
+ * a page holding a token that can observe and drive agent sessions.
+ *
+ * So this is the question `pickBrowser` has to ask first. It used to ask "can it give a window", which
+ * is a different question with a different answer, and the gap between them is how the viewer ended up
+ * in the person's own browser.
+ */
+export function canTakeOwnProfile(browser: HostBrowser): boolean {
+  return browserFamily(browser) !== "unknown";
+}
+
 function ownProfileArguments(browser: HostBrowser, profile: string): string[] {
-  const family = browser.appWindow ? "chromium" : FIREFOX_TOKENS.some(token => `${browser.command.join(" ")} ${browser.name}`.toLowerCase().includes(token)) ? "firefox" : "unknown";
+  const family = browserFamily(browser);
   if (family === "chromium") return [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--class=sbar-orbit-viewer"];
   if (family === "firefox") return ["--profile", profile, "--new-window"];
   return [];
@@ -304,10 +326,31 @@ function fallbackCommand(url: string): string[] {
  */
 export function pickBrowser(browsers: HostBrowser[], choice = "", appWindow = true): HostBrowser | undefined {
   const chosen = browsers.find(entry => entry.id === choice);
-  if (chosen || !appWindow) return chosen ?? browsers[0];
-  if (browsers[0]?.appWindow) return browsers[0];
-  const capable = browsers.filter(entry => entry.appWindow);
-  return [...capable].sort((left, right) => rank(left) - rank(right))[0] ?? browsers[0];
+  if (chosen) return chosen;
+  // A browser that can be given a private profile comes FIRST, always, and the desktop's default only
+  // wins when it is one of those. It used to win outright whenever `appWindow` was off, and on a
+  // desktop whose default is a Firefox fork that handed the viewer to the browser the person lives in.
+  // Measured here: the default is Zen, so `appWindow: false` picked Zen while Chrome, Chromium, Helium
+  // and Edge were all installed and all able to take `--user-data-dir`.
+  //
+  // A window of its own and a profile of its own are different promises. Turning off the first must
+  // not silently give up the second: `viewerCommand` still opens a plain tab when `appWindow` is off,
+  // but it opens it in Orbit's OWN profile, with none of the person's cookies, history or sign-ins.
+  const isolatable = browsers.filter(entry => canTakeOwnProfile(entry));
+  if (isolatable.length === 0) return browsers[0];
+  // The default keeps its place only when it can ALSO give the viewer a window of its own, or when the
+  // caller turned windows off deliberately AND the default is not the browser the person lives in.
+  //
+  // A Firefox fork takes `--profile`, so it is isolatable, but remoting there is keyed by profile and
+  // the result is still a window of the browser the person has open, in their taskbar, in their
+  // window list, looking like their browser. That is the confusion being removed. A Chromium browser
+  // with `--class=sbar-orbit-viewer` and its own user-data-dir is unmistakably Orbit's, so when one is
+  // installed it is preferred over a Firefox-family default whatever `appWindow` says.
+  const chromiumCapable = isolatable.filter(entry => entry.appWindow);
+  const preferred = isolatable[0]?.isDefault ? isolatable[0] : undefined;
+  if (preferred && (preferred.appWindow || chromiumCapable.length === 0)) return preferred;
+  const pool = chromiumCapable.length > 0 ? chromiumCapable : isolatable;
+  return [...pool].sort((left, right) => rank(left) - rank(right))[0] ?? browsers[0];
 }
 
 /**
@@ -349,6 +392,12 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   if (!browser && process.platform !== "linux") return failure;
   let profile: string | undefined;
   if (browser) {
+    // A browser reached here that cannot take its own profile is the last-resort case, not a normal
+    // one: `pickBrowser` prefers every isolatable browser over the default, so this only happens when
+    // nothing installed takes `--user-data-dir` or `--profile`. Opening the viewer in it would put the
+    // session token in the person's own profile, which is the thing this project exists to prevent, so
+    // it is refused everywhere rather than only off Linux.
+    if (!canTakeOwnProfile(browser)) return failure;
     profile = viewerProfileDirectory(browser, env);
     // A directory the browser cannot create is a browser that exits with a profile error, so it is
     // made here, private, and a failure to make it is reported as the viewer not opening.
