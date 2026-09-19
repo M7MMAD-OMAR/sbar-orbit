@@ -32,3 +32,4 @@ extension/dist/
 /.codex/
 /.mcp.json
 /.ignore
+.worktrees/
