@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, statfs, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, posix, win32 } from "node:path";
 import { OrbitError } from "./errors";
 
@@ -124,3 +124,73 @@ export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnsw
   }
   return { root, removed, kept, refused };
 }
+
+/**
+ * The egress socket directory a bounded-origin session opens, per session, under
+ * `$XDG_RUNTIME_DIR/sbar-orbit/egress/<8 hex>`, holding `lease.sock` and `cdp.sock`.
+ *
+ * `EgressLease.close()` removes it, which is precisely what SIGKILL does not run. `browser-crash.test.ts`
+ * kills a broker and proves no descendant survives; it never looks at the filesystem, so these were
+ * invisible to every existing test. Measured on this workstation after a day of runs: 33 directories
+ * left on tmpfs with no broker owning any of them.
+ *
+ * That is not merely untidy. `src/fedora.ts` already carries the reasoning for the native runtime
+ * directory: tmpfs pages are charged to the cgroup that wrote them, and left behind, closed sessions
+ * kept filling the shared memory budget until the kernel throttled everything still running.
+ */
+export function egressRoot(): string {
+  return join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress");
+}
+
+/**
+ * Whether a lease socket still has something listening on it.
+ *
+ * These directories carry NO `owner.json`, so the workspace sweep's ownership logic does not apply:
+ * there is no pid and no broker socket recorded anywhere in them. The socket itself is the evidence.
+ * A live lease accepts a connection; an abandoned one is a filesystem entry whose listener is gone,
+ * and connecting to it fails with ECONNREFUSED immediately, with no timeout to wait out.
+ *
+ * A directory with no `lease.sock` at all is treated as dead, since that is the shape left by a
+ * broker killed between `mkdir` and `listen`.
+ */
+async function leaseIsLive(directory: string): Promise<boolean> {
+  const socket = join(directory, "lease.sock");
+  if (!(await lstat(socket).catch(() => undefined))?.isSocket()) return false;
+  try {
+    const connection = await Bun.connect({ unix: socket, socket: { data() {}, error() {} } });
+    connection.end();
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * Remove the egress socket directories no live lease owns.
+ *
+ * Separate from `cleanWorkspaces` rather than folded into it, because the two roots answer different
+ * questions with different evidence: a workspace is owned by a broker that records its pid and
+ * socket, an egress directory is owned by a listener that records nothing. Sharing one loop would
+ * mean one of them lying about the other.
+ *
+ * The recent grace exists for the same reason it does in the workspace sweep: a session being set up
+ * right now has a directory and may not have a listener yet, and a sweep that deletes it takes the
+ * socket out from under a session that is about to bind it.
+ */
+export async function cleanEgress(root = egressRoot(), live = leaseIsLive) {
+  const removed: string[] = [], kept: string[] = [], refused: { name: string; reason: string }[] = [];
+  let entries: string[];
+  try { entries = await readdir(root); } catch { return { root, removed, kept, refused }; }
+  for (const name of entries.sort()) {
+    const directory = join(root, name);
+    const info = await lstat(directory).catch(() => undefined);
+    if (!info?.isDirectory() || info.isSymbolicLink()) continue;
+    if (await live(directory)) { kept.push(name); continue; }
+    if (Date.now() - info.mtimeMs < egressGraceMs) { kept.push(name); continue; }
+    // One directory that will not go does not end the sweep, the same lesson the workspace sweep
+    // already carries: a single refusal used to abandon every remaining reclaim.
+    try { await rm(directory, { recursive: true, force: true }); removed.push(name); }
+    catch (error) { refused.push({ name, reason: error instanceof Error ? error.message : "could not be removed" }); }
+  }
+  return { root, removed, kept, refused };
+}
+
+const egressGraceMs = 60 * 1000;

@@ -126,8 +126,12 @@ try {
     else throw new OrbitError("INVALID_REQUEST", "Use update status|on|off|check|stage|run|activate VERSION|prune");
   } else if (command === "clean") {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.
-    const { cleanWorkspaces } = await import("./workspace-storage");
-    console.log(JSON.stringify(await cleanWorkspaces(), null, 2));
+    // Two roots, swept together and reported separately. The egress sockets live under
+    // XDG_RUNTIME_DIR rather than under the workspace root, so `cleanWorkspaces` never saw them and
+    // no `clean` path removed them: a broker killed with SIGKILL left its directory on tmpfs for
+    // good, and tmpfs pages are charged to the cgroup that wrote them.
+    const { cleanWorkspaces, cleanEgress } = await import("./workspace-storage");
+    console.log(JSON.stringify({ workspaces: await cleanWorkspaces(), egress: await cleanEgress() }, null, 2));
   } else if (command === "doctor" && process.argv.includes("--report")) {
     // Deliberately local, and before the branch that requires a socket. The most common thing a person
     // reports is a broker that will not start, which is exactly the case a broker RPC cannot answer.
@@ -158,9 +162,15 @@ try {
     // stopped or killed, because the only thing that reclaimed them was a command nobody ran. A
     // managed broker is the one that outlives them all, so it sweeps when it starts. Only directories
     // whose owner does not answer go; a private broker started by a test keeps its own.
-    const swept = managed ? await (await import("./workspace-storage")).cleanWorkspaces().catch(() => undefined) : undefined;
+    const storage = managed ? await import("./workspace-storage") : undefined;
+    const swept = storage ? await storage.cleanWorkspaces().catch(() => undefined) : undefined;
+    // The egress sockets are swept on the same trigger and for the same reason: the managed broker
+    // is the process that outlives every session, so it is the one that can reclaim what a killed
+    // predecessor left behind.
+    const sweptEgress = storage ? await storage.cleanEgress().catch(() => undefined) : undefined;
     console.log(JSON.stringify({ socket: broker.socket, managed,
       ...(swept ? { swept: swept.removed.length } : {}),
+      ...(sweptEgress?.removed.length ? { sweptEgress: sweptEgress.removed.length } : {}),
       // Reported rather than silent: a reaped orphan means a supervisor died badly, and a refusal
       // means a group could not be proved Orbit's, which somebody should be able to see.
       ...(orphans && (orphans.swept.length || orphans.refused.length)
