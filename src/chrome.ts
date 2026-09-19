@@ -380,7 +380,21 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // Chrome can use the desktop bus to move itself into an uncapped systemd scope.
     // This owned headless browser must not connect to the human session bus.
     env.DBUS_SESSION_BUS_ADDRESS = options.sessionBus ?? `unix:path=${profile}/no-session-bus`;
+    // --disable-crash-reporter for the reason the darwin branch above spells out at length, which is
+    // not a macOS reason: Crashpad's handler calls setsid() in the child, so it leaves the process
+    // group AND the session, killpg misses it, a descendant walk misses it, and it is built to
+    // outlive the browser it served. Windows removes it with --disable-crashpad and macOS with this
+    // same flag, each documenting it as the one process that genuinely escapes containment. Linux
+    // was the platform that named the problem twice and did not fix it, and the cost is not only
+    // containment: the handler takes its --database from the BRANDING, not from --user-data-dir, so
+    // on a machine where the person has ever run Chrome an Orbit session's handler writes into
+    // ~/.config/google-chrome/Crash Reports, the person's own browser directory. Measured on this
+    // host: the handler's argv reads
+    // `--database=/home/<person>/.config/google-chrome/Crash Reports` and the settings.dat in it is
+    // written while a session runs. Writing into the person's browser state is the promise this
+    // project is built on, so the flag belongs on every platform rather than on two of three.
     owner = launchOnLinux(executable, profile, [...common, "--disable-dev-shm-usage", "--no-sandbox",
+      "--disable-crash-reporter",
       `--password-store=${options.passwordStore ?? "basic"}`,
       ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"], env);
   }
