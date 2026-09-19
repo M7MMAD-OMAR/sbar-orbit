@@ -19,14 +19,15 @@
  * content is not in the message, not that some particular message is.
  */
 import { test, expect } from "bun:test";
+import { startBroker } from "../src/ipc";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-const cli = fileURLToPath(new URL("../bin/sbar-orbit", import.meta.url));
+const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const run = (args: string[], timeout = 30_000) => {
-  const proc = Bun.spawnSync([cli, ...args], { stdout: "pipe", stderr: "pipe", timeout });
+  const proc = Bun.spawnSync([process.execPath, cli, ...args], { stdout: "pipe", stderr: "pipe", timeout });
   return { out: proc.stdout.toString(), err: proc.stderr.toString(), code: proc.exitCode };
 };
 
@@ -54,11 +55,11 @@ test("a file that cannot be parsed does not have its contents echoed back", asyn
     expect(everything).not.toContain("Unexpected identifier");
     // The PATH is still named, because a person with several files needs to know which one failed,
     // and a path they typed themselves is not a disclosure.
-    expect(everything).toContain(secret);
+    expect(JSON.parse(everything.trim()).error.message).toContain(secret);
   } finally { await rm(dir, { recursive: true, force: true }); }
 }, 60_000);
 
-test("a character device is refused instead of being read without bound", () => {
+test.skipIf(process.platform === "win32")("a character device is refused instead of being read without bound", () => {
   // /dev/zero never ends. Before this, the process grew until something killed it; the assertion is
   // that the command comes back at all, quickly, with a named refusal.
   const started = Date.now();
@@ -70,7 +71,7 @@ test("a character device is refused instead of being read without bound", () => 
   expect(everything).toContain("not a regular file");
 });
 
-test("a FIFO nobody writes to is refused rather than hung on", async () => {
+test.skipIf(process.platform === "win32")("a FIFO nobody writes to is refused rather than hung on", async () => {
   // The quiet form of the same defect: no memory growth, no output, no error, forever. A timeout
   // kill would leave `code` null and an empty message, so the refusal is asserted positively.
   const dir = await mkdtemp(join(tmpdir(), "orbit-act-fifo-"));
@@ -89,15 +90,22 @@ test("a regular file that IS valid JSON still reaches the broker", async () => {
   // refuses everything. A valid document must get past the parser and fail for a REAL reason: the
   // session does not exist.
   const dir = await mkdtemp(join(tmpdir(), "orbit-act-ok-"));
+  const broker = await startBroker();
   try {
     const document = join(dir, "action.json");
     await writeFile(document, JSON.stringify({ type: "observe" }));
-    const { out, err } = run(["act", "definitely-not-a-session", `@${document}`]);
+    const child = Bun.spawn([process.execPath, cli, "act", "definitely-not-a-session", `@${document}`], {
+      env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    expect(code).not.toBe(0);
     const everything = out + err;
     expect(everything).not.toContain("INVALID_REQUEST");
     expect(everything).not.toContain("is not JSON");
     expect(everything).toContain("SESSION_NOT_FOUND");
-  } finally { await rm(dir, { recursive: true, force: true }); }
+  } finally { await broker.close(); await rm(dir, { recursive: true, force: true }); }
 }, 60_000);
 
 test("an oversized regular file is refused before it is read", async () => {

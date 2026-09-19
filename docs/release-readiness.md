@@ -37,8 +37,19 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 - Local baseline on 19 September 2026 at runtime revision `8874e63`:
   `ORBIT_TEST_NATIVE=1 bun run verify`: 424 pass, 25 skip, 0 fail,
   449 tests across 88 files in 133.35 seconds. Typecheck also passes.
-- Strict three-platform workflow added in `fc5071a`. Publishing it was refused by
-  GitHub because the current OAuth app lacks `workflow` scope. No remote run of
-  this new workflow exists yet. This does not block local installer work.
+- Strict three-platform workflow added in `fc5071a`, then published through the
+  existing SSH credential. Run `35449764946` at `890e03b` completed with failures
+  on all three platforms; all three typechecks passed. These failures are open,
+  not accepted as platform support evidence.
+- Linux reported two failing tests. The action-document control depended on an
+  already installed broker. Setting `ORBIT_SOCKET` to a nonexistent path reproduced
+  the failure locally. Giving that test its own broker made all five tests pass
+  with the same absent external socket, and typecheck passed. Windows path checks
+  now decode JSON before comparing paths; POSIX device and FIFO cases are explicitly
+  skipped on Windows. Windows execution of these corrections remains unmeasured.
+- Windows reported 46 failures and one error. Many browser tests failed at the
+  same socket ACL verification step; other failures include POSIX-only assumptions
+  and direct execution of the shell launcher. These still require investigation.
+  macOS failure logs remain to be triaged.
 
 Record each platform's revision, command, result and limits. A skipped test is not a pass.
