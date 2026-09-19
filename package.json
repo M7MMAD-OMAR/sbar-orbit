@@ -16,6 +16,7 @@
     "!**/__pycache__",
     "bun.lock",
     "install.sh",
+    "install.cmd",
     "docs/*.md",
     "docs/research/**/*.md",
     "AGENTS.md",

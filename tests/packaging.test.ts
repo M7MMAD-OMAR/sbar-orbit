@@ -50,6 +50,10 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     // The lockfile is what `--reinstall-deps` resolves against, so a package without it cannot honour
     // a flag its own help prints.
     expect(shipped).toContain("bun.lock");
+    // Every advertised platform needs its actual installation entry point in
+    // the downloadable package, not merely in the development checkout.
+    for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd"])
+      expect(shipped).toContain(required);
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);
 

@@ -57,8 +57,12 @@ separate and deliberate step, and nothing in this file does it for you. Removing
 ## The whole installation in one command
 
 ```sh
-./install.sh
+./install.sh --connect auto
 ```
+
+On Windows, run `install.cmd --connect auto`. These commands register detected
+Claude Code, Codex and Hermes hosts after installation succeeds. Existing unrelated
+settings are preserved; restart a running agent host to load its new tools.
 
 This is the checkout's one command installation. It is a driver over the steps documented in the rest
 of this file rather than a second implementation of any of them: prerequisites come from
@@ -74,14 +78,14 @@ Six steps, each reported as it happens, with the reason beside it when one does 
 | Prepare project dependencies | `bun install --frozen-lockfile --ignore-scripts` | Skipped when the modules already resolve; no lifecycle scripts, ever |
 | Link the sbar-orbit command | `activateLocal` into the prefix, default `~/.local` | Never edits shell configuration, and never puts the prefix on PATH for you |
 | Install the broker service and desktop entries | The units, the panel autostart pair, then enable and start | Nothing that needs elevation, so a full logout still needs `loginctl enable-linger` |
-| Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, or `%APPDATA%\sbar-orbit\mcp.json` on Windows, Orbit's own directory | Never writes into an agent host's configuration; the command to register it is printed instead |
+| Write the agent connector configuration | `~/.config/sbar-orbit/mcp.json`, or `%APPDATA%\sbar-orbit\mcp.json` on Windows, Orbit's own directory | Host settings are changed only with `--connect`; otherwise a manual command is printed |
 | Verify the installed broker answers | One `doctor` call on the managed socket | Does not claim the browser, the display or any application works |
 
 `--json` prints the report and nothing else, which is how an agent runs this: the report's shape, the
 exit codes and the refusals are a contract in [agent-install.md](agent-install.md), checked against the
 program by `tests/agent-contract.test.ts` so the document cannot drift away from it.
 
-Options are `--prefix PATH`, `--no-service`, `--dry-run`, `--reinstall-deps`, `--json` and `--plain`.
+Options are `--prefix PATH`, `--no-service`, `--dry-run`, `--reinstall-deps`, `--connect auto` (or an explicit host list), `--json` and `--plain`.
 A dry run reports every step and writes nothing, which is the safe way to read what it would do on a
 machine you have not installed on before.
 
@@ -220,3 +224,11 @@ The shipped `extension/host/com.sbarorbit.mint.json` carries obvious placeholder
 To remove it: delete the host manifest from the `NativeMessagingHosts` directory, remove the extension from `chrome://extensions`, and delete `extension/dist`. Nothing else on the machine is touched, because nothing else was written. The host program never writes a grant to disk.
 
 What is verified is the pure logic only, in `tests/extension.test.ts` under `bun test`: envelope parsing in both directions, origin and cookie domain scoping, grant lifetimes and expiry, the refusal codes, and the native messaging framing. No browser API is faked in those tests, and passing them says nothing about whether the extension loads or works.
+
+## Registry installer regression, 19 September 2026
+
+The registry file list omitted `install.cmd`, although the repository and source
+archive carried it. A test inspecting the actual `bun pm pack` archive reproduced
+the missing Windows installer. The file list now includes it, and packaging tests
+require both installation scripts and both command launchers. This verifies archive
+contents, not a fresh Windows installation from the registry package.
