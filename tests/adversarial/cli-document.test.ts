@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 /**
  * The two surfaces commit 5576f11 opened, attacked rather than trusted.
  *
@@ -18,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { captureTimeoutMs } from "../../src/browser";
 
-const cli = new URL("../../src/cli.ts", import.meta.url).pathname;
+const cli = fileURLToPath(new URL("../../src/cli.ts", import.meta.url));
 
 /** Run `act` with a document reference and no broker to reach, so the answer is about parsing alone. */
 function runAct(reference: string, directory: string, timeoutMs = 10000) {
@@ -88,7 +89,7 @@ test("an unparsable action document does not echo the file's content back", asyn
  * Remove `.failing` when the read is bounded, by refusing a path that is not a regular file or by
  * capping the bytes taken.
  */
-test("an action document that never ends is refused rather than read forever", async () => {
+test.skipIf(process.platform === "win32")("an action document that never ends is refused rather than read forever", async () => {
   const directory = await mkdtemp(join(tmpdir(), "adversarial-act-endless-"));
   try {
     // An endless device. The read must end, whatever it decides.

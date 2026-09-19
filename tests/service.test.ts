@@ -115,7 +115,8 @@ test("claiming refuses to remove a path that is not a socket", async () => {
  * `stat` failure as "nothing is there", which on the guest left a stale socket file in place and
  * failed the bind with "Failed to listen on unix socket" and no cause. Only ENOENT may mean absent.
  */
-test("a socket that cannot be inspected is probed, not assumed absent", async () => {
+// These fixtures deny directory traversal through POSIX mode bits. Windows uses ACLs.
+test.skipIf(process.platform === "win32")("a socket that cannot be inspected is probed, not assumed absent", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-claim-"));
   try {
     // A directory with no execute bit: `stat` on a path inside it fails with EACCES rather than
@@ -139,7 +140,7 @@ test("a socket that cannot be inspected is probed, not assumed absent", async ()
  * probe said nobody was serving, with no shape test at all, which is the same guarantee the test
  * above pins on the other branch: refuse a person's file rather than remove it.
  */
-test("a path that cannot be inspected is refused, not deleted", async () => {
+test.skipIf(process.platform === "win32")("a path that cannot be inspected is refused, not deleted", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-claim-opaque-"));
   try {
     const locked = join(root, "locked");

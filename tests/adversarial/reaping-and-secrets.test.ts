@@ -1,3 +1,4 @@
+import { expectPrivatePath } from "../private-path";
 /**
  * THE REAPING GUARANTEE and PRIVATE DATA, at the depths the existing tests do not reach.
  *
@@ -220,7 +221,7 @@ test.skipIf(!supported)("the durable journal file holds no typed text, no path, 
     expect(durable).not.toContain(broker.workspace);
 
     // 0600, on the file the broker actually appended rather than on one a test created.
-    expect((await stat(view.path)).mode & 0o777).toBe(0o600);
+    await expectPrivatePath(view.path, 0o600);
   } finally {
     await broker.close();
     fixture.stop(true);

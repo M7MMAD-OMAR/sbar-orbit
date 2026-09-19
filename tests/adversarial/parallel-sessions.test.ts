@@ -1,3 +1,4 @@
+import { expectPrivatePath } from "../private-path";
 /**
  * CROSS SESSION LEAKAGE, raced genuinely in parallel.
  *
@@ -8,7 +9,7 @@
  * each one is written so that the interleaving it forbids would be observable.
  */
 import { test, expect } from "bun:test";
-import { readdir, stat } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { detectPlatform } from "../../src/platform";
 import { openBroker, startFixture, act, type JournalView } from "./probe";
@@ -38,7 +39,7 @@ test.skipIf(!supported)("two sessions created in the same instant get separate p
     const journals = await readdir(join(broker.workspace, "journals"));
     expect(journals.sort()).toEqual([`${a.sessionId}.jsonl`, `${b.sessionId}.jsonl`].sort());
     for (const name of journals)
-      expect((await stat(join(broker.workspace, "journals", name))).mode & 0o777).toBe(0o600);
+      await expectPrivatePath(join(broker.workspace, "journals", name), 0o600);
 
     // Now race the actions themselves, both writing to storage under the same origin with different
     // values. A shared context would leave one value visible to both.
