@@ -35,6 +35,17 @@ const reviewedBinaries = new Map([
   ["docs/images/viewer-window.jpg", "4b6f7af5a2ef21bd3a36dbff9377712e5fee189ce43e8602c34079503b8b0875"],
   // Reviewed 14 September 2026: an Orbit private display or the viewer, no personal window, no account.
   ["docs/images/writer-in-private-display.jpg", "33af88f1c9337bb12b9786da3950f3be14e6d6304d8773898677219bb82ed643"],
+  // Reviewed 19 September 2026, each frame opened and looked at by the orchestrator as well as the
+  // agent that produced them, because a hash registered on a self-report is not a review. All six
+  // are captures of an Orbit private display or owned browser inside a throwaway Fedora VM built for
+  // the gate 3 run, whose only account is "orbit" and whose hostname is "sbar-orbit-gate3". No
+  // personal window, no account, no host path, nothing of the person's own machine is in any of them.
+  ["docs/fragments/real-machine-frames/browser.jpg", "c8d25d69f79233d138de0493ec8087e8332b7103b374006e7db8b1d826ac3512"],
+  ["docs/fragments/real-machine-frames/gl-gears-first.jpg", "bf27548a8851e965179a92e5580a59a97b1242ed594a3c1069754d33c0b20f54"],
+  ["docs/fragments/real-machine-frames/gl-gears-second.jpg", "971533008720c642c7f923b401cd75fd791f010362e78a36f8c94ad21e1cf1a3"],
+  ["docs/fragments/real-machine-frames/native-opengl.jpg", "e95636d2881757b394f7f3ed4e791e663c925aab5260da8de5272731ec2170e5"],
+  ["docs/fragments/real-machine-frames/native-wayland-typed.jpg", "17867e754efce0f83ca6b29c344706639a0691d22ef50e0588517547833c55d8"],
+  ["docs/fragments/real-machine-frames/native-x11-typed.jpg", "eaf279eb83c81d9958b378138cfc81bff6dc179a8c1dc3b9569a016d633a2345"],
   // Reviewed 19 September 2026, and the one exception to the line above: this frame is the person's
   // own desktop, published at their request, because the panel is the one part of Orbit that lives
   // there and no private display can show it. What is in it was looked at rather than assumed: a

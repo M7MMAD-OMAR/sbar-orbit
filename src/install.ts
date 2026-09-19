@@ -274,11 +274,34 @@ export async function runInstall(options: InstallOptions = {}) {
 
   const service = await step("service", async () => {
     if (!wantsService) return { state: "skipped", detail: "--no-service" };
-    // Not a gap to fill later. A Chromium family browser will not run in Windows session 0, measured
-    // on a Windows 11 guest, so the broker belongs in the person's own session and there is no
-    // analogue of `loginctl enable-linger`. Autostart there is a per user Run key or logon task.
-    if (process.platform === "win32")
-      return { state: "skipped", detail: "Windows has no user service for this: a browser cannot run in session 0, so the broker runs in your session. Start it with `sbar-orbit.cmd serve`" };
+    // Windows has no user SERVICE for this and never will: a Chromium family browser will not run in
+    // session 0, measured on a Windows 11 guest, so the broker belongs in the person's own session.
+    // What it does have is a per user LOGON TASK, which is the same promise a macOS LaunchAgent
+    // makes and a narrower one than the Linux unit's: there is no analogue of
+    // `loginctl enable-linger`, so nothing starts before the person logs on. See
+    // src/windows-autostart.ts for why a scheduled task rather than the Run key or Startup folder,
+    // and why it is registered from XML rather than with `/SC ONLOGON`.
+    if (process.platform === "win32") {
+      if (dryRun) return { state: "skipped", detail: `would register the ${(await import("./windows-autostart")).TASK_NAME} logon task` };
+      const { enableLogonTask } = await import("./windows-autostart");
+      const task = await enableLogonTask(launcher);
+      return {
+        state: task.registered ? "done" : "failed",
+        detail: task.registered
+          ? `the ${task.taskName} logon task is registered and starts the broker when you log in`
+          : `schtasks refused the logon task: ${task.output ?? "no output"}`,
+        remedies: task.registered ? [] : [{ id: "logon-task-refused", needsElevation: false, agentMayRun: true,
+          command: `schtasks /Query /TN ${task.taskName} /XML`,
+          message: "The logon task was built and Task Scheduler would not register it. Its own output says why, and nothing here needs an administrator." }],
+        // `startsAtNextLogon` is read by the verify step below. A logon task is not `systemctl enable
+        // --now`: it starts the broker at the NEXT logon and starts nothing at registration time. The
+        // first run of this step reported `service: done` and then `verify: failed, no answer from
+        // the managed broker` on a Windows guest where every step had in fact succeeded, because
+        // verify polled a socket nothing was serving yet. Deriving it here rather than re-testing the
+        // platform in verify keeps the reason with the step that knows it.
+        data: { task: task.taskName, status: task.status, startsAtNextLogon: true },
+      };
+    }
     if (dryRun) return { state: "skipped", detail: "would write units and enable the broker" };
     // macOS has a real per user service and it is a LaunchAgent, not a systemd unit. The autostart
     // promise it can make is narrower and the report says so rather than borrowing the Linux
@@ -361,6 +384,12 @@ export async function runInstall(options: InstallOptions = {}) {
     // poll below, deliberately: that failure is worth reporting against the socket it names.
     if (service.state === "skipped")
       return { state: "skipped", detail: `no managed broker was installed: ${service.detail}` };
+    // A service that starts the broker at the next LOGON has started nothing yet, and polling its
+    // socket for 15 seconds proves only that. Windows is the case: the logon task is registered and
+    // correct, and the broker appears when the person next logs on. Asking the step rather than
+    // re-testing the platform, for the reason given above.
+    if ((service.data as { startsAtNextLogon?: boolean } | undefined)?.startsAtNextLogon)
+      return { state: "skipped", detail: `${service.detail}, so there is no broker to verify until you log in again` };
     const socket = serviceSocketPath();
     for (let attempt = 0; attempt < 60; attempt++) {
       try {

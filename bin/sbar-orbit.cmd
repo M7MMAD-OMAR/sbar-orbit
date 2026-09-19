@@ -51,7 +51,9 @@ if "%orbit_command%"=="install" goto :install
 
 rem Linux only, each for a reason this project has measured rather than assumed.
 if "%orbit_command%"=="service" goto :no_service
-if "%orbit_command%"=="autostart" goto :no_service
+rem `autostart` is NOT refused here any more. There is no Orbit service on Windows and there never
+rem will be, because a browser does not run in session 0, but there IS a per user logon task, and
+rem src/cli.ts answers this verb. See src/windows-autostart.ts.
 if "%orbit_command%"=="panel" goto :no_desktop
 if "%orbit_command%"=="settings" goto :no_desktop
 if "%orbit_command%"=="config" goto :no_desktop
@@ -129,8 +131,12 @@ echo   sbar-orbit connector-config --no-launcher
 echo                                  For a host that cannot spawn a .cmd
 echo   sbar-orbit mcp                 Run the stdio MCP adapter
 echo.
-echo Linux only, and refused here by name rather than failing later: service, autostart,
-echo panel, settings, config. See docs\support-tiers.md for what Windows can and cannot do.
+echo   sbar-orbit autostart status    Whether the broker starts when you log in
+echo   sbar-orbit autostart enable PATH^|disable
+echo                                  Register or remove the per user logon task
+echo.
+echo Linux only, and refused here by name rather than failing later: service, panel,
+echo settings, config. See docs\support-tiers.md for what Windows can and cannot do.
 echo.
 echo ORBIT_SOCKET selects another broker; without it the managed socket under %%LOCALAPPDATA%% is used.
 exit /b 0

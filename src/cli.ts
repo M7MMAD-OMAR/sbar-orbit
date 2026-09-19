@@ -124,6 +124,23 @@ try {
     }
     else if (verb === "prune") console.log(JSON.stringify(await pruneVersions(), null, 2));
     else throw new OrbitError("INVALID_REQUEST", "Use update status|on|off|check|stage|run|activate VERSION|prune");
+  } else if (command === "autostart" && process.platform === "win32") {
+    // The Windows half of what `scripts/service.ts autostart` is on Linux. It lives here rather than
+    // there because that script is systemd all the way down, and because `src/cli.ts` is the file
+    // `bin\sbar-orbit.cmd` falls through to. Read only by default: `status` answers what is
+    // registered, and enabling or disabling is an explicit verb.
+    const { enableLogonTask, disableLogonTask, logonTaskStatus, registeredTaskXml, rejectedMechanisms } = await import("./windows-autostart");
+    if (verb === undefined || verb === "status")
+      console.log(JSON.stringify({ ...await logonTaskStatus(), registeredXml: await registeredTaskXml(), rejected: rejectedMechanisms }, null, 2));
+    else if (verb === "enable") {
+      // The launcher this command was invoked by, so the task names a stable entry rather than the
+      // checkout behind it. Same rule as the connector configuration, and the .cmd launcher already
+      // sets ORBIT_LAUNCHER for the adapter.
+      if (!arg && !process.env.ORBIT_LAUNCHER) throw new OrbitError("INVALID_REQUEST", "Use autostart enable PATH\\TO\\sbar-orbit.cmd");
+      console.log(JSON.stringify(await enableLogonTask(arg ?? process.env.ORBIT_LAUNCHER!), null, 2));
+    }
+    else if (verb === "disable") console.log(JSON.stringify(await disableLogonTask(), null, 2));
+    else throw new OrbitError("INVALID_REQUEST", "Use autostart enable PATH|disable|status");
   } else if (command === "clean") {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.
     // Two roots, swept together and reported separately. The egress sockets live under

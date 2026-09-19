@@ -1,0 +1,300 @@
+{
+  "date": "2026-09-19",
+  "workspace": "/tmp/orbit-application-coverage-mnUUnG",
+  "applications": [
+    {
+      "name": "Ptyxis",
+      "family": "GTK4 libadwaita terminal",
+      "toolkit": "wayland",
+      "launchMs": 1693,
+      "pid": 48123,
+      "windowsOpen": 1,
+      "focusedTitle": "Terminal (Failed)",
+      "frame": "ptyxis.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 3707.049775,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 33.184906453002775,
+        "orbitMachinePercent": 8.296226613250694,
+        "hostBusyPercent": 8.83940620782726,
+        "hostIowaitPercent": 0.33738191632928477
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Characters",
+      "family": "GTK4 libadwaita",
+      "toolkit": "wayland",
+      "launchMs": 1121,
+      "pid": 48189,
+      "windowsOpen": 1,
+      "focusedTitle": "Characters",
+      "frame": "characters.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 3134.9477290000004,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 22.460916763821423,
+        "orbitMachinePercent": 5.615229190955356,
+        "hostBusyPercent": 6.0606060606060606,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Clocks",
+      "family": "GTK4 libadwaita",
+      "toolkit": "wayland",
+      "launchMs": 709,
+      "pid": 48226,
+      "windowsOpen": 1,
+      "focusedTitle": "Clocks",
+      "frame": "clocks.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2720.095043000001,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 8.874910478633591,
+        "orbitMachinePercent": 2.218727619658398,
+        "hostBusyPercent": 2.3020257826887662,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Weather",
+      "family": "GTK4 libadwaita, network backed",
+      "toolkit": "wayland",
+      "launchMs": 762,
+      "pid": 48258,
+      "windowsOpen": 1,
+      "focusedTitle": "Weather",
+      "frame": "weather.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2774.0429409999997,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 11.424300443083878,
+        "orbitMachinePercent": 2.8560751107709694,
+        "hostBusyPercent": 2.9783393501805056,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Loupe",
+      "family": "GTK4, GPU image viewer",
+      "toolkit": "wayland",
+      "launchMs": 717,
+      "pid": 48286,
+      "windowsOpen": 1,
+      "focusedTitle": "Image Viewer",
+      "frame": "loupe.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2728.1103089999997,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 9.079361607294892,
+        "orbitMachinePercent": 2.269840401823723,
+        "hostBusyPercent": 2.5617566331198534,
+        "hostIowaitPercent": 0.09149130832570906
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Papers",
+      "family": "GTK4 document viewer",
+      "toolkit": "wayland",
+      "launchMs": 711,
+      "pid": 48313,
+      "windowsOpen": 1,
+      "focusedTitle": "Document Viewer",
+      "frame": "papers.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2722.799444,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 8.736376104533976,
+        "orbitMachinePercent": 2.184094026133494,
+        "hostBusyPercent": 2.3875114784205693,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Showtime",
+      "family": "GTK4 video player",
+      "toolkit": "wayland",
+      "launchMs": 1117,
+      "pid": 48335,
+      "windowsOpen": 1,
+      "focusedTitle": "Video Player",
+      "frame": "showtime.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 3127.1230780000005,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 16.858786394080006,
+        "orbitMachinePercent": 4.214696598520002,
+        "hostBusyPercent": 4.250200481154772,
+        "hostIowaitPercent": 0.16038492381716118
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Snapshot",
+      "family": "GTK4 camera, no camera on this host",
+      "toolkit": "wayland",
+      "launchMs": 759,
+      "pid": 48361,
+      "windowsOpen": 1,
+      "focusedTitle": "Camera",
+      "frame": "snapshot.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2778.7486820000013,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 21.05166990412988,
+        "orbitMachinePercent": 5.26291747603247,
+        "hostBusyPercent": 5.675675675675676,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Font Viewer",
+      "family": "GTK4",
+      "toolkit": "wayland",
+      "launchMs": 712,
+      "pid": 48389,
+      "windowsOpen": 1,
+      "focusedTitle": "Fonts",
+      "frame": "font-viewer.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2724.198605999998,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 15.714125947247485,
+        "orbitMachinePercent": 3.9285314868118713,
+        "hostBusyPercent": 4.224058769513315,
+        "hostIowaitPercent": 0.09182736455463728
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Inkscape",
+      "family": "GTK3",
+      "toolkit": "wayland",
+      "launchMs": 863,
+      "pid": 48416,
+      "windowsOpen": 1,
+      "focusedTitle": "Inkscape 1.4.4 (dcaf3e7d9e, 2026-05-05)",
+      "frame": "inkscape.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2880.3329490000033,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 25.72504683034125,
+        "orbitMachinePercent": 6.431261707585312,
+        "hostBusyPercent": 6.857638888888889,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "LibreOffice Writer",
+      "family": "VCL with the gtk3 plugin",
+      "toolkit": "wayland",
+      "launchMs": 1070,
+      "pid": 48543,
+      "windowsOpen": 1,
+      "focusedTitle": "coverage.txt — LibreOffice Writer",
+      "frame": "libreoffice-writer.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 3080.754301000001,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 34.30286536180347,
+        "orbitMachinePercent": 8.575716340450867,
+        "hostBusyPercent": 9.024390243902438,
+        "hostIowaitPercent": 0.08130081300813008
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Konsole",
+      "family": "Qt 6, KDE Frameworks terminal",
+      "toolkit": "wayland",
+      "status": "failed",
+      "code": "BACKEND_FAILED",
+      "message": "Application exited before mapping",
+      "afterMs": 156
+    },
+    {
+      "name": "Dolphin",
+      "family": "Qt 6, KDE Frameworks file manager",
+      "toolkit": "wayland",
+      "status": "failed",
+      "code": "BACKEND_FAILED",
+      "message": "Application exited before mapping",
+      "afterMs": 104
+    },
+    {
+      "name": "kitty",
+      "family": "GLFW, OpenGL terminal",
+      "toolkit": "wayland",
+      "launchMs": 606,
+      "pid": 48692,
+      "windowsOpen": 1,
+      "focusedTitle": "~/src",
+      "frame": "kitty.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2615.2304249999943,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 23.773889828465165,
+        "orbitMachinePercent": 5.943472457116291,
+        "hostBusyPercent": 6.124401913875598,
+        "hostIowaitPercent": 0.09569377990430622
+      },
+      "closed": true,
+      "status": "mapped"
+    },
+    {
+      "name": "Calculator under Xwayland",
+      "family": "GTK4 forced to X11",
+      "toolkit": "x11",
+      "launchMs": 659,
+      "pid": 48752,
+      "windowsOpen": 1,
+      "focusedTitle": "Calculator",
+      "frame": "calculator-under-xwayland.jpg",
+      "cpuLaunchToFrame": {
+        "elapsedMs": 2672.055002999994,
+        "logicalCpus": 4,
+        "orbitOneCorePercent": 18.269197282687863,
+        "orbitMachinePercent": 4.567299320671966,
+        "hostBusyPercent": 4.873477038425492,
+        "hostIowaitPercent": 0
+      },
+      "closed": true,
+      "status": "mapped"
+    }
+  ],
+  "summary": {
+    "attempted": 15,
+    "mapped": 13,
+    "failed": 2,
+    "launchMsRange": [
+      606,
+      1693
+    ]
+  },
+  "status": "completed",
+  "limitations": [
+    "One private display at 1280 by 800 with software rendering; a GPU application here renders through llvmpipe.",
+    "Each application is launched alone and closed before the next, so this says nothing about how many run together within the budget; multi-application.ts measures that.",
+    "Mapping a window and drawing a first frame is what is checked; no application was driven further than its first window.",
+    "Applications run with private XDG base directories, which stops session restore and is not a security boundary."
+  ]
+}
