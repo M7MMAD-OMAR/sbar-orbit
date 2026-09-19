@@ -56,14 +56,18 @@ export async function restrictSocketToOwner(socket: string): Promise<void> {
   // Verified, not assumed. `icacls` reports success in cases where the result is not what was asked
   // for, and a control channel whose protection was never checked is a control channel that is
   // protected until the first time it is not.
+  // PowerShell 7 hosts export module paths that Windows PowerShell 5 cannot load.
+  // Let the fixed system executable discover its own modules in this child only.
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
   const listed = Bun.spawnSync([`${system32}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
-    "-NoProfile", "-Command",
-    `(Get-Acl -LiteralPath '${socket.replace(/'/g, "''")}').Access | ForEach-Object { "$($_.IdentityReference)" }`]);
+    "-NoProfile", "-NonInteractive", "-Command",
+    `$ErrorActionPreference='Stop'; (Get-Acl -LiteralPath '${socket.replace(/'/g, "''")}').Access | ForEach-Object { "$($_.IdentityReference)" }`], { env });
   const principals = listed.stdout.toString().trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   // An empty read means the probe failed, not that the socket is private. Passing on an empty result
   // is how this check would quietly stop guarding anything, which is the mistake `tests/private-path.ts`
   // already calls out for the diagnostics files.
-  if (principals.length === 0)
+  if (listed.exitCode !== 0 || principals.length === 0)
     throw new OrbitError("SOCKET_UNPROTECTED", "Cannot read the broker socket's ACL to confirm it is private");
   const exposed = principals.filter(name =>
     /Everyone|ANONYMOUS LOGON|\\Users$|INTERACTIVE|Authenticated Users|Guests/i.test(name));

@@ -31,8 +31,11 @@ const windowsOnly = process.platform !== "win32";
 test.skipIf(windowsOnly)("a bound broker socket is reachable by its owner and nobody else", async () => {
   const broker = await startBroker({});
   try {
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
     const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
-      `(Get-Acl -LiteralPath '${broker.socket}').Access | ForEach-Object { "$($_.IdentityReference)" }`]);
+      `(Get-Acl -LiteralPath '${broker.socket}').Access | ForEach-Object { "$($_.IdentityReference)" }`], { env });
+    expect(listed.exitCode).toBe(0);
     const principals = listed.stdout.toString().trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     // An empty read is a failed probe, not a private socket. Asserting on an empty list is how this
     // check would quietly stop guarding anything.

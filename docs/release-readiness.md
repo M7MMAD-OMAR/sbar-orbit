@@ -53,3 +53,13 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
   macOS failure logs remain to be triaged.
 
 Record each platform's revision, command, result and limits. A skipped test is not a pass.
+
+## Windows CI module-path diagnosis
+
+Run `35450156822` reproduced the ACL read failure on an ordinary file and an
+AF_UNIX socket. Windows PowerShell reported `CouldNotAutoloadMatchingModule`
+for `Microsoft.PowerShell.Security` when it inherited the runner's PowerShell 7
+module path. The same executable and paths succeeded after removing only
+`PSModulePath` from the child environment. The broker now applies that isolation
+to its ACL reader and refuses nonzero exits as well as empty reads. ACL assertions
+remain enabled. Remote verification of the correction is pending.

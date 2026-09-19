@@ -20,8 +20,11 @@ export async function expectPrivatePath(path: string, posixMode: number) {
     expect((await stat(path)).mode & 0o777).toBe(posixMode);
     return;
   }
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
   const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
-    `(Get-Acl -LiteralPath '${path}').Access | ForEach-Object { "$($_.IdentityReference)" }`]);
+    `(Get-Acl -LiteralPath '${path}').Access | ForEach-Object { "$($_.IdentityReference)" }`], { env });
+  expect(listed.exitCode).toBe(0);
   const principals = listed.stdout.toString().trim().split(/\r?\n/).map(entry => entry.trim()).filter(Boolean);
   // The ACL has to say something. An empty read means the probe failed, not that the file is private,
   // and passing on an empty result is how this check would quietly stop guarding anything.
