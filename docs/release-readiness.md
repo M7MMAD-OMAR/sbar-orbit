@@ -155,5 +155,8 @@ frame within the default 3000 ms capture budget. Unlike the previous endpoint
 startup failure, this run reached frame capture. Neither increasing the timeout
 nor a successful rerun alone establishes acceptable performance. The next
 investigation must distinguish capture latency from browser startup latency and
-retain evidence for the failing operation. The macOS full suite was still running
-when this entry was recorded.
+retain evidence for the failing operation. The macOS full suite finished with 362 passes, 103 skips and three failures:
+MCP multi-client control, viewer report download, and viewer session rail.
+The installed command probe now retains per-command timings beside its capture
+artifact, including the failing command, without recording session identifiers or
+action contents. This supplies stage evidence before changing capture behavior.

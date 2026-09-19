@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { requireResourceBudget } from "../src/resource-budget";
@@ -19,6 +19,10 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
 });
 type Reply = { ok: boolean; result?: Record<string, unknown>; error?: { code?: string; message?: string } };
 async function invoke(args: string[], allowFailure = false): Promise<Reply> {
+  // Retain stage timings even when a later command fails. Only fixed command
+  // names are recorded, never session IDs, local paths or action contents.
+  const operation = args[0] === "session" ? `session ${args[1]}` : args[0];
+  const invokedAt = performance.now();
   const child = Bun.spawn([installedLauncher, ...args], {
     stdout: "pipe", stderr: "pipe", env: { ...process.env,
       ORBIT_AGENT_NAME: "installation-test", ORBIT_TASK_NAME: "installed browser acceptance" },
@@ -26,10 +30,12 @@ async function invoke(args: string[], allowFailure = false): Promise<Reply> {
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
+  await appendFile(`${frame}.timings.jsonl`, JSON.stringify({ operation,
+    elapsedMs: Math.round(performance.now() - invokedAt), exitCode: code }) + "\n");
   let reply: Reply;
   try { reply = JSON.parse(code === 0 ? stdout : stderr); }
-  catch { throw new Error(`Installed command returned no JSON: ${args[0]}, exit ${code}, stderr bytes ${stderr.length}`); }
-  if (!allowFailure && (code !== 0 || !reply.ok)) throw new Error(`Installed command failed: ${args[0]}, ${reply.error?.code ?? code}: ${reply.error?.message ?? "no error detail"}`);
+  catch { throw new Error(`Installed command returned no JSON: ${operation}, exit ${code}, stderr bytes ${stderr.length}`); }
+  if (!allowFailure && (code !== 0 || !reply.ok)) throw new Error(`Installed command failed: ${operation}, ${reply.error?.code ?? code}: ${reply.error?.message ?? "no error detail"}`);
   return reply;
 }
 let sessionId: string | undefined;
