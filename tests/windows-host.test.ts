@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { serviceSocketPath } from "../src/service";
 import { canCloneProfile, type PlatformCapabilities } from "../src/platform";
 import { windowsBrowserInstalls } from "../src/runtime-paths";
@@ -14,8 +14,10 @@ import { windowsBrowserInstalls } from "../src/runtime-paths";
  */
 
 test("a managed broker on Windows binds under LOCALAPPDATA, where no runtime directory exists", () => {
+  // `win32.join`: built with the host's `join` this expectation carried forward slashes on Linux, so
+  // the test asserted the host-bound path bug rather than catching it.
   expect(serviceSocketPath("", { LOCALAPPDATA: "C:\\Users\\someone\\AppData\\Local" }, "win32"))
-    .toBe(join("C:\\Users\\someone\\AppData\\Local", "sbar-orbit", "broker.sock"));
+    .toBe(win32.join("C:\\Users\\someone\\AppData\\Local", "sbar-orbit", "broker.sock"));
 });
 
 test("Linux still refuses a managed socket with no runtime directory rather than inventing one", () => {
@@ -23,7 +25,9 @@ test("Linux still refuses a managed socket with no runtime directory rather than
 });
 
 test("an explicit runtime directory wins on either platform", () => {
-  expect(serviceSocketPath("/run/user/1000", {}, "win32")).toBe(join("/run/user/1000", "sbar-orbit", "broker.sock"));
+  // A caller stating a path on Windows gets it joined the Windows way, which is what the product does
+  // with it. The POSIX-looking input is deliberate: an explicit directory wins whatever its shape.
+  expect(serviceSocketPath("/run/user/1000", {}, "win32")).toBe(win32.join("/run/user/1000", "sbar-orbit", "broker.sock"));
 });
 
 /**

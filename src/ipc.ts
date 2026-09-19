@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Sessions } from "./session";
 import { OrbitError } from "./errors";
+import { restrictSocketToOwner } from "./socket-acl";
 import { startPreview } from "./preview";
 import { settingsRequest } from "./desktop-settings";
 import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
@@ -76,6 +77,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     },
   });
   await chmod(socket, 0o600);
+  await restrictSocketToOwner(socket);
   // Recorded once the socket answers, since answering is what marks the workspace as owned.
   await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {

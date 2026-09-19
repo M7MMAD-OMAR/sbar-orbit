@@ -1985,3 +1985,105 @@ guest exists.
   ordinary file under `%LOCALAPPDATA%`.
 - Whether `%LOCALAPPDATA%` on a domain-joined or roaming-profile machine inherits only the three ACEs
   measured on this one guest.
+
+## 34. The two findings section 33 deferred, now measured and fixed
+
+Section 33 left two audit findings alone on purpose and said so: the broker socket's DACL, and the XDG
+variables being honoured ahead of the Windows branch. Both were trust-model changes that deserved their
+own commit and their own measurement. This is that commit.
+
+### What `chmod(socket, 0o600)` actually does on Windows
+
+Recorded as `not measured` in section 33, because the auditor reasoned about it from the code rather
+than from a running socket. Measured now, against the real `Bun.serve({ unix })` socket, read WHILE it
+was bound. That detail is the whole probe: Bun unlinks the socket on stop, so the first attempt looked
+after the server stopped, found nothing, and printed `no socket file at the expected path`, which reads
+as a missing file rather than as a failed measurement.
+
+```
+chmod(0o600): returned without throwing
+stat mode:    EACCES        (the live socket refuses stat, as section 25 already measured)
+attributes:   Archive, ReparsePoint
+owner:        BUILTIN\Administrators
+ACE: BUILTIN\Administrators            | FullControl          | inherited=True
+ACE: NT AUTHORITY\SYSTEM               | FullControl          | inherited=True
+ACE: BUILTIN\Users                     | ReadAndExecute       | inherited=True
+ACE: NT AUTHORITY\Authenticated Users  | Modify, Synchronize  | inherited=True
+```
+
+`chmod` returns successfully and does not touch the DACL. Not even the read-only attribute survives on
+a socket: the attributes are `Archive, ReparsePoint`.
+
+**Whether that is an exposure depends on where the socket binds**, which is why both ends were measured
+rather than assuming the worse one:
+
+| Directory | Inherited ACEs |
+|---|---|
+| `%LOCALAPPDATA%` (a managed broker) | SYSTEM, Administrators, the owning user. No Everyone, no Users |
+| A directory under the drive root (`C:\orbit`) | adds `BUILTIN\Users: ReadAndExecute` and `Authenticated Users: Modify` |
+
+An unmanaged broker binds under `mkdtemp(tmpdir())`, and `TMP` is whatever the environment says it is.
+Behind that socket the control channel accepts `session.create`, `session.act` and `session.observe`
+with no caller authentication, so "whoever can open the file" is the entire boundary.
+
+`restrictSocketToOwner` now states the DACL instead of inheriting one: `icacls /inheritance:r`, which
+REMOVES the inherited entries rather than adding a grant on top of them, then one entry for the owning
+user. `icacls` is spawned absolutely through `%SystemRoot%` for the same reason the registry probe is.
+The result is then read back and checked, because `icacls` reports success in cases where the outcome is
+not what was asked for, and an empty ACL read is treated as a failed probe rather than as a private
+socket. A socket that cannot be made private throws rather than being served.
+
+### XDG variables no longer relocate Windows state
+
+`workspaceRoot`, `stateDirectory` and `serviceSocketPath` each honoured their XDG variable BEFORE the
+Windows branch. A Windows process that has `XDG_CACHE_HOME` set got it from Git Bash, MSYS2 or an agent
+host, not from a person choosing a cache location.
+
+This mattered because the check that would catch a world readable directory does not run there:
+`createWorkspaceDirectory` skips the uid and mode assertions on Windows, since Windows stores no mode,
+and the ACL reasoning that replaces them is about `%LOCALAPPDATA%` specifically. Relocating the
+directory kept the reasoning and lost the ACL, and the table above is what the destination can look
+like. The socket case is the worst of the three, since it moves the control channel itself.
+
+All three now ignore XDG on win32, which is what `updateRoot` already did. An explicitly passed runtime
+directory still wins, because a caller stating a path is not a POSIX variable leaking in from a shell.
+
+Both fixes have negative controls: restoring the three `&& !env.XDG_*` conditions fails three of the
+five new tests, naming the hijacked path.
+
+
+### Two more found by this round, neither of them in the fix under test
+
+Running the guest is worth it for what it catches beside the change you went in for.
+
+**A sibling session's new CLI tests spawned bare `"bun"`.** `Bun.spawnSync(["bun", "run", cli, ...])`
+resolves through PATH, and Bun is not on PATH on the guest. The spawn failed, the test then parsed the
+launcher's error text as JSON, and the failure was reported as `SyntaxError: JSON Parse error` for what
+was really a missing program. Four tests, all reading as a parser bug. They use `bunExecutable()` now,
+which is the resolver the install path has used since this port began, for exactly this reason.
+
+**`serviceSocketPath` built the Linux arm with the host's `join`.** Caught by my own test asserting
+`/run/user/1000` and receiving `\run\user\1000` on the guest. Two existing tests then failed on Linux
+once the source was fixed, because THEY had built their Windows expectations with the host's `join`
+too: they were asserting the bug rather than catching it. Source and expectations both corrected.
+
+That is the sixth occurrence of one rule, so it is now asserted directly rather than discovered again:
+`tests/windows-xdg.test.ts` checks that no POSIX answer contains a backslash and no Windows answer
+contains a forward slash, asked from whatever host is running. The four earlier occurrences were each
+found by the guest, and this one would have been too.
+
+### The lock screen came back, by a different route
+
+The guest sat at "The password is incorrect. Try again." and every probe returned an empty string,
+which reads as "no output" rather than as "never ran": the section 27 failure mode, arriving from
+somewhere new. `arm-test-session.ps1` generates a fresh password on every run and resets the account to
+it, so when a previous arming had not been consumed, the stored `DefaultPassword` and the account
+password disagreed. The script now verifies the Winlogon registry values BEFORE the reboot and refuses
+rather than leaving a guest that boots to a password prompt nobody is watching.
+
+### Still not measured
+
+- Whether `%LOCALAPPDATA%` on a domain-joined or roaming-profile machine inherits only the three ACEs
+  measured on this one guest. A redirected AppData is a different ACL question, and the DACL is now
+  written explicitly rather than inherited, which is the point of writing it.
+- Bun's argv-to-command-string quoting on Windows, unchanged from section 33.

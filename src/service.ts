@@ -1,6 +1,6 @@
 import { totalmem, homedir } from "node:os";
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, posix, resolve } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 /**
  * A macOS path is a POSIX path, whatever host computed it.
  *
@@ -100,8 +100,16 @@ export function stateDirectory(env = process.env, platform = process.platform) {
   // `serviceSocketPath` resolves its runtime directory from the declared env rather than a default
   // parameter: the two disagree exactly when the answer matters.
   const home = env.HOME || env.USERPROFILE || homedir();
-  if (platform === "win32" && !env.XDG_STATE_HOME)
-    return join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "sbar-orbit");
+  // XDG is NOT honoured on Windows. It is a POSIX convention, and a Windows process that has
+  // XDG_CACHE_HOME set got it from Git Bash, MSYS2 or an agent host rather than from a person
+  // choosing a cache location, so honouring it moved live session profiles somewhere nothing checks.
+  // The POSIX mode test that would have caught a world readable directory is disabled on Windows
+  // precisely because Windows does not store a mode, and the ACL reasoning that replaces it is about
+  // %LOCALAPPDATA% specifically: measured on the guest as SYSTEM, Administrators and the owning user,
+  // where a drive root directory was measured handing down Authenticated Users: Modify. `updateRoot`
+  // already ignores XDG on Windows for this reason; these three now agree with it.
+  if (platform === "win32")
+    return win32.join(env.LOCALAPPDATA || win32.join(home, "AppData", "Local"), "sbar-orbit");
   // macOS keeps a per user application's own records under `~/Library/Application Support`, and the
   // diagnostics journal is exactly that: state the person may want to read and paste into an issue,
   // not a cache that can be regenerated and not configuration. The same branch as the socket, for
@@ -123,7 +131,11 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
   // test of this rule and the reason the macOS branch below was unreachable from any host that has a
   // runtime directory of its own. An explicit directory still wins over both, including one that
   // happens to equal this host's.
-  const runtime = runtimeDirectory ?? env.XDG_RUNTIME_DIR;
+  // On Windows an XDG_RUNTIME_DIR from the environment is ignored for the reason given on
+  // `stateDirectory`: it would relocate the CONTROL CHANNEL, whose only boundary is the ACL of the
+  // directory it binds in. An explicitly passed directory still wins, since that is a caller stating
+  // a path rather than a POSIX variable leaking in from a shell.
+  const runtime = runtimeDirectory ?? (platform === "win32" ? undefined : env.XDG_RUNTIME_DIR);
   // macOS has no XDG_RUNTIME_DIR either, and the obvious substitute is wrong: the per user
   // `$TMPDIR` under /var/folders is periodically swept, so a socket there can be removed out from
   // under a live broker. `~/Library/Application Support` is not swept, is per user, and is not
@@ -148,9 +160,16 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
   // person logs out and this is not, so a socket file can outlive the broker that bound it. That is
   // what `claimSocket` already handles, by probing the socket before replacing it.
   if (!runtime && platform === "win32")
-    return join(env.LOCALAPPDATA || join(home, "AppData", "Local"), "sbar-orbit", "broker.sock");
+    return win32.join(env.LOCALAPPDATA || win32.join(home, "AppData", "Local"), "sbar-orbit", "broker.sock");
   if (!runtime) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
-  return join(runtime, "sbar-orbit", "broker.sock");
+  // `posix.join` and `win32.join` rather than the host-bound `join` on both of these. With `platform`
+  // injectable, the Windows arm computed from Linux produced forward slashes and the Linux arm computed
+  // from Windows produced `\run\user\1000`, each a path that is only ever used on the other platform.
+  // The rule this port keeps relearning: the moment a function takes `platform`, every path it builds
+  // for a platform that is not this one needs that platform's own join.
+  return platform === "win32"
+    ? win32.join(runtime, "sbar-orbit", "broker.sock")
+    : posix.join(runtime, "sbar-orbit", "broker.sock");
 }
 
 /** Refuse to displace a broker that still answers; clear only a socket file nothing is serving. */

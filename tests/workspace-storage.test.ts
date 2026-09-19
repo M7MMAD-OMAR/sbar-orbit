@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { linuxOnlyTest, needsSymlink } from "./platform-support";
 import { chmod, lstat, mkdir, mkdtemp, symlink } from "node:fs/promises";
-import { resolve, join, posix } from "node:path";
+import { resolve, join, posix, win32 } from "node:path";
 import { createWorkspaceDirectory, workspaceRoot } from "../src/workspace-storage";
 import { tmpdir } from "node:os";
 
@@ -132,8 +132,10 @@ test("the workspace root follows the platform's own private per user location", 
   // on Linux this test asserted the absence of the branch rather than its result, and the one path a
   // Windows user depends on was verified by inference. That is this project's own "not measured"
   // rule being bent inside the test for it.
+  // `win32.join`, not `join`: the host's separator would build the Windows expectation with forward
+  // slashes on Linux, which is asserting the very bug this file was fixed for.
   expect(workspaceRoot({ LOCALAPPDATA: "C:\\Users\\x\\AppData\\Local" } as NodeJS.ProcessEnv, "win32"))
-    .toBe(join("C:\\Users\\x\\AppData\\Local", "sbar-orbit", "workspaces"));
+    .toBe(win32.join("C:\\Users\\x\\AppData\\Local", "sbar-orbit", "workspaces"));
   // And LOCALAPPDATA alone must still not divert a POSIX host, which is the other half of the rule.
   // Asked with `posix.join`, not `join`: the host's separator would compare a backslash path against
   // a POSIX answer about Linux, which is the same mistake the darwin path builders made and the same

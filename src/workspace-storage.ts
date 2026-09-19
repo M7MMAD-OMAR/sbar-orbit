@@ -1,6 +1,6 @@
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm, statfs, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, posix } from "node:path";
+import { isAbsolute, join, posix, win32 } from "node:path";
 import { OrbitError } from "./errors";
 
 /**
@@ -14,8 +14,16 @@ export function workspaceRoot(env = process.env, platform = process.platform) {
   // reached from a test on any other host, so the one path a Windows user depends on would be
   // verified only by inference. That is this project's own "not measured" rule being bent inside a
   // function it applies to. `serviceSocketPath` and `connectorConfigDirectory` already take it.
-  if (platform === "win32" && !env.XDG_CACHE_HOME)
-    return join(env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "workspaces");
+  // XDG is NOT honoured on Windows. It is a POSIX convention, and a Windows process that has
+  // XDG_CACHE_HOME set got it from Git Bash, MSYS2 or an agent host rather than from a person
+  // choosing a cache location, so honouring it moved live session profiles somewhere nothing checks.
+  // The POSIX mode test that would have caught a world readable directory is disabled on Windows
+  // precisely because Windows does not store a mode, and the ACL reasoning that replaces it is about
+  // %LOCALAPPDATA% specifically: measured on the guest as SYSTEM, Administrators and the owning user,
+  // where a drive root directory was measured handing down Authenticated Users: Modify. `updateRoot`
+  // already ignores XDG on Windows for this reason; these three now agree with it.
+  if (platform === "win32")
+    return win32.join(env.LOCALAPPDATA || win32.join(homedir(), "AppData", "Local"), "sbar-orbit", "workspaces");
   // `~/Library/Caches` is the documented place for regenerable per user data on macOS, which is
   // exactly what a session workspace is: it holds a fresh browser profile that is thrown away when
   // the session ends. It is excluded from Time Machine by default, which is the right answer for a
