@@ -72,7 +72,7 @@ test("a non numeric token in a process child list is refused by name, not merely
  * failed`, which the project's own comments call the unattributable failure. This pins the set.
  */
 test("every error code the broker can return is in the diagnostics allowlist", async () => {
-  const diagnostics = await Bun.file(new URL("../../src/diagnostics.ts", import.meta.url).pathname).text();
+  const diagnostics = await Bun.file(new URL("../../src/diagnostics.ts", import.meta.url)).text();
   const allowlisted = new Set([...diagnostics.matchAll(/'([A-Z_]{4,})'/g)].map(match => match[1]));
   expect(allowlisted.size).toBeGreaterThan(10);
 
@@ -81,7 +81,7 @@ test("every error code the broker can return is in the diagnostics allowlist", a
   const sources = ["session", "policy", "browser", "fedora", "chrome", "clone", "profiles", "egress", "restore", "advisor"];
   const thrown = new Set<string>();
   for (const name of sources) {
-    const text = await Bun.file(new URL(`../../src/${name}.ts`, import.meta.url).pathname).text();
+    const text = await Bun.file(new URL(`../../src/${name}.ts`, import.meta.url)).text();
     for (const match of text.matchAll(/new OrbitError\("([A-Z_]+)"/g)) thrown.add(match[1]!);
   }
   expect(thrown.size).toBeGreaterThan(8);

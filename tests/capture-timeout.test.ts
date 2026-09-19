@@ -57,8 +57,9 @@ test("the default is read from the environment, and only from there", () => {
   // after it in the same file.
   const read = (env: Record<string, string | undefined>) => {
     const probe = Bun.spawnSync(["bun", "-e",
-      `import('${fileURLToPath(new URL("../src/browser.ts", import.meta.url))}').then(m => console.log(m.captureTimeoutMs()))`],
+      `import(${JSON.stringify(new URL("../src/browser.ts", import.meta.url).href)}).then(m => console.log(m.captureTimeoutMs()))`],
       { env: { ...process.env, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe" });
+    expect(probe.exitCode).toBe(0);
     return Number(probe.stdout.toString().trim());
   };
   expect(read({ ORBIT_CAPTURE_TIMEOUT_MS: "30000" })).toBe(30_000);

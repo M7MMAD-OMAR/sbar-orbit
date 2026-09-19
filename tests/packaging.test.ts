@@ -36,7 +36,7 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     const packed = (await readdir(destination)).filter(entry => entry.endsWith(".tgz"));
     expect(packed.length).toBe(1);
     const archive = join(destination, packed[0]!);
-    const shipped = (await run(["tar", "tzf", archive], destination)).split("\n")
+    const shipped = (await run(["tar", "tzf", archive], destination)).split(/\r?\n/)
       .filter(Boolean).map(entry => entry.replace(/^package\//, "")).filter(entry => !entry.endsWith("/"));
     const tracked = new Set((await run(["git", "ls-files", "-z"], project)).split("\0").filter(Boolean));
 
