@@ -232,3 +232,11 @@ GitHub verify is temporarily disabled at the user's request after repeated faile
 runs generated unwanted notifications. Run 35476489102 was cancelled. No new
 pushes or CI runs are authorized until the outstanding failures are addressed and
 verified. Disabling the workflow is operational containment, not a passing gate.
+
+Local verification after the viewer cleanup change first returned 442 passes,
+26 skips and two installer-contract failures. Those two tests passed in isolation.
+Their assertions discarded installer stderr, so they now retain failure output.
+The subsequent native-enabled full suite returned 444 passes, 26 skips and zero
+failures across 470 tests in 92 files, in 160.74 seconds. Typecheck also passed.
+The intermittent installer failure has not been explained by that successful
+rerun and remains open. These changes remain local; verify stays disabled.

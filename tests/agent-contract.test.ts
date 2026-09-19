@@ -25,9 +25,10 @@ test("one install command registers all selected hosts and repeating it preserve
     const child = Bun.spawn([installer, "--no-service", "--connect", "claude,codex,hermes",
       "--prefix", join(root, "prefix with spaces"), "--json", ...extra],
       { env, cwd: project, stdout: "pipe", stderr: "pipe" });
-    const [output, , exit] = await Promise.all([
+    const [output, stderr, exit] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
+    if (exit !== 0) throw new Error(`Installer exited ${exit}: ${stderr || output}`);
     expect(exit).toBe(0);
     const report = JSON.parse(output);
     expect(report.installed).toBe(true);
@@ -45,7 +46,8 @@ test("the documented plan command returns the documented report", async () => {
   try {
     const child = Bun.spawn([installer, "--dry-run", "--json", "--prefix", prefix],
       { cwd: project, stdout: "pipe", stderr: "pipe" });
-    const [text, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    const [text, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    if (code !== 0) throw new Error(`Installer plan exited ${code}: ${stderr || text}`);
     expect(code).toBe(0);
     const report = JSON.parse(text);
     // Every field the contract tells an agent to read.
