@@ -63,6 +63,13 @@ What carries the glass is not what shows through it: a vertical gradient, a hair
 text colour around the edge, and a white sheen that is brightest along the top and gone before it reaches
 the card.
 
+<img src="images/panel-card-detail.jpg" alt="The same card closer: the gradient climbing to a near solid behind the text, the hairline around the edge, and the neck joining the card to the mark at the screen edge" width="720">
+
+The same frame closer, which is where the paragraph above can be checked rather than taken on trust:
+the fill is darkest behind the two rows of text and opens up towards the wallpaper at the bottom, the
+hairline runs the whole outline, and the neck on the right is one body with the capsule around the mark
+rather than a second surface drawn beside it.
+
 There is no backdrop blur in it, and there cannot be a portable one: GTK cannot sample what is behind its
 own surface, and Wayland has no cross compositor protocol for it. Compositors that do offer one can blur
 the panel from the outside, because the surface names itself. On Hyprland:

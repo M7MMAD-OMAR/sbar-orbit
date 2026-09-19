@@ -42,6 +42,8 @@ const reviewedBinaries = new Map([
   // No window contents, no account, no file path, no address bar, and the metadata was stripped at
   // export rather than trusted to be absent.
   ["docs/images/panel-card-on-desktop.jpg", "716fd377ea867250b1314767f583b6dbde7c77ca65acb9775205f835720617e5"],
+  // The same frame, cropped closer onto the card for the glass section. Same review, same content.
+  ["docs/images/panel-card-detail.jpg", "8904fab65af445f13f7a0aea661c4ea87483e38927b14efbec508f1aa05fc938"],
   ["website/public/brand/logo-white.png", "8f503621e67e794946247dac93ae0f12b4d2d12946376c19c27b7da6d6a9c07e"],
   ["website/public/brand/logo.png", "9f2fd99fdc6f92921d73a515c15199b652d741d35038ea776c7160298b020277"],
   ["website/public/fonts/dm-sans-latin.woff2", "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543"],
