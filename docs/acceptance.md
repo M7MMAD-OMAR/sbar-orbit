@@ -13,7 +13,7 @@ Targets below are proposed release gates, not measured results. Current evidence
 | U7 / T7 | Any supported agent can use the same workspace | Identical navigation, input, observation and stop contract through CLI, MCP and API harness; two actual host integrations pass |
 | U8 / T8 | I ask for an unsupported desktop action | Explicit `UNSUPPORTED`; zero fallback input or focus change on the host |
 | U9 / T9 | I work on Fedora native apps | A Wayland app and an X11 app accept text and clicks on the private display; capture matches their state |
-| U10 / T10 | Orbit fails or restarts | No host fallback, stale session rejected, owned children reaped, fresh session works |
+| U10 / T10 | Orbit fails or restarts | No host fallback, stale session rejected, owned children reaped, fresh session works. The process half is measured by `tests/browser-crash.test.ts`. The FILESYSTEM half was false until 19 September 2026 and is named here rather than quietly fixed: a SIGKILLed broker left its egress socket directory on tmpfs with nothing to sweep it, measured at 33 abandoned directories on the developer's own machine, and tmpfs pages are charged to the cgroup that wrote them. `cleanEgress` now runs from `clean` and from a managed broker's startup. The kill itself still reclaims nothing, because nothing runs between SIGKILL and the successor; what closes it is that `Restart=on-failure` with `RestartSec=2` guarantees a successor within seconds |
 | U11 / T11 | Orbit uses my files | Only the selected fixture is modified as intended; simultaneous edits follow lease/worktree policy |
 | U12 / T12 | I use another OS | Repeat T1-T11 on actual macOS/Windows hosts; unsupported operations remain visible in the matrix |
 
