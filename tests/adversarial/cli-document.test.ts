@@ -53,7 +53,7 @@ function runAct(reference: string, directory: string, timeoutMs = 10000) {
  * Remove `.failing` when the parser's message is replaced by the position and length of the failure,
  * or when the quoted token is stripped.
  */
-test.failing("an unparsable action document does not echo the file's content back", async () => {
+test("an unparsable action document does not echo the file's content back", async () => {
   const directory = await mkdtemp(join(tmpdir(), "adversarial-act-"));
   try {
     const secrets = join(directory, "secrets.env");
@@ -88,7 +88,7 @@ test.failing("an unparsable action document does not echo the file's content bac
  * Remove `.failing` when the read is bounded, by refusing a path that is not a regular file or by
  * capping the bytes taken.
  */
-test.failing("an action document that never ends is refused rather than read forever", async () => {
+test("an action document that never ends is refused rather than read forever", async () => {
   const directory = await mkdtemp(join(tmpdir(), "adversarial-act-endless-"));
   try {
     // An endless device. The read must end, whatever it decides.

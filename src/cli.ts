@@ -27,13 +27,54 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
   else if (argument?.startsWith("@")) {
     const path = argument.slice(1);
     source = path;
-    try { raw = await Bun.file(path).text(); }
+    // A REGULAR FILE, checked before anything is read. `Bun.file(path).text()` on a character device
+    // reads without bound: measured on Fedora 44, `act s @/dev/zero` reached 8.4 GiB resident in 8
+    // seconds with nothing on stdout and no error, and a FIFO nobody writes to hangs on the same
+    // line with no memory growth at all, which is the quiet form of it. The documented remedy for a
+    // shell that eats quotes IS `@path`, so a mistyped path that lands on a device turns a one line
+    // command into an out of memory event, and on a machine where several agents share one budget
+    // that is everyone's problem rather than this process's.
+    const file = Bun.file(path);
+    const { statSync } = await import("node:fs");
+    let regular: boolean;
+    try { regular = statSync(path).isFile(); }
+    catch { throw new OrbitError("INVALID_REQUEST", `No action document at ${path}`); }
+    if (!regular) throw new OrbitError("INVALID_REQUEST",
+      `The action document at ${path} is not a regular file. A device, a FIFO or a directory cannot be read as one.`);
+    // And a ceiling even on a regular file, since a regular file can also be enormous. An action
+    // document is a small object; a megabyte is already far past anything legitimate.
+    if (file.size > 1_048_576) throw new OrbitError("INVALID_REQUEST",
+      `The action document at ${path} is ${file.size} bytes. An action document is a small JSON object, and anything past 1 MiB is a mistyped path.`);
+    try { raw = await file.text(); }
     catch { throw new OrbitError("INVALID_REQUEST", `No action document at ${path}`); }
   }
   try { return JSON.parse(raw); }
   catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new OrbitError("INVALID_REQUEST", `The action document from ${source} is not JSON: ${detail}. Where a shell eats quotes, pass it as a file with @path or on standard input with a bare -.`);
+    // The parser's message is NOT repeated, and that is the whole point of this branch. Bun quotes
+    // the offending token in it, so a file that can be read but not parsed had its first token
+    // echoed to stdout: `act s @secrets.env` answered with the name and value sitting at the top of
+    // that file. Not a privilege boundary, since the CLI runs as the person and could read the file
+    // anyway, but a disclosure into a channel that LEAVES the process: an agent host captures this
+    // stdout, and a person pasting a failed command into an issue pastes the first token of whatever
+    // they pointed at. src/policy.ts and src/diagnostics.ts both work to keep file content out of
+    // every record; this path put it into one.
+    //
+    // The parse failure is reported WITHOUT the parser's message and without any content from the
+    // document. Bun's message carries no position, only the quoted token, so there is no position to
+    // report either.
+    //
+    // Recovering one by bisection was tried and removed: it assumed Bun distinguishes an INCOMPLETE
+    // document from a WRONG one, and it does not. `{`, `{"a"` and `{"type": "observe",` all fail
+    // with ordinary syntax messages rather than an end-of-input one, so every prefix reads as wrong,
+    // the search collapses to zero, and the answer is a confident "at position 0" on every document
+    // alike. A number that is always the same number is worse than no number: it reads as a
+    // measurement and is not one.
+    //
+    // The document's LENGTH is reported, which is the one fact available here that is both true and
+    // useful: it separates "the shell truncated my JSON" from "my JSON is wrong" without quoting a
+    // single byte of it.
+    throw new OrbitError("INVALID_REQUEST",
+      `The action document from ${source} is not JSON (${raw.length} bytes read). Where a shell eats quotes, pass it as a file with @path or on standard input with a bare -.`);
   }
 }
 
