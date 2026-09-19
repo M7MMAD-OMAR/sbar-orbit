@@ -37,8 +37,32 @@ import { fileURLToPath } from "node:url";
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 test("the capture budget defaults to the 3000 ms it used to hardcode", () => {
-  expect(captureTimeoutMs(undefined)).toBe(3000);
+  // The argument is passed EXPLICITLY, because `captureTimeoutMs()` with no argument falls through
+  // to its default parameter, which reads the live environment. This test called it with
+  // `undefined`, which triggers that same default, so it asserted the product's behaviour on THIS
+  // machine's environment rather than the default itself. It passed here and failed on the Fedora
+  // gate 3 VM, where the run deliberately exported ORBIT_CAPTURE_TIMEOUT_MS=30000 because a
+  // software rendered guest paints slowly: correct code, correct configuration, and a red test.
+  //
+  // A test that reads ambient environment is a test whose result depends on who runs it. The
+  // function's env-reading path is covered separately below, with the variable set on purpose.
   expect(captureTimeoutMs("")).toBe(3000);
+  expect(captureTimeoutMs(undefined as unknown as string)).not.toBeNaN();
+});
+
+test("the default is read from the environment, and only from there", () => {
+  // The other half, asserted deliberately rather than ambiently: a child process with the variable
+  // set sees the raised budget, one with it explicitly cleared sees 3000. Spawned rather than
+  // mutated in place, because mutating process.env inside a test leaks into every test that runs
+  // after it in the same file.
+  const read = (env: Record<string, string | undefined>) => {
+    const probe = Bun.spawnSync(["bun", "-e",
+      `import('${fileURLToPath(new URL("../src/browser.ts", import.meta.url))}').then(m => console.log(m.captureTimeoutMs()))`],
+      { env: { ...process.env, ...env } as Record<string, string>, stdout: "pipe", stderr: "pipe" });
+    return Number(probe.stdout.toString().trim());
+  };
+  expect(read({ ORBIT_CAPTURE_TIMEOUT_MS: "30000" })).toBe(30_000);
+  expect(read({ ORBIT_CAPTURE_TIMEOUT_MS: undefined })).toBe(3000);
 });
 
 test("a slower host can raise the capture budget", () => {
