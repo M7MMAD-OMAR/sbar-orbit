@@ -123,7 +123,15 @@ this workstation. Nothing here is closed by installing Orbit somewhere.
    and a containment experiment that SIGKILLed a supervisor and left 0 of 9 processes alive. The
    macOS budget is `advisory` by construction and the tier table says so. Every one of those is tier
    `Limited`; a person's machine, with a desktop session and their own Keychain, is still what closes
-   the rest. See [porting](porting.md) section 9 and [what macOS measured](macos-measured.md).
+   the rest. Since 19 September 2026 the Keychain row is no longer `Reasoned`: two runners, macOS
+   26.6.2 arm64 and 15.7.9 x64, ran `experiments/macos-keychain.ts`, and the negative control landed
+   on both. Stripping `--use-mock-keychain` and `--password-store=basic` makes the very next headless
+   launch create a `Chrome Safe Storage` item in `login.keychain-db`; keeping them, no item ever
+   appears, and both arms publish a CDP endpoint either way, so the browser does not fail loudly
+   without them, it quietly reaches for the keychain. The row is `Limited` rather than `Measured`
+   because the claim is about a modal on a person's screen and a runner has no window server session
+   to draw one on. See [the fragment](fragments/macos-keychain.md) and [support tiers](support-tiers.md).
+   See [porting](porting.md) section 9 and [what macOS measured](macos-measured.md).
 5. Publish capabilities from evidence; unsupported closed tools remain explicit. The tier table,
    the local `doctor --report` and the issue forms now exist; what they need is a host this project
    does not have. See [support tiers](support-tiers.md).
