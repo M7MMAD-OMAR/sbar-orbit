@@ -83,10 +83,9 @@ test("no platform is left out of the crash handler rule", () => {
   expect(windowsChromeArguments("/tmp/profile", [], {}).some(a => a.includes("disable-crashpad"))).toBe(true);
 });
 
-// `ps` is POSIX and does not exist on Windows, where this failed with ENOENT rather than skipping: an
-// environment fact reported as a product failure, which is what `needsCommand` exists to prevent. The
-// property it checks is not Windows-specific, but the way it checks it is.
-needsCommand("ps", "the launched browser is found by the --user-data-dir in its argv")(
+// Git's ps on Windows cannot enumerate native browser processes. Use the OS process table.
+needsCommand(process.platform === "win32" ? "powershell.exe" : "ps",
+  "the launched browser is found by its private profile in the OS process table")(
   "a launched session's browser does not name the person's own Chrome directory", async () => {
   // The end to end half, and the only one that reads a REAL process rather than the source. Not a
   // timing assertion: the launch argv is read back from the running browser, so it is attributable
@@ -100,14 +99,27 @@ needsCommand("ps", "the launched browser is found by the --user-data-dir in its 
     // asserted about `["bun", "test", ...]`, the second returned early when no pid was found, which
     // is a pass on nothing. The profile path is the identifier that actually exists, so the process
     // is found by the `--user-data-dir` it was launched with.
-    const table = Bun.spawnSync(["ps", "-eo", "pid=,ppid=,args="], { stdout: "pipe" }).stdout.toString().split("\n");
-    const line = table.find(entry => entry.includes(`--user-data-dir=${profile}`) && !entry.includes("--type="));
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.toLowerCase() === "psmodulepath") delete env[key];
+    const command = process.platform === "win32"
+      ? ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+        '$ErrorActionPreference="Stop"; Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }']
+      : ["ps", "-eo", "pid=,ppid=,args="];
+    const result = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    const table = result.stdout.toString().split(/\r?\n/);
+    const line = table.find(entry => entry.includes("--user-data-dir") && entry.includes(profile) && !entry.includes("--type="));
     expect(line).toBeDefined();
     const argv = line!.trim();
-    expect(argv).toContain("--disable-crash-reporter");
+    expect(argv).toContain(process.platform === "win32" ? "--disable-crashpad" : "--disable-crash-reporter");
     // And the consequence, stated directly: nothing in the command line names the person's own
     // browser directory.
     expect(argv.includes(".config/google-chrome")).toBe(false);
+    if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+      for (const brand of ["Google/Chrome", "Microsoft/Edge"]) {
+        expect(argv.toLowerCase()).not.toContain(join(process.env.LOCALAPPDATA, brand, "User Data").toLowerCase());
+      }
+    }
 
     // THE HALF THIS TEST USED TO MISS, and it is the half that mattered. Asserting the browser's own
     // argv proved nothing about the CHILD it starts: Chrome 152 starts crashpad_handler regardless
@@ -121,7 +133,7 @@ needsCommand("ps", "the launched browser is found by the --user-data-dir in its 
     const pid = argv.split(/\s+/)[0]!;
     const handlers = table
       .map(entry => entry.trim().split(/\s+/))
-      .filter(fields => fields[1] === pid && (fields[2] ?? "").includes("crashpad_handler"))
+      .filter(fields => fields[1] === pid && /crashpad[_-]handler/.test(fields.slice(2).join(" ")))
       .map(fields => fields.join(" "));
     for (const handler of handlers) {
       expect(handler).not.toContain(join(homedir(), ".config/google-chrome"));
