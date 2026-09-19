@@ -34,7 +34,7 @@ const supported = (await detectPlatform()).browserBackendSupported;
  *
  * Remove `.failing` when `immuneMatch` decodes each segment before comparing.
  */
-test.failing("the immune set catches a percent encoded spelling of the same endpoint", () => {
+test("the immune set catches a percent encoded spelling of the same endpoint", () => {
   // The control: the canonical spelling is caught, so a table that refused everything would not pass.
   expect(immuneMatch("navigate", "https://bank.test/transfer", "POST")?.id).toBe("money-movement");
   // The attack. Three encodings of the same three tables.
@@ -51,7 +51,7 @@ test.failing("the immune set catches a percent encoded spelling of the same endp
  *
  * Remove `.failing` with the one above.
  */
-test.failing.skipIf(!supported)("an autonomous session is contained by the immune set whichever spelling it navigates to", async () => {
+test.skipIf(!supported)("an autonomous session is contained by the immune set whichever spelling it navigates to", async () => {
   const broker = await openBroker("adversarial-immune");
   const fixture = startFixture();
   try {
@@ -93,7 +93,7 @@ test.failing.skipIf(!supported)("an autonomous session is contained by the immun
  *
  * Remove `.failing` when `parsePolicy` stores the normalised rule origin.
  */
-test.failing("a narrowing rule written with a bare host or a trailing slash still narrows", () => {
+test("a narrowing rule written with a bare host or a trailing slash still narrows", () => {
   const base = { mode: "autonomous" as const, allow: ["read", "navigate", "write"], origins: ["https://example.test"] };
   for (const spelling of ["example.test", "https://example.test/", "HTTPS://example.test"]) {
     const policy = parsePolicy({ ...base,
@@ -122,7 +122,7 @@ test.failing("a narrowing rule written with a bare host or a trailing slash stil
  * Remove `.failing` when a method bearing rule either fires or is refused at parse time as
  * unsupported for this backend.
  */
-test.failing.skipIf(!supported)("a rule that names a method is not dead on the broker's own path", async () => {
+test.skipIf(!supported)("a rule that names a method is not dead on the broker's own path", async () => {
   const broker = await openBroker("adversarial-rule-method");
   const fixture = startFixture();
   try {

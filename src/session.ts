@@ -99,6 +99,23 @@ interface Session {
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
 const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
+/**
+ * The HTTP method a browser action implies, for rules that name one.
+ *
+ * A navigation is a GET and a form submission is a POST. Neither action carries the method in its
+ * payload, so without this a rule spelled `{ verb: "navigate", method: "GET" }` is accepted, held,
+ * and matches nothing: it fails open while reading as enforced.
+ *
+ * Only the verbs whose method is unambiguous are listed. A click can trigger anything or nothing, so
+ * it is left undefined rather than guessed: claiming a method for it would make rules fire on
+ * actions they do not describe, which is the opposite defect and the more dangerous one.
+ */
+function impliedMethod(actionType: string): string | undefined {
+  if (actionType === "navigate") return "GET";
+  if (actionType === "submit") return "POST";
+  return undefined;
+}
+
 export class Sessions {
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();
@@ -318,8 +335,25 @@ export class Sessions {
     // The policy is evaluated here, on the action the broker resolved, not on the action the agent
     // described. Those are the same thing only when nothing has tried to make them differ.
     const destination = "url" in action ? (action as { url?: string }).url : undefined;
+    // The method is read the same way the url is, and for the same reason. `Rule.method` exists,
+    // `parsePolicy` accepts it, and `ruleMatches` requires the method to match, but this call site
+    // passed only three arguments, so `decide` received `method === undefined` and every rule
+    // carrying a method failed to match. A rule that fails to match is a rule that fails OPEN: the
+    // caller wrote a narrowing rule, the broker accepted it and reported it as held, and it stopped
+    // nothing. `tests/policy.test.ts` calls `decide` directly with a method, so both sides were
+    // green about a field that did not work in the product, which is exactly the kind of gap a unit
+    // test on either side of a seam cannot see.
+    //
+    // Reading the field alone is not enough, and that is the second half of the same defect. No
+    // browser action carries a `method`, so a rule written as `{ verb: "navigate", method: "GET" }`
+    // would still match nothing. A navigation IS a GET, and a person writing that rule means the
+    // navigation. The implied method is supplied per verb, so the rule denies what it says it
+    // denies; an explicit method on the action still wins where one exists.
+    const stated = "method" in action ? (action as { method?: unknown }).method : undefined;
+    const method = typeof stated === "string" ? stated : impliedMethod(action.type);
+    const methodIsImplied = typeof stated !== "string" && method !== undefined;
     const inputLength = "text" in action ? String((action as { text?: string }).text ?? "").length : undefined;
-    const result = this.decided(session, action, destination, inputLength, requestId);
+    const result = this.decided(session, action, destination, method, methodIsImplied, inputLength, requestId);
     session.requests.set(requestId, { fingerprint, result });
     return result;
   }
@@ -327,7 +361,7 @@ export class Sessions {
    * Decide one action, then run it if it survives. A consult is resolved by the advisor rather than
    * by a person, because an autonomous session has nobody to wait for.
    */
-  private decided(session: Session, action: { type: string }, destination: string | undefined, inputLength: number | undefined, requestId: string): Promise<unknown> {
+  private decided(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): Promise<unknown> {
     const record = (decision: ReturnType<typeof decide>, decidedBy?: string, after?: SessionPolicy) => {
       void this.record(session, journalEntry({
         at: new Date().toISOString(), requestId,
@@ -357,7 +391,7 @@ export class Sessions {
       } else record(decision, decidedBy);
       throw new OrbitError("POLICY_DENIED", decision.reason);
     };
-    const decision = decide(session.policy, action.type, destination);
+    const decision = decide(session.policy, action.type, destination, method, methodIsImplied);
     if (decision.outcome !== "consult") {
       if (decision.outcome === "deny") refuse(decision);
       record(decision);

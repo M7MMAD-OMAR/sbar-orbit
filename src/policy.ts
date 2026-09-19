@@ -113,23 +113,65 @@ export const immuneSet: ImmuneEntry[] = [
     pathSegments: ["oauth", "authorize", "consent"], query: ["response_type", "client_id"] },
 ];
 
-/** Whole path segments, lowercased, so a substring cannot be mistaken for a match. */
+/**
+ * Whole path segments, lowercased and PERCENT DECODED, so a substring cannot be mistaken for a match
+ * and an encoding cannot be mistaken for a different path.
+ *
+ * The decode is the half this was missing, and it defeated the immune set outright:
+ * `new URL("https://bank.test/%74ransfer").pathname` is `/%74ransfer` verbatim, so the segment set
+ * held `%74ransfer` while the table looked for `transfer`, and the money movement entry never fired.
+ * Every ordinary web server decodes the path before routing, so those are one endpoint to the
+ * service and two endpoints to the matcher. `docs/autonomy.md` names matching a URL as a string as
+ * Orbit's "equivalent mistake"; this was that mistake surviving inside the structural matcher.
+ * `/%70assword` and `/%6Fauth/authorize` defeated `credential-change` and `oauth-grant` the same way.
+ *
+ * Decoding is per segment and AFTER the split, never before: decoding the whole path first would let
+ * `%2F` introduce a separator that was not in the request, which is the opposite mistake and turns
+ * one segment into two. A segment that cannot be decoded, `%zz` or a lone `%`, keeps its raw form
+ * rather than throwing, because a malformed escape is still a path some server will route somehow
+ * and a matcher that throws on it stops protecting the rest of the request.
+ *
+ * Both spellings are kept, so a server that does NOT decode is covered too: the raw segment and the
+ * decoded one are each matchable.
+ */
 function segmentsOf(pathname: string): string[] {
-  return pathname.toLowerCase().split("/").filter(Boolean);
+  const out: string[] = [];
+  for (const raw of pathname.toLowerCase().split("/")) {
+    if (!raw) continue;
+    out.push(raw);
+    if (!raw.includes("%")) continue;
+    try {
+      const decoded = decodeURIComponent(raw).toLowerCase();
+      // A decode that produced separators is split again, so `%2f` cannot smuggle a segment past a
+      // whole-segment comparison.
+      for (const part of decoded.split("/")) if (part && part !== raw) out.push(part);
+    } catch { /* A malformed escape keeps the raw spelling already pushed above. */ }
+  }
+  return out;
 }
 
 /**
  * The immune entry a resolved action trips, if any. Matched on the request's own shape rather than
  * on anything the page said about it.
  */
-export function immuneMatch(actionType: string, url?: string, method?: string): ImmuneEntry | null {
+export function immuneMatch(actionType: string, url?: string, method?: string, methodIsImplied = false): ImmuneEntry | null {
   if (url === undefined) return null;
   let parsed: URL;
   try { parsed = new URL(url); } catch { return null; }
   const segments = new Set(segmentsOf(parsed.pathname));
   for (const entry of immuneSet) {
     if (entry.verb && !entry.verb.includes(actionType)) continue;
-    if (entry.method && method !== undefined && !entry.method.includes(method.toUpperCase())) continue;
+    // An IMPLIED method never narrows the immune set, only a stated one does. The broker supplies
+    // GET for a navigation so that a person's rule naming a method can fire at all, and feeding that
+    // same guess in here would have quietly disarmed this table: `money-movement` lists POST and
+    // PUT, an implied GET is neither, and every navigation to a transfer endpoint would have walked
+    // straight through a set that had caught it a moment earlier. That regression was real, and the
+    // suite caught it: fixing the dead-rule defect broke the containment one.
+    //
+    // The asymmetry is deliberate. A rule is the person narrowing their own session and a guess that
+    // makes it fire is doing what they asked. The immune set is the floor nobody clears, so it is
+    // never narrowed by anything the broker inferred rather than observed.
+    if (entry.method && method !== undefined && !methodIsImplied && !entry.method.includes(method.toUpperCase())) continue;
     if (!entry.pathSegments.some(segment => segments.has(segment))) continue;
     if (entry.query && !entry.query.every(key => parsed.searchParams.has(key))) continue;
     return entry;
@@ -255,15 +297,20 @@ export function parsePolicy(value: unknown): SessionPolicy {
       const verb = rule.verb;
       if (typeof verb !== "string" && !(Array.isArray(verb) && verb.every(v => typeof v === "string")))
         throw new OrbitError("INVALID_REQUEST", `Rule ${rule.id} needs a verb, or a list of them`);
-      if (rule.origin !== undefined) {
-        const origins = Array.isArray(rule.origin) ? rule.origin : [rule.origin];
-        origins.forEach(normaliseOrigin);
-      }
+      // NORMALISED, not merely validated. This line used to be `origins.forEach(normaliseOrigin)`,
+      // which threw on a malformed origin and then discarded every normalised value, so the rule was
+      // stored with whatever spelling the caller wrote. `ruleMatches` then compared that raw string
+      // against a normalised request origin, and the only spelling that could ever match was the
+      // canonical one. `example.test`, `https://example.test/` and `HTTPS://example.test` were all
+      // accepted, reported back as held, and matched NOTHING: a narrowing rule that fails open while
+      // reading as enforced, which is the worst failure mode a policy has.
+      const normalisedOrigin = rule.origin === undefined ? undefined
+        : Array.isArray(rule.origin) ? rule.origin.map(normaliseOrigin) : normaliseOrigin(rule.origin);
       return {
         id: rule.id, verb: verb as string | string[], decision: rule.decision as Rule["decision"],
         reason: typeof rule.reason === "string" && rule.reason.trim() ? rule.reason : `Rule ${rule.id}.`,
         ...(rule.backend === undefined ? {} : { backend: rule.backend as Rule["backend"] }),
-        ...(rule.origin === undefined ? {} : { origin: rule.origin as string | string[] }),
+        ...(normalisedOrigin === undefined ? {} : { origin: normalisedOrigin }),
         ...(rule.pathPrefix === undefined ? {} : { pathPrefix: String(rule.pathPrefix) }),
         ...(rule.method === undefined ? {} : { method: String(rule.method) }),
       } satisfies Rule;
@@ -329,13 +376,13 @@ function ruleMatches(rule: Rule, actionType: string, url?: string, method?: stri
 /** deny is stricter than consult, which is stricter than allow. The strictest matching rule wins. */
 const severity = { allow: 0, consult: 1, deny: 2 } as const;
 
-export function decide(policy: SessionPolicy, actionType: string, url?: string, method?: string): PolicyDecision {
+export function decide(policy: SessionPolicy, actionType: string, url?: string, method?: string, methodIsImplied = false): PolicyDecision {
   const actionClass = classify(actionType);
   if (policy.deny.includes(actionClass))
     return { outcome: "deny", reason: `The ${actionClass} class is denied for this session and a deny is not overridable.` };
   // Evaluated before every allow, and never routed to the advisor: a model judging a model is the
   // wrong instrument for the actions nobody should take unattended.
-  const immune = immuneMatch(actionType, url, method);
+  const immune = immuneMatch(actionType, url, method, methodIsImplied);
   if (immune) return { outcome: "deny", reason: immune.reason, immuneId: immune.id };
   if (actionClass === "navigate") {
     // A navigating action with no destination stays inside the session, so the allowlist has nothing
