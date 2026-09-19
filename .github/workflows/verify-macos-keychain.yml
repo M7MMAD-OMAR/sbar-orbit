@@ -11,10 +11,22 @@
 # launch, and how a launch with those switches REMOVED differs. The last of those is the experiment;
 # the rest is bookkeeping around it.
 #
-# Started by hand, never on push, and allowed to fail: the log is the result, not a merge gate.
+# Started by hand, never on push to `main`, and allowed to fail: the log is the result, not a merge
+# gate. The `push` trigger is scoped to this project's agent branches for one reason: GitHub resolves
+# `workflow_dispatch` only against the DEFAULT branch, so a workflow that has never been merged cannot
+# be started by hand at all, and an unrunnable workflow is exactly the "not measured" trap this repo
+# is judged on.
 name: verify-macos-keychain
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - "hermes-subagent/**"
+    paths:
+      - ".github/workflows/verify-macos-keychain.yml"
+      - "experiments/macos-keychain.ts"
+      - "tests/macos-keychain.test.ts"
+      - "src/chrome.ts"
 jobs:
   keychain:
     strategy:
