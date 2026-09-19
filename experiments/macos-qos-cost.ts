@@ -45,8 +45,16 @@ await requireResourceBudget();
 // Merely omitting another taskpolicy -b does not undo that inherited state.
 // Reset only this experiment process, preserving group accounting and cleanup.
 if (inheritedBackgroundClass()) {
-  const reset = Bun.spawnSync(["/usr/sbin/taskpolicy", "-B", "-p", String(process.pid)]);
-  if (reset.exitCode !== 0) throw new Error("Could not reset experimental scheduling class");
+  // An external taskpolicy -B changes TASK_POLICY_EXTERNAL, but the inherited
+  // self-imposed class is TASK_POLICY_INTERNAL. Clear it from this process.
+  const { dlopen, FFIType } = await import("bun:ffi");
+  const lib = dlopen("/usr/lib/libSystem.B.dylib", {
+    setpriority: { args: [FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  });
+  try {
+    // PRIO_DARWIN_PROCESS = 4, who = 0 means this process, priority = 0 clears.
+    if (lib.symbols.setpriority(4, 0, 0) !== 0) throw new Error("Could not reset experimental scheduling class");
+  } finally { lib.close(); }
 }
 if (inheritedBackgroundClass()) throw new Error("Foreground control still inherits background scheduling");
 const rounds = Number(process.argv[2] ?? 3);

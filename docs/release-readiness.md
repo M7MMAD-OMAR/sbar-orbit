@@ -204,3 +204,16 @@ batch file; invoking that same file through PowerShell with literal arguments
 returned exit 0 and preserved an argument containing spaces. CI now uses that
 invocation for the Windows installation script. This is a harness correction;
 managed Windows installation from the archive still awaits its remote result.
+
+
+The revised comparison initially refused to run: external `taskpolicy -B -p`
+returned success but the inherited internal background flag remained set. Apple's
+[kernel implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_resource.c)
+selects internal policy when caller and target are the same process, and external
+policy otherwise. The experiment now invokes setpriority for itself through FFI,
+then still requires the kernel flag to be cleared before measuring. No production
+scheduler or resource boundary is changed.
+
+The local native-enabled full suite at f3e099f passed 443 tests, skipped 26 and
+failed none across 469 tests in 91 files, in 131.78 seconds. This includes the
+archive contents and local-dependency regression tests added above.
