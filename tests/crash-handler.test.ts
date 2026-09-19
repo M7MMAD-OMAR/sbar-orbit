@@ -23,11 +23,13 @@
  * can, with no timing at all.
  */
 import { test, expect } from "bun:test";
+import { needsCommand } from "./platform-support";
 import { fileURLToPath } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { windowsChromeArguments } from "../src/windows-job";
+import { darwinChromeArguments } from "../src/chrome";
 
 // `fileURLToPath`, not `.pathname`: on Windows the pathname is `/C:/...`, with a leading slash that
 // no Windows open can use. `tests/platform-support.ts` documents the same trap.
@@ -49,7 +51,19 @@ test("windows removes the crash handler", () => {
 });
 
 test("macOS removes the crash handler", () => {
-  expect(branch("owner = launchOnDarwin")).toContain("--disable-crash-reporter");
+  // The darwin list moved into `darwinChromeArguments` so a test could read it without starting a
+  // browser, so this asks the function rather than the source. That is strictly stronger: a source
+  // grep would still pass if the builder were left uncalled.
+  expect(darwinChromeArguments("/tmp/profile", [])).toContain("--disable-crash-reporter");
+});
+
+test("the macOS list a test reads is the one the launcher passes", () => {
+  // The defect `windowsChromeArguments` already records, checked for the new builder: a list that is
+  // asserted somewhere nothing in production calls is a list that can drift silently. The launcher
+  // must name the builder.
+  const darwin = branch("owner = launchOnDarwin");
+  expect(darwin).toContain("darwinChromeArguments");
+  expect(darwin).not.toContain("--use-mock-keychain");
 });
 
 test("linux removes the crash handler, which it did not until this test existed", () => {
@@ -61,14 +75,19 @@ test("no platform is left out of the crash handler rule", () => {
   // had the flag and documented why, the third had neither, and nothing failed. A per platform
   // assertion could be added for a new backend and forgotten in exactly the same way, so this asks
   // the question once for every branch that launches a browser.
-  const branches = ["owner = launchOnDarwin", "owner = launchOnLinux"];
-  const missing = branches.filter(marker => !branch(marker).includes("--disable-crash-reporter"));
+  const missing: string[] = [];
+  if (!darwinChromeArguments("/tmp/profile", []).includes("--disable-crash-reporter")) missing.push("darwin");
+  if (!branch("owner = launchOnLinux").includes("--disable-crash-reporter")) missing.push("linux");
   expect(missing).toEqual([]);
   // And Windows, whose flag has the other name.
   expect(windowsChromeArguments("/tmp/profile", [], {}).some(a => a.includes("disable-crashpad"))).toBe(true);
 });
 
-test("a launched session's browser does not name the person's own Chrome directory", async () => {
+// `ps` is POSIX and does not exist on Windows, where this failed with ENOENT rather than skipping: an
+// environment fact reported as a product failure, which is what `needsCommand` exists to prevent. The
+// property it checks is not Windows-specific, but the way it checks it is.
+needsCommand("ps", "the launched browser is found by the --user-data-dir in its argv")(
+  "a launched session's browser does not name the person's own Chrome directory", async () => {
   // The end to end half, and the only one that reads a REAL process rather than the source. Not a
   // timing assertion: the launch argv is read back from the running browser, so it is attributable
   // no matter what any sibling agent is doing to the same shared files at the same time.
