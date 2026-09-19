@@ -1,6 +1,6 @@
 import { access, stat } from "node:fs/promises";
-import { constants } from "node:fs";
-import { join, resolve } from "node:path";
+import { constants, existsSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { chromeExecutables, darwinBrowserInstalls, nativeRuntimeLocations, nativeRuntimePackages, windowsBrowserInstalls } from "./runtime-paths";
 
 type Probe = {
@@ -19,7 +19,18 @@ const systemProbe: Probe = {
     try { await access(path, executable ? constants.X_OK : constants.R_OK); return (await stat(path)).isFile(); }
     catch { return false; }
   },
-  module(name, project) { try { Bun.resolveSync(name, project); return true; } catch { return false; } },
+  module(name, project) {
+    // Bun can resolve a missing local dependency from its global cache, using
+    // a version outside this release's frozen lockfile. Parent installations
+    // also do not make an extracted release independently usable.
+    const modules = join(project, "node_modules");
+    const packageName = name.split("/").slice(0, name.startsWith("@") ? 2 : 1).join("/");
+    if (!existsSync(join(modules, packageName, "package.json"))) return false;
+    try {
+      const resolved = relative(modules, Bun.resolveSync(name, project));
+      return resolved !== ".." && !resolved.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(resolved);
+    } catch { return false; }
+  },
   missingLibraries(executables, libraryPath) {
     const ldd = Bun.spawnSync(["ldd", ...executables], { env: { ...process.env, LD_LIBRARY_PATH: libraryPath } });
     return [...new Set(String(ldd.stdout).split("\n").filter(line => line.includes("not found")).map(line => line.trim().split(" ")[0] ?? ""))].filter(Boolean);

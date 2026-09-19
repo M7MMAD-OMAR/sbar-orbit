@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { resolve } from "node:path";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { inspectPrerequisites } from "../src/preflight";
 
@@ -111,4 +112,26 @@ test("standalone preflight runs without a broker socket and emits no personal pa
   expect(report.check).toBe("prerequisite-availability");
   expect(report.startsApplications).toBe(false);
   expect(raw).not.toContain(resolve(import.meta.dir, ".."));
+});
+
+
+test("a fresh source cannot borrow dependencies from its parent or Bun cache", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-preflight-deps-"));
+  const source = join(root, "source");
+  try {
+    await mkdir(source);
+    for (const name of ["playwright", "zod", "@modelcontextprotocol/sdk"]) {
+      const location = join(root, "node_modules", name);
+      await mkdir(join(location, "client"), { recursive: true });
+      await writeFile(join(location, "package.json"), JSON.stringify({ name, main: "index.js" }));
+      await writeFile(join(location, "index.js"), "export {};\n");
+      await writeFile(join(location, "client/index.js"), "export {};\n");
+    }
+    const report = await inspectPrerequisites(source);
+    for (const id of ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"]) {
+      const check = report.checks.find(row => row.id === id);
+      expect(check?.available).toBe(false);
+      expect(check?.remedy?.id).toBe("dependencies-missing");
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -160,3 +160,22 @@ MCP multi-client control, viewer report download, and viewer session rail.
 The installed command probe now retains per-command timings beside its capture
 artifact, including the failing command, without recording session identifiers or
 action contents. This supplies stage evidence before changing capture behavior.
+
+## Fresh archive dependency isolation
+
+A local registry archive trial found that Bun resolved dependencies from its global
+cache even though the extracted release had no node_modules. The installer then
+reported dependencies as already resolved, bypassing its frozen install step.
+A regression with dependencies only in a parent directory failed before the fix
+and passed afterward. Preflight now requires a local package manifest and a
+resolution inside that release's node_modules directory.
+
+The actual extracted registry archive then installed its frozen dependencies,
+linked the command and registered all three hosts successfully in isolated
+configuration directories. This local trial used --no-service to avoid changing
+the workstation's managed installation. Seventeen preflight and installer tests
+passed, as did typecheck. CI managed acceptance now builds and extracts the registry
+archive outside the checkout, verifies dependencies are initially absent, and
+requires the installer to prepare them before running its existing browser flow.
+Bun and a browser remain provisioned prerequisites; their installation is not
+covered by this trial.
