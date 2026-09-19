@@ -287,3 +287,52 @@ export async function uninstallService(unitDirectory: string) {
   }
   return { removed, sourceAndDataRetained: true };
 }
+
+/**
+ * Whether the units on disk are the ones this version of Orbit writes.
+ *
+ * An install rewrites every unit, so drift is never permanent; the problem is that nothing SAYS the
+ * installed unit is older than the code, and a unit is exactly the kind of file nobody re-reads.
+ * Found on the development host: the installed `sbar-orbit.service` predated
+ * `EnvironmentFile=-%h/.config/sbar-orbit/broker.env`, so `ORBIT_NATIVE_RENDERER`,
+ * `ORBIT_CAPTURE_TIMEOUT_MS` and every other documented operator switch reached the managed broker on
+ * a fresh install and silently did not on that machine. The documentation was correct and the machine
+ * disagreed with it, which is the failure this project calls a stale claim.
+ *
+ * Comparison is on CONTENT rather than on a version string, because a version string is a second
+ * thing to keep in sync and would have been equally stale here. `launcher` is what the installed unit
+ * already names, so a unit that points at a different checkout is reported as drifted rather than
+ * being compared against the wrong expectation.
+ */
+export async function serviceUnitDrift(unitDirectory: string, launcher?: string) {
+  const drifted: { unit: string; reason: string }[] = [];
+  const missing: string[] = [];
+  for (const [name, build] of Object.entries(units)) {
+    const target = join(unitDirectory, name);
+    let installed: string;
+    try { installed = await readFile(target, "utf8"); }
+    catch { missing.push(name); continue; }
+    // The launcher path is per machine, so it is read back from the unit rather than assumed, unless
+    // a caller names one. Without this every unit on every machine would read as drifted.
+    //
+    // Two of the four units carry no ExecStart at all and do not need one: the slice is a budget and
+    // the timer is a schedule, and their builders take no launcher. Treating a missing ExecStart as
+    // "cannot compare" reported a FRESH INSTALL as drifted in two of four units, which is the shape
+    // of false alarm that gets a check ignored. So the builder's own arity decides: a builder that
+    // takes no argument is compared directly.
+    const needsLauncher = build.length > 0;
+    const named = needsLauncher ? launcher ?? /^ExecStart=(\S+)/m.exec(installed)?.[1] : "";
+    if (named === undefined) { drifted.push({ unit: name, reason: "the installed unit has no ExecStart to compare against" }); continue; }
+    if (installed !== build(named)) {
+      // Name the missing directives rather than printing two files, because that is what a person
+      // needs to decide whether it matters before reinstalling.
+      const expected = build(named).split("\n").filter(line => line.includes("="));
+      const absent = expected.filter(line => !installed.includes(line));
+      drifted.push({ unit: name, reason: absent.length
+        ? `does not carry ${absent.join(", ")}`
+        : "differs from what this version writes" });
+    }
+  }
+  return { drifted, missing, current: drifted.length === 0 && missing.length === 0,
+    remedy: drifted.length || missing.length ? "Run ./install.sh again to rewrite the units, then `systemctl --user daemon-reload`." : undefined };
+}

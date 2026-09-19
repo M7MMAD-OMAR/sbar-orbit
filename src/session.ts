@@ -17,6 +17,25 @@ import { canRestoreTo, clearRestorePoints, createSubvolume, removeRestorePoint, 
 import { defaultViewport, parseViewport } from "./viewport";
 import { Diagnostics } from "./diagnostics";
 
+/**
+ * The installed units against the ones this version writes, for `doctor`.
+ *
+ * Wrapped here rather than called directly so the unit directory is resolved the same way
+ * `src/install.ts` resolves it, `ORBIT_UNIT_DIR` included, and so a machine with no unit directory
+ * at all reports nothing rather than failing the whole doctor call: a broker started with
+ * `ORBIT_SOCKET` and no install is a supported way to run, and it has no units by design.
+ */
+async function installedUnitDrift() {
+  try {
+    const { serviceUnitDrift } = await import("./service");
+    const directory = process.env.ORBIT_UNIT_DIR ?? join(homedir(), ".config/systemd/user");
+    const drift = await serviceUnitDrift(directory);
+    // Every unit absent means this is not a managed install, which is not drift and not worth a
+    // remedy line telling a person to reinstall something they never installed.
+    return drift.missing.length === 4 && !drift.drifted.length ? { managed: false } : { managed: true, ...drift };
+  } catch { return undefined; }
+}
+
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
   agentName: string; taskName: string; conversationName?: string; projectName?: string; activity?: { type: string; actor: string; state: string; sequence: number };
@@ -475,7 +494,13 @@ export class Sessions {
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
     if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"], backendAliases: { system: "fedora" },
-      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine() };
+      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine(),
+      // Whether the units on disk are the ones this version writes. A managed broker that was
+      // installed before a directive existed does not carry it, and nothing else on the machine
+      // says so: the development host was running a unit with no EnvironmentFile, so every
+      // documented operator switch was reaching a fresh install and silently not that one. Linux
+      // only, since it is systemd units that drift this way.
+      units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
