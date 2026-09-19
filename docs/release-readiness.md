@@ -22,6 +22,11 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
   replace a failed command's exit status with a successful echo.
 - Windows installation registers a next-logon task but does not start the broker now.
 - Installation writes Orbit's connector configuration but leaves host registration manual.
-- Native-enabled local baseline is running; its result will be recorded after completion.
+- Local baseline on 19 September 2026 at runtime revision `8874e63`:
+  `ORBIT_TEST_NATIVE=1 bun run verify`: 424 pass, 25 skip, 0 fail,
+  449 tests across 88 files in 133.35 seconds. Typecheck also passes.
+- Strict three-platform workflow added in `fc5071a`. Publishing it was refused by
+  GitHub because the current OAuth app lacks `workflow` scope. No remote run of
+  this new workflow exists yet. This does not block local installer work.
 
 Record each platform's revision, command, result and limits. A skipped test is not a pass.
