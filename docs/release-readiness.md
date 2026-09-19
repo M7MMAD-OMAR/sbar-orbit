@@ -20,7 +20,10 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 
 - Existing platform workflows deliberately tolerate failures and several shell commands
   replace a failed command's exit status with a successful echo.
-- Windows installation registers a next-logon task but does not start the broker now.
+- Windows installation now requests immediate startup and verifies the broker.
+  Account-specific task names fix a measured collision with another account's task.
+  The installed browser flow passes on Windows and Linux; see
+  [installed command acceptance](fragments/installed-command-acceptance.md).
 - Installation writes Orbit's connector configuration but leaves host registration manual.
 - Local baseline on 19 September 2026 at runtime revision `8874e63`:
   `ORBIT_TEST_NATIVE=1 bun run verify`: 424 pass, 25 skip, 0 fail,

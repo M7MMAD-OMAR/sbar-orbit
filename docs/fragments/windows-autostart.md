@@ -1,5 +1,10 @@
 # Autostart of the broker on Windows
 
+Current follow-up: the [installed command acceptance](installed-command-acceptance.md)
+closes the browser chain after logon on the Windows guest. The installer now starts
+an account-specific task immediately and verifies the broker. The sections below
+preserve the earlier measurement and its then-open limits.
+
 This closes the row `docs/support-tiers.md` recorded as unmeasured: "Always with `--no-service`: the
 service step refuses on Windows by design, so autostart there is not measured". Every Windows install
 before this one ran with `--no-service`, because the service step returned `skipped` on Windows. It no

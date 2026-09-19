@@ -9,6 +9,14 @@ published version. `0.1.0-alpha.6` is still what the npm registry serves as `lat
 
 ### Fixed
 
+- Windows installation starts the broker immediately and requires its doctor response.
+  Scheduled task names include the account SID so another user's installation does
+  not cause `Access is denied`. The installed browser flow passed before and after
+  a guest reboot without manually starting the broker.
+- Windows scheduler tests use unique task names and leave the installed broker intact.
+  The guest harness reports failed task starts and incomplete runs as errors.
+
+
 - **Chrome's crash handler escaped containment on Linux, and wrote into the person's own browser
   directory.** Crashpad calls `setsid()` in the child, so it leaves the process group and the session:
   `killpg` misses it and a descendant walk misses it. `src/chrome.ts` documents exactly that in its

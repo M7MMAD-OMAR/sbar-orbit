@@ -54,6 +54,12 @@ fields and the exit codes below are identical: nothing in this contract branches
 The Windows installer checks for Bun and nothing else, because the systemd user session `install.sh`
 requires has no analogue there; the shared budget is a named job object the process joins itself.
 
+The Windows service step registers a per-user logon task and starts it immediately.
+The verify step must receive a broker response before reporting success; no second
+logon is required. A Task Scheduler start request alone is not proof of readiness.
+Task names include the account SID, so another account's installation cannot take
+the name or require administrative permission to replace it.
+
 **On macOS run `./install.sh`, the same command as Linux.** It is the same script and the same
 report, and it skips the systemd user session check there, because the shared budget on macOS is a
 registered process group rather than a slice and needs no session manager. Two things in the report

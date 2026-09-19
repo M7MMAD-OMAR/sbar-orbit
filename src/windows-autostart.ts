@@ -187,25 +187,32 @@ export type LogonTaskStatus = {
  * in a way that survives localisation, and the description is the ownership marker. The same shape
  * the macOS half uses: the file is asked what label it carries, not assumed.
  */
-export async function logonTaskStatus(): Promise<LogonTaskStatus> {
+/** Task Scheduler names are machine-wide even when the trigger is per-user. */
+export function taskNameForUser(sid: string) {
+  if (!/^S-1-\d+(?:-\d+)+$/.test(sid)) throw new OrbitError("CONFIG_REQUIRED", "Invalid Windows account SID");
+  return `${TASK_NAME}-${sid}`;
+}
+
+export async function logonTaskStatus(requestedName?: string): Promise<LogonTaskStatus> {
   const notes: string[] = [];
   notes.push("A Windows logon task runs while you are logged in. Windows has no equivalent of lingering, so the broker does not start at boot before a logon.");
   if (process.platform !== "win32") {
     notes.push("This is the Windows autostart mechanism and this is not Windows.");
     return { taskPresent: false, enabled: false, orbitOwned: false, startsAtBoot: false, startsWithTheDesktop: false, lastResult: null, notes };
   }
-  const described = await schtasks("/Query", "/TN", TASK_NAME, "/XML");
+  const taskName = requestedName ?? taskNameForUser(await currentUserSid());
+  const described = await schtasks("/Query", "/TN", taskName, "/XML");
   if (!described.ok)
     return { taskPresent: false, enabled: false, orbitOwned: false, startsAtBoot: false, startsWithTheDesktop: false, lastResult: null, notes };
   const orbitOwned = described.output.includes(TASK_DESCRIPTION);
   if (!orbitOwned)
-    notes.push(`A scheduled task named ${TASK_NAME} is registered and Orbit did not write it. Orbit will not change or remove it.`);
+    notes.push(`A scheduled task named ${taskName} is registered and Orbit did not write it. Orbit will not change or remove it.`);
   // The verbose list is where the last result and the enabled state live. Read separately from the
   // XML so a failure to parse one does not lose the other.
-  const listed = await schtasks("/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V");
+  const listed = await schtasks("/Query", "/TN", taskName, "/FO", "LIST", "/V");
   const enabled = !/Scheduled Task State:\s*Disabled/i.test(listed.output);
   const lastResult = /Last Result:\s*(\S+)/.exec(listed.output)?.[1] ?? null;
-  if (!enabled) notes.push(`${TASK_NAME} is registered and disabled, so it will not start at your next logon.`);
+  if (!enabled) notes.push(`${taskName} is registered and disabled, so it will not start at your next logon.`);
   return {
     taskPresent: true, enabled, orbitOwned,
     startsAtBoot: false,
@@ -227,18 +234,19 @@ export async function logonTaskStatus(): Promise<LogonTaskStatus> {
  * Scheduler store whatever this function was told, so a test that skips registration is the only way
  * to exercise the XML without changing what the machine running the suite starts at logon.
  */
-export async function enableLogonTask(launcher: string, options: { register?: boolean; sid?: string; environment?: Record<string, string> } = {}) {
+export async function enableLogonTask(launcher: string, options: { register?: boolean; sid?: string; environment?: Record<string, string>; startNow?: boolean; taskName?: string } = {}) {
   if (process.platform !== "win32" && options.register !== false)
     throw new OrbitError("UNSUPPORTED", "A Windows logon task can only be registered on Windows");
+  const sid = options.sid ?? (options.register !== false ? await currentUserSid() : "S-1-5-21-0-0-0-1000");
+  const taskName = options.taskName ?? taskNameForUser(sid);
   const file = Bun.file(launcher);
   if (!await file.exists()) throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file");
   const register = options.register !== false;
   if (register) {
-    const existing = await logonTaskStatus();
+    const existing = await logonTaskStatus(taskName);
     if (existing.taskPresent && !existing.orbitOwned)
-      throw new OrbitError("CONFIG_REQUIRED", `A scheduled task named ${TASK_NAME} already exists and Orbit did not write it; remove it deliberately`);
+      throw new OrbitError("CONFIG_REQUIRED", `A scheduled task named ${taskName} already exists and Orbit did not write it; remove it deliberately`);
   }
-  const sid = options.sid ?? (register ? await currentUserSid() : "S-1-5-21-0-0-0-1000");
   const contents = brokerTaskXml(launcher, sid, options.environment ?? {});
   // UTF-16LE with a BOM, because the declaration says UTF-16 and schtasks believes it. Written with
   // a random name in the temp directory and removed afterwards: the XML is an argument to schtasks,
@@ -247,9 +255,15 @@ export async function enableLogonTask(launcher: string, options: { register?: bo
   const path = join(tmpdir(), `sbar-orbit-task-${crypto.randomUUID()}.xml`);
   await writeFile(path, Buffer.from(`\ufeff${contents}`, "utf16le"));
   try {
-    if (!register) return { wrote: [path], registered: false, taskName: TASK_NAME, xml: contents, status: await logonTaskStatus() };
-    const created = await schtasks("/Create", "/TN", TASK_NAME, "/XML", path, "/F");
-    return { wrote: [path], registered: created.ok, output: created.output, taskName: TASK_NAME, xml: contents, status: await logonTaskStatus() };
+    if (!register) return { wrote: [path], registered: false, started: false, taskName, xml: contents, status: await logonTaskStatus(taskName) };
+    const created = await schtasks("/Create", "/TN", taskName, "/XML", path, "/F");
+    // Registration alone starts nothing. The installer requests an on-demand run
+    // in the same interactive account, then verifies the broker's actual socket.
+    const started = created.ok && options.startNow
+      ? await schtasks("/Run", "/TN", taskName) : null;
+    return { wrote: [path], registered: created.ok, started: started?.ok ?? false,
+      output: started && !started.ok ? started.output : created.output,
+      taskName, xml: contents, status: await logonTaskStatus(taskName) };
   } finally {
     await rm(path, { force: true }).catch(() => {});
   }
@@ -262,15 +276,16 @@ export async function enableLogonTask(launcher: string, options: { register?: bo
  * Linux uninstall refuses a unit it did not write and the macOS one refuses a plist without its
  * label. Removing nothing and saying so is the right answer for a machine that has nothing of ours.
  */
-export async function disableLogonTask(options: { register?: boolean } = {}) {
+export async function disableLogonTask(options: { register?: boolean; taskName?: string } = {}) {
+  const taskName = options.taskName ?? (process.platform === "win32" ? taskNameForUser(await currentUserSid()) : TASK_NAME);
   const register = options.register !== false;
-  if (!register) return { removed: [], status: await logonTaskStatus() };
-  const before = await logonTaskStatus();
+  if (!register) return { removed: [], status: await logonTaskStatus(taskName) };
+  const before = await logonTaskStatus(taskName);
   if (!before.taskPresent) return { removed: [], status: before };
   if (!before.orbitOwned)
-    throw new OrbitError("CONFIG_REQUIRED", `The scheduled task ${TASK_NAME} was not written by Orbit; remove it deliberately`);
-  const deleted = await schtasks("/Delete", "/TN", TASK_NAME, "/F");
-  return { removed: deleted.ok ? [TASK_NAME] : [], output: deleted.output, status: await logonTaskStatus() };
+    throw new OrbitError("CONFIG_REQUIRED", `The scheduled task ${taskName} was not written by Orbit; remove it deliberately`);
+  const deleted = await schtasks("/Delete", "/TN", taskName, "/F");
+  return { removed: deleted.ok ? [taskName] : [], output: deleted.output, status: await logonTaskStatus(taskName) };
 }
 
 /**
@@ -290,7 +305,8 @@ export const rejectedMechanisms = [
 /** Read a task's registered XML, for a report to show what is actually installed. */
 export async function registeredTaskXml(): Promise<string | null> {
   if (process.platform !== "win32") return null;
-  const described = await schtasks("/Query", "/TN", TASK_NAME, "/XML");
+  const taskName = taskNameForUser(await currentUserSid());
+  const described = await schtasks("/Query", "/TN", taskName, "/XML");
   return described.ok ? described.output : null;
 }
 

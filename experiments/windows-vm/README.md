@@ -26,6 +26,11 @@ python3 vmpush.py ./bun.exe 'C:\orbit\bun.exe'
 python3 vmexec_user.py ./probe.ps1 --wait 400
 ```
 
+If WMI cannot resolve the interactive account, inspect `query user` and supply that
+test account with `--user ACCOUNT`. A failed task registration or start is an error,
+not an empty successful measurement. A timeout names the task and log to inspect;
+it does not establish that the guest process stopped.
+
 ## Why `vmexec_user.py` exists, and why every browser probe has to use it
 
 `guest-exec` runs as `NT AUTHORITY\SYSTEM` in **session 0**. Measured on this guest: a Chromium

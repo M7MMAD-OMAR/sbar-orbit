@@ -3,8 +3,8 @@ import { mkdtemp, writeFile, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fixtureRoot, resolvedTmpdir } from "./platform-support";
 import {
-  TASK_NAME, TASK_DESCRIPTION, brokerTaskXml, enableLogonTask, disableLogonTask,
-  logonTaskStatus, currentUserSid, rejectedMechanisms, readTaskXmlFile,
+  TASK_NAME as BROKER_TASK_NAME, TASK_DESCRIPTION, brokerTaskXml, enableLogonTask as enableTask, disableLogonTask as disableTask,
+  logonTaskStatus as taskStatus, currentUserSid, rejectedMechanisms, readTaskXmlFile, taskNameForUser,
 } from "../src/windows-autostart";
 import { OrbitError } from "../src/errors";
 
@@ -28,6 +28,25 @@ import { OrbitError } from "../src/errors";
  * redirects the Windows variables as well, and there is a test that the temp file the builder writes
  * lands inside the redirection rather than in the person's profile.
  */
+
+// The real scheduler ignores profile redirection. Every test owns a unique name.
+const TASK_NAME = `SbarOrbitTest-${crypto.randomUUID()}`;
+const enableLogonTask = (launcher: string, options: Parameters<typeof enableTask>[1] = {}) =>
+  enableTask(launcher, { ...options, taskName: TASK_NAME });
+const disableLogonTask = (options: Parameters<typeof disableTask>[0] = {}) =>
+  disableTask({ ...options, taskName: TASK_NAME });
+const logonTaskStatus = () => taskStatus(TASK_NAME);
+
+test("scheduler tests cannot replace the installed broker task", () => {
+  expect(TASK_NAME).not.toBe(BROKER_TASK_NAME);
+});
+
+test("different Windows accounts never compete for a machine-wide task name", () => {
+  const first = taskNameForUser("S-1-5-21-1-2-3-1001");
+  const second = taskNameForUser("S-1-5-21-1-2-3-1002");
+  expect(first).not.toBe(second);
+  expect(first).toBe("SbarOrbitBroker-S-1-5-21-1-2-3-1001");
+});
 
 const windowsOnly = (reason: string) => {
   if (!reason.trim()) throw new Error("A Windows only test has to say why");
@@ -210,6 +229,15 @@ test("a launcher that is not there is refused before anything is registered", as
   });
 });
 
+test("planning immediate startup never starts or registers a task", async () => {
+  const { root, launcher } = await fixtureLauncher();
+  try {
+    const result = await enableLogonTask(launcher, { register: false, sid: SID, startNow: true });
+    expect(result.registered).toBe(false);
+    expect(result.started).toBe(false);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("registering is refused on a platform that is not Windows, rather than silently doing nothing", async () => {
   if (process.platform === "win32") return;
   const { launcher } = await fixtureLauncher();
@@ -232,6 +260,25 @@ test("no autostart mechanism claims to start at boot, on any platform, because W
 // ---------------------------------------------------------------------------
 // Everything below talks to the real Task Scheduler, and only on Windows.
 // ---------------------------------------------------------------------------
+
+windowsOnly("Immediate startup needs the Windows Task Scheduler")(
+  "an immediate task runs without a new logon, including a launcher path with spaces", async () => {
+  const root = await mkdtemp(join(await resolvedTmpdir(), "orbit task start "));
+  const launcher = join(root, "sbar-orbit.cmd");
+  const marker = join(root, "started.txt");
+  await writeFile(launcher, `@echo off\r\necho ready>"${marker}"\r\n`);
+  try {
+    const result = await enableLogonTask(launcher, { startNow: true });
+    expect(result.registered).toBe(true);
+    expect(result.started).toBe(true);
+    const deadline = Date.now() + 10000;
+    while (!await Bun.file(marker).exists() && Date.now() < deadline) await Bun.sleep(100);
+    expect((await readFile(marker, "utf8")).trim()).toBe("ready");
+  } finally {
+    await disableLogonTask();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 20000);
 
 windowsOnly("Task Scheduler is Windows only; there is nothing to register elsewhere")(
   "this account's SID reads back in the shape a logon trigger needs", async () => {
@@ -266,7 +313,7 @@ windowsOnly("Task Scheduler is Windows only; there is nothing to register elsewh
   expect((await logonTaskStatus()).taskPresent).toBe(true);
 
   // A neighbour task of another name must survive the disable: "exactly what enable wrote".
-  const neighbour = "SbarOrbitAutostartTestNeighbour";
+  const neighbour = `${TASK_NAME}-Neighbour`;
   const made = Bun.spawnSync(["schtasks.exe", "/Create", "/TN", neighbour, "/TR", "cmd.exe /c exit", "/SC", "ONCE", "/ST", "23:59", "/F"], { stdout: "pipe", stderr: "pipe" });
   expect(made.exitCode).toBe(0);
   try {

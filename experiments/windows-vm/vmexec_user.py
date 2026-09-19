@@ -26,7 +26,7 @@ from vmexec import agent, guest_write, powershell, run  # noqa: F401
 REMOTE_DIR = "C:\\orbit"
 
 
-def run_as_user(script: str, wait: int = 300) -> str:
+def run_as_user(script: str, wait: int = 300, user: str | None = None) -> str:
     """Push a script, run it in the interactive session, return its log."""
     tag = uuid.uuid4().hex[:8]
     remote_script = f"{REMOTE_DIR}\\task-{tag}.ps1"
@@ -46,11 +46,15 @@ def run_as_user(script: str, wait: int = 300) -> str:
     )
     guest_write(remote_script, wrapper.encode("utf-8"))
 
+    selected_user = "'" + user.replace("'", "''") + "'" if user else "(Get-CimInstance Win32_ComputerSystem).UserName"
     control = f"""
 $ErrorActionPreference = "Continue"
-$user = (Get-CimInstance Win32_ComputerSystem).UserName
+$user = {selected_user}
+if (-not $user) {{ throw "No interactive account detected; specify --user from query user" }}
 & schtasks.exe /Create /TN {task} /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {remote_script}" /SC ONCE /ST 23:59 /RU $user /IT /F | Out-Null
+if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 & schtasks.exe /Run /TN {task} | Out-Null
+if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}
 "launched as $user"
 """
     result = powershell(control, wait=120)
@@ -71,7 +75,11 @@ $user = (Get-CimInstance Win32_ComputerSystem).UserName
             break
         time.sleep(3)
 
+    if "___ORBIT_DONE___" not in body:
+        raise TimeoutError(f"No completion from {task}; inspect {remote_log} and the task before retrying")
     powershell(f"& schtasks.exe /Delete /TN {task} /F | Out-Null", wait=60)
+    if "UNCAUGHT:" in body:
+        raise RuntimeError(body.replace("___ORBIT_DONE___", "").rstrip())
     return body.replace("___ORBIT_DONE___", "").rstrip()
 
 
@@ -79,10 +87,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("script")
     parser.add_argument("--wait", type=int, default=300)
+    parser.add_argument("--user", help="Interactive test account when WMI cannot identify it")
     args = parser.parse_args()
     with open(args.script, "r", encoding="utf-8") as handle:
         body = handle.read()
-    sys.stdout.write(run_as_user(body, wait=args.wait) + "\n")
+    sys.stdout.write(run_as_user(body, wait=args.wait, user=args.user) + "\n")
     return 0
 
 

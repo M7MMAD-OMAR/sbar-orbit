@@ -282,24 +282,19 @@ export async function runInstall(options: InstallOptions = {}) {
     // src/windows-autostart.ts for why a scheduled task rather than the Run key or Startup folder,
     // and why it is registered from XML rather than with `/SC ONLOGON`.
     if (process.platform === "win32") {
-      if (dryRun) return { state: "skipped", detail: `would register the ${(await import("./windows-autostart")).TASK_NAME} logon task` };
+      if (dryRun) return { state: "skipped", detail: `would register and start an account-specific Orbit logon task` };
       const { enableLogonTask } = await import("./windows-autostart");
-      const task = await enableLogonTask(launcher);
+      const task = await enableLogonTask(launcher, { startNow: true });
+      const ready = task.registered && task.started;
       return {
-        state: task.registered ? "done" : "failed",
-        detail: task.registered
-          ? `the ${task.taskName} logon task is registered and starts the broker when you log in`
-          : `schtasks refused the logon task: ${task.output ?? "no output"}`,
-        remedies: task.registered ? [] : [{ id: "logon-task-refused", needsElevation: false, agentMayRun: true,
+        state: ready ? "done" : "failed",
+        detail: ready
+          ? `the ${task.taskName} logon task was started and will start Orbit when you log in`
+          : `schtasks refused to ${task.registered ? "start" : "register"} the logon task: ${task.output || "no output"}`,
+        remedies: ready ? [] : [{ id: "logon-task-refused", needsElevation: false, agentMayRun: true,
           command: `schtasks /Query /TN ${task.taskName} /XML`,
-          message: "The logon task was built and Task Scheduler would not register it. Its own output says why, and nothing here needs an administrator." }],
-        // `startsAtNextLogon` is read by the verify step below. A logon task is not `systemctl enable
-        // --now`: it starts the broker at the NEXT logon and starts nothing at registration time. The
-        // first run of this step reported `service: done` and then `verify: failed, no answer from
-        // the managed broker` on a Windows guest where every step had in fact succeeded, because
-        // verify polled a socket nothing was serving yet. Deriving it here rather than re-testing the
-        // platform in verify keeps the reason with the step that knows it.
-        data: { task: task.taskName, status: task.status, startsAtNextLogon: true },
+          message: "Task Scheduler could not register or start Orbit. Its own output says why; no administrator is needed." }],
+        data: { task: task.taskName, status: task.status, started: task.started },
       };
     }
     if (dryRun) return { state: "skipped", detail: "would write units and enable the broker" };
@@ -384,12 +379,6 @@ export async function runInstall(options: InstallOptions = {}) {
     // poll below, deliberately: that failure is worth reporting against the socket it names.
     if (service.state === "skipped")
       return { state: "skipped", detail: `no managed broker was installed: ${service.detail}` };
-    // A service that starts the broker at the next LOGON has started nothing yet, and polling its
-    // socket for 15 seconds proves only that. Windows is the case: the logon task is registered and
-    // correct, and the broker appears when the person next logs on. Asking the step rather than
-    // re-testing the platform, for the reason given above.
-    if ((service.data as { startsAtNextLogon?: boolean } | undefined)?.startsAtNextLogon)
-      return { state: "skipped", detail: `${service.detail}, so there is no broker to verify until you log in again` };
     const socket = serviceSocketPath();
     for (let attempt = 0; attempt < 60; attempt++) {
       try {
@@ -398,8 +387,10 @@ export async function runInstall(options: InstallOptions = {}) {
       } catch { await Bun.sleep(250); }
     }
     return { state: "failed", detail: "no answer from the managed broker",
-      remedies: [{ id: "broker-silent", needsElevation: false, agentMayRun: true, command: "journalctl --user -u sbar-orbit.service --since -5min",
-        message: "The broker service is installed but nothing answered on its socket. Its journal says why." }] };
+      remedies: [{ id: "broker-silent", needsElevation: false, agentMayRun: true, command: process.platform === "win32" ? `schtasks /Query /TN ${service.data?.task ?? "SbarOrbitBroker"} /V /FO LIST`
+          : process.platform === "darwin" ? "launchctl print gui/$(id -u)/com.sbar.orbit.broker"
+          : "journalctl --user -u sbar-orbit.service --since -5min",
+        message: "The broker service is installed but nothing answered on its socket. Read its service status for the cause." }] };
   });
 
   return finish();
