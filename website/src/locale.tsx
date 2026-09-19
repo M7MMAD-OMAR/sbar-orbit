@@ -52,7 +52,7 @@ export const arabic: Record<string, string> = {
   "Copy installation commands": "نسخ أوامر التثبيت",
   "Copy": "انسخ",
   "Installation commands": "أوامر التثبيت",
-  "Linux, macOS or Windows, with Bun and Chrome/Chromium. The private display for native apps is Linux only, and needs the": "يعمل على لينكس وmacOS وWindows، ويحتاج إلى Bun ومتصفح Chrome أو Chromium. أما سطح المكتب الخاص لتطبيقات النظام فيعمل على لينكس وحده، راجع",
+  "Linux, macOS or Windows, with Bun and Chrome/Chromium. Linux additionally needs user cgroup delegation, and the private display for native apps is Linux only and needs the": "يعمل على لينكس وmacOS وWindows، ويحتاج إلى Bun ومتصفح Chrome أو Chromium. ويحتاج لينكس إضافة إلى ذلك تفويض cgroup للمستخدم. أما سطح المكتب الخاص لتطبيقات النظام فيعمل على لينكس وحده، راجع",
   "Fedora setup": "إعداد Fedora بالإنجليزية",
   "Experimental alpha": "نسخة أولية تجريبية",
   "Measured on Fedora 44 with wlroots, on Windows, and on Apple silicon macOS. The private browser runs on all three.": "اختبر على Fedora 44 مع wlroots، وعلى Windows، وعلى macOS بمعالج Apple. المتصفح الخاص يعمل على الأنظمة الثلاثة.",
