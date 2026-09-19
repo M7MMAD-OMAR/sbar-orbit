@@ -13,6 +13,13 @@ socket; `ORBIT_SOCKET` selects a different broker. `ORBIT_NATIVE_RENDERER` and
 `ORBIT_NATIVE_RENDER_DEVICE` opt the private display into a pinned GPU renderer, read once when the
 broker starts; a managed broker takes them from `~/.config/sbar-orbit/broker.env`. Pixman is the
 default and the measured choice, see [fedora results](fedora-results.md).
+`ORBIT_CAPTURE_TIMEOUT_MS` sets how long a single frame capture may take, default 3000, floored at
+500 and capped at 120000, and it lives in the same file for the same reason: it is a property of the
+host rather than of the product. Raise it on a machine that paints slowly, a small CI runner, a
+software rendered guest, or a workstation running several agents against one budget. The default was
+a hardcoded 3000 until a 2 vCPU GitHub runner beat it on the first capture after a cold navigate,
+which reached the agent as an unattributable `BACKEND_ERROR`; a capture that runs out of budget now
+answers `TIMEOUT` and names both the budget and this variable.
 
 ## Install
 
@@ -55,6 +62,15 @@ bun run src/cli.ts session pause "$ORBIT_SESSION_ID"
 bun run src/cli.ts session resume "$ORBIT_SESSION_ID"
 bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
 ```
+
+The quoted form above is the readable one and works in any POSIX shell. It is not the only one, because quoting is the host shell's business and some hosts lose: PowerShell strips the inner quotes before the process sees them, and a Windows CI job that already routed the command back through `cmd /c` with doubled quotes still answered `CLI_ERROR: JSON Parse error: Unterminated string` the first time it ran on a GitHub runner. So `act` also takes the document from a file or from standard input, and those two forms are the ones to prefer from any script, any agent host, and anything running on Windows:
+
+```sh
+bun run src/cli.ts act "$ORBIT_SESSION_ID" @action.json   # read it from a file
+echo '{"type":"read","selector":"h1"}' | bun run src/cli.ts act "$ORBIT_SESSION_ID" -
+```
+
+A document that will not parse says where it came from and what to use instead, rather than passing the parser's own message up with no context.
 
 `session observe ID` retains JPEG base64 JSON for existing scripts. Prefer `session observe ID --output /absolute/new-image.jpg` for an agent: it returns metadata and a file path without base64 text. Use `session observe ID --metadata` for tab/window and pointer information without capturing. The `mimeType` field names the actual image encoding. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
 
