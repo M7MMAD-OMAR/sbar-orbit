@@ -223,9 +223,24 @@ export function sliceUnit() {
     ...Object.entries(budget).map(([key, value]) => `${key}=${value}`), ""].join("\n");
 }
 
+function unitExecutable(launcher: string) {
+  // systemd parses ExecStart itself, including quoting and percent specifiers. The executable does not expand variables.
+  if (!/[\s"\\%$]/.test(launcher)) return launcher;
+  return JSON.stringify(launcher).replace(/%/g, "%%");
+}
+
+function installedExecutable(unit: string): string | undefined {
+  const token = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(unit)?.[1];
+  if (!token) return undefined;
+  try {
+    const decoded = token.startsWith('"') ? JSON.parse(token) as string : token;
+    return decoded.replace(/%%/g, "%");
+  } catch { return undefined; }
+}
+
 export function serviceUnit(launcher: string) {
   return ["[Unit]", "Description=Sbar Orbit local broker", "", "[Service]", "Type=simple",
-    `ExecStart=${launcher} serve --managed-socket`, "Slice=sbarorbit.slice",
+    `ExecStart=${unitExecutable(launcher)} serve --managed-socket`, "Slice=sbarorbit.slice",
     // Operator switches such as ORBIT_NATIVE_RENDERER live in a file the installer never rewrites.
     "EnvironmentFile=-%h/.config/sbar-orbit/broker.env",
     "Restart=on-failure", "RestartSec=2", "Nice=10",
@@ -249,7 +264,7 @@ export function updateTimerUnit() {
 export function updateServiceUnit(launcher: string) {
   return ["[Unit]", "Description=Sbar Orbit update check", "", "[Service]", "Type=oneshot",
     // Preparing a version downloads and unpacks, which is work like any other and belongs in the budget.
-    `ExecStart=${launcher} update run`, "Slice=sbarorbit.slice", "Nice=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
+    `ExecStart=${unitExecutable(launcher)} update run`, "Slice=sbarorbit.slice", "Nice=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
 }
 
 const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit,
@@ -321,7 +336,7 @@ export async function serviceUnitDrift(unitDirectory: string, launcher?: string)
     // of false alarm that gets a check ignored. So the builder's own arity decides: a builder that
     // takes no argument is compared directly.
     const needsLauncher = build.length > 0;
-    const named = needsLauncher ? launcher ?? /^ExecStart=(\S+)/m.exec(installed)?.[1] : "";
+    const named = needsLauncher ? launcher ?? installedExecutable(installed) : "";
     if (named === undefined) { drifted.push({ unit: name, reason: "the installed unit has no ExecStart to compare against" }); continue; }
     if (installed !== build(named)) {
       // Name the missing directives rather than printing two files, because that is what a person

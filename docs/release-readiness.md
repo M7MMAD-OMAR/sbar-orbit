@@ -97,3 +97,19 @@ instead of treating failed inspection as absence. The same guest and tests then
 returned seven passes, zero failures. Linux cleanup coverage returned eleven
 passes across egress and workspace tests; typecheck passed. This establishes the
 cleanup primitive on Windows, not namespace confinement on that platform.
+
+## First managed-installation CI results
+
+Run `35451273900` installed and connected all requested hosts on Windows and
+macOS, with the managed broker answering doctor, but their installed browser
+checks failed afterwards. Windows could not join the shared job object from the
+probe process; macOS returned BACKEND_FAILED during session creation. Neither
+browser acceptance is closed by the successful installation alone.
+
+Ubuntu exposed an unquoted ExecStart executable when the installation prefix
+contains spaces. A regression using the real systemd unit parser failed against
+the old builder, then passed for spaces, a literal percent specifier and a dollar
+sign after quoting the executable and escaping percent specifiers. The broker
+and updater units share this correction, and drift detection decodes the quoted
+path. Nineteen service and drift checks passed locally. Remote acceptance of the
+correction is pending.

@@ -17,7 +17,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
   fetch: () => new Response(`<html><title>Orbit installation</title><h1>${marker}</h1></html>`,
     { headers: { "content-type": "text/html" } }),
 });
-type Reply = { ok: boolean; result?: Record<string, unknown>; error?: { code?: string } };
+type Reply = { ok: boolean; result?: Record<string, unknown>; error?: { code?: string; message?: string } };
 async function invoke(args: string[], allowFailure = false): Promise<Reply> {
   const child = Bun.spawn([installedLauncher, ...args], {
     stdout: "pipe", stderr: "pipe", env: { ...process.env,
@@ -29,7 +29,7 @@ async function invoke(args: string[], allowFailure = false): Promise<Reply> {
   let reply: Reply;
   try { reply = JSON.parse(code === 0 ? stdout : stderr); }
   catch { throw new Error(`Installed command returned no JSON: ${args[0]}, exit ${code}, stderr bytes ${stderr.length}`); }
-  if (!allowFailure && (code !== 0 || !reply.ok)) throw new Error(`Installed command failed: ${args[0]}, ${reply.error?.code ?? code}`);
+  if (!allowFailure && (code !== 0 || !reply.ok)) throw new Error(`Installed command failed: ${args[0]}, ${reply.error?.code ?? code}: ${reply.error?.message ?? "no error detail"}`);
   return reply;
 }
 let sessionId: string | undefined;
