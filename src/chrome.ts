@@ -367,6 +367,23 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   await rm(join(profile, "DevToolsActivePort"), { force: true }).catch(() => {});
   const env = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined &&
     !["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY"].includes(key))) as Record<string, string>;
+  // Crashpad's database comes from the browser's USER CONFIG DIRECTORY, which on Linux is derived
+  // from XDG_CONFIG_HOME, and not from --user-data-dir. So a session with a fresh profile still had
+  // its crash handler writing into ~/.config/google-chrome/Crash Reports, the person's own browser
+  // directory, and pointing at https://clients2.google.com/cr/report.
+  //
+  // c9a5413 added --disable-crash-reporter for this and the flag is present in the argv, but the
+  // handler starts anyway: measured on Chrome 152, TWO handlers parented to the session's own
+  // browser, both naming the person's database. --disable-crashpad and --crash-dumps-dir were both
+  // tried and neither moved it either. The adversarial suite caught it because it matched the
+  // handler by PARENTAGE; my own first check filtered ps by the profile path and found zero, which
+  // is a false negative by construction, since the handler does not carry --user-data-dir at all.
+  //
+  // Redirecting the variable the derivation actually reads is what works, verified the same way:
+  // the handler's argv then reads --database=<profile>/config/google-chrome/Crash Reports. The
+  // flags stay, because on other Chrome builds they do suppress the handler and a suppressed
+  // handler is better than a redirected one.
+  env.XDG_CONFIG_HOME = join(profile, "config");
   const common = [`--user-data-dir=${profile}`, "--headless", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
     "--no-first-run", "--no-default-browser-check", "--disable-background-networking"];
   let owner: OwnedBrowser;

@@ -26,7 +26,7 @@ import { test, expect } from "bun:test";
 import { needsCommand } from "./platform-support";
 import { fileURLToPath } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { windowsChromeArguments } from "../src/windows-job";
 import { darwinChromeArguments } from "../src/chrome";
@@ -100,15 +100,35 @@ needsCommand("ps", "the launched browser is found by the --user-data-dir in its 
     // asserted about `["bun", "test", ...]`, the second returned early when no pid was found, which
     // is a pass on nothing. The profile path is the identifier that actually exists, so the process
     // is found by the `--user-data-dir` it was launched with.
-    const ps = Bun.spawnSync(["ps", "-eo", "pid=,args="], { stdout: "pipe" });
-    const line = ps.stdout.toString().split("\n")
-      .find(entry => entry.includes(`--user-data-dir=${profile}`) && !entry.includes("--type="));
+    const table = Bun.spawnSync(["ps", "-eo", "pid=,ppid=,args="], { stdout: "pipe" }).stdout.toString().split("\n");
+    const line = table.find(entry => entry.includes(`--user-data-dir=${profile}`) && !entry.includes("--type="));
     expect(line).toBeDefined();
     const argv = line!.trim();
     expect(argv).toContain("--disable-crash-reporter");
     // And the consequence, stated directly: nothing in the command line names the person's own
     // browser directory.
     expect(argv.includes(".config/google-chrome")).toBe(false);
+
+    // THE HALF THIS TEST USED TO MISS, and it is the half that mattered. Asserting the browser's own
+    // argv proved nothing about the CHILD it starts: Chrome 152 starts crashpad_handler regardless
+    // of --disable-crash-reporter, and the handler takes its database from the user config
+    // directory, not from --user-data-dir. So the flag was present, this test was green, and two
+    // live handlers were writing into the person's own ~/.config/google-chrome/Crash Reports.
+    //
+    // The handler carries no --user-data-dir, so it cannot be found the way the browser is: a `ps`
+    // filter on the profile path returns zero handlers and reads as a clean result. It is found by
+    // PARENTAGE instead, which is how the adversarial suite caught this.
+    const pid = argv.split(/\s+/)[0]!;
+    const handlers = table
+      .map(entry => entry.trim().split(/\s+/))
+      .filter(fields => fields[1] === pid && (fields[2] ?? "").includes("crashpad_handler"))
+      .map(fields => fields.join(" "));
+    for (const handler of handlers) {
+      expect(handler).not.toContain(join(homedir(), ".config/google-chrome"));
+      // Positively, not just by absence: where a handler runs at all, its database belongs inside
+      // the session's own profile, which is what XDG_CONFIG_HOME redirection achieves.
+      expect(handler).toContain(profile);
+    }
   } finally {
     await browser.close();
     await rm(profile, { recursive: true, force: true });
