@@ -179,3 +179,19 @@ archive outside the checkout, verifies dependencies are initially absent, and
 requires the installer to prepare them before running its existing browser flow.
 Bun and a browser remain provisioned prerequisites; their installation is not
 covered by this trial.
+
+## Scheduling comparison correction
+
+The earlier macOS scheduling experiment ran through limited.ts, which already
+backgrounds its descendants. Its nominal foreground arm only omitted an additional
+background request and never cleared the inherited class. Its old ratios therefore
+do not isolate scheduling cost and cannot rule that cause out.
+
+The revised disposable-CI experiment keeps registered process-group accounting,
+resets only its own inherited background class, and reads the actual browser's
+kernel flag in both arms. A mismatch fails the experiment. It also measures frame
+capture with the existing 3000 ms budget, retains failures and avoids treating a
+small sample as a platform-wide conclusion. Apple's
+[taskpolicy implementation](https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.c)
+uses `-B -p PID` to clear this scheduling class. Production scheduling is unchanged.
+The corrected experiment's remote measurement remains pending.

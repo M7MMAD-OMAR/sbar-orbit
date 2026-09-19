@@ -26,18 +26,31 @@
  * machines and the number says by how much.
  */
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cpus, totalmem } from "node:os";
 import { launchChrome } from "../src/chrome";
+import { inheritedBackgroundClass } from "../src/macos";
+import { requireResourceBudget } from "../src/resource-budget";
 
 if (process.platform !== "darwin") {
   console.log(JSON.stringify({ skipped: "this experiment measures the macOS scheduling class", platform: process.platform }));
   process.exit(0);
 }
 
+if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Scheduling comparison requires a disposable CI runner");
+await requireResourceBudget();
+// limited.ts registers this process group and backgrounds its descendants.
+// Merely omitting another taskpolicy -b does not undo that inherited state.
+// Reset only this experiment process, preserving group accounting and cleanup.
+if (inheritedBackgroundClass()) {
+  const reset = Bun.spawnSync(["/usr/sbin/taskpolicy", "-B", "-p", String(process.pid)]);
+  if (reset.exitCode !== 0) throw new Error("Could not reset experimental scheduling class");
+}
+if (inheritedBackgroundClass()) throw new Error("Foreground control still inherits background scheduling");
 const rounds = Number(process.argv[2] ?? 3);
+if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) throw new Error("Rounds must be 1 through 10");
 
 /** One session's real work, timed: launch, navigate to a local page, read it back, close. */
 async function timeOneSession(background: boolean) {
@@ -45,7 +58,7 @@ async function timeOneSession(background: boolean) {
   // A local page, so the number is this machine's scheduling and not somebody's network.
   const server = Bun.serve({ port: 0, fetch: () => new Response("<h1 id=t>measured</h1>", { headers: { "Content-Type": "text/html" } }) });
   const started = performance.now();
-  let launchMs = 0, navigateMs = 0, readMs = 0, failed: string | undefined;
+  let launchMs = 0, navigateMs = 0, readMs = 0, captureMs = 0, observedBackground: boolean | null = null, failed: string | undefined;
   let session: Awaited<ReturnType<typeof launchChrome>> | undefined;
   try {
     // `ORBIT_DARWIN_BACKGROUND=0` is the switch `launchOnDarwin` reads. Set per arm rather than
@@ -53,6 +66,10 @@ async function timeOneSession(background: boolean) {
     process.env.ORBIT_DARWIN_BACKGROUND = background ? "1" : "0";
     session = await launchChrome(profile);
     launchMs = Math.round(performance.now() - started);
+    const owner = JSON.parse(await readFile(join(profile, "owner.json"), "utf8"));
+    if (!Number.isInteger(owner.pid)) throw new Error("Browser owner report lacks a process");
+    observedBackground = inheritedBackgroundClass(owner.pid);
+    if (observedBackground !== background) throw new Error("Browser scheduling class does not match the requested arm");
     const navigateAt = performance.now();
     await session.page.goto(`http://127.0.0.1:${server.port}/`);
     navigateMs = Math.round(performance.now() - navigateAt);
@@ -60,6 +77,9 @@ async function timeOneSession(background: boolean) {
     const text = await session.page.textContent("#t");
     readMs = Math.round(performance.now() - readAt);
     if (text !== "measured") failed = `read returned ${JSON.stringify(text)}`;
+    const captureAt = performance.now();
+    await session.page.screenshot({ type: "jpeg", quality: 80, timeout: 3000 });
+    captureMs = Math.round(performance.now() - captureAt);
   } catch (error) {
     failed = error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : String(error).slice(0, 200);
   } finally {
@@ -68,10 +88,10 @@ async function timeOneSession(background: boolean) {
     await rm(profile, { recursive: true, force: true }).catch(() => {});
     delete process.env.ORBIT_DARWIN_BACKGROUND;
   }
-  return { launchMs, navigateMs, readMs, totalMs: launchMs + navigateMs + readMs, failed };
+  return { launchMs, navigateMs, readMs, captureMs, observedBackground, totalMs: launchMs + navigateMs + readMs + captureMs, failed };
 }
 
-const samples: { round: number; background: boolean; launchMs: number; navigateMs: number; readMs: number; totalMs: number; failed?: string }[] = [];
+const samples: (Awaited<ReturnType<typeof timeOneSession>> & { round: number; background: boolean })[] = [];
 for (let round = 0; round < rounds; round++) {
   // Alternating order per round, so a machine that warms up or gets busier does not systematically
   // favour one arm.
@@ -113,8 +133,7 @@ console.log(JSON.stringify({
   backgroundCostRatio: ratio,
   failures: samples.filter(sample => sample.failed).map(({ round, background, failed }) => ({ round, background, failed })),
   samples,
-  verdict: ratio === null ? "not measured: a session failed in one arm"
-    : ratio >= 2 ? "the background class more than doubles a session here; the default is wrong for a machine this size"
-    : ratio >= 1.3 ? "the background class costs real time here and is defensible; the figure belongs beside the claim"
-    : "the background class is close to free here, so it is not what makes sessions miss deadlines",
+  verdict: samples.some(sample => sample.failed) ? "incomplete comparison: failures retained"
+    : "measured scheduling classes verified; ratio applies only to these samples",
 }, null, 2));
+if (samples.some(sample => sample.failed)) process.exitCode = 1;
