@@ -33,6 +33,9 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Check types
         run: bun run typecheck
+      - name: Diagnose Windows socket ACL environment
+        if: runner.os == 'Windows'
+        run: bun run scripts/limited.ts bun experiments/windows-socket-diagnostic.ts
       # Use the same bounded entry point on every platform. The command's exit
       # status is the job result, with no echo or tolerated failure masking it.
       - name: Run the bounded suite

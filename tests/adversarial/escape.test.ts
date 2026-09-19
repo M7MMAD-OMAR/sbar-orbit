@@ -194,7 +194,7 @@ test.skipIf(!supported)("the browser a session is given cannot reach the person'
  *
  * Remove `.failing` when no handler runs, or when its `--database` is inside the session profile.
  */
-test.failing.skipIf(!supported)("no live process under a session names the person's crash database or its upload endpoint", async () => {
+(supported ? test.failing : test.skip)("no live process under a session names the person's crash database or its upload endpoint", async () => {
   const broker = await openBroker("adversarial-crashpad");
   const fixture = startFixture();
   try {
