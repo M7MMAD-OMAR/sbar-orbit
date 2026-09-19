@@ -28,7 +28,18 @@ const source = join(root, "package");
 if (await Bun.file(join(source, "node_modules/playwright/package.json")).exists())
   throw new Error("Fresh package unexpectedly contains prepared dependencies");
 const installer = join(source, process.platform === "win32" ? "install.cmd" : "install.sh");
-const child = Bun.spawn([installer, "--prefix", prefix, "--connect", "claude,codex,hermes", "--json"],
+const installArgs = ["--prefix", prefix, "--connect", "claude,codex,hermes", "--json"];
+let installCommand = [installer, ...installArgs];
+if (process.platform === "win32") {
+  // Bun's implicit cmd.exe invocation splits a batch path containing spaces.
+  // Invoke it through PowerShell as a person would, with literal arguments.
+  const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+  const driver = join(root, "invoke-installer.ps1");
+  await writeFile(driver, `& ${[installer, ...installArgs].map(quote).join(" ")}\nexit $LASTEXITCODE\n`);
+  installCommand = [join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", driver];
+}
+const child = Bun.spawn(installCommand,
   { cwd: source, env, stdout: "pipe", stderr: "pipe", timeout: 180000 });
 const [out, err, exit] = await Promise.all([
   new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,

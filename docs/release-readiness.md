@@ -195,3 +195,12 @@ small sample as a platform-wide conclusion. Apple's
 [taskpolicy implementation](https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.c)
 uses `-B -p PID` to clear this scheduling class. Production scheduling is unchanged.
 The corrected experiment's remote measurement remains pending.
+
+The first registry-archive acceptance passed installation and browser use on
+Ubuntu and macOS. Windows failed before entering the installer: Bun's implicit
+batch-file invocation split the extracted source path at a space. A Windows 11
+ordinary-account probe reproduced exit 1 and the split-path error with a real
+batch file; invoking that same file through PowerShell with literal arguments
+returned exit 0 and preserved an argument containing spaces. CI now uses that
+invocation for the Windows installation script. This is a harness correction;
+managed Windows installation from the archive still awaits its remote result.
