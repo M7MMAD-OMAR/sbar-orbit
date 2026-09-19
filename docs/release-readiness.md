@@ -240,3 +240,12 @@ The subsequent native-enabled full suite returned 444 passes, 26 skips and zero
 failures across 470 tests in 92 files, in 160.74 seconds. Typecheck also passed.
 The intermittent installer failure has not been explained by that successful
 rerun and remains open. These changes remain local; verify stays disabled.
+
+The installer contract checks also passed together with the preceding update and
+advisor suites: 35 passes, zero failures. This did not reproduce the intermittent
+full-suite failure. On the ordinary-account Windows 11 guest, the updated preflight
+and failed-viewer-setup tests passed all seven checks with Bun 1.4.2. Only those
+changed files were transferred into the existing test checkout; this is targeted
+Windows evidence, not a full-suite result at the current revision. The guest's
+one-time test login was disarmed and its stored automatic-login password removed.
+No GitHub workflow was started and no commits were pushed for these checks.
