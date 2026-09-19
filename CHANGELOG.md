@@ -2,7 +2,73 @@
 
 Versions follow Semantic Versioning. Alpha releases are experimental and may change interfaces without compatibility guarantees.
 
-## Unreleased
+## 0.1.0-alpha.7 - 19 September 2026
+
+### Added
+
+- **The macOS port**, measured on a real Apple silicon Mac across twelve runs rather than reasoned
+  about on Linux. `src/macos.ts` reaches libproc through `bun:ffi` for process group enumeration,
+  per-group resource usage and start-time identity; `src/macos-budget.ts` is the group registry that
+  stands where a cgroup would; `src/native/supervise-darwin.ts` owns the browser tree and sweeps it;
+  `src/macos-autostart.ts` writes a LaunchAgent in `gui/$UID`; `src/macos-orphans.ts` is the second
+  containment layer, run at broker start. Containment held in every run: 9 to 10 Chrome processes, the
+  supervisor SIGKILLed with no cleanup handler, **0 survivors in 60 to 137 ms**.
+  [what macOS measured](docs/macos-measured.md).
+- **The macOS research**, about 5,400 lines under [docs/research/macos/](docs/research/macos/), written
+  before the code by four agents under instructions to cite primary sources and label anything they
+  could not. Three findings in it changed the design before it existed: there is no shared resource
+  pool on macOS because task coalitions are gated behind a private Apple entitlement, a fresh
+  `--user-data-dir` does **not** avoid the Keychain dialog because the lookup uses compile-time
+  constants naming no profile, and Chromium's crash handler calls `setsid()` on purpose so it escapes
+  any process group sweep and has to be disabled rather than contained.
+- **An adversarial security audit** of the finished adapter, kept at
+  [docs/research/macos/security-audit.md](docs/research/macos/security-audit.md) including the one
+  defect it reported that was not real, because an audit is evidence to be checked rather than a
+  verdict to be applied.
+- **The Windows port research**, 874 sourced lines under
+  [docs/research/windows/](docs/research/windows/).
+
+### Changed
+
+- `resourceStatus()` reports `enforcement: "advisory"` on macOS, a third value beside
+  `kernel-cgroup` and `job-object`. macOS has neither a cgroup nor a named job object, so the budget
+  is a registered process group plus an inherited scheduling class: the same shape as the other two,
+  a weaker promise, and the word carries the difference rather than a footnote doing it.
+- `config`, `panel` and `viewer` are refused by name outside Linux instead of being attempted.
+  `bin/sbar-orbit` runs `/usr/bin/python3`, which on a Mac without the Command Line Tools opens a
+  system dialog: exactly the behaviour this project exists to prevent.
+
+### Fixed
+
+- **The viewer opened in the person's own browser, on every Mac.** `listHostBrowsers()` scans
+  `.desktop` files, of which macOS has none, so it returned an empty list and the viewer fell through
+  to `open`, which makes LaunchServices activate the browser the person is already working in and hand
+  it the viewer URL and its access token, in their real profile. It lists real `.app` bundles now, and
+  a Mac with no Chromium-family browser gets no viewer at all rather than one in the person's window.
+- **A documented containment layer that did not exist.** Three comments described a second sweep for a
+  supervisor killed before it could run its own; there was no implementation and no caller, so a
+  SIGKILLed supervisor left the tree orphaned and `cleanWorkspaces()` then deleted the profile
+  directory from under a running browser. It runs before workspace cleaning now.
+- **A failed group enumeration read as an empty group**, so `SIGKILL` was never sent to a tree that had
+  ignored `SIGTERM`, and the registry reaped live registrations. `failed` is a separate field from
+  `complete`, and both callers treat it as "something may still be there".
+- `killpg` on the supervisor's own group delivered the signal back to the supervisor, which died
+  mid-sweep before the poll that confirms the group is gone.
+- A struct offset read `pbi_ppid` as `pbi_flags`, so the background-class check tested bit `0x8000` of
+  a **parent process id**: a coin flip decided by machine load. An earlier test passed for the wrong
+  reason, pid 1's parent being 0.
+- `ri_user_time` was read as nanoseconds; it is in mach ticks.
+- `ORBIT_BUDGET_ROOT` was taken literally, with no check that it is absolute, a directory, owned by
+  this user and not a symlink.
+- A null leader start time **disabled** the process-group reuse check instead of failing closed, which
+  is the check that stops a sweep signalling whatever now holds a recycled group id.
+- The publication audit's macOS TCC rules matched 2 of 16 real calls, missing bare `screencapture` and
+  `CGDisplayCreateImage`; they are prefix checks now and match 13 of 13.
+
+
+### Also in this release: the Windows launcher and connector work
+
+Carried here from Unreleased, because it shipped in the same cycle as the macOS port.
 
 ### Added
 
