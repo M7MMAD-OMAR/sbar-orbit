@@ -19,7 +19,8 @@ import { call } from "../../src/ipc";
 import { detectPlatform } from "../../src/platform";
 import { openBroker, startFixture, act, type JournalView } from "./probe";
 
-const supported = (await detectPlatform()).browserBackendSupported;
+const capabilities = await detectPlatform();
+const supported = capabilities.browserBackendSupported;
 const linux = process.platform === "linux";
 
 const egressRoot = join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress");
@@ -50,7 +51,9 @@ async function entriesOf(directory: string): Promise<string[]> {
  * Remove `.failing` when a starting broker sweeps the egress root for directories whose owner does not
  * answer, the way `cleanWorkspaces` already does for workspaces.
  */
-test.skipIf(!supported || !linux)("a broker killed outright is followed by a broker that reclaims its egress directory", async () => {
+// A host with only in-browser egress creates no namespace directory to reclaim.
+// Report this coverage as skipped there, not as a successful cleanup measurement.
+test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker killed outright is followed by a broker that reclaims its egress directory", async () => {
   const broker = Bun.spawn([process.execPath, "src/cli.ts", "serve"], { stdout: "pipe", stderr: "pipe" });
   const reader = broker.stdout.getReader();
   const drained = new Response(broker.stderr).text();
@@ -76,7 +79,8 @@ test.skipIf(!supported || !linux)("a broker killed outright is followed by a bro
 
     const during = await entriesOf(egressRoot);
     const opened = during.filter(entry => !before.includes(entry));
-    if (session.egressTier === "namespace") {
+    expect(session.egressTier).toBe("namespace");
+    {
       // The lease is real on this host, so there is something to leak.
       expect(opened.length).toBe(1);
       const directory = join(egressRoot, opened[0]!);

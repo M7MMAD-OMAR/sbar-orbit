@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { inspectPrerequisites } from "../src/preflight";
 
 const complete = { platform: "linux", file: async () => true, module: () => true, which: () => "/usr/bin/Xwayland",
@@ -98,8 +99,11 @@ test("unsupported OS and absent executable checks cannot claim availability", as
 
 test("standalone preflight runs without a broker socket and emits no personal paths", async () => {
   const env = { ...process.env }; delete env.ORBIT_SOCKET;
-  const child = Bun.spawn([resolve(import.meta.dir, "../bin/sbar-orbit"), "preflight"], {
-    cwd: "/tmp", env, stdout: "pipe", stderr: "pipe",
+  const command = process.platform === "win32"
+    ? [process.execPath, resolve(import.meta.dir, "../scripts/preflight.ts")]
+    : [resolve(import.meta.dir, "../bin/sbar-orbit"), "preflight"];
+  const child = Bun.spawn(command, {
+    cwd: tmpdir(), env, stdout: "pipe", stderr: "pipe",
   });
   const raw = await new Response(child.stdout).text();
   const report = JSON.parse(raw);
