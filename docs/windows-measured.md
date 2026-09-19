@@ -1807,3 +1807,65 @@ an argument, every path it builds for a platform that is not this one has to be 
 platform's own `join`.** The compiler cannot see it, and on a single-platform CI it never fails.
 
 **220 pass, 0 fail, 103 skip** on the guest afterwards.
+
+## 32. The libraries, measured on the guest rather than reasoned about on Linux
+
+"Test the libraries too" deserved its own measurement, because a dependency tree is a Windows
+question: install scripts run arbitrary code, native addons need a matching ABI and a Visual C++
+runtime, and a copyleft transitive dependency is a distribution problem for a project that ships a
+source archive. `bun audit` reports zero known vulnerabilities, which is worth exactly what it says
+and no more: it is a CVE lookup, not a supply chain audit.
+
+**The tree, on the guest, in the unpacked archive.** 99 top-level entries under `node_modules`.
+
+| Question | Measured on Windows 11 |
+|---|---|
+| Native `.node` addons | **0**, so there is no ABI to match and no toolchain needed for a Windows install |
+| Packages with `install`/`postinstall`/`preinstall` | **0**. Only 4 declare `prepare`, which does not run for a registry tarball |
+| `playwright` own lifecycle scripts | **none at all**: its `scripts` key is absent, so the browser download is the separate `playwright install` CLI, not a postinstall |
+| Copyleft or unlicensed | **0**. 85 MIT, 7 ISC, 4 Apache-2.0, 2 BSD-3-Clause, 1 BSD-2-Clause |
+| `@typescript` native tsc selected | **`typescript-win32-x64`**, not the Linux binary the dev host installs |
+
+That last row closes a question the audit could only infer from an `os`/`cpu` gate in the lockfile.
+Bun picks the win32 binary on the guest from the same lockfile entry, so the committed lockfile is
+genuinely cross-platform rather than a Linux snapshot.
+
+### The interesting one: Playwright names a browser that is not there
+
+```
+bundled browser path: C:\WINDOWS\system32\config\systemprofile\AppData\Local\ms-playwright\chromium-1243\chrome-win64\chrome.exe
+does playwrights bundled chrome exist? False
+orbit found: [{"id":"microsoft-edge","executable":"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", ...}]
+```
+
+`chromium.executablePath()` answers happily with a path that does not exist, because `--ignore-scripts`
+means nothing ever downloaded it. Orbit never asks: it probes the filesystem and the registry itself
+(`src/runtime-paths.ts`) and drives the Edge that Windows already had over CDP. The single value
+import from the whole library is `chromium`, used at exactly one call site, `connectOverCDP`.
+
+So skipping the browser download is correct by design, not a degraded mode. That is worth stating
+plainly because the failure it invites is a contributor seeing a skipped postinstall, running
+`playwright install` as the obvious fix, and pulling several hundred MB of browser binaries that
+nothing will ever launch.
+
+### Four of these are now tests, not paragraphs
+
+A property that holds until the next dependency bump is a snapshot, not a property.
+`tests/dependency-tree.test.ts` asserts zero install-time code execution, zero copyleft, zero native
+addons, and that no file in `src`, `scripts`, `bin` or `docs` invokes `playwright install`. A fifth
+asserts every install path still carries `--frozen-lockfile`, which is the only reason the caret
+ranges in `package.json` cannot drift.
+
+Both security-shaped ones were checked with negative controls: planting a `postinstall` in an
+installed package, and planting `GPL-3.0` as its license, each fails the matching test and names the
+offender. The manifest was restored afterwards.
+
+### What is still not measured
+
+- Registry-side provenance: npm attestations and publisher 2FA were not checked. The lockfile's
+  sha512 integrity fields protect against tampering in transit, not against a compromised publisher.
+- Whether swapping `playwright` for `playwright-core` keeps the guest suite green. It would drop the
+  4.86 MB wrapper containing the downloader and test runner while keeping the 12.83 MB core that holds
+  the one function used. That is a real supply-chain reduction and an untested change, so it is
+  recorded as a recommendation and not applied.
+- Whether any dependency reaches the network at import time: not instrumented.

@@ -7,7 +7,14 @@ $ErrorActionPreference = 'Continue'
 # skipped on Windows, does the project work anyway, and is the browser it drives the one Windows
 # already had rather than one playwright fetched.
 
-$root = 'C:\orbit\w0918i'
+# The archive unpacks into a NAMED directory inside the unpack root, so the tree is one level deeper
+# than the root the other probes use. Pointing at the root instead printed "node_modules=none" and
+# "top-level packages: 0" for a tree that was fully installed, which reads as a finding rather than as
+# a wrong path. Resolve it rather than hardcoding the version.
+$unpackRoot = 'C:\orbit\w0918i'
+$root = (Get-ChildItem $unpackRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'package.json') } | Select-Object -First 1).FullName
+if (-not $root) { Write-Output "FATAL: no unpacked source tree under $unpackRoot"; exit 1 }
+Write-Output "tree: $root"
 Set-Location $root
 
 Write-Output '--- 1. did playwright download any browser at install time ---'
