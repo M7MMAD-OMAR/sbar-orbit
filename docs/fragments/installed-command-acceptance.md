@@ -48,6 +48,7 @@ Typecheck passed.
 
 ## Limits
 
-macOS execution of this new check, resource acceptance on physical machines, and
-automatic host registration remain open. These measurements do not establish
+macOS execution of this installed-browser check and resource acceptance on physical
+machines remain open. Automatic host registration now passes the three-platform
+protocol probe; see [release readiness](../release-readiness.md). These measurements do not establish
 support for native Windows or macOS applications.
