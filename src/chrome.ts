@@ -304,6 +304,37 @@ async function launchOnWindows(executable: string, profile: string, argv: string
   };
 }
 
+/**
+ * The arguments every macOS browser launch is made of, in one place so a test can read the list the
+ * process is actually given.
+ *
+ * Extracted for the reason `windowsChromeArguments` records: the Windows containment flags were once
+ * asserted against a builder nothing in production called, and the two lists drifted. The macOS list
+ * was worse off than that, because it was a literal inside `launchChrome` that no test could reach at
+ * all without starting a browser, so `--use-mock-keychain` was unasserted on every host.
+ *
+ * `common` is the platform independent prefix `launchChrome` already builds; it is passed in rather
+ * than rebuilt, so this function cannot become a second copy of it.
+ */
+export function darwinChromeArguments(profile: string, common: string[], extra: string[] = [],
+  options: { extensions?: boolean } = {}): string[] {
+  return [
+    ...common,
+    // The two Keychain flags. See the block in `launchChrome` for why each one is here; the short
+    // version is that `keychain_password_mac.mm` looks the key up by compile time constants, so a
+    // fresh `--user-data-dir` reuses the person's `Chrome Safe Storage` item, and `os_crypt_switches.h`
+    // documents `--use-mock-keychain` as existing to prevent blocking dialogs.
+    "--use-mock-keychain",
+    "--password-store=basic",
+    "--disable-crash-reporter",
+    "--disable-features=MediaRouter",
+    `--disk-cache-dir=${join(profile, "cache")}`,
+    ...(options.extensions ? [] : ["--disable-extensions"]),
+    ...extra,
+    "about:blank",
+  ];
+}
+
 /** Own Chrome separately from its CDP connection, including failed startup. */
 export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
   await requireResourceBudget();
@@ -373,9 +404,11 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     //
     // No --no-sandbox: the Chrome sandbox works on macOS and dropping it would be a straight
     // security regression, the same reasoning the Windows branch already records.
-    owner = launchOnDarwin(executable, profile, [...common, "--use-mock-keychain", "--password-store=basic",
-      "--disable-crash-reporter", "--disable-features=MediaRouter", `--disk-cache-dir=${join(profile, "cache")}`,
-      ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"], env);
+    //
+    // Built by `darwinChromeArguments`, for the reason the Windows branch gives: a list built inline
+    // here is a list no test can read without launching a browser.
+    owner = launchOnDarwin(executable, profile,
+      darwinChromeArguments(profile, common, options.extraArgs ?? [], { extensions: options.extensions }), env);
   } else {
     // Chrome can use the desktop bus to move itself into an uncapped systemd scope.
     // This owned headless browser must not connect to the human session bus.
