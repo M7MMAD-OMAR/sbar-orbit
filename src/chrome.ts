@@ -190,7 +190,13 @@ function launchOnDarwin(executable: string, profile: string, argv: string[], env
     exitCode: () => owner.exitCode,
     exited: owner.exited,
     diagnostics: () => {
-      try { return String(JSON.parse(readFileSync(join(profile, "owner.json"), "utf8")).error?.message ?? ""); } catch { return ""; }
+      try {
+        const report = JSON.parse(readFileSync(join(profile, "owner.json"), "utf8"));
+        if (report.error?.message) return String(report.error.message);
+        return Number.isInteger(report.pid)
+          ? "macOS supervisor recorded browser startup"
+          : "macOS supervisor has not recorded a browser process";
+      } catch { return "macOS supervisor has not written its startup report"; }
     },
     async stop() {
       // Closing the pipe is the stop signal the supervisor waits on, and it is what a broker that

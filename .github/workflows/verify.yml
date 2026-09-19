@@ -80,7 +80,7 @@ jobs:
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Install, register hosts and use the managed browser
-        run: bun experiments/installed-ci-acceptance.ts
+        run: bun run scripts/limited.ts bun experiments/installed-ci-acceptance.ts
       - name: Preserve installer report and browser frame
         if: always()
         uses: actions/upload-artifact@v4

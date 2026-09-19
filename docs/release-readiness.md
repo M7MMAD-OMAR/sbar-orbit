@@ -120,3 +120,22 @@ spawning its child. The CI assignment failure therefore remains specific to the
 unexplained runner context, not reproduced by this guest. Assignment errors now
 retain the Win32 error number before the membership check overwrites it. This is
 diagnostic evidence and stricter refusal, not a claim that the CI failure is fixed.
+
+Run `35451744936` passed the full managed installation and installed-browser flow
+on Ubuntu, including a prefix containing spaces and all three requested host
+registrations. The captured 1280 by 800 frame was inspected and its random heading
+was visible. This is a fresh runner with prerequisites provisioned, not installation
+on a physical desktop without Bun.
+
+The Windows CI probe now reports Win32 assignment error 5. A nonempty job can only
+accept an already-jobbed process within a compatible hierarchy, as described by
+[Microsoft's AssignProcessToJobObject contract](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-assignprocesstojobobject).
+The acceptance driver previously created separately bounded subprocesses from an
+unbounded parent. The next run places the driver itself inside the shared budget
+before installation, preserving one ancestor for those subprocesses. Whether this
+resolves the runner refusal remains to be measured.
+
+The macOS installed flow also reports its specific failure now: Chrome remains
+running but does not publish its endpoint within 20 seconds. Failure diagnostics
+now distinguish a supervisor that recorded browser startup from one that has not
+written its startup report, without exposing profile paths. Deadlines remain unchanged.
