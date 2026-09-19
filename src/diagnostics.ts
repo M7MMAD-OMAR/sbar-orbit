@@ -8,7 +8,29 @@ import { version } from "../package.json";
 
 const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write']);
 const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'select-tab', 'close-tab', 'launch', 'scroll', 'pointer', 'resize', 'window', 'text', 'paste', 'key']);
-const codes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'SESSION_LIMIT', 'RESOURCE_LIMIT', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED']);
+/**
+ * The codes a diagnostic event may carry. Anything not here is recorded as `BACKEND_ERROR`, which is
+ * the unattributable failure `src/ipc.ts` names, so this list drifting from what the source throws is
+ * not cosmetic: it turns a known refusal into "something went wrong".
+ *
+ * It drifted in BOTH directions and was measured doing so. `LIMIT_REACHED` is thrown from four
+ * ceilings on the hot path, the 32 session, 10000 action, 64 tab and 32 application limits, and was
+ * absent, so a busy broker's ceilings were recorded as BACKEND_ERROR. `SESSION_LIMIT` and
+ * `RESOURCE_LIMIT` were present and are thrown by nothing at all, which is how the absence went
+ * unnoticed: the list LOOKED like it covered limits.
+ *
+ * `tests/diagnostic-codes.test.ts` compares this set against the codes `src/**` actually throws and
+ * fails on a new code in either direction, because that is the only thing that keeps a hand-written
+ * list honest. An intentionally listed code that nothing throws belongs in that test's allowlist with
+ * its reason, not here.
+ */
+export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED',
+  // Added after measuring what the layer recorded for each: every one of these was landing as
+  // BACKEND_ERROR. They are refusals a person or an agent can act on, and an agent that cannot tell
+  // "you hit a ceiling" from "something broke" retries the wrong thing.
+  'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_UNAVAILABLE', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
+  'RESTORE_REFUSED', 'POLICY_CONFIRMATION_REQUIRED', 'ACCOUNT_STATE_INVALID', 'USAGE_STATE_INVALID',
+  'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;
 export const diagnosticRoot = () => join(stateDirectory(), 'diagnostics');
@@ -77,7 +99,7 @@ export class Diagnostics {
       await this.record({ ...event, at: new Date().toISOString(), session: event.session ?? hash(object(result).sessionId), outcome: 'ok', durationMs: Math.round(performance.now() - start) });
       return result;
     } catch (error) {
-      const code = error instanceof OrbitError && codes.has(error.code) ? error.code : 'BACKEND_ERROR';
+      const code = error instanceof OrbitError && diagnosticCodes.has(error.code) ? error.code : 'BACKEND_ERROR';
       await this.record({ ...event, at: new Date().toISOString(), outcome: 'error', code, durationMs: Math.round(performance.now() - start) });
       // The journal is metadata by design, and an exception that is not Orbit's own says nothing here
       // except that something threw. Its own words go to the broker's stderr, which is the operator's
@@ -107,7 +129,7 @@ export class Diagnostics {
               ...(['browser', 'fedora', 'system'].includes(String(e.backend)) ? { backend: String(e.backend) } : {}),
               ...(/^[a-f0-9]{16}$/.test(String(e.session)) ? { session: String(e.session) } : {}),
               ...(/^[a-f0-9]{16}$/.test(String(e.request)) ? { request: String(e.request) } : {}),
-              ...(codes.has(String(e.code)) ? { code: String(e.code) } : {}),
+              ...(diagnosticCodes.has(String(e.code)) ? { code: String(e.code) } : {}),
               ...(typeof e.durationMs === 'number' && Number.isFinite(e.durationMs) && e.durationMs >= 0 ? { durationMs: e.durationMs } : {}) });
           } catch { this.failedReads++; }
         }

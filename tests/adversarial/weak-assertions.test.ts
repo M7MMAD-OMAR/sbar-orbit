@@ -88,26 +88,22 @@ test("every error code the broker can return is in the diagnostics allowlist", a
 
   // A code the broker throws and diagnostics does not know is recorded as BACKEND_ERROR, so the
   // journal says a method failed and not why. Reported as the set rather than as one example.
+  //
+  // This list USED to carry seven codes, and the finding it recorded is now fixed: `LIMIT_REACHED`,
+  // thrown by the 32 session, 10000 action, 64 tab and 32 application ceilings, was absent from the
+  // allowlist while `SESSION_LIMIT` and `RESOURCE_LIMIT`, which nothing throws, were present. The
+  // ceilings a busy broker actually hits were recorded as the unattributable BACKEND_ERROR that
+  // `src/ipc.ts` names. Measured through the real Diagnostics class before the fix, and again after.
+  //
+  // The expectation is now EMPTY rather than deleted, because empty is the assertion: any code this
+  // project starts throwing without listing fails here, which is what this test was written for.
   const unknown = [...thrown].filter(code => !allowlisted.has(code)).sort();
-  expect(unknown).toEqual([
-    // Known and accepted, and listed rather than filtered out so a NEW unlisted code fails this.
-    // Sorted, because `unknown` is sorted.
-    "ACCOUNT_STATE_INVALID",
-    // FINDING, small and real: `LIMIT_REACHED` is thrown from four places on the hot path, the 32
-    // session ceiling, the 10000 action ceiling, the 64 tab ceiling and the 32 application ceiling,
-    // and the allowlist carries `SESSION_LIMIT` and `RESOURCE_LIMIT` instead, neither of which any
-    // source throws. So the four ceilings a busy broker actually hits are the ones recorded as
-    // BACKEND_ERROR in the diagnostics report, which is the unattributable failure `src/ipc.ts`
-    // names. Kept in this list rather than fixed here, because `src/diagnostics.ts` is not this
-    // agent's file to edit.
-    "LIMIT_REACHED",
-    "POLICY_CONFIRMATION_REQUIRED",
-    "RESOURCE_BOUNDARY_LOST", "RESOURCE_UNAVAILABLE", "RESTORE_REFUSED",
-  ]);
-  // And the two codes the allowlist carries that nothing throws, which is the same drift from the
-  // other side: a reader of the report cannot see them because they never occur.
+  expect(unknown).toEqual([]);
+  // And the other side of the same drift, also fixed: the allowlist no longer carries codes nothing
+  // throws. A phantom entry is what made the absence hard to see, since the list LOOKED like it
+  // covered limits. tests/diagnostic-codes.test.ts holds this across the whole of src/**; here it is
+  // pinned for the ten modules this file reads.
   for (const orphan of ["SESSION_LIMIT", "RESOURCE_LIMIT"]) {
-    expect(allowlisted.has(orphan)).toBe(true);
-    expect(thrown.has(orphan)).toBe(false);
+    expect(allowlisted.has(orphan)).toBe(false);
   }
 });
