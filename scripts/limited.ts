@@ -115,7 +115,8 @@ if (alreadyLimited) {
   // The same two numbers `requireWindowsBudget` joins with, so the pool this creates is the pool that
   // check then accepts. Stated once in `src/service.ts`, as on the other two platforms.
   const { memoryMiB } = await import("../src/service");
-  joinSharedBudget({ memoryBytes: memoryMiB * 1048576, processes: 1536 });
+  const pool = joinSharedBudget({ memoryBytes: memoryMiB * 1048576, processes: 1536 });
+  if (!pool.joined) throw new Error(`Cannot join the shared Orbit job object (Win32 assignment error ${pool.assignmentError ?? "unknown"})`);
   // Assignment is INHERITED, so the command and everything it starts are inside the job without
   // being assigned individually, and killing the job takes the tree.
   const child = Bun.spawn([executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });

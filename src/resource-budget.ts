@@ -88,7 +88,7 @@ async function requireWindowsBudget(): Promise<BudgetLimits> {
     const { cpuCores, memoryMiB } = await import("./service");
     const pool = joinSharedBudget({ memoryBytes: memoryMiB * 1048576, processes: 1536 });
     if (!pool.joined)
-      throw new Error("This process is not inside the shared Orbit job object");
+      throw new Error(`This process is not inside the shared Orbit job object (Win32 assignment error ${pool.assignmentError ?? "unknown"})`);
     if (pool.memoryBytes > 8589934592 || pool.processes > 1536)
       throw new Error("The shared Orbit job object is wider than the budget allows");
     return {

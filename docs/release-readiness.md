@@ -113,3 +113,10 @@ sign after quoting the executable and escaping percent specifiers. The broker
 and updater units share this correction, and drift detection decodes the quoted
 path. Nineteen service and drift checks passed locally. Remote acceptance of the
 correction is pending.
+
+The same installed-command probe passed on the ordinary-account Windows 11 guest
+in 5692 ms after the limiter was changed to refuse a failed job assignment before
+spawning its child. The CI assignment failure therefore remains specific to the
+unexplained runner context, not reproduced by this guest. Assignment errors now
+retain the Win32 error number before the membership check overwrites it. This is
+diagnostic evidence and stricter refusal, not a claim that the CI failure is fixed.

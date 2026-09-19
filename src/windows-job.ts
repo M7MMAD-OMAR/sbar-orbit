@@ -304,6 +304,8 @@ export type SharedBudget = {
   processes: number;
   /** Whether this process is inside the pool, which is the check `requireResourceBudget` makes. */
   joined: boolean;
+  /** Win32 assignment failure, retained before membership probing changes GetLastError. */
+  assignmentError?: number;
 };
 
 /**
@@ -335,10 +337,12 @@ export function joinSharedBudget(budget: { memoryBytes: number; processes: numbe
   const self = asHandle(api.OpenProcess(PROCESS_ACCESS, false, process.pid));
   if (!self) throw new OrbitError("BACKEND_FAILED", `Could not open this process, error ${api.GetLastError()}`);
   let joined = false;
+  let assignmentError: number | undefined;
   try {
     joined = api.AssignProcessToJobObject(handle, self);
     // Already in the pool from an earlier call is success, not failure.
     if (!joined) {
+      assignmentError = api.GetLastError();
       const flag = new Uint8Array(4);
       if (api.IsProcessInJob(self, handle, ptr(flag))) joined = flag[0] === 1;
     }
@@ -357,7 +361,7 @@ export function joinSharedBudget(budget: { memoryBytes: number; processes: numbe
     memoryBytes = Number(view.getBigUint64(120, true));
   }
   // The handle is deliberately NOT closed: it is what keeps the pool alive for the next process.
-  return { memoryBytes, processes, joined };
+  return { memoryBytes, processes, joined, assignmentError: joined ? undefined : assignmentError };
 }
 
 /** What the shared pool currently holds, for `budgetHeadroom` and `resourceStatus`. */
