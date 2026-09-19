@@ -58,12 +58,37 @@ test("every option shape a macOS launch can take still carries both switches", (
 
 test("a caller cannot turn the Keychain switches off through the arguments it is allowed to add", () => {
   // `extraArgs` is caller controlled: the egress lease uses it. Chromium takes the LAST occurrence of
-  // a switch, so an extra `--password-store=gnome-libsecret` appearing after ours would win. This
-  // asserts the shape that keeps the answer readable: ours are present, and nothing in extras is a
-  // second `--password-store` or a `--use-mock-keychain` negation.
-  const argv = darwinChromeArguments("/tmp/e", common("/tmp/e"), ["--disable-gpu"]);
-  expect(argv.filter(argument => argument.startsWith("--password-store="))).toEqual(["--password-store=basic"]);
-  expect(argv.filter(argument => argument === "--use-mock-keychain")).toHaveLength(1);
+  // a switch, so an extra `--password-store=gnome-libsecret` appearing after ours would win.
+  //
+  // The first version of this test passed `--disable-gpu` and asserted the result, which attacks
+  // nothing: it proved a harmless argument is harmless. Measured against the builder as it then
+  // stood, the real attack got through, producing
+  // `[--password-store=basic, --password-store=gnome-libsecret]` with the hostile one LAST and
+  // therefore the one obeyed. The defence lived only in this comment. It is now in the builder, so
+  // these are the arguments an attacker would actually send.
+  const hostile = darwinChromeArguments("/tmp/e", common("/tmp/e"),
+    ["--disable-gpu", "--password-store=gnome-libsecret", "--use-mock-keychain"]);
+  const stores = hostile.filter(argument => argument.startsWith("--password-store="));
+  // Exactly one store, and it is Orbit's. Not "contains ours", which the vulnerable shape satisfied.
+  expect(stores).toEqual(["--password-store=basic"]);
+  // And the last occurrence is what Chromium obeys, so state that directly rather than by counting.
+  expect(stores.at(-1)).toBe("--password-store=basic");
+  expect(hostile.filter(argument => argument === "--use-mock-keychain")).toHaveLength(1);
+  // The caller's legitimate argument survives: this filters two switches, it does not censor extras.
+  expect(hostile).toContain("--disable-gpu");
+});
+
+test("the Keychain switches come after anything a caller adds, because the last one wins", () => {
+  // The property the filter exists to guarantee, asserted on ORDER rather than on membership. A
+  // future edit that re-adds the switches before `extra` would keep every membership assertion above
+  // green while restoring the defect.
+  const argv = darwinChromeArguments("/tmp/g", common("/tmp/g"), ["--proxy-server=http://127.0.0.1:1"]);
+  const mock = argv.indexOf("--use-mock-keychain");
+  const store = argv.indexOf("--password-store=basic");
+  const caller = argv.indexOf("--proxy-server=http://127.0.0.1:1");
+  expect(caller).toBeGreaterThan(-1);
+  expect(mock).toBeGreaterThan(caller);
+  expect(store).toBeGreaterThan(caller);
 });
 
 test("the macOS launch also keeps the two other switches that exist to leave the person alone", () => {
@@ -84,8 +109,17 @@ test("the darwin launch path calls this builder rather than building a second li
   const chrome = await sourceOf("chrome.ts");
   expect(chrome).toContain("darwinChromeArguments(profile, common, options.extraArgs ?? []");
   // And the switches appear in the builder, not as a second literal inside the darwin branch of
-  // `launchChrome`. One occurrence of each in the file, inside the builder.
-  expect(chrome.match(/"--use-mock-keychain"/g) ?? []).toHaveLength(1);
+  // `launchChrome`. This counted occurrences of the string and read 1, which was right until the
+  // builder gained a guard that filters a caller's own `--use-mock-keychain` before re-adding
+  // Orbit's last. That is a second mention inside the same function and not a second list, so the
+  // guard is EXTENDED to see it rather than relaxed: the occurrences must all be inside the
+  // builder, and the darwin branch of `launchChrome` must carry none.
+  const builder = chrome.slice(chrome.indexOf("export function darwinChromeArguments"),
+    chrome.indexOf("/** Own Chrome separately"));
+  const inBuilder = (builder.match(/"--use-mock-keychain"/g) ?? []).length;
+  const inFile = (chrome.match(/"--use-mock-keychain"/g) ?? []).length;
+  expect(inBuilder).toBeGreaterThan(0);
+  expect(inFile).toBe(inBuilder);
 });
 
 test("the Linux and Windows launch paths are unaffected by the macOS switch", async () => {

@@ -318,19 +318,28 @@ async function launchOnWindows(executable: string, profile: string, argv: string
  */
 export function darwinChromeArguments(profile: string, common: string[], extra: string[] = [],
   options: { extensions?: boolean } = {}): string[] {
+  // Chromium obeys the LAST occurrence of a repeated switch, and `extra` is caller controlled: the
+  // egress lease already passes arguments through it. So a caller that passes
+  // `--password-store=gnome-libsecret`, by intent or by copying a Linux invocation, would win the
+  // tie and send this launch at the person's real login keyring, which is the dialog these two
+  // switches exist to prevent. A comment saying "do not do that" is not a defence, so the two are
+  // filtered out of `extra` and re-added after it: last occurrence, and therefore the one that
+  // counts, is always Orbit's.
+  const guarded = extra.filter(argument =>
+    !argument.startsWith("--password-store=") && argument !== "--use-mock-keychain");
   return [
     ...common,
-    // The two Keychain flags. See the block in `launchChrome` for why each one is here; the short
-    // version is that `keychain_password_mac.mm` looks the key up by compile time constants, so a
-    // fresh `--user-data-dir` reuses the person's `Chrome Safe Storage` item, and `os_crypt_switches.h`
-    // documents `--use-mock-keychain` as existing to prevent blocking dialogs.
-    "--use-mock-keychain",
-    "--password-store=basic",
     "--disable-crash-reporter",
     "--disable-features=MediaRouter",
     `--disk-cache-dir=${join(profile, "cache")}`,
     ...(options.extensions ? [] : ["--disable-extensions"]),
-    ...extra,
+    ...guarded,
+    // The two Keychain flags, LAST, which is what makes them unoverridable rather than merely
+    // present. `keychain_password_mac.mm` looks the key up by compile time constants, so a fresh
+    // `--user-data-dir` reuses the person's `Chrome Safe Storage` item, and `os_crypt_switches.h`
+    // documents `--use-mock-keychain` as existing to prevent blocking dialogs.
+    "--use-mock-keychain",
+    "--password-store=basic",
     "about:blank",
   ];
 }
