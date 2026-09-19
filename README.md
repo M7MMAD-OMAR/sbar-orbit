@@ -77,9 +77,11 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 
 ## What is actually supported
 
-Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.
-The browser backend is measured on four: that host, a GitHub Ubuntu 24.04 runner where `bun run verify`
-passed 233 tests on 14 September 2026, a Windows 11 guest where the published release archive
+Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation,
+where the suite reads **334 pass, 0 fail, 32 skip across 366 tests in 75 files** as of 19 September
+2026. The browser backend is measured on four: that host, a GitHub Ubuntu 24.04 runner where
+`bun run verify` passed 233 to 234 tests across four runs on 14 September 2026, a Windows 11 guest
+where the published release archive
 installs and an agent host drives a browser session through MCP, and a GitHub `macos-26-arm64` runner
 where the one command install, the launch agent, a browser session and the containment experiment all
 ran on 18 September 2026. Every statement about non Fedora Linux beyond what containers of Debian,
@@ -144,7 +146,7 @@ bun add -g sbar-orbit
 sbar-orbit install
 ```
 
-`0.1.0-alpha.4` is on the npm registry and was installed back from it and run before this was written. The checkout above is still the path that has been run to completion on a machine; [packaging](docs/packaging.md) says exactly what the registry path has and has not shown.
+`0.1.0-alpha.6` is what the registry serves as `latest`; `0.1.0-alpha.7` is tagged in this repository and not published. The registry path was installed back from and run on `0.1.0-alpha.4` before this was written. The checkout above is still the path that has been run to completion on a machine; [packaging](docs/packaging.md) says exactly what the registry path has and has not shown.
 
 ### Or hand it to an agent
 

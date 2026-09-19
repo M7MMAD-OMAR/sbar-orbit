@@ -27,8 +27,14 @@ import { captureTimeoutMs } from "../src/browser";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const cli = new URL("../src/cli.ts", import.meta.url).pathname;
+// `fileURLToPath`, not `.pathname`. On Windows a file URL's pathname is `/C:/orbit/.../src/cli.ts`,
+// with a LEADING SLASH, which is not a path Windows can open: `bun run` reported
+// `Command failed: Was there a typo in the url or port?` and the test then parsed that JSON reply
+// while expecting the CLI's own. The failure read as a JSON syntax error for what was really a
+// malformed path. `fileURLToPath` is the conversion that knows about the drive letter.
+const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 test("the capture budget defaults to the 3000 ms it used to hardcode", () => {
   expect(captureTimeoutMs(undefined)).toBe(3000);

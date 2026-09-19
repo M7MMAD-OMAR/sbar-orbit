@@ -8,10 +8,10 @@ These are alpha measurements, not guarantees for arbitrary applications. Raw wor
 | Frame format | Both backends capture JPEG quality 80; the recorded timing run above predates this change and its frame costs no longer apply | See measured capture cost below |
 | Resources | Per-run peak about 951 MiB; no new OOM or hard-limit events; zero added swap | Same bounded timing run |
 | Process containment | 117 sampled tree audits found no escapes; cleanup left no owned processes | Timing run and `tests/chrome-containment.test.ts` |
-| Default and native tests | 27 distinct tests passed across default and native-enabled executions before public packaging | `bun run verify`, then native tests with `ORBIT_TEST_NATIVE=1` |
+| The suite | 334 pass, 0 fail, 32 skip across 366 tests in 75 files, 105 s, on 19 September 2026 inside `sbarorbit.slice`. The 32 skips are macOS and Windows capabilities plus the native tests, which need `ORBIT_TEST_NATIVE=1` and the Fedora bootstrap. A skip is not a pass | `bun run verify`, then `ORBIT_TEST_NATIVE=1 bun run verify` |
 | Session surface cost | Capture latency nearly flat from 1280 by 800 to 1920 by 1200; continuous native capture rises 71.9% to 100.8% of one core across the same range | `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/surface-cost.ts` |
 | Viewer theming | Generated stylesheet renders in owned headless Chrome; malformed colours and font names are dropped rather than escaped | `bun test tests/theme.test.ts`, `experiments/theme-preview.ts` |
-| Secret scan | Gitleaks 8.30.0 over all 28 commits: no leaks. The pre-commit gate was verified by staging a fabricated key, which it refused | `gitleaks git --redact --no-banner` |
+| Secret scan | Gitleaks 8.30.0 over the whole history, 262 commits as of 19 September 2026: no leaks. The pre-commit gate was verified by staging a fabricated key, which it refused | `gitleaks git --redact --no-banner` |
 | Appearance in a private display | Files, Text Editor and Dolphin open dark with the person's icons, colour scheme and fonts; 12,544 font faces visible with the compositor starting in 0.1 s, against 3.9 s when fonts were linked | `experiments/appearance-check.ts`, `bun test ./tests/appearance.test.ts` |
 | Desktop panel | Layer-shell strip captured inside a private display with two windows: collapsed `1/2`, expanded row naming agent, task, focused window, state, window 2 of 2 and pointer | `experiments/panel-check.ts` |
 | Working indicator | Click-through frame around the output: green edge pixels while a launch was in flight with the applications visible beneath, none after it finished, with the panel process's CPU ticks across both states recorded from the pid its launcher wrote | `ORBIT_TEST_NATIVE=1 bun run scripts/limited.ts bun run experiments/panel-check.ts` |
@@ -36,7 +36,9 @@ These are alpha measurements, not guarantees for arbitrary applications. Raw wor
 
 All runtime experiments must use `bun run scripts/limited.ts` on supported Linux systems. The native tests require the documented Fedora bootstrap. Model-host trials are not part of the default suite and may incur model-service usage.
 
-Sampling cannot exclude every transient focus or cgroup change. Frame metadata approximates readiness, not physical display latency. A successful scripted run does not confirm simultaneous human work. macOS, Windows, clean-machine installation, broader application coverage and broader failure coverage remain open.
+Sampling cannot exclude every transient focus or cgroup change. Frame metadata approximates readiness, not physical display latency. A successful scripted run does not confirm simultaneous human work.
+
+What was open here and is now measured elsewhere, at tier `Limited`: clean-machine installation (`experiments/fresh-machine/systemd-session.sh`, row above), Windows on a real guest ([windows-measured.md](windows-measured.md)), macOS on a real runner ([macos-measured.md](macos-measured.md)), and application coverage across fifteen applications (below). What remains genuinely open: broader failure coverage, and every one of the three platforms above on a machine with a person at it rather than a guest or a runner.
 
 ### A shipped bug the confined measurement found
 

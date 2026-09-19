@@ -1,5 +1,10 @@
 # Roadmap
 
+**State, 19 September 2026.** Tagged `v0.1.0-alpha.7` at `230cb4b`; `0.1.0-alpha.6` is what the npm
+registry serves. Of the seven gates below, 1, 3 (browser half), 6 and 7 are closed at the tier their
+evidence supports; 2, 4 and 5 all wait on the same thing, a machine with a person at it that is not
+this workstation. Nothing here is closed by installing Orbit somewhere.
+
 ## Demonstrated in the alpha
 
 - Local broker, CLI and MCP contract.
@@ -14,6 +19,10 @@
   below it whose only route out is a proxy the browser cannot go around.
 - Autonomy without a checkpoint: a policy fixed at creation that only ever tightens, an advisor that
   fails closed, an immune set nothing clears, a durable journal, and restore points with a refusal set.
+- Windows and macOS adapters, each measured on a real machine of its own at tier `Limited`: a Windows 11
+  guest and a GitHub `macos-26-arm64` runner. Job objects and process groups in place of the cgroup,
+  an explicitly written socket DACL on Windows, an advisory budget on macOS that says so in
+  `enforcement`, and containment measured by killing the supervisor rather than asking it to stop.
 - One command installation on this host class: `./install.sh` checks prerequisites, prepares
   dependencies, links the command, installs and starts the service, writes connector configuration and
   verifies that the broker answers, printing a remedy for every item only a package manager can supply.

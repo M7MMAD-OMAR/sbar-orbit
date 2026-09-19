@@ -11,7 +11,9 @@ bun run verify
 
 The hook path is per clone and is not carried in the repository, so a fresh clone runs no pre-commit hook until you set it. Without it neither the publication audit nor the secret scan runs on your staged changes. The hook needs `gitleaks` on PATH, or `GITLEAKS_BIN` pointing at it.
 
-There is no hosted continuous integration: `bun run verify` needs the shared budget, which a hosted runner does not have, and a workflow that ran only the cheap checks was a green badge for work already done before every commit. Every gate runs locally, in this order, before a commit: the typecheck, the full suite, the publication audit and the Gitleaks scan.
+There is no hosted continuous integration for the suite: `bun run verify` needs the shared budget, which a hosted runner does not have, and a workflow that ran only the cheap checks was a green badge for work already done before every commit. Every gate runs locally, in this order, before a commit: the typecheck, the full suite, the publication audit and the Gitleaks scan.
+
+`.github/workflows/platform-probes.yml` is the one exception and is not that: it runs by hand, on Windows and macOS runners, to measure what this Fedora workstation cannot. It reports platform evidence, not a pass on the suite. Its first real Windows run on 19 September 2026 found two defects, a hardcoded capture timeout and an `act` form PowerShell cannot deliver, both of them this host's assumptions rather than platform results. That is what it is for.
 
 Native tests additionally require the Fedora runtime and `ORBIT_TEST_NATIVE=1`. Model-host experiments are opt-in and can use the host's existing authentication or paid model service.
 

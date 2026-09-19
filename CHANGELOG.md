@@ -2,6 +2,65 @@
 
 Versions follow Semantic Versioning. Alpha releases are experimental and may change interfaces without compatibility guarantees.
 
+## Unreleased
+
+Tagged `v0.1.0-alpha.7` sits at `230cb4b`. Everything below landed after it and is not in any
+published version. `0.1.0-alpha.6` is still what the npm registry serves as `latest`.
+
+### Fixed
+
+- **Chrome's crash handler escaped containment on Linux, and wrote into the person's own browser
+  directory.** Crashpad calls `setsid()` in the child, so it leaves the process group and the session:
+  `killpg` misses it and a descendant walk misses it. `src/chrome.ts` documents exactly that in its
+  Windows branch, which passes `--disable-crashpad`, and again in its darwin branch, which passes
+  `--disable-crash-reporter`; the Linux branch, on the platform this project is developed on, passed
+  neither. The handler also takes its `--database` from the browser's branding rather than from
+  `--user-data-dir`, so on a machine where the person has ever run Chrome an Orbit session's handler
+  wrote into `~/.config/google-chrome/Crash Reports`, measured live during a session. Writing into the
+  person's own browser state is the promise this project exists to keep.
+- **The viewer opened in the person's own browser, on every Windows machine.** The same defect already
+  fixed for macOS: `listHostBrowsers()` enumerates XDG `.desktop` files, Windows has none, so the scan
+  returned nothing and `openViewer` fell through to `cmd /c start`, handing the viewer URL and its
+  bearer token to the browser the person is logged into. Windows enumerates its own installs now, and
+  the fallback is refused on any platform that is not Linux.
+- `doctor --report`, which the CLI calls safe to paste into a public issue, printed the real account
+  name: `redact()` covered `profileDirectory` and not `executable`, and Chrome's default Windows
+  install is per user under `%LOCALAPPDATA%`.
+- `registeredPath` queried `HKCU` before `HKLM`. `App Paths` under `HKCU` is writable unprivileged, so
+  one registry value chose the binary Orbit launches as the session browser.
+- The output path validator accepted `notes.txt:hidden` (an alternate data stream written onto an
+  existing file, invisible to `dir`), `NUL`, `CON`, and trailing dot or space. All refused on win32.
+- **`chmod(socket, 0o600)` does nothing on Windows.** Measured against the live `Bun.serve({unix})`
+  socket: it returns successfully and leaves the inherited DACL, which under a drive-root directory
+  carries `Authenticated Users: Modify`. Behind that socket the control channel accepts `session.create`
+  and `session.act` with no caller authentication. `src/socket-acl.ts` now states the DACL with
+  `icacls /inheritance:r`, reads it back, and refuses to serve a socket it cannot prove is private.
+- **XDG variables no longer relocate Windows state.** `workspaceRoot`, `stateDirectory` and
+  `serviceSocketPath` each honoured their XDG variable ahead of the Windows branch, so a variable
+  leaking in from Git Bash or an agent host moved live session profiles, and the control channel
+  itself, out from under the `%LOCALAPPDATA%` ACL that the Windows reasoning depends on.
+- **Capture had a hardcoded 3000 ms budget**, chosen against this workstation. A 2 vCPU runner beat it
+  on the first capture after a cold navigate, and the agent read back an unattributable
+  `BACKEND_ERROR: Request failed`. The budget is `ORBIT_CAPTURE_TIMEOUT_MS`, default 3000, floored at
+  500 and capped at 120000, and an overrun answers `TIMEOUT` naming both the budget and the knob.
+- **`act` took its action document only as a command line argument**, which PowerShell will not deliver
+  intact; a Windows CI job routing it through `cmd /c` with doubled quotes still answered
+  `CLI_ERROR: JSON Parse error`. `act` reads `@path` and a bare `-` from standard input now, and those
+  are the forms to prefer from any script or agent host.
+
+### Documented
+
+- `docs/cli.md`: the two `act` forms a shell cannot eat, and `ORBIT_CAPTURE_TIMEOUT_MS` beside
+  `ORBIT_NATIVE_RENDERER` in the `broker.env` paragraph.
+- `docs/windows-measured.md` section 34: the socket DACL and the XDG relocation, each measured rather
+  than reasoned, with what is still not measured beside them.
+
+Deliberately not fixed, and written down instead: `%LOCALAPPDATA%` on a domain-joined or
+roaming-profile machine is one ACL question this guest cannot answer, and Bun's argv-to-command-string
+quoting on Windows is unchanged.
+
+Local suite at this commit, Fedora 44: **334 pass, 0 fail, 32 skip, 366 tests across 75 files, 105 s.**
+
 ## 0.1.0-alpha.7 - 19 September 2026
 
 ### Added

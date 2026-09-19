@@ -23,12 +23,15 @@
  * can, with no timing at all.
  */
 import { test, expect } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { windowsChromeArguments } from "../src/windows-job";
 
-const source = await Bun.file(new URL("../src/chrome.ts", import.meta.url).pathname).text();
+// `fileURLToPath`, not `.pathname`: on Windows the pathname is `/C:/...`, with a leading slash that
+// no Windows open can use. `tests/platform-support.ts` documents the same trap.
+const source = await Bun.file(fileURLToPath(new URL("../src/chrome.ts", import.meta.url))).text();
 
 /** The argv literal each branch of launchChrome builds, read from the source of truth. */
 function branch(marker: string): string {
