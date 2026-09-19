@@ -18,14 +18,14 @@ one exception is named in its own row below, the private compositor's bootstrap.
 Give an agent this, with the Orbit source directory it should work in:
 
 ```text
-Install Sbar Orbit on this machine.
+Install Sbar Orbit on this machine and connect detected agent hosts.
 
 1. Clone https://github.com/M7MMAD-OMAR/sbar-orbit into a directory that will stay where it is, and
    work there. If I have already given you the source, use that instead and clone nothing.
 2. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
-3. Plan before acting: run ./install.sh --dry-run --json, or install.cmd --dry-run --json on
+3. Plan before acting: run ./install.sh --dry-run --connect auto --json, or install.cmd --dry-run --connect auto --json on
    Windows, and read the JSON. Branch on the fields, never on the prose.
-4. Run ./install.sh --json, or install.cmd --json on Windows. Exit 0 means installed, exit 1 means
+4. Run ./install.sh --connect auto --json, or install.cmd --connect auto --json on Windows. Exit 0 means installed, exit 1 means
    not installed. Read steps[] to see which step stopped it.
 5. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or its
    message and packages when it carries no command, and stop. Never run it yourself, never add sudo
@@ -100,7 +100,7 @@ it, `--reinstall-deps` to force a dependency install.
 ```
 
 - `steps[].id` is one of `prerequisites`, `dependencies`, `native`, `launcher`, `service`,
-  `connector`, `verify`, always in that order, and a run that fails early simply carries fewer of them.
+  `connector`, `verify`, `hosts`, always in that order, and a run that fails early simply carries fewer of them.
   `native` is skipped unless `--native` was passed: it downloads pinned Fedora packages and compiles
   the pointer helper, and browser sessions do not need it. When the build tools are missing it fails
   with the `dnf` line that installs them, which needs elevation and is yours to hand back.
@@ -217,11 +217,24 @@ there is, and it is why the fields exist in the shape they do.
 
 ## Registering Orbit with an agent host
 
-The install writes `~/.config/sbar-orbit/mcp.json`, or `%APPDATA%\sbar-orbit\mcp.json` on Windows,
-which is Orbit's own directory and never a host's
-configuration. The run prints the exact one line command to register it. Registering is the person's
-decision, so print the command rather than editing their host settings. [Connectors](connectors.md)
-covers the tools themselves.
+Use `./install.sh --connect auto` on Linux or macOS, or `install.cmd --connect auto`
+on Windows, to install and register detected Claude Code, Codex and Hermes hosts.
+`--connect claude,codex,hermes` selects hosts explicitly. The flag authorizes the
+`hosts` step to add Orbit to their configuration after installation succeeds.
+Without it, the installer only writes Orbit's own `mcp.json` and prints a manual command.
+
+Existing settings are preserved, changed files receive private backups, and an
+existing different `orbit` entry is refused rather than overwritten. Repeating
+the same registration changes nothing. `--dry-run --connect auto --json` previews
+the selected paths and states without writing. Hermes uses its active profile, or
+`HERMES_HOME` when explicitly set; on Windows its default home is `%LOCALAPPDATA%\hermes`. A running host needs a restart to
+load its new tools; registration does not claim the host has already loaded them.
+
+`hosts.data.registration` lists `configured`, `unchanged`, `planned`, `not-found`
+or `failed` per host. `auto` detects a host by its CLI or existing configuration.
+On Windows host entries invoke Bun directly because Node-based hosts cannot
+execute a `.cmd` file directly. Other MCP hosts can import Orbit's generated
+configuration manually. [Connectors](connectors.md) covers the tools themselves.
 
 ## What an installing agent must never do
 
@@ -230,4 +243,5 @@ covers the tools themselves.
   an agent does not have to.
 - Report an installation as verified, tested or measured. It is installation state. The gates that
   measure anything are in [validation](validation.md), and none of them is closed by installing.
-- Edit the person's shell configuration, host MCP settings, or any systemd unit Orbit did not write.
+- Edit the person's shell configuration or any systemd unit Orbit did not write.
+  Host MCP settings may be changed only through an explicitly requested `--connect` step.

@@ -4,6 +4,7 @@ import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../sr
 import { requireResourceBudget } from "../src/resource-budget";
 import { connectorConfigDirectory } from "../src/service";
 import { commandName } from "../src/local-install";
+import { parseHosts } from "../src/host-registration";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -16,6 +17,7 @@ if (flag("--help") || flag("-h")) {
   --dry-run         Report every step without changing anything
   --reinstall-deps  Run bun install even when dependencies already resolve
   --native          Build the private display runtime (downloads Fedora packages, compiles)
+  --connect HOSTS   Register Orbit: auto or claude,codex,hermes (preserves other settings)
   --json            Print the report only, for a script rather than a person
   --plain           One line per step, no repainting`);
   process.exit(0);
@@ -54,6 +56,9 @@ function quoteForShell(value: string) {
 
 const json = flag("--json");
 const plain = flag("--plain") || json;
+let connect: ReturnType<typeof parseHosts> | undefined;
+try { if (flag("--connect")) connect = parseHosts(value("--connect") ?? ""); }
+catch { console.error("Use --connect auto or a comma-separated list of claude,codex,hermes"); process.exit(64); }
 
 // The same budget every other Orbit entry point runs inside. An installer that stepped around it
 // would be the one command in the project that can take the desktop down.
@@ -72,6 +77,7 @@ const report = await runInstall({
   dryRun: flag("--dry-run"),
   reinstallDependencies: flag("--reinstall-deps"),
   native: flag("--native"),
+  connect,
   onStep(id, state, record?: StepRecord) {
     const view = views.find(entry => entry.id === id);
     if (!view) return;
@@ -97,8 +103,9 @@ if (json) {
       `    ${command} session create`,
       `    ${command} preview`,
       "",
-      "  Give an agent host the connector:",
-      `    ${connectorCommand(report)}`,
+      ...(connect ? ["  Agent hosts:", `    ${report.steps.find(step => step.id === "hosts")?.detail ?? "not configured"}`,
+        "    Restart configured hosts to load Orbit tools."]
+        : ["  Give an agent host the connector:", `    ${connectorCommand(report)}`]),
     ], report.remedies.length ? "warn" : "good");
   } else {
     const failed = report.steps.filter(step => step.state === "failed");

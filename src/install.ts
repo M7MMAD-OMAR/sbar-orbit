@@ -9,6 +9,7 @@ import { enableAutostart, autostartStatus } from "./autostart";
 import { connectorEntry } from "./connector-entry";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
+import { registerAgentHosts, type AgentHost } from "./host-registration";
 
 /**
  * One command that does every part of an Orbit installation this user can do without elevation, and
@@ -35,6 +36,8 @@ export type InstallOptions = {
   reinstallDependencies?: boolean;
   /** Build the private display runtime from the tracked bootstrap. Off by default: browser sessions do not need it. */
   native?: boolean;
+  /** Explicit authorization to add Orbit to these hosts' own configuration. */
+  connect?: "auto" | AgentHost[];
   /** Reporting hook, so the terminal display and the JSON report read the same events. */
   onStep?: (id: string, state: "running" | StepOutcome["state"], record?: StepRecord) => void;
   /** Injected for tests, which must never spawn a package manager. */
@@ -159,6 +162,7 @@ export const stepTitles: { id: string; title: string }[] = [
   { id: "service", title: "Install the broker service and desktop entries" },
   { id: "connector", title: "Write the agent connector configuration" },
   { id: "verify", title: "Verify the installed broker answers" },
+  { id: "hosts", title: "Connect agent hosts" },
 ];
 
 /**
@@ -391,6 +395,20 @@ export async function runInstall(options: InstallOptions = {}) {
           : process.platform === "darwin" ? "launchctl print gui/$(id -u)/com.sbar.orbit.broker"
           : "journalctl --user -u sbar-orbit.service --since -5min",
         message: "The broker service is installed but nothing answered on its socket. Read its service status for the cause." }] };
+  });
+
+  await step("hosts", async () => {
+    if (!options.connect) return { state: "skipped", detail: "not requested; --connect auto registers detected agent hosts" };
+    if (!dryRun && records.some(record => record.state === "failed"))
+      return { state: "skipped", detail: "installation failed; host settings left unchanged" };
+    const registration = await registerAgentHosts(options.connect, {
+      ...connectorEntry({ launcher, source, preferInterpreter: process.platform === "win32" }),
+      env: { ORBIT_SOCKET: serviceSocketPath() },
+    }, { dryRun });
+    const failed = registration.some(host => host.state === "failed");
+    return { state: failed ? "failed" : dryRun ? "skipped" : "done",
+      detail: registration.map(host => `${host.host}: ${host.state}${host.state === "failed" ? ` (${host.detail})` : ""}`).join(", "),
+      data: { registration } };
   });
 
   return finish();

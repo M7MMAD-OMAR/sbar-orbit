@@ -16,6 +16,30 @@ const contract = await readFile(resolve(project, "docs/agent-install.md"), "utf8
 /** The installer this platform actually runs, which is the one the contract tells an agent to call. */
 const installer = resolve(project, process.platform === "win32" ? "install.cmd" : "install.sh");
 
+test("one install command registers all selected hosts and repeating it preserves their entries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-connect-contract-"));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: join(root, "claude"),
+    CODEX_HOME: join(root, "codex"), HERMES_HOME: join(root, "hermes"),
+    XDG_CONFIG_HOME: join(root, "config"), APPDATA: join(root, "appdata") };
+  const run = async (extra: string[] = []) => {
+    const child = Bun.spawn([installer, "--no-service", "--connect", "claude,codex,hermes",
+      "--prefix", join(root, "prefix with spaces"), "--json", ...extra],
+      { env, cwd: project, stdout: "pipe", stderr: "pipe" });
+    const [output, , exit] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    expect(exit).toBe(0);
+    const report = JSON.parse(output);
+    expect(report.installed).toBe(true);
+    return report.steps.find((step: { id: string }) => step.id === "hosts").data.registration;
+  };
+  try {
+    expect((await run(["--dry-run"])).map((host: { state: string }) => host.state)).toEqual(["planned", "planned", "planned"]);
+    expect((await run()).map((host: { state: string }) => host.state)).toEqual(["configured", "configured", "configured"]);
+    expect((await run()).map((host: { state: string }) => host.state)).toEqual(["unchanged", "unchanged", "unchanged"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 60000);
+
 test("the documented plan command returns the documented report", async () => {
   const prefix = await mkdtemp(join(tmpdir(), "orbit-agent-contract-"));
   try {

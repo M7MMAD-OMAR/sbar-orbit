@@ -9,6 +9,10 @@ published version. `0.1.0-alpha.6` is still what the npm registry serves as `lat
 
 ### Fixed
 
+- The installer accepts `--connect auto` or explicit Claude Code, Codex and Hermes
+  selections. It adds Orbit without replacing other servers, preserves conflicting
+  entries, backs up changed settings, and supports a write-free preview.
+
 - Windows installation starts the broker immediately and requires its doctor response.
   Scheduled task names include the account SID so another user's installation does
   not cause `Access is denied`. The installed browser flow passed before and after

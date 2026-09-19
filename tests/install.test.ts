@@ -47,7 +47,7 @@ test("a dry run reports every step and changes nothing", async () => {
     expect(report.steps.map(step => step.id)).toEqual(stepTitles.map(step => step.id));
     // The first step only reads, so it runs for real even here. Everything that writes is skipped.
     expect(report.steps.filter(step => step.state === "skipped").map(step => step.id))
-      .toEqual(["dependencies", "native", "launcher", "service", "connector", "verify"]);
+      .toEqual(["dependencies", "native", "launcher", "service", "connector", "verify", "hosts"]);
     expect(await missing(join(box.prefix, "bin", commandName()))).toBe(true);
     expect(await missing(join(box.config, "sbar-orbit/mcp.json"))).toBe(true);
   } finally { await box.restore(); }

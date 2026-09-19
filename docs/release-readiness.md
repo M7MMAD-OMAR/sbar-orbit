@@ -24,7 +24,16 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
   Account-specific task names fix a measured collision with another account's task.
   The installed browser flow passes on Windows and Linux; see
   [installed command acceptance](fragments/installed-command-acceptance.md).
-- Installation writes Orbit's connector configuration but leaves host registration manual.
+- `--connect auto` now registers detected Claude Code, Codex and Hermes hosts.
+  Other settings are preserved, changed files receive private backups, conflicting
+  registrations are refused, and repeated installation leaves matching entries alone.
+  Real Claude and Hermes CLIs connected on Linux; Codex's CLI read its registration.
+  On Windows, 28 targeted tests passed and all three serialized entries negotiated
+  MCP and listed 12 tools. The host CLIs themselves were absent on that guest.
+  Linux also passed the 28 targeted tests and all three protocol checks. An earlier
+  run was stopped under pressure from existing broker sessions, then repeated after
+  measured memory use fell from about 8 GiB to 2.8 GiB. macOS remains unmeasured for
+  this new registration path.
 - Local baseline on 19 September 2026 at runtime revision `8874e63`:
   `ORBIT_TEST_NATIVE=1 bun run verify`: 424 pass, 25 skip, 0 fail,
   449 tests across 88 files in 133.35 seconds. Typecheck also passes.

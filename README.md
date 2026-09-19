@@ -113,26 +113,27 @@ delegate. The native backend is Linux only and needs the separate [Fedora bootst
 ```sh
 git clone https://github.com/M7MMAD-OMAR/sbar-orbit
 cd sbar-orbit
-./install.sh
+./install.sh --connect auto
 ```
 
-On Windows the same command is `install.cmd`, and it is the same installer behind both doors:
+On Windows use `install.cmd --connect auto`, with the same installer behind both doors:
 
 ```bat
 git clone https://github.com/M7MMAD-OMAR/sbar-orbit
 cd sbar-orbit
-install.cmd
+install.cmd --connect auto
 ```
 
 One command, and it shows every step as it happens. It checks what the machine already has, prepares
 dependencies from the frozen lockfile, links the `sbar-orbit` command into `~/.local/bin`, installs and
 starts the broker service and the desktop mark, writes the agent connector configuration, then verifies
-that the installed broker answers. `./install.sh --dry-run` reports the same steps and changes nothing.
+that the installed broker answers. `--connect auto` also registers detected Claude Code, Codex and
+Hermes hosts while preserving their other settings. Restart those hosts to load Orbit's tools.
+`./install.sh --dry-run --connect auto` reports the same steps and changes nothing.
 
-Two of those steps differ on Windows and say so in the report rather than claiming a pass: the command
-is a `.cmd` shim rather than a symlink, and no service is installed, because a Chromium family browser
-will not run in Windows session 0, so the broker belongs in your own session. `verify` is skipped for
-that reason too, with the commands to start one yourself. Start it with `sbar-orbit.cmd serve`.
+On Windows the command is a `.cmd` shim and the broker runs through an account-specific scheduled
+task. Installation starts it immediately and verifies its response. It also starts at your next
+logon. It never runs as a Windows service in session 0, where Chromium cannot launch.
 
 It installs nothing that needs root. Bun, a browser and the capture tools stay your package
 manager's job, and the run prints the exact command for each one it finds missing rather than reporting
@@ -153,22 +154,10 @@ sbar-orbit install
 Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:
 
 ```text
-Install Sbar Orbit on this machine.
-
-1. Clone https://github.com/M7MMAD-OMAR/sbar-orbit into a directory that will stay where it is, and
-   work there. If I have already given you the source, use that instead and clone nothing.
-2. Read docs/agent-install.md in that directory. It is the contract. This message is only the trigger.
-3. Plan before acting: run ./install.sh --dry-run --json and read the JSON. Branch on the fields,
-   never on the prose.
-4. Run ./install.sh --json. Exit 0 means installed, exit 1 means not installed. Read steps[] to see
-   which step stopped it.
-5. Run a remedy only when its agentMayRun is true. Everything else is mine: print its command, or its
-   message and packages when it carries no command, and stop. Never run it yourself, never add sudo
-   to a command that does not have it, and never use sudo for anything.
-6. Report back: every step with its state, the capabilities object, and the remedies you did not run.
-   Say plainly what is installed and what is not. Do not describe an installation as verified: the
-   run reports installation state, not a measurement.
-7. Do not open, automate, read or copy my own browser profile at any point, for any reason.
+Install Sbar Orbit on this machine and connect detected agent hosts.
+Clone https://github.com/M7MMAD-OMAR/sbar-orbit if I have not provided its source.
+Read docs/agent-install.md and follow its plan, install and reporting contract.
+Use --connect auto. Preserve other settings and never touch my personal browser.
 ```
 
 The prompt is short on purpose: it points at [the contract](docs/agent-install.md) rather than
