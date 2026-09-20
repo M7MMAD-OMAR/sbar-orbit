@@ -140,6 +140,24 @@ to 77 GB, with the remaining 30 kept because a live or recent broker owns them. 
 fix, because an empty read-only snapshot has nothing inside it to unlink; with one file in the profile
 before the point is taken, the test fails against the unfixed code and passes with it.
 
+## All nine CI jobs at the workspace-sweep fix, 20 September 2026
+
+[Run 35505029561](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35505029561) passed all nine
+jobs at `9f48b96`, the revision of the workspace-sweep fix, dispatched by hand after that revision was
+pushed. Each platform ran the full bounded suite and discovered **486 tests in 97 files**, with zero
+failures: **Ubuntu 24.04 435 pass, 51 skip, 162.68 s; Windows 368 pass, 118 skip, 181.45 s; macOS 378
+pass, 108 skip, 223.44 s**. The installed-browser and generated-host-registration jobs passed on all
+three platforms as well. Skips are platform capabilities, not passes.
+
+That run is also what settles how the two local failures on this workstation read. The same revision
+failed one browser-driven test locally twice, a different test each time, while another agent held five
+sessions on the shared slice, and both of those tests passed alone here and on the runners. Contention
+is the shape of it, not a named cause, and neither local failure is treated as fixed.
+
+The `verify` workflow was `disabled_manually` before this run, because repeated failures had generated
+unwanted notifications, and a disabled workflow cannot be dispatched. It is **enabled again** as of
+this run. `platform-probes` and `macos-cold-start` remain manual.
+
 ## Previous cross-platform verified state
 
 On 20 September 2026, [run 35482866635](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482866635)
@@ -357,6 +375,8 @@ GitHub verify is temporarily disabled at the user's request after repeated faile
 runs generated unwanted notifications. Run 35476489102 was cancelled. No new
 pushes or CI runs are authorized until the outstanding failures are addressed and
 verified. Disabling the workflow is operational containment, not a passing gate.
+(Superseded on 20 September 2026: the user authorised the push, the workflow is enabled again, and
+run 35505029561 passed all nine jobs; see the section above.)
 
 Local verification after the viewer cleanup change first returned 442 passes,
 26 skips and two installer-contract failures. Those two tests passed in isolation.

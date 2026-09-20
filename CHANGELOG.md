@@ -4,6 +4,20 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- `sbar-orbit clean` could not reclaim a workspace that held a restore point. A point is a read-only
+  btrfs snapshot and unlinking inside one answers EROFS whatever the path's permissions are, so the
+  sweep refused 21 of 192 workspaces on the development host and left 107 GB of a 108 GB cache in
+  place. It now clears the `ro` property on the subvolumes under each `restore-*` directory before
+  removing the workspace, which succeeds unprivileged. `tests/workspace-storage.test.ts` holds the
+  regression, which fails against the unfixed code.
+- The human handoff harness attaches to a running broker instead of starting one, so the takeover trial
+  can run beside a managed installation; it stops its own session, counts the input a pause refuses,
+  and drives the participant's side through `session.control` with `--auto-participant`, which measures
+  the mechanism and never claims a person.
+- The focus monitor's owned set is read from the whole cgroup subtree rather than one cgroup of it, and
+  a pid is a positive integer or it is not a process. An empty `cgroup.procs` parsed to `{0}`, and pid
+  0 also means "no active window", so a run with no Orbit window reported owning focus.
+
 ## 0.1.0-alpha.8 (20 September 2026)
 
 Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8). The published archive was installed back and verified on Linux; see [release readiness](docs/release-readiness.md).
