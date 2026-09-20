@@ -347,3 +347,21 @@ the existing managed service was not changed by that installation trial. The
 concurrency probe's temporary stop of the idle VM service was reversed afterward.
 No source changes were pushed and no GitHub workflow was enabled or started.
 macOS verification and the unexplained earlier Linux installer failure remain open.
+
+## Bounded installer follow-up, 20 September 2026
+
+At `ba97d6b`, `bun run verify tests/viewer-settings.test.ts
+tests/agent-contract.test.ts --rerun-each 10` completed with 60 passes, zero
+failures and 1060 assertions in 39.37 seconds. The local log is
+`/tmp/orbit-installer-repeat.log`. This checks repeated settings and installation
+contracts but did not reproduce the earlier failure. Inspection of the user
+journal covering that original run found no actionable cause. Successful reruns
+do not close that defect; retained subprocess stderr is needed if it recurs.
+
+The closing audit still cannot establish current macOS behavior: the available
+local VM inventory contains Windows only, the repository has no registered
+self-hosted runner, and GitHub verify remains `disabled_manually`. No new remote
+run or push was made. A real macOS execution of the current revision is required
+before claiming a passing cross-platform release. Existing installation trials
+also do not prove automatic provisioning on every blank machine or integration
+inside every native host application.
