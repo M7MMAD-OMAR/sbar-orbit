@@ -28,11 +28,14 @@ Recorded from the newest evidence, so a reader can tell what alpha.8 does and do
    timer exist on Linux only; Windows and macOS refuse managed activation and scheduling explicitly
    rather than reporting success. See [automatic updates](updates.md) and
    [the alpha.8 guide](release-alpha8.md).
-4. **Two intermittent failures with no identified cause.** A local Linux installer-contract test failed
-   in one full-suite run and has passed in every run since, with the user journal showing no actionable
-   cause; a Windows cold first-capture timed out once and did not recur. Both had their diagnostics
-   strengthened and neither has been reproduced with its cause named. A successful rerun is not an
-   explanation, and no failing functional test was deleted or given a longer deadline.
+4. **Three failures with no identified cause.** A local Linux installer-contract test failed in one
+   full-suite run and has passed in every run since, with the user journal showing no actionable cause;
+   a Windows cold first-capture timed out once and did not recur; and the managed broker on this
+   workstation aborted with SIGABRT after 4h46m of uptime, taking its live sessions with it, with the
+   core truncated and no message printed. Each had its diagnostics strengthened and none has been
+   reproduced with its cause named. A successful rerun is not an explanation, and no failing functional
+   test was deleted or given a longer deadline. See
+   [release readiness](release-readiness.md#managed-broker-abort-20-september-2026).
 5. **A real host for gates 4 and 5.** The browser extension and the Linux families are closed as far as
    their hosts could take them. What closes more is a machine of each family with a screen and a GPU,
    and a person's Windows or macOS desktop, which is the same host classes item 2 names.

@@ -57,7 +57,9 @@ a skipped test is not a pass, and a limit is never omitted. What is not closed i
       escape, resource accounting, and crash recovery on Windows and macOS, both at 0 survivors after a
       kill with no cleanup handler. Concurrency (three browsers and two displays on one broker, 20 of
       20 rounds) and the measured one-core share date to 11 September 2026 and were not re-measured at
-      alpha.8.
+      alpha.8. A managed broker did abort on this host class on 20 September 2026 and its systemd
+      restart swept 259 leftovers and answered; the abort itself has no identified cause, and the
+      session loss is documented restart behaviour rather than a recovery failure.
 - [x] Release documentation, support table and package commands agree with verified behavior.
       The 20 September 2026 pass moved the suite figures, the alpha number and the managed-update
       platform limit in [PROJECT.md](../PROJECT.md), [the readme](../README.md),
@@ -97,6 +99,28 @@ The initial publication failure was a credential-selection error: the CLI used a
 credential instead of the existing project publishing credential. The existing credential was valid;
 no token rotation or new security key was needed. CLI authentication was corrected before publishing.
 See [the alpha.8 guide](release-alpha8.md) for installation, migration and platform limits.
+
+## Managed broker abort, 20 September 2026
+
+The managed broker on this workstation aborted with **SIGABRT** at 08:12:33, after 4h46m of uptime
+with 4.3G of peak memory, and systemd restarted it two seconds later. Live browser sessions were open
+at the time, evidenced by the roughly twenty `chrome` processes and one `python3` systemd killed with
+the cgroup as the unit went down. Their sessions died with it, which is what a broker restart does by
+design rather than a second defect. The recovery behaved as documented: the new broker swept 259
+leftovers and answered, and fresh sessions worked afterwards.
+
+Nothing recovered says why. No cgroup ceiling was hit (`memory.events` all zero; `pids.events` shows
+one `max` event with no timestamp, which cannot be attributed to this), the kernel logged no OOM, and
+the broker printed no panic, assertion or abort message, even though its stderr does reach the journal
+where its ordinary JSON diagnostics appear. A core was captured and is **truncated at 1 GiB with no
+usable frames**, so the cause is not recoverable from it. Two full bounded suites and a trial had run
+in the hour before, alongside other agents' sessions on the same shared slice; no evidence links that
+load to the abort and none rules it out.
+
+This is an unidentified failure with retained evidence, not a fixed one. No test asserts on a managed
+broker's lifetime, and none sends SIGABRT or names that socket, so the suite is not the mechanism as
+far as its own code shows. The raw facts are kept in the gitignored
+`docs/evidence/broker-abort-2026-09-20.json`.
 
 ## Previous cross-platform verified state
 
