@@ -264,7 +264,9 @@ export class BrowserBackend {
     try { image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: budget })).toString("base64"); }
     catch (error) {
       if (error instanceof Error && error.name === "TimeoutError") {
-        throw new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms. A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
+        const stage = error.message.includes("fonts loaded") ? "capturing pixels"
+          : error.message.includes("waiting for fonts to load") ? "waiting for fonts" : "preparing capture";
+        throw new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (${stage}). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
       }
       throw error;
     }
