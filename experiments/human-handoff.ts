@@ -28,8 +28,12 @@ const id = crypto.randomUUID();
 const phrase = `orbit-${id.slice(0, 6)}`;
 const directory = join("output", `human-handoff-${id}`);
 await mkdir(directory, { recursive: true, mode: 0o700 });
-const report: Record<string, unknown> = { status: "running", automatedDriver: true, humanParticipationConfirmed: false, manualPhraseAccepted: false, pausedObserved: false, resumedAfterManual: false, completedSubmissions: 0 };
-let accepted = false, stopping = false;
+const report: Record<string, unknown> = { status: "running", automatedDriver: true, humanParticipationConfirmed: false, manualPhraseAccepted: false, pausedObserved: false, resumedAfterManual: false, completedSubmissions: 0,
+  // The check table asks for rejected agent input while paused and for work that continues after the
+  // viewer is closed. Neither was counted before, so a run could observe a pause and still evidence
+  // neither.
+  refusedWhilePaused: 0, refusedActionTypes: [] as string[], submissionsAfterResume: 0, sessionStoppedByTrial: false };
+let accepted = false, stopping = false, sessionId = "";
 const stop = () => { stopping = true; };
 process.on("SIGTERM", stop); process.on("SIGINT", stop);
 const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -49,6 +53,7 @@ const started = performance.now();
 const deadline = started + 600_000;
 try {
   const session = await call(broker.socket, "session.create", { backend: "browser", agentName: "SbarOrbit", taskName: "Form updates · scripted demo" }) as { sessionId: string };
+  sessionId = session.sessionId;
   const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
   await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}` });
   const { url } = await call(broker.socket, "preview.open") as { url: string };
@@ -64,18 +69,31 @@ try {
     if (state === "paused") report.pausedObserved = true;
     report.manualPhraseAccepted = accepted;
     if (state === "running") {
+      let attempting = "click #agent";
       try {
         const value = `Agent step ${submissions + 1}`;
         await act({ type: "click", selector: "#agent" });
         await Bun.sleep(250);
+        attempting = "fill #agent";
         await act({ type: "fill", selector: "#agent", text: value });
         await Bun.sleep(250);
+        attempting = "click #agent-save";
         await act({ type: "click", selector: "#agent-save" });
+        attempting = "read #result";
         const result = await act({ type: "read", selector: "#result" }) as { text: string };
         if (result.text !== value) throw new Error("Agent readback mismatch");
         report.completedSubmissions = ++submissions;
-        if (accepted && report.pausedObserved) report.resumedAfterManual = true;
-      } catch (error) { if ((error as { code?: string }).code !== "PAUSED") throw error; }
+        if (accepted && report.pausedObserved) {
+          report.resumedAfterManual = true;
+          report.submissionsAfterResume = Number(report.submissionsAfterResume) + 1;
+        }
+      } catch (error) {
+        if ((error as { code?: string }).code !== "PAUSED") throw error;
+        // The pause refused this action. That refusal, named by what it was, is the evidence the
+        // takeover check asks for; before this it was swallowed and the run could not show it.
+        report.refusedWhilePaused = Number(report.refusedWhilePaused) + 1;
+        (report.refusedActionTypes as string[]).push(attempting);
+      }
     }
     report.elapsedSeconds = Math.round((performance.now() - started) / 1000);
     await Bun.write(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
@@ -84,6 +102,13 @@ try {
   report.status = accepted && report.resumedAfterManual ? "interaction-observed" : "incomplete";
 } catch (error) { report.status = "failed"; report.error = error instanceof Error ? error.message : "Trial failed"; process.exitCode = 1; }
 finally {
+  // The trial stops its own session. Until this it did not, so every run left a browser session
+  // running on whatever broker it attached to, and on a managed broker that means somebody else's
+  // broker keeps it until the next restart.
+  if (sessionId) {
+    try { await call(broker.socket, "session.stop", { sessionId }); report.sessionStoppedByTrial = true; }
+    catch { /* already closed, by the participant or by the memory ceiling */ }
+  }
   await broker.close(); fixture.stop(true);
   report.focus = await focus.stop();
   report.elapsedSeconds = Math.round((performance.now() - started) / 1000);
