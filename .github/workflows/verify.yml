@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to verify, or all supported runners
+        type: choice
+        default: all
+        options: [all, ubuntu-24.04, windows-latest, macos-latest]
 
 permissions:
   contents: read
@@ -18,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -52,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -69,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -90,6 +96,7 @@ jobs:
           if-no-files-found: warn
 
   macos-scheduling:
+    if: ${{ !inputs.platform || inputs.platform == 'all' || inputs.platform == 'macos-latest' }}
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
