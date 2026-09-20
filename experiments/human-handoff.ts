@@ -2,7 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBroker, call } from "../src/ipc";
 import { requireResourceBudget, budgetHeadroom } from "../src/resource-budget";
-import { startFocusMonitor } from "./hyprland-focus";
+import { readProcessSet, startFocusMonitor } from "./hyprland-focus";
 
 /**
  * Reuse a broker that is already answering when one is named on `ORBIT_SOCKET`, so the trial can run
@@ -46,9 +46,12 @@ const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
 } });
 const broker = await attachOrStartBroker();
 report.attachedToExistingBroker = broker.attached;
-// The owned set is every process in the shared Orbit slice, so a managed broker's browser and this
-// trial's own processes both count, whichever broker the session runs on.
-const focus = await startFocusMonitor(async () => new Set((await readFile(join(parent, "cgroup.procs"), "utf8")).trim().split(/\s+/).map(Number)));
+// The owned set is every process in the shared Orbit slice, descendants included, so a managed
+// broker's browser and this trial's own processes both count, whichever broker the session runs on.
+// Its size is recorded, because an empty owned set makes every observation read as "nothing was
+// owned" and is therefore not evidence of anything.
+const focus = await startFocusMonitor(() => readProcessSet(parent));
+report.ownedProcesses = (await readProcessSet(parent)).size;
 const started = performance.now();
 const deadline = started + 600_000;
 try {

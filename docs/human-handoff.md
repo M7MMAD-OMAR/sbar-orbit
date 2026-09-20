@@ -24,38 +24,56 @@ Two consequences of attaching, both printed in the report's own `limitations`:
   already spent. A fixed threshold made the trial abort immediately whenever Orbit was already
   running, which is the one situation it needs to work in.
 
-## Concurrent run, 20 September 2026
+## Concurrent runs, 20 September 2026
 
-One browser session ran for the full 600 seconds on the **managed** broker on this workstation, with
+Two browser sessions each ran the full 600 seconds on the **managed** broker on this workstation, with
 four other agents' sessions live on the same broker and the same shared slice, while the desktop
-carried the person's own applications. The driver completed **555 submissions**, each a click, a fill
-and a readback that had to match the value it wrote. The read-only Hyprland monitor sampled **1184
-times** across the run, and the result is flat: no sample had an Orbit-owned active window, no sample
-had an Orbit-owned window visible at all, all **9** delivered focus events were unattributed to
-Orbit, `errors` was 0, `unresolvedFocusEvents` was 0, and the largest gap between samples was
-1288 ms.
+carried the person's own applications. The driver completed **555 submissions** in the first and
+**558** in the second, each a click, a fill and a readback that had to match the value it wrote.
 
-What that settles and what it does not:
+**The first reading was wrong. This is the correction, not a quiet replacement.** It reported 1184
+samples with no Orbit-owned focus anywhere, which is the right answer reached from an owned set that
+could not have contained one: the monitor was reading `sbarorbit.slice/cgroup.procs`, and that file
+holds **0 processes**, because the managed broker's 69 live one level down in
+`sbarorbit.slice/sbar-orbit.service`. An empty file then parsed to a set holding **pid 0**, since
+`"".split(/\s+/)` is `[""]` and `Number("")` is 0, while `sanitizeFocus` reports pid 0 for "no active
+window". The two zeros matched each other. The second run is what exposed it: 1207 samples, **four
+claiming an owned active window and two focus events claiming the same**, on a desktop where
+`visibleOwnedCount` was 0 in every sample and no Orbit window existed at all.
 
-- It settles the no-interference half at the tier the monitor can reach. Over ten minutes of
-  concurrent activity, Orbit never took focus and never mapped a window on the person's desktop,
-  while working the whole time. The monitor is read-only, keeps no titles, classes, addresses, PIDs
-  or keystrokes, and is not a keyboard or pointer recorder, so it cannot exclude every transient
-  focus change.
+Both causes are fixed, and both are held by tests in `tests/hyprland-focus.test.ts`: a pid is a
+positive integer or it is not a process, pid 0 is never an owner, and the owned set is read from the
+whole cgroup subtree rather than one cgroup of it. The report now prints the size of that set, because
+an empty owned set makes every observation read as "nothing was owned" and is therefore not evidence
+of anything.
+
+The corrected reading, from the run after the fix: the owned set covered **74 processes**, the managed
+broker's browser among them, and over **187 samples** `activeOwned` was false in every one,
+`visibleOwnedCount` was 0 in every one, and `errors` and `unresolvedFocusEvents` were both 0. That run
+was 95 seconds and was ended deliberately, not 600, so it is a check that the harness reads correctly
+rather than a second ten-minute measurement.
+
+What the ten-minute runs settle and what they do not:
+
+- They settle the no-interference half at the tier the monitor can reach. Across ten minutes of
+  concurrent activity in each run, the browser session never took focus and never mapped a window on
+  the person's desktop, while working the whole time. The monitor is read-only, keeps no titles,
+  classes, addresses, PIDs or keystrokes, and is not a keyboard or pointer recorder, so it cannot
+  exclude every transient focus change.
 - The covered set is Orbit's own window class. The session is headless, and a viewer opened by the
   person runs in their own browser, outside the measured Orbit scope, so this is **not** a
   measurement of a viewer window. It is a measurement that the browser session itself stayed off the
   desktop.
-- It does **not** settle the human half. Nothing paused, so `manualPhraseAccepted` and
+- They do **not** settle the human half. Nothing paused, so `manualPhraseAccepted` and
   `pausedObserved` are false, no input was rejected while paused, and the disposable phrase was
-  never read back. The run ended `incomplete`, which is the honest status for it.
-- It is not participant confirmation of concurrent work. The desktop was in use, but this
-  measurement does not establish that a person was at it, and a submitted phrase would not have
-  proved who submitted it either.
+  never read back. Both runs ended `incomplete`, which is the honest status for them.
+- They are not participant confirmation of concurrent work. The desktop was in use, but neither
+  measurement establishes that a person was at it, and a submitted phrase would not have proved who
+  submitted it either.
 
 The runner attaches to the managed broker rather than starting its own, and both consequences are
-printed in the report: the owned set is the whole shared slice, so the other agents' sessions count
-as Orbit processes, and the attached broker's own startup and workspace are outside the trial.
+printed in the report: the owned set is the whole shared slice subtree, so other agents' sessions
+count as Orbit processes, and the attached broker's own startup and workspace are outside the trial.
 
 ## User flow
 

@@ -1,8 +1,50 @@
 import { createConnection } from "node:net";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const address = (value: unknown) => typeof value === "string" && /^(?:0x)?[a-f0-9]+$/i.test(value) ? value.replace(/^0x/i, "").toLowerCase() : null;
 const pid = (value: unknown) => Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null;
+
+/**
+ * The process ids in a `cgroup.procs` file. An empty file has no processes in it, and that is not the
+ * same as having one process whose id is nothing: `"".split(/\s+/)` is `[""]` and `Number("")` is 0,
+ * so the obvious parse produced a set containing **pid 0**. Since `sanitizeFocus` also reports pid 0
+ * for "no active window", the two zeros matched each other and a run with nothing to report printed
+ * `activeOwned: true`. Measured on 20 September 2026: four samples in a ten minute run, on a desktop
+ * where no Orbit window existed at all. A pid is a positive integer or it is not a process.
+ */
+export function parseProcessIds(text: string): Set<number> {
+  const ids = new Set<number>();
+  for (const token of text.split(/\s+/)) {
+    const value = Number(token);
+    if (Number.isInteger(value) && value > 0) ids.add(value);
+  }
+  return ids;
+}
+
+/** Pid 0 is "no window", so it can never be an owned one, whatever the caller's set happens to hold. */
+export function ownsFocus(activePid: number, owned: Set<number>) {
+  return activePid > 0 && owned.has(activePid);
+}
+
+/**
+ * Every process under a cgroup root, its descendants included.
+ *
+ * `cgroup.procs` lists the processes in ONE cgroup and never in its children, so reading only the
+ * slice would have missed the managed broker entirely: measured on this workstation, `sbarorbit.slice`
+ * itself holds 0 processes while `sbarorbit.slice/sbar-orbit.service` holds 69. An owned set that is
+ * empty makes every observation read as "nothing was owned", which is not evidence of anything.
+ */
+export async function readProcessSet(root: string): Promise<Set<number>> {
+  const pids = new Set<number>();
+  const visit = async (directory: string) => {
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) if (entry.isDirectory()) await visit(join(directory, entry.name));
+    for (const id of parseProcessIds(await readFile(join(directory, "cgroup.procs"), "utf8").catch(() => ""))) pids.add(id);
+  };
+  await visit(root);
+  return pids;
+}
 
 /** Drop titles and all other metadata before retaining a snapshot. */
 export function sanitizeFocus(active: unknown, clients: unknown) {
@@ -77,8 +119,9 @@ export async function startFocusMonitor(ownedPids: () => Promise<Set<number>>, i
     const [active, allClients, currentOwned] = await Promise.all([query("activewindow"), query("clients"), ownedPids()]);
     const snapshot = sanitizeFocus(active, allClients);
     owned = currentOwned; clients = new Map(snapshot.clients.map(item => [item.address, item.pid]));
-    samples.push({ atMs: Math.round(performance.now() - started), activeOwned: owned.has(snapshot.activePid),
-      visibleOwnedCount: snapshot.clients.filter(item => owned.has(item.pid)).length });
+    samples.push({ atMs: Math.round(performance.now() - started), activeOwned: ownsFocus(snapshot.activePid, owned),
+      // A client with pid 0 is not a process either, for the same reason an empty procs file is not.
+      visibleOwnedCount: snapshot.clients.filter(item => item.pid > 0 && owned.has(item.pid)).length });
   };
   try { await sample(); } catch (error) { stopping = true; socket.destroy(); throw error; }
   const loop = (async () => {
