@@ -1,6 +1,11 @@
 name: macos-cold-start
 on:
   workflow_dispatch:
+    inputs:
+      utility-control:
+        description: Clamp both comparison arms to utility QoS
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -20,7 +25,9 @@ jobs:
       - name: Measure both orders on separate fresh hosts
         run: |
           mkdir -p output
-          bun run scripts/limited.ts bun experiments/macos-qos-cost.ts 3 '${{ matrix.first-arm }}' > output/cold-start.json
+          ${{ inputs.utility-control && '/usr/sbin/taskpolicy -c utility' || '' }} bun run scripts/limited.ts bun experiments/macos-qos-cost.ts 3 '${{ matrix.first-arm }}' > output/cold-start.json
+        env:
+          ORBIT_EXPERIMENT_UTILITY_CLAMP: ${{ inputs.utility-control && '1' || '0' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -137,6 +137,7 @@ console.log(JSON.stringify({
   host: { cpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)) },
   rounds,
   firstArm,
+  requestedUtilityClamp: process.env.ORBIT_EXPERIMENT_UTILITY_CLAMP === "1",
   background: withBackground,
   foreground: without,
   // Above 1 means the background class makes a session slower, which is expected. The question this
