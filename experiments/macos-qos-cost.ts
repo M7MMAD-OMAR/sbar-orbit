@@ -1,5 +1,8 @@
 /**
- * What does the background scheduling class cost a browser session on this Mac?
+ * What does the former background scheduling class cost compared with utility QoS?
+ * Production now uses utility. The background arm intentionally measures the
+ * stricter policy that caused startup failures; this is a manual experiment,
+ * not a release gate requiring the discarded policy to meet interactive deadlines.
  *
  * The macOS budget has two halves. The accounting half reads the kernel and refuses work that would
  * not fit. The scheduling half is `taskpolicy -b`, the darwin-background class, which is the only
@@ -137,6 +140,7 @@ console.log(JSON.stringify({
   host: { cpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)) },
   rounds,
   firstArm,
+  controlPolicy: "non-background, with utility QoS inherited from the bounded entry point",
   requestedUtilityClamp: process.env.ORBIT_EXPERIMENT_UTILITY_CLAMP === "1",
   background: withBackground,
   foreground: without,
