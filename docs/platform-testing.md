@@ -24,3 +24,14 @@ Do not change `process.platform` and describe a Linux process as a measured Mac.
 Do not remove a failing test merely to obtain a passing run. Keep kernel-only
 coverage and report skips separately. Diagnose failures from their retained logs;
 a successful rerun does not explain an earlier intermittent failure.
+
+The manual `macos-cold-start` workflow compares scheduling orders on separate fresh
+Mac runners. Its background arm deliberately exercises the former policy, which
+can miss deadlines. Keep this diagnostic comparison separate from the release
+gate; the `verify` workflow runs the production utility QoS policy and retains
+real functional failures. No failing functional test was deleted for this change.
+
+Apple documents `taskpolicy -c utility` as a QoS clamp inherited by children:
+https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.8
+This prioritizes active agent work below interactive work without the former
+background I/O throttling. Resource accounting remains advisory on macOS.

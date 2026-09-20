@@ -255,6 +255,7 @@ Display separation is not a security sandbox. Applications retain the OS user's 
 | [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
 | [What Windows measured](docs/windows-measured.md) | Every Windows result on a live guest, including the defects only a real machine found |
 | [What macOS measured](docs/macos-measured.md) | Every macOS result on a real host: the numbers, the advisory budget, and what is still not proven |
+| [Platform verification](docs/platform-testing.md) | Portable contracts, macOS service simulation, and real cloud runners without owning a Mac |
 | [macOS research](docs/research/macos/) | The sourced groundwork behind the macOS adapter, and the adversarial audit of it |
 | [Windows research](docs/research/windows/) | The sourced groundwork behind the Windows adapter, written before the port |
 | [Support tiers](docs/support-tiers.md) | What is known to work, on which host class, on what evidence, and which report to file |

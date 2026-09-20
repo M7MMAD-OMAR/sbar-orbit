@@ -18,27 +18,28 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 
 ## Latest verified state
 
-At `e7576a6`, [run 35450920294](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35450920294)
-passed the full bounded suite on Ubuntu (418 pass, 49 skip, zero fail) and Windows
-(356 pass, 111 skip, zero fail). The same run passed the
-installation and generated MCP registration probe on all three platforms. That
-probe configures Claude Code, Codex and Hermes, then negotiates each actual entry;
-it does not claim the native host CLI exists when it is absent.
+On 20 September 2026, [run 35482866635](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482866635)
+passed all nine jobs at runtime revision `1399122`: the full bounded suite, fresh
+registry-archive installation with a managed browser, and generated MCP host
+registration on Ubuntu, Windows and macOS. Typechecks passed on all three hosts.
 
-The macOS full suite in that run failed. The earlier run at `3af9051`
-passed, but the subsequent run at `0b11302` failed with timeouts in viewer frame
-visibility and browser resize. Those intermittent failures remain open until
-explained; a successful rerun alone will not establish performance acceptance.
+| Host | Runtime | Passed | Skipped | Failed | Suite duration |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Ubuntu 24.04 runner | Bun 1.3.14 | 425 | 50 | 0 | 174.48 s |
+| Windows runner | Bun 1.4.2 | 361 | 114 | 0 | 166.71 s |
+| macOS arm64 runner | Bun 1.3.14 | 371 | 104 | 0 | 202.16 s |
+| Local Fedora, native enabled | Bun 1.3.14 | 448 | 27 | 0 | 150.91 s |
 
-The local native-enabled suite passed with 441 passes, 26 skips and zero failures
-across 467 tests in 145.07 seconds on 19 September 2026. The resource wrapper
-recorded 147 samples and preserved exit status 0. Minimum host free memory was
-5.73 GiB; peak whole-host CPU busy fraction was 0.58. These are whole-machine
-observations, not resource use attributable to Orbit or a limit guarantee.
+Every suite discovered 475 tests in 94 files. Skips represent platform or host
+requirements, not passing capabilities. The Windows VM is shut down after checking
+that it had no active browser sessions or verification processes. GitHub automatic
+verification remains disabled; these were explicitly dispatched checks.
 
-Managed installation plus installed browser acceptance and resource artifacts are
-now defined in CI. Their remote results are recorded below. The native host remains
-Fedora; the Windows guest and CI runners do not establish physical-device support.
+This establishes current passing scenarios, not every physical device or an
+installation without Bun, a browser or required OS facilities. Earlier isolated
+Linux installer failures and a Windows cold-capture timeout remain unexplained;
+subsequent passing runs do not identify their causes. Their diagnostics remain in
+place. No failing functional test was deleted or given a longer deadline.
 
 ## Investigation history
 
@@ -365,3 +366,42 @@ run or push was made. A real macOS execution of the current revision is required
 before claiming a passing cross-platform release. Existing installation trials
 also do not prove automatic provisioning on every blank machine or integration
 inside every native host application.
+
+## Portable simulation and macOS scheduling correction, 20 September 2026
+
+`bun run verify:platform-contracts` provides a documented local entry point even
+without a Mac. The service simulation drives real production functions and real
+temporary files while simulating only launchctl responses. It covers first and
+repeated installation, bootstrap refusal, status, removal and foreign-file
+preservation. It exposed a real ordering defect: removal attempted to stop a
+service before checking file ownership. The strengthened test failed before the
+fix and passed after ownership validation moved ahead of bootout.
+
+Cold-order comparisons now run each initial order on a separate fresh Mac rather
+than always charging cold startup to the background arm. The diagnostic runs are
+[35482307360](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482307360)
+and [35482468017](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482468017).
+The utility-clamped, non-background control completed all three sessions in each
+order; one background arm timed out capturing its first frame after fonts loaded.
+On the foreground-first host, median total work was 1281 ms for the utility
+control and 8337 ms for background. These are small host-specific samples, not
+universal speedup claims. Bun 1.4.2 alone did not repair macOS startup failures,
+so the production macOS verification pin stays at 1.3.14.
+
+Active work now uses `taskpolicy -c utility`. The LaunchAgent uses Standard process
+type, retains Nice 10 and does not independently force low-priority I/O. A stricter
+inherited background policy is preserved. Shared accounting, admission, ownership
+and cleanup remain in place; the macOS budget is still advisory, not a kernel
+CPU or memory ceiling. The plist contract failed against the former policy and
+passed after the change. Production verification subsequently passed on two fresh
+macOS runners: [35482684889](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482684889)
+and the final three-platform run above. The first installed-browser trial created
+a session in 3186 ms and captured in 319 ms through the actual installed command;
+the retrieved JPEG visibly contained the fixture heading.
+
+The discarded background-policy comparison remains available in the manually
+triggered `macos-cold-start` workflow. It is a diagnostic experiment, not a release
+gate requiring the discarded policy to satisfy interactive deadlines. All
+functional suites, installer checks and host-entry checks remain strict gates.
+Focused manual runs can select one platform without cancelling a different one.
+See [platform testing](platform-testing.md) for commands and evidence limits.
