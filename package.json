@@ -45,6 +45,7 @@
   ],
   "scripts": {
     "verify": "bun --smol run scripts/limited.ts bun --smol test",
+    "verify:platform-contracts": "bun run verify tests/macos.test.ts tests/macos-keychain.test.ts tests/macos-service-simulation.test.ts tests/platform.test.ts tests/service-paths.test.ts",
     "typecheck": "tsc",
     "orbit": "bun run src/cli.ts",
     "serve": "bun run scripts/limited.ts bun run src/cli.ts serve"
