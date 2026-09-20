@@ -7,6 +7,19 @@ import { inspectPrerequisites } from "../src/preflight";
 const complete = { platform: "linux", file: async () => true, module: () => true, which: () => "/usr/bin/Xwayland",
   userManager: async () => true, missingLibraries: () => [] as string[] };
 
+test("Windows preflight rejects the runtime that exhausted the shared MCP budget", async () => {
+  for (const bunVersion of ["1.3.14", "1.4.1", "unknown"]) {
+    const probe = { ...complete, platform: "win32", bunVersion };
+    const report = await inspectPrerequisites("/fixture", probe);
+    expect(report.checks.find(check => check.id === "bun-version")?.available).toBe(false);
+    expect(report.browserPrerequisitesFound).toBe(false);
+    expect(report.checks.find(check => check.id === "bun-version")?.remedy?.message).toContain("1.4.2");
+  }
+  const report = await inspectPrerequisites("/fixture", { ...complete, platform: "win32", bunVersion: "1.4.2" });
+  expect(report.checks.find(check => check.id === "bun-version")?.available).toBe(true);
+  expect(report.checks.find(check => check.id === "bun-version")?.remedy).toBeNull();
+});
+
 test("preflight distinguishes browser, native and common missing prerequisites", async () => {
   const all = await inspectPrerequisites("/fixture", complete);
   expect(all.browserPrerequisitesFound).toBe(true);

@@ -106,7 +106,7 @@ leaves the machine is a report you generated, read and pasted yourself.
 
 ## Start
 
-Requires Bun and Chrome, Chromium or Edge. On Linux it also needs user cgroup delegation, which is where
+Requires Bun and Chrome, Chromium or Edge. Windows requires Bun 1.4.2 or newer. On Linux it also needs user cgroup delegation, which is where
 the shared budget lives; on Windows that budget is a named job object instead and there is nothing to
 delegate. The native backend is Linux only and needs the separate [Fedora bootstrap](docs/fedora-results.md).
 

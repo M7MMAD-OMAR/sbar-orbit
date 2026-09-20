@@ -5,6 +5,7 @@ import { chromeExecutables, darwinBrowserInstalls, nativeRuntimeLocations, nativ
 
 type Probe = {
   platform: string;
+  bunVersion?: string;
   file(path: string, executable: boolean): Promise<boolean>;
   module(name: string, project: string): boolean;
   which(name: string): string | null;
@@ -15,6 +16,7 @@ type Probe = {
 };
 const systemProbe: Probe = {
   platform: process.platform,
+  bunVersion: Bun.version,
   async file(path, executable) {
     try { await access(path, executable ? constants.X_OK : constants.R_OK); return (await stat(path)).isFile(); }
     catch { return false; }
@@ -107,6 +109,12 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   add("supported-platform", "common", probe.platform === "linux" || windows || darwin,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
       message: "This alpha runs on Linux, and at the Limited tier on Windows and macOS. Nothing here can install it on another platform." });
+  if (windows) {
+    const runtime = probe.bunVersion ?? "";
+    add("bun-version", "common", /^\d+\.\d+\.\d+/.test(runtime) && Bun.semver.satisfies(runtime, ">=1.4.2"),
+      { id: "unsupported-bun-version", needsElevation: false, agentMayRun: false,
+        message: "Windows requires Bun 1.4.2 or newer. Bun 1.3.14 exhausted the shared memory budget with concurrent MCP adapters. Upgrade Bun using its original installation method, then run the installer again." });
+  }
   if (darwin) {
     // The macOS prerequisites, which are a short list because almost everything Orbit needs here is
     // in the base system. Each one is checked at the path it really has, not at the path a POSIX

@@ -30,14 +30,14 @@ async function run(command: string[], cwd: string) {
 needsGitCheckout("git ls-files, which needs the repository and not just the binary")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
   try {
-    await run([process.execPath, "pm", "pack", "--destination", destination], project);
+    await run([process.execPath, "scripts/registry-package.ts", destination], project);
     // Read with readdir rather than shelling out to `bash -c ls`: a glob is not worth a shell, and
     // the shell was the only reason this test needed one at all.
     const packed = (await readdir(destination)).filter(entry => entry.endsWith(".tgz"));
     expect(packed.length).toBe(1);
     const archive = join(destination, packed[0]!);
     const shipped = (await run(["tar", "tzf", archive], destination)).split(/\r?\n/)
-      .filter(Boolean).map(entry => entry.replace(/^package\//, "")).filter(entry => !entry.endsWith("/"));
+      .filter(Boolean).map(entry => entry.replace(/^package\//, "")).filter(entry => entry && !entry.endsWith("/"));
     const tracked = new Set((await run(["git", "ls-files", "-z"], project)).split("\0").filter(Boolean));
 
     // Build products are the ones that arrive by accident: a `.pyc` is gitignored, so seeing one here
@@ -50,9 +50,11 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     // The lockfile is what `--reinstall-deps` resolves against, so a package without it cannot honour
     // a flag its own help prints.
     expect(shipped).toContain("bun.lock");
+    expect(await run(["tar", "xOf", archive, "package/bun.lock"], destination))
+      .toBe(await Bun.file(join(project, "bun.lock")).text());
     // Every advertised platform needs its actual installation entry point in
     // the downloadable package, not merely in the development checkout.
-  for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd", "bunfig.toml"])
+    for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd", "bunfig.toml"])
       expect(shipped).toContain(required);
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);

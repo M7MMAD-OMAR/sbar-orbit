@@ -15,7 +15,7 @@ await mkdir(env.CODEX_HOME, { recursive: true });
 // Exercise the artifact users receive, without borrowing checkout dependencies.
 // The isolated temporary parent also prevents Bun from resolving node_modules
 // through the checkout's ancestors.
-const pack = Bun.spawn([process.execPath, "pm", "pack", "--destination", root],
+const pack = Bun.spawn([process.execPath, "scripts/registry-package.ts", root],
   { cwd: checkout, stdout: "ignore", stderr: "inherit" });
 if (await pack.exited !== 0) throw new Error("Could not build registry archive");
 const archives = (await readdir(root)).filter(name => name.endsWith(".tgz"));

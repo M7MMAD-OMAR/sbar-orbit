@@ -101,7 +101,7 @@ exit /b %errorlevel%
 exit /b %errorlevel%
 
 :no_bun
-echo sbar-orbit: bun was not found on PATH, in %%BUN_INSTALL%%, ~\.bun\bin or %%LOCALAPPDATA%%\Programs\bun; install Bun 1.3 or newer 1>&2
+echo sbar-orbit: bun was not found on PATH, in %%BUN_INSTALL%%, ~\.bun\bin or %%LOCALAPPDATA%%\Programs\bun; install Bun 1.4.2 or newer 1>&2
 exit /b 127
 
 :no_service

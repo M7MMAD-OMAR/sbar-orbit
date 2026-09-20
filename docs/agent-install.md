@@ -157,6 +157,7 @@ measures. On another distribution the names are the person's to translate.
 | `id` | Cause | `needsElevation` | `agentMayRun` |
 |---|---|---|---|
 | `unsupported-platform` | Not Linux, Windows or macOS. Those three have adapters; anything else has none | No | No, and nothing can fix it here |
+| `unsupported-bun-version` | Windows needs Bun 1.4.2 or newer, the minimum verified with concurrent MCP adapters | No | No, upgrade the existing Bun installation through its original installation method |
 | `macos-base-system-missing` | A tool that ships with macOS (`/bin/launchctl`, `/bin/cp`, `/usr/sbin/sysctl`) is absent | No | No, a system missing these is not one Orbit can repair |
 | `no-taskpolicy` | `/usr/sbin/taskpolicy` is absent, so sessions cannot be placed in the background scheduling class. **Not fatal**: the budget's accounting half still works and sessions still run | No | No |
 | `system-tool-systemctl`, `system-tool-systemd-run`, `system-tool-nice`, `system-tool-python3` | A base system tool is missing | Yes | No |

@@ -307,3 +307,43 @@ The final Linux native-enabled full suite using the lower-memory command also
 passed: 445 passes, 27 skips, zero failures across 472 tests in 93 files, in
 150.82 seconds. The restored Windows managed broker answered session list with
 an empty successful result after the isolated trial.
+
+## Windows runtime and registry artifact correction
+
+The smaller three-adapter experiment reproduced the Windows 2 GiB pressure failure
+with Bun 1.3.14 against the current private broker, independently of the full test
+runner. Bun 1.4.2 completed the same scenario. The final trial kept three generated
+MCP interpreter entries connected, navigated a private local browser, read its
+heading through another adapter, captured its frame, closed the first adapter and
+stopped the browser through a remaining connection. Peak job commit was about
+1.44 GiB. This is MCP protocol evidence, not three native host applications running.
+The same scenario passed on Linux with Bun 1.3.14. Raw reports are retained locally, under the gitignored
+`docs/evidence/mcp-concurrency-*-2026-09-20.json` paths.
+
+Windows now requires Bun 1.4.2 or newer in preflight. The refusal regression failed
+before that check existed and passed afterward. Only the Windows CI runtime pins
+changed; the workflow remains disabled. This is a minimum verified baseline, not
+proof of every later runtime release or every machine.
+
+Bun 1.4.2's full Windows suite first passed every runtime test and failed packaging:
+its packer unconditionally excludes root lockfiles. The registry producer now uses
+Bun's selected files, then adds the exact source lock into the final archive.
+Artifact tests still reject untracked payload files, require every platform's
+entry point and compare the archived lock byte for byte. The managed-install CI
+harness builds this artifact too. Maintainers publish the completed archive rather
+than packing the directory implicitly during publication.
+
+Final ordinary-account Windows verification with the prior managed broker still
+running returned 356 passes, 117 skips and zero failures across 473 tests in
+93 files, in 144.50 seconds, on Bun 1.4.2. This supersedes the two-failure pressure
+result above for that runtime and scenario. The focused installer, prerequisite
+and packaging checks also passed all 26 tests on Linux and Windows.
+
+A freshly extracted registry archive, in a Windows path containing spaces and
+without node_modules, then installed frozen dependencies and configured all three
+hosts through one `install.cmd --no-service --connect claude,codex,hermes` command.
+Its lock matched the source. All configuration and prefix paths were temporary;
+the existing managed service was not changed by that installation trial. The
+concurrency probe's temporary stop of the idle VM service was reversed afterward.
+No source changes were pushed and no GitHub workflow was enabled or started.
+macOS verification and the unexplained earlier Linux installer failure remain open.
