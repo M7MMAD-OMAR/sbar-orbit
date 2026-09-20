@@ -140,6 +140,15 @@ to 77 GB, with the remaining 30 kept because a live or recent broker owns them. 
 fix, because an empty read-only snapshot has nothing inside it to unlink; with one file in the profile
 before the point is taken, the test fails against the unfixed code and passes with it.
 
+## The nine jobs again at the process-tree guard, 20 September 2026
+
+The push of `78e8a7b` triggered run 35505546868, and all nine jobs passed with **491 tests across 98
+files** discovered on each platform: **Ubuntu 24.04 440 pass, 51 skip; Windows 373 pass, 118 skip;
+macOS 383 pass, 108 skip**, every one of them with 0 fail, plus installed-browser and host
+registration on all three. The Windows job that failed at `f77b22d` passed here, on the same
+assertions, with the guarded walk. These figures replace the `9f48b96` numbers in
+[support tiers](support-tiers.md).
+
 ## The Windows runner's stack overflow, 20 September 2026
 
 The push of `f77b22d`, a documentation-only change, triggered run 35505288681, and `suite
