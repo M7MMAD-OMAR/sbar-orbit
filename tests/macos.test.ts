@@ -1,3 +1,4 @@
+import { darwinTaskPolicy } from "../src/macos-scheduling";
 import { test, expect } from "bun:test";
 import { chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
@@ -105,10 +106,11 @@ test("the launch agent plist is valid XML, names the broker, and never abandons 
   // remaining process group. `AbandonProcessGroup` would switch that off, so its ABSENCE is the
   // assertion, and this test exists so nobody adds it later as a tidy-up.
   expect(plist).not.toContain("AbandonProcessGroup");
-  // The scheduling half of the budget, which is the only half macOS enforces.
+  // The launcher applies utility QoS. launchd must not add background I/O throttling.
   expect(plist).toContain("<key>ProcessType</key>");
-  expect(plist).toContain("<string>Background</string>");
-  expect(plist).toContain("<key>LowPriorityIO</key>");
+  expect(plist).toContain("<string>Standard</string>");
+  expect(plist).toContain("<key>Nice</key>\n  <integer>10</integer>");
+  expect(plist).toContain("<key>LowPriorityIO</key>\n  <false/>");
   // NOT a resource limit: HardResourceLimits CPU is RLIMIT_CPU, cumulative seconds with a SIGKILL,
   // which kills a healthy long lived broker for staying alive. docs/porting.md records the deletion.
   expect(plist).not.toContain("HardResourceLimits");
@@ -450,4 +452,13 @@ darwinOnly("a stale registration whose number was handed out again must not char
     expect(await liveBudgetGroups(root)).toEqual([]);
     expect(await readdir(root)).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test("macOS scheduling caps active work at utility and preserves stricter inherited policy", () => {
+  expect(darwinTaskPolicy(false)).toEqual(["-c", "utility"]);
+  expect(darwinTaskPolicy(true)).toEqual([]);
+  expect(darwinTaskPolicy(true, "0")).toEqual([]);
+  expect(darwinTaskPolicy(false, "1")).toEqual(["-b"]);
+  expect(darwinTaskPolicy(false, "0")).toEqual([]);
 });

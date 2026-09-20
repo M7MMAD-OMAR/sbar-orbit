@@ -1,3 +1,4 @@
+import { darwinTaskPolicy } from "./macos-scheduling";
 import { requireHeadroom, requireResourceBudget } from "./resource-budget";
 import { chromium, type Browser, type ConnectOverCDPTransport } from "playwright";
 import { readFile, rm } from "node:fs/promises";
@@ -160,24 +161,12 @@ function launchOnLinux(executable: string, profile: string, argv: string[], env:
  * to `KILL_ON_JOB_CLOSE`. `docs/support-tiers.md` states the row at that tier.
  */
 function launchOnDarwin(executable: string, profile: string, argv: string[], env: Record<string, string>): OwnedBrowser {
-  // The scheduling half of the macOS budget, and the only half the system enforces. The
-  // darwin-background class is the nearest analogue of the Linux slice's `CPUWeight=10` and
-  // `IOWeight=10`: on Apple silicon it places threads on the efficiency cluster, and it also sets
-  // throttled low priority I/O.
-  //
-  // `RLIMIT_AS` is deliberately not used instead. It IS enforced on macOS 12 and later, contrary to
-  // the folklore, but it bounds address space rather than footprint, and V8 reserves hundreds of
-  // gigabytes of address space, so any value that would bound a browser's memory kills a healthy one.
-  //
-  // Applied ONCE. The class is inherited, so a broker already running under `scripts/limited.ts`
-  // has it and every browser it starts gets it for free; spawning `taskpolicy -b` again on top was
-  // a second process per session buying nothing. `alreadyBackground` is how this path knows, and
-  // `ORBIT_DARWIN_BACKGROUND=0` is the override `experiments/macos-qos-cost.ts` uses to measure
-  // what the class costs by running one arm without it.
-  const requested = process.env.ORBIT_DARWIN_BACKGROUND !== "0";
-  const alreadyBackground = process.env.ORBIT_DARWIN_BACKGROUND === "1" ? false : inheritedBackgroundClass();
-  const background = requested && !alreadyBackground && Bun.file("/usr/sbin/taskpolicy").size > 0
-    ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  // Utility remains below interactive work without background disk throttling,
+  // which repeatedly stalled cold browser starts on the three-core macOS host.
+  // Preserve a stricter inherited class and keep explicit experiment overrides.
+  const policy = darwinTaskPolicy(inheritedBackgroundClass(), process.env.ORBIT_DARWIN_BACKGROUND);
+  const background = policy.length && Bun.file("/usr/sbin/taskpolicy").size > 0
+    ? ["/usr/sbin/taskpolicy", ...policy] : [];
   const owner = Bun.spawn([process.execPath, "run", resolve(import.meta.dir, "native/supervise-darwin.ts"),
     join(profile, "owner.json"), ...background, executable, ...argv],
     { env, stdin: "pipe", stdout: "ignore", stderr: "pipe" });

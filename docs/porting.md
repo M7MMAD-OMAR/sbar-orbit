@@ -541,7 +541,7 @@ NOT passed: the sandbox works on darwin and dropping it is a straight security r
 
 | Layer | Status |
 |---|---|
-| `ProcessType Background`, `Nice 10`, `LowPriorityIO`, `LowPriorityBackgroundIO`, and `taskpolicy -b` per session | Kept. On Apple silicon the darwin-background class is what places threads on the efficiency cluster, the nearest analogue of `CPUWeight=10`. This is the only half the system enforces |
+| `ProcessType Standard`, `Nice 10`, and `taskpolicy -c utility` | Updated on 20 September 2026 after background throttling repeatedly delayed cold startup. Utility caps active work below interactive QoS. LowPriorityIO is false; stricter inherited background policies remain intact. Scheduling priority is not a CPU or memory ceiling |
 | `HardResourceLimits {CPU: N}` | **Deleted.** It is `RLIMIT_CPU`, cumulative CPU seconds since exec with a `SIGKILL` on breach. It is not a rate, so it kills a healthy long session for staying alive while permitting a saturated core for minutes. No value of N does both jobs |
 | A broker side sampler over `proc_pid_rusage(RUSAGE_INFO_V4)` summing `ri_phys_footprint` across the session's process group | Kept, as the only real governor. `requireResourceBudget()` reports `enforcement: "advisory"` with every dimension in `unbounded` |
 

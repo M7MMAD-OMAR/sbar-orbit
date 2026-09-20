@@ -98,11 +98,11 @@ export function brokerAgentPlist(launcher: string, socket: string, home = homedi
     <false/>
   </dict>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Standard</string>
   <key>Nice</key>
   <integer>10</integer>
   <key>LowPriorityIO</key>
-  <true/>
+  <false/>
   <key>LowPriorityBackgroundIO</key>
   <true/>
   <key>EnvironmentVariables</key>

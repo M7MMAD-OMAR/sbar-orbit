@@ -27,9 +27,9 @@
  *     so a stale registration is reaped by asking the kernel whether the group has members, not by
  *     trusting the file.
  *
- * The scheduling half of the budget is real and is not in this file: `taskpolicy -b` places the
- * session in the darwin-background class, which on Apple silicon is what puts its threads on the
- * efficiency cluster. That is the nearest analogue of `CPUWeight=10` and it is a hint, not a cap.
+ * The scheduling policy lives outside this file: `taskpolicy -c utility` caps QoS
+ * below interactive work. It does not impose a CPU, memory or process-count ceiling.
+ * A stricter inherited background class is preserved rather than raised.
  */
 
 import { lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";

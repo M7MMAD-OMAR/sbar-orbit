@@ -132,12 +132,12 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
         { id: "macos-base-system-missing", needsElevation: false, agentMayRun: false,
           message: `Orbit uses ${path}, which ships with macOS. A system missing it is not one Orbit can repair.` });
     // The scheduling half of the budget. Its absence is NOT fatal and the check says so: the
-    // accounting half still works, and a session runs without the background class at a slightly
+    // accounting half still works, and a session runs without the utility QoS clamp at a slightly
     // higher priority rather than not at all. It is reported so a person reading the report knows
     // which half they have.
     add("taskpolicy", "common", await probe.file("/usr/sbin/taskpolicy", true),
       { id: "no-taskpolicy", needsElevation: false, agentMayRun: false,
-        message: "taskpolicy is missing, so sessions cannot be placed in the background scheduling class. The budget's accounting half still works and sessions still run." });
+        message: "taskpolicy is missing, so sessions cannot be placed under the utility QoS clamp. The budget's accounting half still works and sessions still run." });
     // The supervisor that holds a browser tree here is TypeScript run by this same Bun, not the
     // Python one Linux uses, so its absence is an incomplete source tree in exactly the same way.
     add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise-darwin.ts"), false),

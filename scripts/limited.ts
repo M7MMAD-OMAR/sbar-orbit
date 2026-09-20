@@ -1,3 +1,4 @@
+import { darwinTaskPolicy } from "../src/macos-scheduling";
 import { requireResourceBudget } from "../src/resource-budget";
 import { budget } from "../src/service";
 
@@ -52,9 +53,9 @@ if (alreadyLimited) {
   //      group id the kernel can enumerate.
   //   2. The group is written into the shared registry, which is what makes the pool shared across
   //      independently started Orbit processes.
-  //   3. The command runs under `taskpolicy -b`, the darwin-background class, which on Apple
-  //      silicon places its threads on the efficiency cluster. That is the scheduling half of the
-  //      budget and the only half the system enforces.
+  //   3. The command runs under a utility QoS clamp, below interactive work but
+  //      without maintenance-style background I/O throttling. The kernel applies
+  //      this scheduling policy; it does not impose a CPU or memory ceiling.
   //
   // Step 3 is a hint and steps 1 and 2 are accounting. Nothing here is a ceiling, which is why
   // `requireResourceBudget()` reports `enforcement: "advisory"` on this platform.
@@ -71,8 +72,9 @@ if (alreadyLimited) {
   // budgeted command starts another. The class is inherited, so re-applying it spawns a process per
   // nesting level and changes nothing.
   const { inheritedBackgroundClass } = await import("../src/macos");
-  const background = !inheritedBackgroundClass() && await Bun.file("/usr/sbin/taskpolicy").exists()
-    ? ["/usr/sbin/taskpolicy", "-b"] : [];
+  const policy = darwinTaskPolicy(inheritedBackgroundClass());
+  const background = policy.length && await Bun.file("/usr/sbin/taskpolicy").exists()
+    ? ["/usr/sbin/taskpolicy", ...policy] : [];
   const child = Bun.spawn([...background, executable, ...args.slice(1)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   // Signals go to the GROUP, not to the child: the point of the group is that everything the
   // command started is addressable, and forwarding to one pid would leave a browser tree behind.
