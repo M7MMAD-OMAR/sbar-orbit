@@ -6,15 +6,63 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 
 ## Acceptance checklist
 
-- [ ] Fresh installation starts a usable broker immediately on Linux, Windows and macOS.
+State, 20 September 2026 (alpha.8). Each closed box names the evidence and prints its limit beside it:
+a skipped test is not a pass, and a limit is never omitted. What is not closed is listed under
+[the roadmap's what remains](roadmap.md).
+
+- [x] Fresh installation starts a usable broker immediately on Linux, Windows and macOS.
+      On a GitHub Ubuntu 24.04 runner the one command install returned `installed: true`, the service
+      stayed up and `doctor` answered; on the Windows 11 guest the install ran without `--no-service`,
+      registered an account-specific logon task and received a broker response before another logon,
+      and after a real reboot the automatically started broker completed the installed-command browser
+      check with no manual start; on the macOS runner `./install.sh --json` exited 0, the LaunchAgent
+      answered `launchctl print` and `doctor` exited 0. Run 35484602666 repeated fresh registry-archive
+      installation with a managed browser on all three hosts. Limit: every host had Bun and a browser
+      already provisioned, and the Windows and macOS hosts are a borrowed guest and a hosted runner
+      with no person at them.
 - [x] Installation offers an explicit, repeatable way to register supported agent hosts,
       preserving unrelated configuration and reporting unsupported hosts.
-- [ ] Published commands work from a clean source archive and handle missing prerequisites.
+      Real Claude and Hermes CLIs connected on Linux, Codex's CLI read its registration, and all three
+      serialized entries negotiated MCP and listed 12 tools on Linux and Windows.
+- [x] Published commands work from a clean source archive and handle missing prerequisites.
+      An extracted registry archive with no `node_modules` installed its frozen dependencies, linked
+      the command and registered all three hosts in isolated configuration directories on Linux; the
+      same archive extracted into a Windows path containing spaces installed frozen dependencies and
+      configured all three hosts through one `install.cmd --no-service --connect claude,codex,hermes`
+      command whose lock matched the source; registry-archive acceptance passed installation and
+      browser use on Ubuntu and macOS. Preflight refuses a missing or too-old runtime with a named
+      remedy, and Windows now requires Bun 1.4.2. Limit: Bun and a browser remain provisioned
+      prerequisites and their installation is not covered by this evidence.
 - [x] Cross-platform CI fails on type errors, failing tests and failed runtime checks.
-- [ ] Browser and MCP flows verify navigation, text, capture, pause/resume and cleanup.
-- [ ] Native application flows run on supported Linux hosts; platform refusals are tested.
-- [ ] Resource use, concurrent sessions and crash recovery have current recorded evidence.
-- [ ] Release documentation, support table and package commands agree with verified behavior.
+      Run 35484602666 passed all nine jobs at `6a802f5` on 20 September 2026, after earlier runs
+      recorded real failures that specific corrections closed. Note: the `verify` workflow is currently
+      `disabled_manually` after repeated failed runs generated unwanted notifications; focused manual
+      platform runs exist, and no push or run has been authorized since.
+- [x] Browser and MCP flows verify navigation, text, capture, pause/resume and cleanup.
+      On the Windows guest the whole action surface ran through the broker's RPC (navigate, read, fill,
+      click, scroll, tabs, resize, observe, journal, pause, resume, stop); the installed command drove a
+      browser session on Linux and Ubuntu that navigated, read a heading and captured a decodable
+      1280 by 800 frame; and a three-adapter MCP concurrency probe ran on Linux and Windows. Limit:
+      pause and resume are proven at the protocol and installed-command level, not against a person at
+      the keyboard, which is item 1 under what remains.
+- [x] Native application flows run on supported Linux hosts; platform refusals are tested.
+      A purpose-built Fedora 44 machine launched a Wayland and an Xwayland application, typed into and
+      clicked both, and read both typed strings off the pixels; nineteen applications across GTK4,
+      GTK3, LibreOffice, Qt 6 and Xwayland map; `tests/owned-group.test.ts` passed 5 of 5 there; and
+      the platform refusals (session-0 browser, a second concurrent interactive session, profile
+      clone) are recorded with their sources. Limit: that machine has no physical GPU and its
+      compositor rasterises in software, and the other Linux families are container limited.
+- [x] Resource use, concurrent sessions and crash recovery have current recorded evidence.
+      The newest rows are 19 September 2026: process containment including the Chrome crash-handler
+      escape, resource accounting, and crash recovery on Windows and macOS, both at 0 survivors after a
+      kill with no cleanup handler. Concurrency (three browsers and two displays on one broker, 20 of
+      20 rounds) and the measured one-core share date to 11 September 2026 and were not re-measured at
+      alpha.8.
+- [x] Release documentation, support table and package commands agree with verified behavior.
+      The 20 September 2026 pass moved the suite figures, the alpha number and the managed-update
+      platform limit in [PROJECT.md](../PROJECT.md), [the readme](../README.md),
+      [support tiers](support-tiers.md) and [validation](validation.md) onto alpha.8 evidence, and added
+      a what remains list to [the roadmap](roadmap.md).
 
 ## Alpha.8 release, 20 September 2026
 

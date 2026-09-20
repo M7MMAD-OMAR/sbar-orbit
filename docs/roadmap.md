@@ -1,9 +1,40 @@
 # Roadmap
 
-**State, 19 September 2026.** Tagged `v0.1.0-alpha.7` at `230cb4b`; `0.1.0-alpha.6` is what the npm
-registry serves. Of the seven gates below, 1, 3 (browser half), 6 and 7 are closed at the tier their
-evidence supports; 2, 4 and 5 all wait on the same thing, a machine with a person at it that is not
-this workstation. Nothing here is closed by installing Orbit somewhere.
+**State, 20 September 2026.** Tagged `v0.1.0-alpha.8` at `6a802f5`, and `0.1.0-alpha.8` is what the npm
+registry serves as `latest`. Of the seven gates below, 2, 3, 6 and 7 are closed at the tier their
+evidence supports, and gate 1 is closed by an automated reading taken on this desktop but not yet by
+the participant's own reading of the viewer's `#cost` line. Gates 4 and 5, and every claim about a
+machine with a person at it, still wait on the same thing: a host that is not this workstation, with
+someone sitting at it. Nothing here is closed by installing Orbit somewhere.
+
+## What remains, 20 September 2026
+
+Recorded from the newest evidence, so a reader can tell what alpha.8 does and does not settle.
+
+1. **A participant-confirmed human usage trial.** No trial with a person working alongside a live
+   session has run. The concurrent-work confirmation, the pause and takeover acknowledgement, the
+   exact disposable phrase readback and the viewer-optional check all wait on a person. Gate 1's
+   participant reading and the `Failed` rows for "human takeover and resume" and "participant
+   acceptance" in [support tiers](support-tiers.md) wait on the same thing. See
+   [human work and takeover trial](human-handoff.md).
+2. **Real-device coverage.** Windows and macOS have run on a borrowed Windows 11 guest and a hosted
+   `macos-26-arm64` runner, with nobody at the machine; the guest has Edge alone on one of its two
+   hosts. What is missing is a Windows and a macOS machine with a real desktop session and the
+   person's own account, Keychain and browser history. On Linux the native rows come from a machine
+   whose compositor rasterises in software, with no physical GPU, and the other distributions are
+   container limited.
+3. **Managed installation and updates on Windows and macOS.** Adopt, stage, activate, rollback and the
+   timer exist on Linux only; Windows and macOS refuse managed activation and scheduling explicitly
+   rather than reporting success. See [automatic updates](updates.md) and
+   [the alpha.8 guide](release-alpha8.md).
+4. **Two intermittent failures with no identified cause.** A local Linux installer-contract test failed
+   in one full-suite run and has passed in every run since, with the user journal showing no actionable
+   cause; a Windows cold first-capture timed out once and did not recur. Both had their diagnostics
+   strengthened and neither has been reproduced with its cause named. A successful rerun is not an
+   explanation, and no failing functional test was deleted or given a longer deadline.
+5. **A real host for gates 4 and 5.** The browser extension and the Linux families are closed as far as
+   their hosts could take them. What closes more is a machine of each family with a screen and a GPU,
+   and a person's Windows or macOS desktop, which is the same host classes item 2 names.
 
 ## Demonstrated in the alpha
 
