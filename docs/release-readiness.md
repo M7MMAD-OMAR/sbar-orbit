@@ -161,6 +161,43 @@ would fix it properly is the one the Ubuntu tab-closing test already uses, waiti
 signal rather than on a fixed timer, and that needs `session stop` to answer after the workspace is
 gone, which is a change to the stop path rather than to the test.
 
+## 0.1.0-alpha.9 published, 20 September 2026
+
+`0.1.0-alpha.9` was published to the npm registry as `latest` on 20 September 2026, with an annotated tag
+`v0.1.0-alpha.9` at `ed355d8`, the revision run 35506995596 verified: all nine jobs, 491 tests across 98
+files on each platform, Ubuntu 440 pass and 51 skip, Windows 373 and 118, macOS 383 and 108, every one
+at 0 fail. It is a fix release, so no migration evidence beyond alpha.8's is needed and the update path
+is unchanged.
+
+The source archive is SHA-256 `e0295494ec0200f3e24f5788d67c6122a54de9ffea59abc424c71ec5f32f5959`, 473
+files. The registry archive is SHA-256
+`dec1006fd42a20e0bb70552998e96496ddbc2e68ad48c0368ab7a9c28e80d67a`, 144 files and 779707 bytes. It was
+downloaded again from the registry after publication and is byte identical to the built one, same digest
+and same file list, so nothing was repacked on the way in. `verify-source` accepted all 473 files of the
+extracted archive with `verified: true`; from there `bun install --frozen-lockfile --ignore-scripts`
+installed 100 packages in 104 ms and the launcher ran `--help`, `preflight` and `install --dry-run
+--json` with `installed: true`. From the registry, `bun add -g sbar-orbit@0.1.0-alpha.9` into a
+temporary `BUN_INSTALL` resolved 95 packages in 27.84 s and the installed command answered.
+
+Two things about this release are limits rather than results.
+
+**The package smoke test was not run.** Three attempts were refused by the shared resource budget before
+the browser could launch, with 85, 85 and 117 free tasks of 1536 against the roughly 140 a session needs,
+because another agent held six sessions in the same slice at the time. The steps before the launch did
+run on the exact archive: extraction, manifest verification, the frozen dependency install and the broker
+start. The frame capture and the packaged Canvas viewer are **not measured**, and not measured is not a
+pass.
+
+**A defect in the registry path was found after the artifact was frozen, and is not fixed in it.** From
+a real global registry install, `preflight` reports the three runtime dependencies as missing, so the
+install report says `browserSessions: false`. The dependencies are installed: bun's global layout places
+them at the root of the global `node_modules` (94 entries, siblings of `sbar-orbit`), and the command runs
+from there. `src/preflight.ts:28` resolves them against `<source root>/node_modules` and does not walk up
+the way Bun's own resolution does. A published version cannot be replaced, so this is recorded for the
+next release rather than repaired in this one. The native half of that report is separate and correct:
+the native runtime is not shipped in the registry package, and `install --native` answers
+`native-bootstrap-absent` by design.
+
 ## The nine jobs again at the process-tree guard, 20 September 2026
 
 The push of `78e8a7b` triggered run 35505546868, and all nine jobs passed with **491 tests across 98

@@ -4,6 +4,8 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## 0.1.0-alpha.9 (20 September 2026)
 
+Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9), tagged at `ed355d8`, where all nine CI jobs passed with 491 tests on each platform. The published tarball was downloaded back and is byte identical to the built one; the package smoke test was refused by the shared budget and is not measured. See [the release notes](docs/release-alpha9.md).
+
 A fix release. No persisted schema and no service unit contract changed, so the update path and the
 migration instructions in [0.1.0-alpha.8](docs/release-alpha8.md) apply unchanged. Four fixes, three of
 them found by measurement on 20 September 2026 rather than by reading:

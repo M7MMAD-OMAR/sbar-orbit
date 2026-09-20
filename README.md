@@ -148,13 +148,14 @@ bun add -g sbar-orbit
 sbar-orbit install
 ```
 
-`0.1.0-alpha.8` is published on the npm registry as `latest` and as a
-[GitHub prerelease](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8).
-The published registry archive was installed back on a disposable Fedora systemd host, with managed
-installation, broker health, a private browser capture and update timer controls verified.
+`0.1.0-alpha.9` is published on the npm registry as `latest` and as a
+[GitHub prerelease](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9). It is a fix
+release, and the update path is unchanged from alpha.8, which was installed back on a disposable Fedora
+systemd host with managed installation, broker health, a private browser capture and update timer
+controls verified.
 [Packaging](docs/packaging.md) records the artifact and its limits.
 
-For Linux managed installation and opt-in automatic updates, see [the alpha.8 migration guide](docs/release-alpha8.md). This remains an experimental alpha.
+For Linux managed installation and opt-in automatic updates, see [the alpha.9 release notes](docs/release-alpha9.md), which carry the alpha.8 migration steps with the new version. This remains an experimental alpha.
 
 ### Or hand it to an agent
 
