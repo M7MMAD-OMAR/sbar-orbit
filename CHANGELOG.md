@@ -2,7 +2,11 @@
 
 Versions follow Semantic Versioning. Alpha releases are experimental and may change interfaces without compatibility guarantees.
 
-## Unreleased
+## 0.1.0-alpha.9 (20 September 2026)
+
+A fix release. No persisted schema and no service unit contract changed, so the update path and the
+migration instructions in [0.1.0-alpha.8](docs/release-alpha8.md) apply unchanged. Four fixes, three of
+them found by measurement on 20 September 2026 rather than by reading:
 
 - The Windows descendant walk in `browser-crash.test.ts` trusted a `Win32_Process` snapshot, and that
   table can hold a cycle: a pid recycled into a parent of its own ancestor, or a process naming itself
