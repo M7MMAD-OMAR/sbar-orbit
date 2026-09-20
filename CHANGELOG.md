@@ -4,8 +4,22 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
-Tagged `v0.1.0-alpha.7` sits at `230cb4b`. Everything below landed after it and is not in any
-published version. `0.1.0-alpha.6` is still what the npm registry serves as `latest`.
+## 0.1.0-alpha.8 (20 September 2026)
+
+Release candidate: publication status is recorded in [release readiness](docs/release-readiness.md).
+
+### Linux managed updates
+
+- `install --managed` adopts a release into persistent version directories without modifying the
+  package-manager copy. Source checkouts remain on Git.
+- Stable launcher links follow version switches. Update activation takes an idle-broker lease that
+  blocks new sessions, verifies the running version, and reports whether rollback recovered health.
+- Kernel locking excludes simultaneous update mutations. Preparation verifies package identity and
+  rejects invalid version paths. Stable installations do not automatically select prereleases.
+- Failed timer enablement leaves automatic updates off. macOS and Windows refuse unsupported managed
+  activation and scheduling instead of reporting success.
+- A disposable Fedora systemd gate verifies real upgrade, broken-startup rollback, private browser
+  session refusal, retained data and timer controls. See [installation and migration](docs/release-alpha8.md).
 
 ### Latest verification and platform fixes
 

@@ -16,7 +16,23 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 - [ ] Resource use, concurrent sessions and crash recovery have current recorded evidence.
 - [ ] Release documentation, support table and package commands agree with verified behavior.
 
-## Latest verified state
+## Alpha.8 candidate, 20 September 2026
+
+Linux managed updates now have an isolated systemd gate: actual registry alpha.6 installation and
+migration to the candidate archive, idle upgrade, private-browser busy refusal, broken-startup
+rollback with a healthy version response, retained state, timer enable/disable and explicit rollback.
+The successor alpha.9 and alpha.10 archives are controlled local fixtures, not published releases.
+
+Local Fedora native verification: **457 passed, 27 skipped, 0 failed**, 484 tests in 97 files,
+143.85 seconds. Typecheck passed. Regressions were observed failing before the fixes for stable
+launcher indirection, update admission, invalid version paths, timer enable failure, release-channel
+selection, archive identity ordering and disabling updates during preparation.
+
+Publication is pending. The installed npm credential returns HTTP 401 from both Bun and the registry
+identity endpoint. No package publication is claimed until authentication and registry readback succeed.
+See [the alpha.8 guide](release-alpha8.md) for installation, migration and platform limits.
+
+## Previous cross-platform verified state
 
 On 20 September 2026, [run 35482866635](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482866635)
 passed all nine jobs at runtime revision `1399122`: the full bounded suite, fresh

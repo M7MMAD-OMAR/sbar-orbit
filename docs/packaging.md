@@ -121,7 +121,7 @@ lockfiles even when `files` names them. The packaging helper retains Bun's file
 selection, adds the exact source `bun.lock`, and refuses to replace an existing
 archive. Tests inspect its contents and compare the archived lock byte for byte.
 
-The updater has unit-tested staging and activation logic, but requires a managed version directory. Automatic scheduling is implemented only for Linux systemd; a real upgrade and rollback remain not measured. macOS and Windows activation integration is incomplete. See [automatic updates](updates.md) before relying on it.
+Linux managed installation, scheduling, upgrade and rollback are covered by the disposable systemd gate. macOS and Windows managed updates explicitly refuse. See [installation and migration](release-alpha8.md) for the measured scope and commands.
 
 Two things the registry path had wrong until 13 September 2026, both found by packing rather than by
 reading. `bun pm pack` builds from the working tree, not from the git index the source archive uses, so

@@ -149,6 +149,8 @@ sbar-orbit install
 
 `0.1.0-alpha.6` is what the registry serves as `latest`; `0.1.0-alpha.7` has a [GitHub source release](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.7), but is not published to the registry. Later fixes on `main` remain unreleased. The registry path was installed back from and run on `0.1.0-alpha.4` before this was written. The checkout above is still the path that has been run to completion on a machine; [packaging](docs/packaging.md) says exactly what the registry path has and has not shown.
 
+For Linux managed installation and opt-in automatic updates, see [the alpha.8 migration guide](docs/release-alpha8.md). This remains an experimental alpha.
+
 ### Or hand it to an agent
 
 Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:

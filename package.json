@@ -1,6 +1,6 @@
 {
   "name": "sbar-orbit",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "description": "Local isolated application workspaces for tool-capable AI agents.",
   "license": "Apache-2.0",
   "type": "module",
@@ -23,7 +23,8 @@
     "AGENTS.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
-    "NOTICE"
+    "NOTICE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "bun": ">=1.3"
