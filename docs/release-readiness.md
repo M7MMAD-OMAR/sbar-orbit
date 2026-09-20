@@ -140,6 +140,27 @@ to 77 GB, with the remaining 30 kept because a live or recent broker owns them. 
 fix, because an empty read-only snapshot has nothing inside it to unlink; with one file in the profile
 before the point is taken, the test fails against the unfixed code and passes with it.
 
+## A Windows flake at a fixed revision, 20 September 2026
+
+Run 35505751527, the push-triggered run at `56fd4a9`, failed `suite (windows-latest)` on a different
+test than the stack overflow: `stopping a session removes its profile and its restore store from the
+workspace` in `tests/adversarial/reaping-and-secrets.test.ts`, at line 164, 4984 ms in. The test stops a
+session, then polls the workspace for up to 100 rounds of 30 ms, about 3 s, for the `profile-` and
+`restore-` directories to go, and asserts none is left. It found `profile-DWueMm` still there. The
+other eight jobs passed.
+
+Run 35506009515, dispatched on the **same revision** `56fd4a9`, passed all nine jobs. The bun version
+is pinned per platform in the workflow (1.4.2 on Windows, 1.3.14 on Linux), and all three Windows runs
+used 1.4.2, so a version change is not the variable here: the removal was slower than the test's own
+3 s budget once, on the slowest runner.
+
+That budget was **not** widened. The suite's job is to fail when a profile is not removed, and
+loosening a timer because a slower host beat it, without measuring how long the removal actually takes
+on that host, is retrying a failure into silence. It is retained as an observation. The shape that
+would fix it properly is the one the Ubuntu tab-closing test already uses, waiting on the system's own
+signal rather than on a fixed timer, and that needs `session stop` to answer after the workspace is
+gone, which is a change to the stop path rather than to the test.
+
 ## The nine jobs again at the process-tree guard, 20 September 2026
 
 The push of `78e8a7b` triggered run 35505546868, and all nine jobs passed with **491 tests across 98
