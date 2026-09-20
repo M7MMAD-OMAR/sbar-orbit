@@ -1,9 +1,9 @@
 import { test, expect } from "bun:test";
-import { linuxOnlyTest, needsSymlink } from "./platform-support";
-import { chmod, lstat, mkdir, mkdtemp, symlink } from "node:fs/promises";
+import { linuxOnlyTest, needsSymlink, onBtrfs as onBtrfsPath, fixtureRoot } from "./platform-support";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { resolve, join, posix, win32 } from "node:path";
 import { createWorkspaceDirectory, workspaceRoot } from "../src/workspace-storage";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 
 linuxOnlyTest("POSIX mode bits on the root and a /dev/shm root, neither of which Windows has")(
   "workspace storage creates unique private directories and rejects unsafe or RAM-backed roots", async () => {
@@ -144,4 +144,45 @@ test("the workspace root follows the platform's own private per user location", 
     .toBe(posix.join("/data/cache", "sbar-orbit/workspaces"));
   // macOS keeps regenerable per user data in ~/Library/Caches, asked in its own terms for the same reason.
   expect(workspaceRoot({} as NodeJS.ProcessEnv, "darwin")).toContain("Library/Caches");
+});
+
+/**
+ * The sweep could not remove a workspace that held a restore point, and reported the reason as
+ * "Read-only file system": a point is a read-only btrfs snapshot, and unlinking inside one answers
+ * EROFS whatever the path's own permissions are. Measured on this workstation on 20 September 2026:
+ * `clean` removed 141 of 192 workspaces and refused 21 with that message, leaving 107 GB of a 108 GB
+ * cache in place. `src/restore.ts` has cleared the `ro` property before deleting a point since it was
+ * written; the sweep simply never asked it to. Snapshots need btrfs, so this runs where the workspaces
+ * actually live.
+ */
+const onBtrfs = await onBtrfsPath(workspaceRoot());
+test.if(onBtrfs)("a workspace holding a read-only restore point is removed, not refused", async () => {
+  const { cleanWorkspaces, createWorkspaceDirectory, markWorkspaceOwner } = await import("../src/workspace-storage");
+  const { createSubvolume, takeRestorePoint } = await import("../src/restore");
+  // Disk-backed, because `createWorkspaceDirectory` refuses a RAM-backed root and this fixture has to
+  // be one it accepts. Snapshot subvolumes need btrfs too, so the base is where workspaces live.
+  const scratch = await fixtureRoot("orbit-clean-restore-", join(homedir(), ".cache"));
+  const root = join(scratch, "workspaces");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const workspace = await createWorkspaceDirectory("broker", root);
+  // A broker nobody can reach, so the workspace is a candidate rather than a kept one.
+  await markWorkspaceOwner(workspace, "/nowhere/broker.sock", 4194304 + 21);
+  // The shape a killed broker leaves behind: a profile that is its own subvolume, with one read-only
+  // point taken beside it.
+  const profile = join(workspace, "profile");
+  expect(await createSubvolume(profile)).toBe(true);
+  // A file inside the subvolume BEFORE the point is taken. This is the whole difference: an empty
+  // read-only snapshot has nothing in it to unlink, so `rm` removes it and the defect stays hidden.
+  // The real ones held a browser profile, file by file.
+  await writeFile(join(profile, "Preferences"), "before");
+  const store = join(workspace, "restore-00000000-0000-0000-0000-000000000000");
+  await mkdir(store, { recursive: true, mode: 0o700 });
+  expect(await takeRestorePoint(profile, store, 1, "launch", true)).not.toBeNull();
+  try {
+    const result = await cleanWorkspaces(root);
+    expect(result.refused).toEqual([]);
+    expect(result.removed).toEqual([workspace.slice(root.length + 1)]);
+    // The directory itself is gone, not merely reported as gone.
+    await expect(lstat(workspace)).rejects.toThrow();
+  } finally { await rm(scratch, { recursive: true, force: true }).catch(() => {}); }
 });

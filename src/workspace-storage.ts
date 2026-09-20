@@ -99,6 +99,35 @@ async function ownerIsAlive(directory: string, probe: (socket: string) => Promis
 const recordlessGraceMs = 60 * 60 * 1000;
 
 /**
+ * Clear the read-only flag on every subvolume inside a workspace that is about to be removed.
+ *
+ * A workspace that held restore points could not be removed at all, and the sweep had no idea why:
+ * a restore point is a read-only btrfs snapshot, and unlinking inside one answers EROFS whatever the
+ * permissions on the path say, so the whole workspace was refused. Measured on this workstation on
+ * 20 September 2026: `clean` removed 141 of 192 workspaces and refused 21 with "Read-only file
+ * system", leaving 107 GB of a 108 GB cache in place. `src/restore.ts` has cleared the `ro` property
+ * before deleting a point since it was written, and the sweep simply never asked it to. Clearing the
+ * property succeeds unprivileged; `btrfs subvolume delete` does not, which is why this is not that
+ * call.
+ *
+ * Only `restore-*` directories are walked, so a sweep does not pay for a directory tree walk over
+ * every browser profile it removes. Nothing here reads a profile's contents.
+ */
+async function clearReadOnlySubvolumes(directory: string): Promise<void> {
+  const { isSubvolume } = await import("./restore");
+  const pending = (await readdir(directory, { withFileTypes: true }).catch(() => []))
+    .filter(entry => entry.isDirectory() && entry.name.startsWith("restore-"))
+    .map(entry => join(directory, entry.name));
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (await isSubvolume(current))
+      await Bun.spawn(["/usr/bin/btrfs", "property", "set", "-ts", current, "ro", "false"], { stdout: "ignore", stderr: "ignore" }).exited;
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) if (entry.isDirectory()) pending.push(join(current, entry.name));
+  }
+}
+
+/**
  * Remove the workspaces no running broker owns. A directory with no owner record predates the
  * record; it is kept while it is recent, in case an older broker still holds it, and removed
  * otherwise. Nothing here reads a profile's contents.
@@ -119,7 +148,13 @@ export async function cleanWorkspaces(root = workspaceRoot(), probe = brokerAnsw
     const alive = await ownerIsAlive(directory, probe);
     const recent = Date.now() - info.mtimeMs < recordlessGraceMs;
     if (alive || (alive === undefined && recent)) { kept.push(name); continue; }
-    try { await rm(directory, { recursive: true, force: true }); removed.push(name); }
+    try {
+      // A restore point inside is a read-only snapshot, and `rm` cannot remove one: without this the
+      // whole workspace is refused and the space it holds is kept forever.
+      await clearReadOnlySubvolumes(directory);
+      await rm(directory, { recursive: true, force: true });
+      removed.push(name);
+    }
     catch (error) { refused.push({ name, reason: error instanceof Error ? error.message : "could not be removed" }); }
   }
   return { root, removed, kept, refused };

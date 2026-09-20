@@ -123,6 +123,23 @@ broker's lifetime, and none sends SIGABRT or names that socket, so the suite is 
 far as its own code shows. The raw facts are kept in the gitignored
 `docs/evidence/broker-abort-2026-09-20.json`.
 
+## Workspace sweep could not reclaim spaces holding restore points, 20 September 2026
+
+`sbar-orbit clean` removed 141 of 192 workspaces and refused 21 of them with `EROFS: read-only file
+system`, leaving 107 GB of a 108 GB cache in place. The refused ones all held a restore point: a point
+is a **read-only btrfs snapshot**, and unlinking anything inside one answers `EROFS` whatever the
+permissions on the path say, so the plain `rm` in the sweep could never remove them. `src/restore.ts`
+has cleared the `ro` property before deleting a point since it was written, and the sweep simply never
+asked it to. `btrfs subvolume delete` is not the answer either: it needs privileges this leaves alone,
+while clearing the property succeeds unprivileged.
+
+`cleanWorkspaces` now clears the `ro` property on the subvolumes under each `restore-*` directory
+before removing the workspace. Re-running it: **refused 0**, 20 removed, and the cache fell from 107 GB
+to 77 GB, with the remaining 30 kept because a live or recent broker owns them. The regression is
+`tests/workspace-storage.test.ts`, which held an **empty** snapshot at first and passed without the
+fix, because an empty read-only snapshot has nothing inside it to unlink; with one file in the profile
+before the point is taken, the test fails against the unfixed code and passes with it.
+
 ## Previous cross-platform verified state
 
 On 20 September 2026, [run 35482866635](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482866635)
