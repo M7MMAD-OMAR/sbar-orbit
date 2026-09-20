@@ -7,6 +7,23 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 Tagged `v0.1.0-alpha.7` sits at `230cb4b`. Everything below landed after it and is not in any
 published version. `0.1.0-alpha.6` is still what the npm registry serves as `latest`.
 
+### Latest verification and platform fixes
+
+- macOS uses utility scheduling for ordinary launches while preserving an inherited stricter
+  background policy. This fixes the measured cold browser capture failures on hosted Apple Silicon.
+- macOS service removal checks file ownership before unloading a service. Platform contract
+  simulations cover installation, replacement, failure handling and removal without requiring a Mac.
+- Windows requires Bun 1.4.2 and includes memory-budget recovery fixes. Registry packages retain
+  the exact frozen lockfile needed by installation.
+- Capture timeouts identify their failing phase, and CI preserves relevant broker diagnostics.
+- All nine jobs passed in [run 35482866635](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35482866635):
+  Linux, Windows and macOS suites, host registration and installed registry-artifact browser flows.
+  Local Fedora native verification passed 448 tests with 27 skips. See
+  [release readiness](docs/release-readiness.md) for scope and unresolved historical intermittent failures.
+- Automatic verification remains manually disabled. Focused manual platform verification is available.
+- The updater's current platform and installation limits are documented in [automatic updates](docs/updates.md).
+  A passing install is not evidence of an upgrade or rollback; neither is a new published release.
+
 ### Fixed
 
 - The installer accepts `--connect auto` or explicit Claude Code, Codex and Hermes

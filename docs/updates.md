@@ -1,6 +1,26 @@
 # Automatic updates
 
-A study, not an implementation. Nothing described here is built, and every measurement in it is marked.
+Implementation and design notes. The staging and activation orchestration is built, but this is not a
+verified automatic upgrade path for every installation.
+
+## Current limits, 20 September 2026
+
+- `bun run verify tests/update.test.ts`: 20 passing tests, 0 failures. Restart and health checks are
+  injected in activation tests; this does not measure a real service upgrade or rollback.
+- Only launchers resolving into the updater's managed `versions` directory qualify. A source checkout
+  updates through git; a global package installation is not automatically a managed updater install.
+- Linux has an opt-in systemd timer. End to end activation and rollback on a managed installation,
+  including compatibility with state written by a newer version, remain **not measured**.
+- macOS has no updater launchd timer, and activation still attempts a systemd restart.
+- Windows has no updater scheduler. Activation still assumes there is no managed broker and can accept
+  an absent broker as healthy. This does not integrate with the installed Windows scheduled tasks.
+- `update on` records the opt-in flag before attempting the timer. `automatic: true` alone is not
+  evidence of a working scheduler; inspect the timer result. Do not rely on automatic updates on
+  macOS or Windows yet.
+- GitHub source releases and the registry feed are separate. The updater checks the registry, whose
+  latest version is still `0.1.0-alpha.6`; the GitHub `0.1.0-alpha.7` release does not reach that feed.
+
+The historical design and implementation notes below explain the intended Linux flow and its limits.
 The question it answers is the one an installed base creates: when a fix or a feature lands, how does it
 reach a machine that already has Orbit, on its own, without taking away the session the person is
 watching.

@@ -1,7 +1,7 @@
 # Source releases
 
-**Current state, 19 September 2026.** `0.1.0-alpha.6` is what the npm registry serves as `latest`.
-`0.1.0-alpha.7`, the macOS port, is tagged at `230cb4b` in this repository and has not been published.
+**Current state, 20 September 2026.** `0.1.0-alpha.6` is what the npm registry serves as `latest`.
+`0.1.0-alpha.7`, the macOS port, has a GitHub source release at `230cb4b`, but has not been published to the registry.
 Commits after that tag are listed under Unreleased in [the changelog](../CHANGELOG.md).
 
 The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`, and `0.1.0-alpha.4` followed it the same day with the packaging fixes below; a published version is immutable, so `0.1.0-alpha.3` still carries what it shipped with. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
@@ -121,7 +121,7 @@ lockfiles even when `files` names them. The packaging helper retains Bun's file
 selection, adds the exact source `bun.lock`, and refuses to replace an existing
 archive. Tests inspect its contents and compare the archived lock byte for byte.
 
-How a machine that already has Orbit would get the next version is a separate question, studied in [automatic updates](updates.md) and not built.
+The updater has unit-tested staging and activation logic, but requires a managed version directory. Automatic scheduling is implemented only for Linux systemd; a real upgrade and rollback remain not measured. macOS and Windows activation integration is incomplete. See [automatic updates](updates.md) before relying on it.
 
 Two things the registry path had wrong until 13 September 2026, both found by packing rather than by
 reading. `bun pm pack` builds from the working tree, not from the git index the source archive uses, so

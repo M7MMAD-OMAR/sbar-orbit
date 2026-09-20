@@ -188,6 +188,11 @@ What this does and does not give you. The broker starts at login and restarts on
 
 ## Updating without ending a session
 
+This interface requires a managed version-directory installation. Linux systemd scheduling is
+implemented, but a real managed upgrade and rollback remain not measured. macOS and Windows automatic
+scheduling and service activation integration are incomplete. `automatic: true` is the saved opt-in
+flag, not proof that a timer was enabled. See the [current limits](updates.md#current-limits-20-september-2026).
+
 ```sh
 sbar-orbit update status     # which version is running, which are prepared, whether one is waiting
 sbar-orbit update check      # what the registry has, and whether it is eligible yet
