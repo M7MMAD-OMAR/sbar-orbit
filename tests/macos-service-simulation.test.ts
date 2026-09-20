@@ -69,7 +69,9 @@ unixTest("simulated macOS service installation, replacement, refusal and removal
     expect((await disableLaunchAgent(home, env)).removed).toEqual([]);
 
     await writeFile(path, "unrelated user configuration");
+    const beforeForeignRemoval = calls.length;
     await expect(disableLaunchAgent(home, env)).rejects.toThrow(/not written by Orbit/);
+    expect(calls).toHaveLength(beforeForeignRemoval);
     expect(await readFile(path, "utf8")).toBe("unrelated user configuration");
     const before = calls.length;
     await expect(enableLaunchAgent(join(root, "absent"), socket, home, env)).rejects.toThrow(/regular file/);

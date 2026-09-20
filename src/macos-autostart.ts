@@ -204,13 +204,14 @@ export async function enableLaunchAgent(launcher: string, socket: string, home =
 export async function disableLaunchAgent(home = homedir(), env = process.env, register = true) {
   const path = launchAgentPath(home, env);
   const removed: string[] = [];
-  if (register) await launchctl("bootout", `${guiDomain()}/${BROKER_LABEL}`);
   // Only Orbit's own file, identified by the label it carries, for the same reason the Linux
   // uninstall refuses a unit it did not write.
   const contents = await readFile(path, "utf8").catch(() => null);
+  if (contents !== null && !contents.includes(BROKER_LABEL))
+    throw new OrbitError("CONFIG_REQUIRED", `${path} was not written by Orbit; remove it deliberately`);
+  // Check ownership before stopping anything, not only before deleting its file.
+  if (register) await launchctl("bootout", `${guiDomain()}/${BROKER_LABEL}`);
   if (contents !== null) {
-    if (!contents.includes(BROKER_LABEL))
-      throw new OrbitError("CONFIG_REQUIRED", `${path} was not written by Orbit; remove it deliberately`);
     await rm(path, { force: true });
     removed.push(path);
   }
