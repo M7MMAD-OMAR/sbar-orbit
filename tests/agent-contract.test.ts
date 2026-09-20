@@ -21,33 +21,52 @@ test("one install command registers all selected hosts and repeating it preserve
   const env = { ...process.env, CLAUDE_CONFIG_DIR: join(root, "claude"),
     CODEX_HOME: join(root, "codex"), HERMES_HOME: join(root, "hermes"),
     XDG_CONFIG_HOME: join(root, "config"), APPDATA: join(root, "appdata") };
+  // Every run is timed and its host states kept, because the one failure of this test in a full suite
+  // run could not be attributed afterwards: a timeout, a nonzero exit and a wrong host state all left
+  // the same "two installer-contract failures" behind. The assertion that discarded the installer's
+  // stderr was fixed; the one that discarded WHICH run and HOW LONG it took was not, so a recurrence
+  // still could not be read. The trace is only ever added to a failure message.
+  const trace: string[] = [];
+  const label = (extra: string[]) => extra.join(" ") || "install";
   const run = async (extra: string[] = []) => {
+    const started = performance.now();
     const child = Bun.spawn([installer, "--no-service", "--connect", "claude,codex,hermes",
       "--prefix", join(root, "prefix with spaces"), "--json", ...extra],
       { env, cwd: project, stdout: "pipe", stderr: "pipe" });
     const [output, stderr, exit] = await Promise.all([
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
-    if (exit !== 0) throw new Error(`Installer exited ${exit}: ${stderr || output}`);
+    const elapsedMs = Math.round(performance.now() - started);
+    if (exit !== 0) {
+      trace.push(`${label(extra)}: exit ${exit} after ${elapsedMs} ms :: ${(stderr || output).trim().slice(0, 400)}`);
+      throw new Error(`Installer exited ${exit} after ${elapsedMs} ms: ${stderr || output}`);
+    }
     expect(exit).toBe(0);
     const report = JSON.parse(output);
     expect(report.installed).toBe(true);
-    return report.steps.find((step: { id: string }) => step.id === "hosts").data.registration;
+    const registration = report.steps.find((step: { id: string }) => step.id === "hosts").data.registration;
+    trace.push(`${label(extra)}: exit 0 after ${elapsedMs} ms, hosts ${registration.map((host: { state: string }) => host.state).join(",")}`);
+    return registration;
   };
+  const states = (registration: { state: string }[]) => registration.map(host => host.state);
   try {
-    expect((await run(["--dry-run"])).map((host: { state: string }) => host.state)).toEqual(["planned", "planned", "planned"]);
-    expect((await run()).map((host: { state: string }) => host.state)).toEqual(["configured", "configured", "configured"]);
-    expect((await run()).map((host: { state: string }) => host.state)).toEqual(["unchanged", "unchanged", "unchanged"]);
+    expect(states(await run(["--dry-run"]))).toEqual(["planned", "planned", "planned"]);
+    expect(states(await run())).toEqual(["configured", "configured", "configured"]);
+    expect(states(await run())).toEqual(["unchanged", "unchanged", "unchanged"]);
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nRuns: ${trace.join(" | ")}`);
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 60000);
 
 test("the documented plan command returns the documented report", async () => {
   const prefix = await mkdtemp(join(tmpdir(), "orbit-agent-contract-"));
   try {
+    const started = performance.now();
     const child = Bun.spawn([installer, "--dry-run", "--json", "--prefix", prefix],
       { cwd: project, stdout: "pipe", stderr: "pipe" });
     const [text, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    if (code !== 0) throw new Error(`Installer plan exited ${code}: ${stderr || text}`);
+    const elapsedMs = Math.round(performance.now() - started);
+    if (code !== 0) throw new Error(`Installer plan exited ${code} after ${elapsedMs} ms: ${stderr || text}`);
     expect(code).toBe(0);
     const report = JSON.parse(text);
     // Every field the contract tells an agent to read.
