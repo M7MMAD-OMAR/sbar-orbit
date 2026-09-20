@@ -1,8 +1,24 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startBroker, call } from "../src/ipc";
-import { requireResourceBudget } from "../src/resource-budget";
+import { requireResourceBudget, budgetHeadroom } from "../src/resource-budget";
 import { startFocusMonitor } from "./hyprland-focus";
+
+/**
+ * Reuse a broker that is already answering when one is named on `ORBIT_SOCKET`, so the trial can run
+ * beside a managed installation on this workstation instead of starting a second broker that the
+ * shared slice has no room for. An attached broker is never closed: for this trial it is the one the
+ * person is already using. A named socket that does not answer falls through to a private broker.
+ */
+async function attachOrStartBroker() {
+  const existing = process.env.ORBIT_SOCKET;
+  if (existing) {
+    try { await call(existing, "doctor"); return { socket: existing, attached: true, close: async () => {} }; }
+    catch { /* fall through: start a private broker */ }
+  }
+  const broker = await startBroker();
+  return { socket: broker.socket, attached: false, close: () => broker.close() };
+}
 
 await requireResourceBudget();
 const scope = (await readFile("/proc/self/cgroup", "utf8")).trim().slice(3);
@@ -24,8 +40,11 @@ const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
   }
   return new Response(`<html><title>Orbit form update demo</title><style>body{font:24px system-ui;padding:32px;background:white;color:#182d45}input,button{font:22px system-ui;padding:12px;margin:8px}section{margin:24px 0;padding:16px;border:1px solid #aaa}</style><h1>Orbit takeover trial</h1><section><h2>Agent work</h2><input id="agent"><button id="agent-save" onclick="document.querySelector('#result').textContent=document.querySelector('#agent').value">Update counter</button><output id="result">Starting</output></section><section><h2>Your turn after Pause</h2><p>Enter <strong>${phrase}</strong>, then click Confirm phrase. Resume afterward.</p><input id="human" placeholder="Test phrase"><button id="human-save" onclick="fetch('/',{method:'POST',body:document.querySelector('#human').value}).then(r=>r.text()).then(t=>document.querySelector('#manual-result').textContent=t)">Confirm phrase</button><output id="manual-result">Waiting</output></section></html>`, { headers: { "Content-Type": "text/html" } });
 } });
-const broker = await startBroker();
-const focus = await startFocusMonitor(async () => new Set((await readFile(join(group, "cgroup.procs"), "utf8")).trim().split(/\s+/).map(Number)));
+const broker = await attachOrStartBroker();
+report.attachedToExistingBroker = broker.attached;
+// The owned set is every process in the shared Orbit slice, so a managed broker's browser and this
+// trial's own processes both count, whichever broker the session runs on.
+const focus = await startFocusMonitor(async () => new Set((await readFile(join(parent, "cgroup.procs"), "utf8")).trim().split(/\s+/).map(Number)));
 const started = performance.now();
 const deadline = started + 600_000;
 try {
@@ -37,7 +56,8 @@ try {
   console.log(JSON.stringify({ previewUrl: url, phrase, reportPath: join(directory, "report.json"), sessionId: session.sessionId }));
   let submissions = 0;
   while (!stopping && performance.now() < deadline) {
-    if (Number(await readFile(join(parent, "memory.current"), "utf8")) > 1900 * 1024 * 1024) throw new Error("Stopped before hard memory limit");
+    const headroom = await budgetHeadroom();
+    if (headroom.memory.freeBytes < 512 * 1024 * 1024) throw new Error("Stopped before the shared memory ceiling");
     const sessions = await call(broker.socket, "session.list") as { sessionId: string; state: string }[];
     const state = sessions.find(item => item.sessionId === session.sessionId)?.state;
     if (state === "closed") { report.participantStoppedSession = true; break; }
@@ -67,7 +87,7 @@ finally {
   await broker.close(); fixture.stop(true);
   report.focus = await focus.stop();
   report.elapsedSeconds = Math.round((performance.now() - started) / 1000);
-  report.limitations = ["The driver is scripted, not a model host. A submitted phrase alone does not prove who submitted it.", "Human participation and simultaneous work require explicit participant confirmation.", "The participant's viewer runs in their application outside this measured Orbit scope."];
+  report.limitations = ["The driver is scripted, not a model host. A submitted phrase alone does not prove who submitted it.", "Human participation and simultaneous work require explicit participant confirmation.", "The participant's viewer runs in their application outside this measured Orbit scope.", "The owned process set is the whole shared Orbit slice, so it also counts any other agent's sessions running at the same time.", broker.attached ? "The session ran on a broker that was already running, so that broker's own startup and workspace are outside this trial." : "The broker was started by this trial and shares the slice with any other Orbit work."];
   await Bun.write(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
   process.off("SIGTERM", stop); process.off("SIGINT", stop);
   console.log(JSON.stringify({ status: report.status, reportPath: join(directory, "report.json") }));

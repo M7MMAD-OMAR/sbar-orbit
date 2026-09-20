@@ -1,6 +1,28 @@
 # Human work and takeover trial
 
-Status: preparation only. The 600-second automated run passed, but no human participation is inferred from it or from desktop activity.
+Status: preparation only. The monitor and the runner are in place, and a trial may be running; no human participation is inferred from a run or from desktop activity until the participant confirms it.
+
+## Running it
+
+```sh
+ORBIT_SOCKET="$XDG_RUNTIME_DIR/sbar-orbit/broker.sock" bun run scripts/limited.ts bun run experiments/human-handoff.ts
+```
+
+With `ORBIT_SOCKET` naming a broker that answers, the trial attaches to it, so it can run beside a
+managed installation on this workstation, which is the case the trial is for. That broker is never
+closed by the trial. Without it the runner starts a private broker of its own. The run prints the
+viewer link and the disposable phrase once, and rewrites `output/human-handoff-<id>/report.json` as
+it goes.
+
+Two consequences of attaching, both printed in the report's own `limitations`:
+
+- The browser belongs to the managed broker rather than to this process, so the monitor's owned set
+  is every process in the shared `sbarorbit.slice`, which also counts any other agent's sessions
+  running at the same time.
+- The memory guard reads the slice's live headroom through `budgetHeadroom()` and stops the trial
+  before the shared ceiling, rather than comparing against a fixed number that a managed broker has
+  already spent. A fixed threshold made the trial abort immediately whenever Orbit was already
+  running, which is the one situation it needs to work in.
 
 ## User flow
 
