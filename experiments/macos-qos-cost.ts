@@ -59,6 +59,8 @@ if (inheritedBackgroundClass()) {
 if (inheritedBackgroundClass()) throw new Error("Foreground control still inherits background scheduling");
 const rounds = Number(process.argv[2] ?? 3);
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) throw new Error("Rounds must be 1 through 10");
+const firstArm = process.argv[3] ?? "background";
+if (!["background", "foreground"].includes(firstArm)) throw new Error("First arm must be background or foreground");
 
 /** One session's real work, timed: launch, navigate to a local page, read it back, close. */
 async function timeOneSession(background: boolean) {
@@ -103,7 +105,8 @@ const samples: (Awaited<ReturnType<typeof timeOneSession>> & { round: number; ba
 for (let round = 0; round < rounds; round++) {
   // Alternating order per round, so a machine that warms up or gets busier does not systematically
   // favour one arm.
-  const order = round % 2 === 0 ? [true, false] : [false, true];
+  const backgroundFirst = (round % 2 === 0) === (firstArm === "background");
+  const order = backgroundFirst ? [true, false] : [false, true];
   for (const background of order) samples.push({ round, background, ...await timeOneSession(background) });
 }
 
@@ -133,6 +136,7 @@ console.log(JSON.stringify({
   date: new Date().toISOString(),
   host: { cpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)) },
   rounds,
+  firstArm,
   background: withBackground,
   foreground: without,
   // Above 1 means the background class makes a session slower, which is expected. The question this

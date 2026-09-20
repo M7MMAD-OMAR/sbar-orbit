@@ -1,0 +1,28 @@
+name: macos-cold-start
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      matrix:
+        first-arm: [background, foreground]
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Measure both orders on separate fresh hosts
+        run: |
+          mkdir -p output
+          bun run scripts/limited.ts bun experiments/macos-qos-cost.ts 3 '${{ matrix.first-arm }}' > output/cold-start.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cold-start-${{ matrix.first-arm }}
+          path: output/cold-start.json
