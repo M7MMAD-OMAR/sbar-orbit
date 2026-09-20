@@ -155,12 +155,10 @@ export async function budgetHeadroom() {
   if (process.platform === "win32") {
     const { sharedBudgetUsage } = await import("./windows-job");
     const usage = sharedBudgetUsage();
-    // `peakMemoryBytes` is a high water mark, not a gauge: Windows has no job class that reports
-    // current committed memory outside a limit violation. Using the peak here is deliberate and
-    // conservative, since it can only ever refuse a session the kernel might have allowed.
+    // Admission uses current committed memory. The lifetime peak remains diagnostic only.
     return {
       tasks: { used: usage.processes, max: limits.tasks, free: limits.tasks - usage.processes },
-      memory: { usedBytes: usage.peakMemoryBytes, maxBytes: limits.memoryBytes, freeBytes: limits.memoryBytes - usage.peakMemoryBytes },
+      memory: { usedBytes: usage.memoryBytes, maxBytes: limits.memoryBytes, freeBytes: limits.memoryBytes - usage.memoryBytes },
     };
   }
   const root = await budgetRoot();
@@ -208,8 +206,7 @@ export async function resourceStatus() {
     const usage = sharedBudgetUsage();
     return {
       scope: "all-orbit-jobs", sampledAt: new Date().toISOString(), limits,
-      // `memoryBytes` is the pool's PEAK, and the field says so rather than being read as current.
-      current: { peakMemoryBytes: usage.peakMemoryBytes, swapBytes: null, tasks: usage.processes },
+      current: { memoryBytes: usage.memoryBytes, peakMemoryBytes: usage.peakMemoryBytes, swapBytes: null, tasks: usage.processes },
       // Windows job objects deliver limit hits on a completion port rather than as readable counters,
       // and Orbit does not attach one to the shared pool, so there is nothing honest to report here.
       events: null,

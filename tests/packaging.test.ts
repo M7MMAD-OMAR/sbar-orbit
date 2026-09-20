@@ -52,7 +52,7 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     expect(shipped).toContain("bun.lock");
     // Every advertised platform needs its actual installation entry point in
     // the downloadable package, not merely in the development checkout.
-    for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd"])
+  for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd", "bunfig.toml"])
       expect(shipped).toContain(required);
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);

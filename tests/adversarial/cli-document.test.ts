@@ -127,7 +127,14 @@ test("a path that is not a readable document is refused by name, never read as n
       // Named, so a person can see which path was wrong, and never reported as a successful null action.
       expect(reply?.error?.message).toContain(reference);
     }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 60000);
 
+// Ordinary Windows accounts cannot create file symlinks without an additional
+// developer-mode or privilege grant. The invalid-path checks above still run.
+test.skipIf(process.platform === "win32")("an action document follows a symlink to a regular file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "adversarial-act-link-"));
+  try {
     // A symlink to a real document IS followed, and that is the intended behaviour for a path the
     // person typed. Pinned so a later change to refuse links is a deliberate decision rather than a
     // silent one, and so this file records which of the two Orbit chose.

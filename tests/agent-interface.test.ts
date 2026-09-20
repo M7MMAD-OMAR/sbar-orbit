@@ -25,14 +25,17 @@ async function harness() {
   const connect = async (conversationId?: string) => {
     const client = new Client({ name: "interface-test", version: "1" });
     clients.push(client);
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: ["src/mcp.ts"], cwd: process.cwd(),
-      env: { ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...(conversationId ? { ORBIT_CONVERSATION_ID: conversationId } : {}) }, stderr: "pipe" }));
+    const transport = new StdioClientTransport({ command: process.execPath, args: ["src/mcp.ts"], cwd: process.cwd(),
+      env: { ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...(conversationId ? { ORBIT_CONVERSATION_ID: conversationId } : {}) }, stderr: "pipe" });
+    transport.stderr?.on("data", chunk => process.stderr.write(chunk));
+    await client.connect(transport);
     return client;
   };
   const cli = async (args: string[], conversationId?: string) => {
     const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], { env: { ...env, ORBIT_CONVERSATION_ID: conversationId }, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    return { code, data: JSON.parse(code === 0 ? stdout : stderr) };
+    try { return { code, data: JSON.parse(code === 0 ? stdout : stderr) }; }
+    catch { throw new Error(`CLI exited ${code} without JSON: ${stderr || stdout}`); }
   };
   return { root, calls, connect, cli, close: async () => { await Promise.all(clients.map(client => client.close())); server.stop(true); await rm(root, { recursive: true, force: true }); } };
 }

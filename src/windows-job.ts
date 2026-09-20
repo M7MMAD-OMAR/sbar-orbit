@@ -87,6 +87,7 @@ const CLASS = {
   BasicProcessIdList: 3,
   ExtendedLimitInformation: 9,
   CpuRateControlInformation: 15,
+  MemoryUsageInformation: 28,
 } as const;
 
 /** PROCESS_QUERY_LIMITED_INFORMATION plus PROCESS_TERMINATE plus PROCESS_SET_QUOTA. */
@@ -365,21 +366,27 @@ export function joinSharedBudget(budget: { memoryBytes: number; processes: numbe
 }
 
 /** What the shared pool currently holds, for `budgetHeadroom` and `resourceStatus`. */
-export function sharedBudgetUsage(): { processes: number; peakMemoryBytes: number } {
+export function sharedBudgetUsage(): { processes: number; memoryBytes: number; peakMemoryBytes: number } {
   const api = kernel32();
   const name = Buffer.from(`${SHARED_BUDGET_NAME}\0`, "utf16le");
   const handle = asHandle(api.OpenJobObjectW(JOB_ALL_ACCESS, false, ptr(name)));
   if (!handle) throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "The shared Orbit budget is not open on this machine");
   try {
     const basic = new Uint8Array(48);
-    let processes = 0;
-    if (api.QueryInformationJobObject(handle, CLASS.BasicAccountingInformation, ptr(basic), 48, null))
-      processes = new DataView(basic.buffer).getUint32(40, true);
-    const extended = new Uint8Array(144);
-    let peak = 0;
-    if (api.QueryInformationJobObject(handle, CLASS.ExtendedLimitInformation, ptr(extended), 144, null))
-      peak = Number(new DataView(extended.buffer).getBigUint64(136, true));
-    return { processes, peakMemoryBytes: peak };
+    if (!api.QueryInformationJobObject(handle, CLASS.BasicAccountingInformation, ptr(basic), basic.byteLength, null))
+      throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", `Cannot read shared Orbit process accounting, error ${api.GetLastError()}`);
+    // Same 16-byte structure used by Microsoft's hcsshim QueryMemoryStats:
+    // https://github.com/microsoft/hcsshim/blob/main/internal/winapi/jobobject.go
+    // A lifetime peak cannot admit new sessions after earlier allocations are released.
+    const memory = new Uint8Array(16);
+    if (!api.QueryInformationJobObject(handle, CLASS.MemoryUsageInformation, ptr(memory), memory.byteLength, null))
+      throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", `Cannot read shared Orbit memory accounting, error ${api.GetLastError()}`);
+    const view = new DataView(memory.buffer);
+    return {
+      processes: new DataView(basic.buffer).getUint32(40, true),
+      memoryBytes: Number(view.getBigUint64(0, true)),
+      peakMemoryBytes: Number(view.getBigUint64(8, true)),
+    };
   } finally {
     api.CloseHandle(handle);
   }

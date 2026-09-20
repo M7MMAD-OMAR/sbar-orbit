@@ -15,6 +15,7 @@
     "viewer",
     "!**/__pycache__",
     "bun.lock",
+    "bunfig.toml",
     "install.sh",
     "install.cmd",
     "docs/*.md",
@@ -43,7 +44,7 @@
     "fedora"
   ],
   "scripts": {
-    "verify": "bun run scripts/limited.ts bun test",
+    "verify": "bun --smol run scripts/limited.ts bun --smol test",
     "typecheck": "tsc",
     "orbit": "bun run src/cli.ts",
     "serve": "bun run scripts/limited.ts bun run src/cli.ts serve"

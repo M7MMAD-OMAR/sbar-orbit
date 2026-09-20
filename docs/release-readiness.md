@@ -249,3 +249,61 @@ changed files were transferred into the existing test checkout; this is targeted
 Windows evidence, not a full-suite result at the current revision. The guest's
 one-time test login was disarmed and its stored automatic-login password removed.
 No GitHub workflow was started and no commits were pushed for these checks.
+
+## Local Windows admission and command fixes
+
+A clean Git bundle of 1dce7bd was installed into a fresh ordinary-account Windows
+11 directory, with the same Bun 1.3.14 as CI. Both frozen dependency installs and
+root typecheck passed. The documented `bun run verify` command then refused shared
+job assignment with Win32 error 5 while the managed broker was already running.
+Direct limited.ts invocation entered the suite; `bun run --shell system verify`
+also entered it with the same account, runtime and existing broker. The root
+bunfig now selects the system shell and is included in the release archive.
+This retains limited.ts and the shared job enforcement.
+
+The direct full-suite trial returned 318 passes, 116 skips and 36 failures.
+Windows admission was stuck near the memory ceiling because it subtracted the
+lifetime peak rather than current job commit. A real 256 MiB child-allocation
+regression failed before the fix: releasing the child recovered zero reported
+bytes. It passed after admission switched to JobObjectMemoryUsageInformation.
+Current and peak commit are now distinct status fields, and failed kernel reads
+report unavailable instead of zero. The hard memory and process limits did not
+change. This is local Windows 11 evidence, not a new GitHub CI result.
+
+With live accounting and the system shell, the full Windows trial progressed to
+349 passes, 116 skips and six failures in 165.36 seconds. One was the newly added
+bunfig not yet staged in the trial checkout; the package check passed after staging.
+Another was a file-symlink fixture requiring a Windows privilege that the ordinary
+account does not have. That fixture is now a separate non-Windows test; invalid
+path rejection still runs on Windows. MCP and CLI diagnostics were retained, and
+a subsequent full trial exposed the original runtime error: JavaScriptCore
+MemoryExhaustion, exit 9. A smaller passing run does not close that full-suite
+failure. Lower-memory verification is being measured without widening the job.
+
+The final verification command keeps both the waiting budget launcher and the
+Bun test runner in `--smol` mode. Test assertions, browser settings, timeouts and
+kernel limits are unchanged. This reduced the full Windows trial with the old
+managed broker present to 353 passes, 117 skips and two MCP failures. That remains
+a failed pressure scenario, not a passing gate.
+
+The old VM broker had no sessions and its two processes used about 357 MiB of
+private commit. After checking its session list was empty, its scheduled task was
+stopped for a clean CI-like baseline. Windows typecheck and the full suite then
+passed: 355 passes, 117 skips, zero failures across 472 tests in 93 files, in
+153.29 seconds. The prior managed task was restarted in a finally block. The
+measurement used Bun 1.3.14 on the ordinary account, at 1dce7bd plus these local
+fixes. This does not establish capacity for the full suite plus another running
+broker under the same 2 GiB pool. The tests started their own required brokers.
+
+The Linux native-enabled full suite before the final lower-memory runner change
+passed 445 tests, skipped 27 and failed none in 154.82 seconds. The final command
+also passed the targeted packaging, resources, adapter and action-document checks:
+15 passes, one platform skip, zero failures. GitHub verify remains disabled and
+no commits or CI runs were sent during these local trials. macOS remains unverified
+at these changes, and the earlier intermittent installer-contract failure remains
+unexplained rather than declared fixed by successful reruns.
+
+The final Linux native-enabled full suite using the lower-memory command also
+passed: 445 passes, 27 skips, zero failures across 472 tests in 93 files, in
+150.82 seconds. The restored Windows managed broker answered session list with
+an empty successful result after the isolated trial.

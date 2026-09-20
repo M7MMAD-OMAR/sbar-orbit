@@ -131,16 +131,22 @@ statement is not "`--disable-crashpad` fixes it". It is:
 `--disable-crashpad` is kept because a crash handler outside the budget is worth nothing to Orbit,
 not because it is proven to close the race.
 
-### Accounting, and the thing Windows will not give you
+### Accounting correction, 20 September 2026
 
-`JOBOBJECT_BASIC_ACCOUNTING_INFORMATION` gives CPU time, page faults and process counts. It does not
-give current memory. `PeakJobMemoryUsed` is a high water mark, and there is no job information class
-that reports current committed memory outside a limit violation notification. Measured side by side:
-peak 302.6 MiB, live summed `PrivateMemorySize64` 286.9 MiB.
+The earlier trial measured 302.6 MiB peak against 286.9 MiB live and incorrectly
+concluded that current job commit required summing process counters. Windows also
+supports `JobObjectMemoryUsageInformation` (class 28), the 16-byte structure used
+by [Microsoft hcsshim](https://github.com/microsoft/hcsshim/blob/main/internal/winapi/jobobject.go).
+It reports current job commit and peak separately.
 
-So `resourceStatus()` on Windows publishes a weaker contract than on Linux, and says so:
-`{ cpuCycleSharePercent, commitLimitBytes, activeProcessLimit, swap: "not bounded" }`, with the
-live memory figure summed per process rather than read from one counter.
+A full-suite trial with the managed broker already running exhausted admission
+against the historical peak even after children exited. A regression allocated
+256 MiB in a bounded child, stopped it and checked that admission recovered at
+least 128 MiB. Before the correction it recovered zero; afterward it passed on
+Windows 11 with Bun 1.3.14. The kernel job limit is unchanged. Failed accounting
+queries now report unavailable instead of returning zero usage. Swap and threads
+remain unbounded. Older measurements below retain their original peak-based
+accounting and do not describe the corrected admission behavior.
 
 One more thing the plan got right and is worth restating with the number under it: `CpuRate` is a
 share of the **whole machine**, not of a core. On this 8 vCPU guest, 2500 is 25% of all eight.

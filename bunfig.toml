@@ -1,0 +1,4 @@
+[run]
+# Windows Bun Shell adds a job hierarchy that cannot join an existing shared
+# Orbit job. The system shell lets limited.ts establish that boundary itself.
+shell = "system"

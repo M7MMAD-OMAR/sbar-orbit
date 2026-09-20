@@ -41,6 +41,8 @@ test("doctor exposes the enforced aggregate limits this platform can actually pr
       expect(result.resources.limits.enforcement).toBe("job-object");
       expect(result.resources.limits.unbounded).toEqual(["swap", "threads"]);
       expect(result.resources.current.peakMemoryBytes).toBeGreaterThan(0);
+      expect(result.resources.current.memoryBytes).toBeGreaterThan(0);
+      expect(result.resources.current.peakMemoryBytes).toBeGreaterThanOrEqual(Number(result.resources.current.memoryBytes));
       // Not zero: NOT BOUNDED. A job object has no per job swap limit of any kind.
       expect(result.resources.current.swapBytes).toBeNull();
       // Job objects deliver limit hits on a completion port rather than as readable counters, and
