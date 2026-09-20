@@ -16,7 +16,7 @@ Unsupported capabilities must remain explicit; no finite test matrix proves ever
 - [ ] Resource use, concurrent sessions and crash recovery have current recorded evidence.
 - [ ] Release documentation, support table and package commands agree with verified behavior.
 
-## Alpha.8 candidate, 20 September 2026
+## Alpha.8 release, 20 September 2026
 
 Linux managed updates now have an isolated systemd gate: actual registry alpha.6 installation and
 migration to the candidate archive, idle upgrade, private-browser busy refusal, broken-startup
@@ -38,10 +38,16 @@ The exact candidate registry archive also passed the isolated Linux upgrade gate
 The source archive at that revision has SHA-256
 `e943fe45ccdd2b87e4b8ec0caf04e2adff52793ae726ff42dd16633b372372d2`.
 
-Publication is pending. Registry identity returns HTTP 401 and the actual `bun publish` attempt
-returned HTTP 404. Public readback confirms alpha.8 is absent and `latest` remains alpha.6. The
-GitHub release is prepared as a draft to avoid claiming a unified publication before registry access
-is restored and the published package can be installed back. No package publication is claimed.
+Publication completed on 20 September 2026. The npm registry exposes alpha.8 as `latest`, and
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8) carries the matching
+registry archive, source archive and checksums. The annotated tag points to tested revision `6a802f5`.
+The public registry download matches the tested archive SHA-256 above. Installing the published
+package back on a disposable Fedora systemd host passed managed adoption, broker health, private
+browser creation/capture and timer enable/disable.
+
+The initial publication failure was a credential-selection error: the CLI used a different configured
+credential instead of the existing project publishing credential. The existing credential was valid;
+no token rotation or new security key was needed. CLI authentication was corrected before publishing.
 See [the alpha.8 guide](release-alpha8.md) for installation, migration and platform limits.
 
 ## Previous cross-platform verified state

@@ -6,7 +6,7 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## 0.1.0-alpha.8 (20 September 2026)
 
-Release candidate: publication status is recorded in [release readiness](docs/release-readiness.md).
+Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8). The published archive was installed back and verified on Linux; see [release readiness](docs/release-readiness.md).
 
 ### Linux managed updates
 
