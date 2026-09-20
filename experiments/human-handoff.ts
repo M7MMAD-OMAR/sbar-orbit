@@ -32,8 +32,14 @@ const report: Record<string, unknown> = { status: "running", automatedDriver: tr
   // The check table asks for rejected agent input while paused and for work that continues after the
   // viewer is closed. Neither was counted before, so a run could observe a pause and still evidence
   // neither.
-  refusedWhilePaused: 0, refusedActionTypes: [] as string[], submissionsAfterResume: 0, sessionStoppedByTrial: false };
-let accepted = false, stopping = false, sessionId = "";
+  refusedWhilePaused: 0, refusedActionTypes: [] as string[], submissionsAfterResume: 0, sessionStoppedByTrial: false,
+  participant: "human", mechanismVerified: false, agentReadManualResult: null, scriptedParticipantSubmitted: false };
+let accepted = false, stopping = false, sessionId = "", participated = false;
+// `--auto-participant` drives pause, the manual phrase and resume through `session.control`, which is
+// the method the viewer's own manual input calls. It measures the takeover mechanism end to end and
+// it does not measure a person, so it can never satisfy the participant-confirmation check. The
+// report says which of the two ran.
+const autoParticipant = process.argv.includes("--auto-participant");
 const stop = () => { stopping = true; };
 process.on("SIGTERM", stop); process.on("SIGINT", stop);
 const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -42,7 +48,7 @@ const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request)
     if (value === phrase) accepted = true;
     return new Response(value === phrase ? "Accepted" : "Try the displayed phrase");
   }
-  return new Response(`<html><title>Orbit form update demo</title><style>body{font:24px system-ui;padding:32px;background:white;color:#182d45}input,button{font:22px system-ui;padding:12px;margin:8px}section{margin:24px 0;padding:16px;border:1px solid #aaa}</style><h1>Orbit takeover trial</h1><section><h2>Agent work</h2><input id="agent"><button id="agent-save" onclick="document.querySelector('#result').textContent=document.querySelector('#agent').value">Update counter</button><output id="result">Starting</output></section><section><h2>Your turn after Pause</h2><p>Enter <strong>${phrase}</strong>, then click Confirm phrase. Resume afterward.</p><input id="human" placeholder="Test phrase"><button id="human-save" onclick="fetch('/',{method:'POST',body:document.querySelector('#human').value}).then(r=>r.text()).then(t=>document.querySelector('#manual-result').textContent=t)">Confirm phrase</button><output id="manual-result">Waiting</output></section></html>`, { headers: { "Content-Type": "text/html" } });
+  return new Response(`<html><title>Orbit form update demo</title><style>body{font:24px system-ui;padding:32px;background:white;color:#182d45}input,button{font:22px system-ui;padding:12px;margin:8px}section{margin:24px 0;padding:16px;border:1px solid #aaa}</style><h1>Orbit takeover trial</h1><section><h2>Agent work</h2><input id="agent"><button id="agent-save" onclick="document.querySelector('#result').textContent=document.querySelector('#agent').value">Update counter</button><output id="result">Starting</output></section><section><h2>Your turn after Pause</h2><p>Enter <strong>${phrase}</strong>, then click Confirm phrase. Resume afterward.</p><input id="human" placeholder="Test phrase" style="position:fixed;left:32px;top:560px;width:420px;height:46px"><button id="human-save" style="position:fixed;left:470px;top:560px;width:240px;height:46px" onclick="fetch('/',{method:'POST',body:document.querySelector('#human').value}).then(r=>r.text()).then(t=>document.querySelector('#manual-result').textContent=t)">Confirm phrase</button><output id="manual-result">Waiting</output></section><p style="font:16px system-ui;color:#667">The two controls above are pinned to fixed positions so a scripted participant can reach them by coordinate exactly as a person reaches them by pointing.</p></html>`, { headers: { "Content-Type": "text/html" } });
 } });
 const broker = await attachOrStartBroker();
 report.attachedToExistingBroker = broker.attached;
@@ -98,11 +104,50 @@ try {
         (report.refusedActionTypes as string[]).push(attempting);
       }
     }
+    // The scripted participant, driven through the viewer's own channel. It runs once, about twenty
+    // seconds in, so the agent is mid-work when a person's two minutes would happen.
+    if (autoParticipant && !participated && Number(report.elapsedSeconds ?? 0) >= 20) {
+      report.participant = "scripted";
+      await call(broker.socket, "session.pause", { sessionId: session.sessionId });
+      report.pausedObserved = true;
+      // The pause refuses agent input. That refusal, named, is the evidence the takeover check asks
+      // for; a read that succeeded here would mean the pause did not hold.
+      try { await act({ type: "read", selector: "#result" }); report.pauseDidNotRefuseInput = true; }
+      catch (error) {
+        if ((error as { code?: string }).code !== "PAUSED") throw error;
+        report.refusedWhilePaused = Number(report.refusedWhilePaused) + 1;
+        (report.refusedActionTypes as string[]).push("read #result during pause");
+      }
+      const control = (input: unknown) => call(broker.socket, "session.control", { sessionId: session.sessionId, input });
+      // Point and type, the way a person does in the viewer: focus the field, insert the phrase, then
+      // press the button that submits it.
+      await control({ type: "click", x: 240, y: 583 });
+      await control({ type: "text", text: phrase });
+      await control({ type: "click", x: 590, y: 583 });
+      await Bun.sleep(400);
+      report.scriptedParticipantSubmitted = accepted;
+      await call(broker.socket, "session.resume", { sessionId: session.sessionId });
+      participated = true;
+    }
+    // After the resume, the agent reads what the participant changed. This is the check that work
+    // continued from the changed page rather than from the agent's own last value.
+    if (autoParticipant && participated && state === "running" && report.agentReadManualResult === null) {
+      const manual = await act({ type: "read", selector: "#manual-result" }) as { text: string };
+      report.agentReadManualResult = manual.text;
+    }
     report.elapsedSeconds = Math.round((performance.now() - started) / 1000);
+    // The scripted run stops once the agent has read the participant's result and kept working past
+    // it; a person's run has nothing to stop for. The verdict itself is computed after the loop, from
+    // all the facts, because deriving it here raced with the submission that sets `resumedAfterManual`.
+    if (autoParticipant && report.agentReadManualResult !== null && report.resumedAfterManual && Number(report.elapsedSeconds) >= 90) break;
     await Bun.write(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
     await Bun.sleep(500);
   }
-  report.status = accepted && report.resumedAfterManual ? "interaction-observed" : "incomplete";
+  report.status = accepted && report.resumedAfterManual ? (autoParticipant ? "mechanism-verified" : "interaction-observed") : "incomplete";
+  // Read off the whole run rather than set at one moment: every clause here is a separate observation.
+  report.mechanismVerified = Boolean(autoParticipant && accepted && report.scriptedParticipantSubmitted
+    && report.pausedObserved && Number(report.refusedWhilePaused) > 0
+    && report.resumedAfterManual && report.agentReadManualResult === "Accepted" && Number(report.submissionsAfterResume) > 0);
 } catch (error) { report.status = "failed"; report.error = error instanceof Error ? error.message : "Trial failed"; process.exitCode = 1; }
 finally {
   // The trial stops its own session. Until this it did not, so every run left a browser session
@@ -116,6 +161,7 @@ finally {
   report.focus = await focus.stop();
   report.elapsedSeconds = Math.round((performance.now() - started) / 1000);
   report.limitations = ["The driver is scripted, not a model host. A submitted phrase alone does not prove who submitted it.", "Human participation and simultaneous work require explicit participant confirmation.", "The participant's viewer runs in their application outside this measured Orbit scope.", "The owned process set is the whole shared Orbit slice, so it also counts any other agent's sessions running at the same time.", broker.attached ? "The session ran on a broker that was already running, so that broker's own startup and workspace are outside this trial." : "The broker was started by this trial and shares the slice with any other Orbit work."];
+  if (autoParticipant) (report.limitations as string[]).push("The participant was scripted: pause, the phrase and resume were driven through session.control, the viewer's own channel. That measures the takeover mechanism end to end and it does not measure a person using it, so it cannot close the participant-confirmation check.");
   await Bun.write(join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
   process.off("SIGTERM", stop); process.off("SIGINT", stop);
   console.log(JSON.stringify({ status: report.status, reportPath: join(directory, "report.json") }));

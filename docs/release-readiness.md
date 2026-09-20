@@ -43,8 +43,9 @@ a skipped test is not a pass, and a limit is never omitted. What is not closed i
       click, scroll, tabs, resize, observe, journal, pause, resume, stop); the installed command drove a
       browser session on Linux and Ubuntu that navigated, read a heading and captured a decodable
       1280 by 800 frame; and a three-adapter MCP concurrency probe ran on Linux and Windows. Limit:
-      pause and resume are proven at the protocol and installed-command level, not against a person at
-      the keyboard, which is item 1 under what remains.
+      pause and resume are proven at the protocol and installed-command level, and the takeover path is
+      now measured end to end through the viewer's own channel with a scripted participant, not against
+      a person at the keyboard, which is item 1 under what remains.
 - [x] Native application flows run on supported Linux hosts; platform refusals are tested.
       A purpose-built Fedora 44 machine launched a Wayland and an Xwayland application, typed into and
       clicked both, and read both typed strings off the pixels; nineteen applications across GTK4,

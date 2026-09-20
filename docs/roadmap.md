@@ -11,13 +11,15 @@ someone sitting at it. Nothing here is closed by installing Orbit somewhere.
 
 Recorded from the newest evidence, so a reader can tell what alpha.8 does and does not settle.
 
-1. **A participant-confirmed human usage trial.** The no-interference half has a ten-minute concurrent
-   measurement on a live desktop, recorded in [human work and takeover trial](human-handoff.md), but
-   it is not participant confirmation: nothing paused, no input was rejected while paused and the
-   disposable phrase was never read back. The concurrent-work confirmation, the pause and takeover
-   acknowledgement and the viewer-optional check all still wait on a person. Gate 1's participant
-   reading and the `Failed` rows for "human takeover and resume" and "participant acceptance" in
-   [support tiers](support-tiers.md) wait on the same thing.
+1. **A person at the keyboard.** The no-interference half has a ten-minute concurrent measurement on a
+   live desktop, and the takeover half is now measured end to end with a scripted participant driving
+   pause, the phrase and resume through the viewer's own channel, both recorded in
+   [human work and takeover trial](human-handoff.md). Neither is participant confirmation and neither
+   can be: `humanParticipationConfirmed` stays false in every run, by construction. What is left is the
+   one thing no script can supply, a person saying that working alongside a live session disturbed
+   nothing, reading the viewer's own `#cost` line, and confirming that work continued after they closed
+   the viewer. Gate 1's participant reading and the `participant acceptance` row in
+   [support tiers](support-tiers.md) wait on that.
 2. **Real-device coverage.** Windows and macOS have run on a borrowed Windows 11 guest and a hosted
    `macos-26-arm64` runner, with nobody at the machine; the guest has Edge alone on one of its two
    hosts. What is missing is a Windows and a macOS machine with a real desktop session and the

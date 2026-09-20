@@ -1,6 +1,6 @@
 # Human work and takeover trial
 
-Status: the automated half has run; the participant half has not. The monitor and the runner are in place, and a trial may be running; no human participation is inferred from a run or from desktop activity until the participant confirms it.
+Status: the mechanism has been measured end to end with a scripted participant; a person at the keyboard is still unmeasured. The monitor and the runner are in place, and a human trial may be running; no human participation is inferred from a run or from desktop activity until the participant confirms it.
 
 ## Running it
 
@@ -78,6 +78,36 @@ What that settles and what it does not:
 The runner attaches to the managed broker rather than starting its own, and both consequences are
 printed in the report: the owned set is the whole shared slice subtree, so other agents' sessions
 count as Orbit processes, and the attached broker's own startup and workspace are outside the trial.
+
+## Scripted participant, 20 September 2026
+
+The takeover path itself is measured, without a person, by driving the participant's side through
+`session.control`, which is the method the viewer's own manual input calls. `experiments/human-handoff.ts
+--auto-participant` pauses the session about twenty seconds into a run, then points, types and presses
+the way a person does: focus the field by coordinate, insert the phrase, press the button.
+
+One run, 92 seconds, every clause observed separately:
+
+| Clause | Observed |
+|---|---|
+| Pause acknowledged | `pausedObserved: true` |
+| Agent input refused while paused | `refusedWhilePaused: 1`, `["read #result during pause"]` |
+| The participant's phrase accepted by the page | `scriptedParticipantSubmitted: true` |
+| The agent read the changed result after the resume | `agentReadManualResult: "Accepted"` |
+| Work continued from the changed page | `resumedAfterManual: true`, `submissionsAfterResume: 64` |
+| The trial cleaned up after itself | `sessionStoppedByTrial: true` |
+
+`mechanismVerified` is true for that run, and it is computed from all six clauses rather than set at
+one moment.
+
+**This is not participant confirmation and the report refuses to make it one.** `participant` reads
+`scripted`, `humanParticipationConfirmed` stays false in every run, and the limitation is printed in
+the report's own list: driving the same method a viewer calls measures the mechanism, not a person
+using it. What is still missing is the one thing no script can supply, a person at the keyboard saying
+that nothing about Orbit disturbed their work.
+
+Both modes use the same page. The participant's two controls sit at fixed coordinates so a scripted
+participant can reach them exactly as a person reaches them by pointing.
 
 ## User flow
 
