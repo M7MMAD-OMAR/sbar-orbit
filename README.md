@@ -78,7 +78,7 @@ all fifteen mapped. [Validation](docs/validation.md) has the list, the times and
 ## What is actually supported
 
 Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation,
-where the suite reads **457 pass, 0 fail, 27 skip across 484 tests in 97 files** with
+where the suite reads **458 pass, 0 fail, 27 skip across 485 tests in 97 files** with
 `ORBIT_TEST_NATIVE=1` on 20 September 2026. The browser backend is measured on four: that host, a
 GitHub Ubuntu 24.04 runner where `bun run verify` passed 434 tests with 50 skips on 20 September 2026,
 a Windows 11 guest

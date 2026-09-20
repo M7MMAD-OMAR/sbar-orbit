@@ -40,7 +40,7 @@ column. That is the evidence column doing its job, not a sixth tier.
 
 ## Fedora 44, wlroots, cgroup delegation
 
-The only class with rows that are not reasoning. Measured from `0.1.0-alpha.1` onward; each row carries its own date. The suite at HEAD on 20 September 2026: **457 pass, 0 fail, 27 skip, 484 tests across 97 files**, inside `sbarorbit.slice`, with the managed broker and five other agent sessions running alongside it; the same revision without `ORBIT_TEST_NATIVE=1` reads 443 pass, 41 skip, 0 fail. At `6a802f5` with native tests the same suite read 143.85 s on an idle host.
+The only class with rows that are not reasoning. Measured from `0.1.0-alpha.1` onward; each row carries its own date. The suite at HEAD on 20 September 2026: **458 pass, 0 fail, 27 skip, 485 tests across 97 files**, inside `sbarorbit.slice`, with the managed broker and other agents' sessions running alongside it; the same revision without `ORBIT_TEST_NATIVE=1` reads 444 pass, 41 skip, 0 fail. At `6a802f5` with native tests the same suite read 143.85 s on an idle host.
 
 | Capability | Tier | Evidence | Date |
 |---|---|---|---|
