@@ -21,7 +21,8 @@ async function sourceLauncher(source: string) {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   if (pkg.name !== "sbar-orbit" || typeof pkg.version !== "string" || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(pkg.version))
     throw new Error("Source is not an Orbit release or checkout");
-  return launcher;
+  // Validate the resolved release above, but preserve a managed current symlink in the command.
+  return process.platform === "linux" ? join(resolve(source), launcherName()) : launcher;
 }
 
 async function binDirectory(prefix: string, create: boolean) {

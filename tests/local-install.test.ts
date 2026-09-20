@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { linuxOnlySuite, resolvedTmpdir } from "./platform-support";
-import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, symlink, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { activateLocal, deactivateLocal } from "../src/local-install";
 import { tmpdir } from "node:os";
@@ -131,4 +131,19 @@ test("on Windows the installed command is a marker carrying shim, and a foreign 
     await expect(deactivateLocal(f.prefix)).rejects.toThrow(/not a recognized Orbit source launcher/);
     expect(await readFile(installed, "utf8")).toContain("someone else's");
   });
+});
+
+test.skipIf(process.platform !== "linux")("a managed current link follows a later version swap", async () => {
+  const f = await fixture();
+  const first = await f.source("0.1.0-alpha.7");
+  const second = await f.source("0.1.0-alpha.8");
+  const current = join(f.root, "current");
+  await symlink(first, current);
+  const launcher = await activateLocal(current, f.prefix);
+  expect(await readlink(launcher)).toBe(join(current, "bin/sbar-orbit"));
+  await symlink(second, current + ".next");
+  await rename(current + ".next", current);
+  const child = Bun.spawn([launcher], { stdout: "pipe" });
+  expect((await new Response(child.stdout).text()).trim()).toBe("0.1.0-alpha.8");
+  expect(await child.exited).toBe(0);
 });

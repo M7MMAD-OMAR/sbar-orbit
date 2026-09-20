@@ -12,6 +12,7 @@ const value = (name: string) => { const index = args.indexOf(name); return index
 if (flag("--help") || flag("-h")) {
   console.log(`Usage: sbar-orbit install [options]
 
+  --managed         Linux: adopt a release into the versioned update layout
   --prefix PATH     Where the sbar-orbit command is linked (default ~/.local)
   --no-service      Write nothing into systemd and start nothing
   --dry-run         Report every step without changing anything
@@ -72,6 +73,7 @@ display.setNote(offerings[0]!);
 display.start(views);
 
 const report = await runInstall({
+  managed: flag("--managed"),
   prefix: value("--prefix"),
   service: !flag("--no-service"),
   dryRun: flag("--dry-run"),

@@ -29,6 +29,7 @@ export type StepOutcome = { state: "done" | "skipped" | "failed"; detail: string
 export type StepRecord = StepOutcome & { id: string; title: string; elapsedMs: number };
 export type InstallOptions = {
   source?: string;
+  managed?: boolean;
   prefix?: string;
   unitDirectory?: string;
   service?: boolean;
@@ -178,7 +179,7 @@ export function defaultPrefix(env = process.env, platform = process.platform) {
 }
 
 export async function runInstall(options: InstallOptions = {}) {
-  const source = resolve(options.source ?? project);
+  let source = resolve(options.source ?? project);
   const prefix = resolve(options.prefix ?? defaultPrefix());
   const unitDirectory = options.unitDirectory ?? process.env.ORBIT_UNIT_DIR ?? join(homedir(), ".config/systemd/user");
   const wantsService = options.service !== false;
@@ -256,6 +257,12 @@ export async function runInstall(options: InstallOptions = {}) {
   });
 
   const linked = await step("launcher", async () => {
+    if (options.managed) {
+      if (prefix !== resolve(defaultPrefix())) throw new Error("Managed updates require the default installation prefix");
+      const { prepareManagedInstall } = await import("./update");
+      const managed = await prepareManagedInstall(source, { dryRun, install: options.install });
+      if (!dryRun) source = managed;
+    }
     if (dryRun) {
       // The top level launcher is what a caller reads to find the command afterwards. During a dry
       // run it has to name where the link would go, not where the source happens to be.

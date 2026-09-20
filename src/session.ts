@@ -117,6 +117,7 @@ function impliedMethod(actionType: string): string | undefined {
 }
 
 export class Sessions {
+  private updateLease?: { token: string; expires: number };
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();
   private creating = new Set<Promise<unknown>>();
@@ -144,6 +145,8 @@ export class Sessions {
   }
   private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid } : {}) }; }
   create(input: Record<string, unknown>): Promise<unknown> {
+    if (this.updateLease && this.updateLease.expires > Date.now())
+      return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
     const operation = this.createOwned(input);
     this.creating.add(operation);
@@ -525,9 +528,21 @@ export class Sessions {
   private async dispatchRequest(value: unknown): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
+    if (request.method === "update.begin") {
+      if (this.updateLease && this.updateLease.expires > Date.now())
+        throw new OrbitError("PROFILE_BUSY", "Another update is in progress");
+      if (this.creating.size || [...this.sessions.values()].some(session => session.state !== "closed"))
+        throw new OrbitError("PROFILE_BUSY", "A session is open or starting; update waits until it closes");
+      this.updateLease = { token: crypto.randomUUID(), expires: Date.now() + 120_000 };
+      return this.updateLease;
+    }
+    if (request.method === "update.end") {
+      if (params.token === this.updateLease?.token) this.updateLease = undefined;
+      return { released: !this.updateLease };
+    }
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
-    if (request.method === "doctor") return { platform: process.platform, backend: "browser", backends: ["browser", "fedora"], backendAliases: { system: "fedora" },
+    if (request.method === "doctor") return { version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora"], backendAliases: { system: "fedora" },
       capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine(),
       // Whether the units on disk are the ones this version writes. A managed broker that was
       // installed before a directive existed does not carry it, and nothing else on the machine

@@ -332,10 +332,10 @@ test("automatic updates are off until somebody says otherwise, and off stops a r
     expect(await setAutomaticUpdates(false, root, async on => { timers.push(on); return { ok: true, output: "" }; }))
       .toMatchObject({ automatic: false, timer: "disabled" });
     expect(timers).toEqual([true, false]);
-    // The file is the authority, so the switch still holds if the timer could not be touched.
+    // A failed enable must not report automatic updates as active.
     expect(await setAutomaticUpdates(true, root, async () => ({ ok: false, output: "Failed to connect to bus" })))
-      .toMatchObject({ automatic: true, timer: "unchanged: Failed to connect to bus" });
-    expect(await automaticUpdates(root)).toBe(true);
+      .toMatchObject({ automatic: false, timer: "unchanged: Failed to connect to bus" });
+    expect(await automaticUpdates(root)).toBe(false);
   } finally { await close(); }
 });
 
@@ -465,5 +465,65 @@ test("an archive without this platform's launcher is refused rather than prepare
     // And nothing is left behind: a refused release must not leave a half prepared version that a
     // later activate could find.
     expect(await preparedVersions(root)).toEqual([]);
+  } finally { await close(); }
+});
+
+test("a version argument cannot escape the managed versions directory", async () => {
+  const { root, close } = await fixture();
+  try {
+    await expect(activateVersion("../../outside", { root, openSessions: async () => 0 })).rejects.toThrow("version");
+  } finally { await close(); }
+});
+
+test("failed timer activation does not leave automatic updates opted in", async () => {
+  const { root, close } = await fixture();
+  try {
+    expect(await setAutomaticUpdates(true, root, async () => ({ ok: false, output: "no timer" })))
+      .toMatchObject({ automatic: false });
+    expect(await automaticUpdates(root)).toBe(false);
+  } finally { await close(); }
+});
+
+test("a stable installation never automatically selects a prerelease", () => {
+  expect(sameLine("1.0.0", "1.1.0-alpha.1")).toBe(false);
+  expect(sameLine("0.1.0-alpha.8", "0.1.0-beta.1")).toBe(false);
+  expect(sameLine("0.1.0-alpha.8", "0.1.0-alpha.9")).toBe(true);
+  expect(sameLine("0.1.0-alpha.8", "0.1.0")).toBe(true);
+});
+
+test("archive identity is checked before dependencies are installed", async () => {
+  const { root, close } = await fixture();
+  try {
+    const archive = await packFixture(root, "0.1.0-alpha.7");
+    const bytes = await Bun.file(archive).arrayBuffer();
+    const digest = new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+    let installed = false;
+    const result = await prepareVersion({ version: "0.1.0-alpha.8", tarball: "fixture://archive", integrity: `sha512-${digest}`, publishedAt: "2026-09-01" },
+      { download: async () => bytes }, { root, install: async () => { installed = true; return { ok: true, output: "" }; } });
+    expect(result.prepared).toBe(false);
+    expect(installed).toBe(false);
+  } finally { await close(); }
+});
+
+test("turning updates off during preparation prevents automatic activation", async () => {
+  const { root, close } = await fixture();
+  try {
+    const current = "0.1.0-alpha.8", next = "0.1.0-alpha.9";
+    const original = await prepared(root, current);
+    const launcher = await installedLauncher(join(original, launcherName()), join(root, "command"));
+    const archive = await packFixture(root, next);
+    const bytes = await Bun.file(archive).arrayBuffer();
+    const integrity = `sha512-${new Bun.CryptoHasher("sha512").update(bytes).digest("base64")}`;
+    const timer = async () => ({ ok: true, output: "" });
+    await setAutomaticUpdates(true, root, timer);
+    let restarted = false;
+    const result = await runUpdate(current, { root, launcher, maturationHours: 0,
+      metadata: async () => ({ versions: { [next]: { dist: { tarball: "fixture://next", integrity } } }, time: { [next]: "2026-09-01" } }),
+      download: async () => bytes,
+      install: async () => { await setAutomaticUpdates(false, root, timer); return { ok: true, output: "" }; },
+      openSessions: async () => 0,
+      restart: async () => { restarted = true; return { ok: true, output: "" }; }, healthy: async () => true });
+    expect(result.activated).toBe(false);
+    expect(restarted).toBe(false);
   } finally { await close(); }
 });
