@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { expectDeclaredImage } from "./frame-format";
 import { readFile, readdir } from "node:fs/promises";
 import { call, startBroker } from "../src/ipc";
+import { descendantsFromTable } from "../src/process-tree";
 
 /**
  * Every descendant of a process, per platform.
@@ -44,18 +45,13 @@ async function descendants(pid: number, seen = new Set<number>()): Promise<numbe
 function windowsDescendants(root: number): number[] {
   // One snapshot of the whole table, then walked in memory: asking per process would race a tree
   // that is still starting, and a browser launch creates processes while the walk runs.
+  //
+  // The walk itself lives in `src/process-tree.ts`. This path returns before `descendants` applies its
+  // `seen` guard, because it needs a snapshot rather than one answer per process, so it was the one
+  // walk in the file without a guard and it recursed until the stack ended on the Windows runner.
   const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
     "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"]);
-  const parents = new Map<number, number[]>();
-  for (const line of listed.stdout.toString().split(/\r?\n/)) {
-    const [child, parent] = line.trim().split(/\s+/).map(Number);
-    if (!child || parent === undefined || Number.isNaN(parent)) continue;
-    parents.set(parent, [...(parents.get(parent) ?? []), child]);
-  }
-  const found: number[] = [];
-  const walk = (pid: number) => { for (const child of parents.get(pid) ?? []) { found.push(child); walk(child); } };
-  walk(root);
-  return found;
+  return descendantsFromTable(listed.stdout.toString().split(/\r?\n/), root);
 }
 
 /** Whether a process is still on the machine, asked the way each kernel answers it. */

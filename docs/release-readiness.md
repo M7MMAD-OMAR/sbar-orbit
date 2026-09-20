@@ -140,6 +140,30 @@ to 77 GB, with the remaining 30 kept because a live or recent broker owns them. 
 fix, because an empty read-only snapshot has nothing inside it to unlink; with one file in the profile
 before the point is taken, the test fails against the unfixed code and passes with it.
 
+## The Windows runner's stack overflow, 20 September 2026
+
+The push of `f77b22d`, a documentation-only change, triggered run 35505288681, and `suite
+(windows-latest)` failed one test: `abrupt broker death reaps its browser tree and a fresh broker
+rejects stale sessions` in `tests/browser-crash.test.ts`, 11803 ms in, with `RangeError: Maximum call
+stack size exceeded` raised at that file's own line 56. The other eight jobs passed, and the same test
+code had passed on the same platform eleven minutes earlier, in run 35505029561.
+
+The cause is in the test rather than in the runner. `windowsDescendants` reads one `Win32_Process`
+snapshot and walked it recursively with no visited set, while the cross-platform `descendants` returns
+for win32 before its own `seen` guard runs, at line 23 against lines 24 to 26 of the same file. A
+snapshot can hold a cycle, because a pid is recycled while the snapshot is taken or because a process
+names itself as its parent, and the walk followed the cycle until the stack ended. `src/process-tree.ts`
+now holds the walk, iterative and visiting each pid once, and `tests/process-tree.test.ts` covers a
+cycle, a self-parent, a root named inside its own subtree, and a blank line from a trailing newline.
+
+Those five tests were run against the old recursive walk before the fix: three of them failed with the
+same `RangeError`, in 10.20 ms, 14.87 ms and 5.03 ms. The defect is therefore reproducible on Linux in
+milliseconds, and catching it no longer depends on a Windows runner landing on a recycled pid.
+
+This is the first of the intermittent failures to be explained rather than retained. It is one test, on
+one platform, in one run: it does not explain the earlier Windows first-capture delay, and it does not
+touch the two local contention failures on this workstation.
+
 ## All nine CI jobs at the workspace-sweep fix, 20 September 2026
 
 [Run 35505029561](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35505029561) passed all nine

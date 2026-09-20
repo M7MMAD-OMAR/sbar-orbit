@@ -4,6 +4,13 @@ Versions follow Semantic Versioning. Alpha releases are experimental and may cha
 
 ## Unreleased
 
+- The Windows descendant walk in `browser-crash.test.ts` trusted a `Win32_Process` snapshot, and that
+  table can hold a cycle: a pid recycled into a parent of its own ancestor, or a process naming itself
+  as its parent. The walk then recursed until the stack ended, which failed that test on the Windows
+  runner on 20 September 2026 (run 35505288681, `RangeError: Maximum call stack size exceeded`) with
+  every other job on every platform green. The walk now lives in `src/process-tree.ts`, is iterative
+  and visits each pid once, and `tests/process-tree.test.ts` pins the cycle, the self-parent and the
+  blank line, so the shape a real table has is exercised on every platform instead of only on Windows.
 - `sbar-orbit clean` could not reclaim a workspace that held a restore point. A point is a read-only
   btrfs snapshot and unlinking inside one answers EROFS whatever the path's permissions are, so the
   sweep refused 21 of 192 workspaces on the development host and left 107 GB of a 108 GB cache in
