@@ -28,8 +28,20 @@ Local Fedora native verification: **457 passed, 27 skipped, 0 failed**, 484 test
 launcher indirection, update admission, invalid version paths, timer enable failure, release-channel
 selection, archive identity ordering and disabling updates during preparation.
 
-Publication is pending. The installed npm credential returns HTTP 401 from both Bun and the registry
-identity endpoint. No package publication is claimed until authentication and registry readback succeed.
+[Run 35484602666](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35484602666) passed all nine
+jobs at `6a802f5`: suites, installed browser flows and generated host registrations on all three hosts.
+Ubuntu passed 434 tests with 50 skips; Windows passed 367 with 117 skips; macOS passed 377 with
+107 skips. Every suite had zero failures and discovered 484 tests. Typechecks passed on all hosts.
+
+The exact candidate registry archive also passed the isolated Linux upgrade gate. Its SHA-256 is
+`c484215612b60275bc6d889fb5930d52b4a6e9bdcdc54b6a59c4781a1c5637e1`.
+The source archive at that revision has SHA-256
+`e943fe45ccdd2b87e4b8ec0caf04e2adff52793ae726ff42dd16633b372372d2`.
+
+Publication is pending. Registry identity returns HTTP 401 and the actual `bun publish` attempt
+returned HTTP 404. Public readback confirms alpha.8 is absent and `latest` remains alpha.6. The
+GitHub release is prepared as a draft to avoid claiming a unified publication before registry access
+is restored and the published package can be installed back. No package publication is claimed.
 See [the alpha.8 guide](release-alpha8.md) for installation, migration and platform limits.
 
 ## Previous cross-platform verified state
