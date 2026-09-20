@@ -26,6 +26,16 @@ export async function openViewerPage(taskName: string, options: { language?: str
     if (!page) throw new Error("Private Orbit page missing");
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
+    page.on("response", async response => {
+      if (new URL(response.url()).pathname !== "/rpc") return;
+      try {
+        const request = response.request().postDataJSON();
+        if (request?.method !== "session.observe") return;
+        const reply = await response.json();
+        if (!reply.ok) console.error(JSON.stringify({ viewerCaptureFailure: taskName,
+          code: reply.error?.code, message: reply.error?.message }));
+      } catch { /* Closing the private browser can interrupt a pending response. */ }
+    });
     if (options.viewport) await page.setViewportSize(options.viewport);
     // The viewer follows the languages the browser asks for, so a test that wants one says so rather
     // than inheriting whatever the machine running it happens to be set to.
