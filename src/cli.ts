@@ -213,6 +213,11 @@ try {
     let method: string;
     let params: unknown = {};
     if (command === "doctor") method = "doctor";
+    // Which of the person's own browser profiles a session may start from. On the command line for
+    // the same reason it is on the agent surface: the capability is unusable if there is no way to
+    // learn a profile path, and a person deciding whether to hand an agent their logins should be
+    // able to see the same verdicts the agent will.
+    else if (command === "profiles") method = "profiles.list";
     else if (command === "preview" && verb === "browsers") method = "viewer.browsers";
     // `preview` prints the link and opens nothing, which is what a script wants. `preview open` is the
     // person's command: it opens their chosen browser, in a window of its own where that browser has one.
@@ -228,7 +233,7 @@ try {
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, profiles, preview, preview open, preview browsers, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
     console.log(JSON.stringify({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result }));
   }

@@ -5,286 +5,111 @@
 
 # Sbar Orbit
 
-Local application workspaces for tool-capable AI agents. The mark is two surfaces offset on the diagonal: the screen you keep, and the one Orbit opens beside it. They never touch. [Brand](docs/brand.md).
+**Give an AI agent its own browser and desktop, so it stops using yours.**
 
-**Experimental alpha, Apache-2.0.** Orbit gives an agent an owned browser or a private display of its own. You can keep working, open a viewer when needed, pause, take control and resume. It does not attach to your personal browser profile, and the viewer itself opens in a browser window that is Orbit's own, never a tab of yours.
+Orbit opens a private browser or a private display for each agent session, on your own machine.
+You keep working while it works. Open a viewer when you want to watch, pause it, take over,
+hand it back. Nothing leaves the machine: no telemetry, no account, no ping.
+
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![npm](https://img.shields.io/npm/v/sbar-orbit)](https://www.npmjs.com/package/sbar-orbit)
 
 <img src="docs/images/viewer-window.jpg" alt="The Orbit viewer in a window of its own: a session rail on the left, the watched page in the middle, take over and hand back above it" width="720">
 
-```mermaid
-flowchart LR
-    Agent["Any agent host"] -->|MCP| Broker
-    CLI["sbar-orbit CLI"] -->|"local socket"| Broker
+## Install
 
-    subgraph orbit["Orbit, inside one shared CPU and memory budget"]
-        Broker["Broker"]
-        Browser["Private browser, one per session"]
-        Display["Private display, one per session"]
-    end
-
-    Broker --> Browser
-    Broker --> Display
-
-    subgraph yours["Your desktop, which none of this touches"]
-        Screen["Your windows, pointer and keyboard"]
-        Viewer["Viewer, open it when you want it"]
-    end
-
-    Viewer -.->|"watch, pause, take over, resume"| Broker
-```
-
-## What it puts on your own screen
-
-<img src="docs/images/panel-card-on-desktop.jpg" alt="A session card open against the right edge of the desktop: the agent name, a running chip, the task, the application with its window count and the pointer, and the three actions under it" width="640">
-
-One mark against an edge of the screen, and nothing else. Resting the pointer on it opens one card per
-session: who is working, on what, which window or tab of how many is open, and where the pointer is
-inside the session, with one row of actions under the list. Clicking opens the viewer; the middle action
-opens a browser that is yours rather than an agent's, paused, so you can type in it. The card is cheap
-by construction, because it reads titles and a window tree rather than capturing a frame. Taken on the
-development host on 19 September 2026. [Desktop presence](docs/desktop-presence.md).
-
-## What it costs an agent
-
-Measured 14 September 2026 on the development host, through the broker's own socket, one browser
-session on a real public page; reproduce any line with the CLI in [cli](docs/cli.md).
-
-| Step | Round trip | What comes back |
-|---|---|---|
-| `session.create` | 431 ms | a session id |
-| `navigate` to a public page | 2248 ms | 37 bytes, the time is the network and the page |
-| `observe`, image | 87 to 112 ms | a 41 to 58 KiB JPEG at 1280 by 800 |
-| `observe`, metadata only | 2 ms | 258 bytes: title, location, tabs, pointer |
-| `read` a selector | 43 ms | the element's text |
-| `scroll` | 32 ms | 16 bytes |
-
-Orbit itself is not where an agent's time or money goes. Every call above is under a tenth of a
-second except the page load, which is the page's. What costs is the model turn around each call, and
-above all each image: a 1280 by 800 frame is roughly 1,400 input tokens for a vision model and several
-seconds of thinking, every time. An agent that alternates `act` and `observe` with an image after
-every action is paying for pictures it did not need. The cheap loop is `read` for text and the
-metadata observation for where it is, with an image only when the layout itself is the question; the
-[agent interface](docs/agent-interface.md) and the [orbit-usage skill](skills/orbit-usage/SKILL.md)
-say the same in the agent's own terms.
-
-<p>
-<img src="docs/images/writer-in-private-display.jpg" alt="LibreOffice Writer open inside an Orbit private display" width="360">
-<img src="docs/images/dolphin-in-private-display.jpg" alt="Dolphin open inside an Orbit private display" width="360">
-</p>
-
-Two of the fifteen applications launched into a private display, one at a time, on 14 September 2026;
-all fifteen mapped. [Validation](docs/validation.md) has the list, the times and what each cost.
-
-## What is actually supported
-
-Orbit's native backend is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation,
-where the suite reads **458 pass, 0 fail, 27 skip across 485 tests in 97 files** with
-`ORBIT_TEST_NATIVE=1` on 20 September 2026. The browser backend is measured on four: that host, a
-GitHub Ubuntu 24.04 runner where `bun run verify` passed 434 tests with 50 skips on 20 September 2026,
-a Windows 11 guest
-where the published release archive
-installs and an agent host drives a browser session through MCP, and a GitHub `macos-26-arm64` runner
-where the one command install, the launch agent, a browser session and the containment experiment all
-ran on 18 September 2026. Every statement about non Fedora Linux beyond what containers of Debian,
-Ubuntu, Arch and openSUSE on that one host could show is reasoning rather than a test, which the tier
-table marks `Limited`. `sbar-orbit doctor --report` prints which row of the
-[support tiers](docs/support-tiers.md) applies to your machine; it needs no broker, and it is safe to
-paste into an issue.
-
-One thing to read before trusting a number on macOS: **the resource budget there is advisory, not a
-kernel ceiling.** macOS has no cgroup and no job object, so Orbit measures its own process groups
-from the kernel and refuses work that would not fit, rather than stopping work that is already over.
-`enforcement` reads `advisory` and every dimension is listed as unbounded.
-[What macOS measured](docs/macos-measured.md) has the numbers and the limits.
-
-`Reasoned` means installing here produces a test report, not a bug report. `Refused` means a primary
-source says it cannot work, so Orbit throws `UNSUPPORTED` rather than degrading quietly, and the tracker
-does not accept a bug for it. `Failed` means it ran here and did not pass, and the result is kept rather
-than retried into silence.
-
-**No telemetry.** No counters, no ping, no crash upload, no opt in prompt. The only thing that ever
-leaves the machine is a report you generated, read and pasted yourself.
-
-## Start
-
-Requires Bun and Chrome, Chromium or Edge. Windows requires Bun 1.4.2 or newer. On Linux it also needs user cgroup delegation, which is where
-the shared budget lives; on Windows that budget is a named job object instead and there is nothing to
-delegate. The native backend is Linux only and needs the separate [Fedora bootstrap](docs/fedora-results.md).
-
-```sh
-git clone https://github.com/M7MMAD-OMAR/sbar-orbit
-cd sbar-orbit
-./install.sh --connect auto
-```
-
-On Windows use `install.cmd --connect auto`, with the same installer behind both doors:
-
-```bat
-git clone https://github.com/M7MMAD-OMAR/sbar-orbit
-cd sbar-orbit
-install.cmd --connect auto
-```
-
-One command, and it shows every step as it happens. It checks what the machine already has, prepares
-dependencies from the frozen lockfile, links the `sbar-orbit` command into `~/.local/bin`, installs and
-starts the broker service and the desktop mark, writes the agent connector configuration, then verifies
-that the installed broker answers. `--connect auto` also registers detected Claude Code, Codex and
-Hermes hosts while preserving their other settings. Restart those hosts to load Orbit's tools.
-`./install.sh --dry-run --connect auto` reports the same steps and changes nothing.
-
-On Windows the command is a `.cmd` shim and the broker runs through an account-specific scheduled
-task. Installation starts it immediately and verifies its response. It also starts at your next
-logon. It never runs as a Windows service in session 0, where Chromium cannot launch.
-
-It installs nothing that needs root. Bun, a browser and the capture tools stay your package
-manager's job, and the run prints the exact command for each one it finds missing rather than reporting
-a success you would discover was false minutes later. It is not a measurement either: it says what was
-installed, not what was proven to work.
-
-### Or from a package registry
+Requires [Bun](https://bun.sh) and Chrome, Chromium or Edge.
 
 ```sh
 bun add -g sbar-orbit
-sbar-orbit install
+sbar-orbit install --connect auto
 ```
 
-`0.1.0-alpha.9` is published on the npm registry as `latest` and as a
-[GitHub prerelease](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9). It is a fix
-release, and the update path is unchanged from alpha.8, which was installed back on a disposable Fedora
-systemd host with managed installation, broker health, a private browser capture and update timer
-controls verified.
-[Packaging](docs/packaging.md) records the artifact and its limits.
-
-For Linux managed installation and opt-in automatic updates, see [the alpha.9 release notes](docs/release-alpha9.md), which carry the alpha.8 migration steps with the new version. This remains an experimental alpha.
-
-### Or hand it to an agent
-
-Any agent with a shell can do the whole installation. Give it the Orbit source directory and this:
-
-```text
-Install Sbar Orbit on this machine and connect detected agent hosts.
-Clone https://github.com/M7MMAD-OMAR/sbar-orbit if I have not provided its source.
-Read docs/agent-install.md and follow its plan, install and reporting contract.
-Use --connect auto. Preserve other settings and never touch my personal browser.
-```
-
-The prompt is short on purpose: it points at [the contract](docs/agent-install.md) rather than
-restating it, so it cannot drift away from the installer. The contract carries the commands, the JSON
-shape, the exit codes, every refusal an agent should expect, and the `agentMayRun` flag that marks the
-line between what an agent may run and what it hands back. No model, host or vendor is assumed:
-it needs a shell and the ability to read JSON.
-
-The individual steps remain available, which is what to reach for when only one of them is wanted:
+Or from source:
 
 ```sh
-bun install --frozen-lockfile --ignore-scripts
-./bin/sbar-orbit service install
+git clone https://github.com/M7MMAD-OMAR/sbar-orbit
+cd sbar-orbit
+./install.sh --connect auto      # Windows: install.cmd --connect auto
 ```
 
-That installs the broker and the desktop mark and starts both with your desktop, which is the default: a
-thing meant to be waiting for your agents should be running. `./bin/sbar-orbit service install
---no-autostart` writes the units and enables nothing. To run it in the foreground instead, use
-`./bin/sbar-orbit serve`, which prints a socket path to set as `ORBIT_SOCKET` in another terminal.
+One command. It checks what the machine has, links the `sbar-orbit` command, starts the broker,
+writes the MCP configuration for detected Claude Code, Codex and Hermes hosts, and verifies that
+the installed broker answers. Restart those hosts to load Orbit's tools. Nothing needs root, and
+`--dry-run` reports every step without changing anything.
 
-Then `./bin/sbar-orbit session create`, or generate MCP configuration with
-`./bin/sbar-orbit connector-config`. A right click on the mark opens the settings, which are searchable,
-and `./bin/sbar-orbit config search WORD` is the same settings from a terminal. [CLI guide](docs/cli.md).
+## Use it
 
-## Main agent commands
-
-With the Orbit skill selected, type just `off`, `on`, or `status`. For example:
-`$sbar-orbit off` or `$orbit-usage off`. The agent resolves the conversation ID.
-The default suggestion is `status`, which reads usage state without changing it.
-The shell commands below are for direct CLI use.
+From an agent, through MCP: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_stop`.
+From a terminal:
 
 ```sh
-export ORBIT_CONVERSATION_ID=unique-task-id  # keep this ID for this conversation
-sbar-orbit usage status
-sbar-orbit usage off       # reject new Orbit calls in this scope
-sbar-orbit usage on        # re-enable only when you ask
-sbar-orbit session create
-sbar-orbit session observe SESSION_ID --metadata
-sbar-orbit session observe SESSION_ID --output /absolute/new-image.jpg
+sbar-orbit session create                                  # returns a session id
+sbar-orbit act SESSION_ID '{"type":"navigate","url":"https://example.com"}'
 sbar-orbit act SESSION_ID '{"type":"read","selector":"h1"}'
+sbar-orbit preview                                         # the viewer link, to watch or take over
 sbar-orbit session stop SESSION_ID
 ```
 
-MCP has the equivalent `orbit_usage` tool with `mode: "on"`, `"off"` or `"status"`.
-Without an explicit conversation ID its switch is connection-local and resets on
-reconnect. CLI and MCP share a persistent switch only when launched with the same
-ID. A host sharing one MCP process across chats must provide separate scopes.
-Off does not close applications, cancel accepted work or remove tool definitions.
+To work as **you**, signed in to your own accounts, a session can start from a copy of your real
+browser profile. The copy is deleted when the session stops, so nothing the agent does reaches your
+own browser:
 
-The [portable orbit-usage skill](skills/orbit-usage/SKILL.md) makes an explicit
-"Do not use Orbit in this conversation" take priority over automatic selection.
-It includes setup for CLI/MCP scope and compact observations. Metadata mode avoids
-screenshot capture; image mode preserves the title, tabs/windows and dimensions
-alongside the image. CLI file output keeps base64 out of the text context.
+```sh
+sbar-orbit profiles                 # which profiles can be used, and why not when they cannot
+```
 
-[Usage, host integration, research and measured limits](docs/agent-interface.md).
+An agent does the same with `orbit_profiles`, then passes `cloneOf` to `orbit_create` with the
+origins the session may reach. See [accounts](docs/accounts.md).
 
-## Scope
+Turn Orbit off for one conversation with `sbar-orbit usage off`, on again only when you ask.
 
-The alpha includes browser/native lifecycle tests, a scripted 10-minute viewer run, fifteen native applications mapped one at a time, a clean-machine installation in a container with a systemd user session, the mint extension loaded and measured in owned browsers, and one real account carried through a profile restart without a typed password. See [validation](docs/validation.md) and the [roadmap](docs/roadmap.md) for what each of those does and does not show. Windows is measured and
-`Limited`: the suite runs on a Windows 11 guest at 270 pass and 0 fail with 113 skipped, the published
-release installs there, and an agent host reaches a browser session through the connector Orbit writes.
-113 skips is the honest half of that figure, since the private display, the systemd units, D-Bus, the
-keyring and btrfs snapshots are Linux capabilities and are not ported. See
-[what Windows measured](docs/windows-measured.md).
+## Supported systems
 
-macOS is measured and `Limited` as of 18 September 2026: the one command install, the launch agent,
-a browser session driven through the installed command, and a containment run where a supervisor was
-SIGKILLed and left **0 of 9 Chrome processes alive after 60 ms**, repeated across every run. The
-suite there went from 12 failures on the first run to **between 0 and 3**, and the range is stated
-rather than the best figure because the same commit has produced both a 0 and a 1: on a three core
-runner a few browser driven tests time out under the suite's own load, and that cause is not
-established. Getting from 12 to 3 found twelve real defects, including a containment layer that was
-documented in three places and had never been implemented. Two things remain openly unproven: the
-budget is advisory rather than kernel enforced, and the no prompt guarantee has not been seen on a
-person's real account with a real Chrome history. The full run table is in
-[what macOS measured](docs/macos-measured.md).
+| System | State | What that means |
+|---|---|---|
+| Fedora 44, wlroots | **Measured** | Everything: private browser, private display, real-profile sessions, kernel-enforced budget. 458 pass / 0 fail across 485 tests |
+| Other Linux | **Reasoned** | The browser backend is expected to work; no host of that class has run the suite here. A report from yours is welcome |
+| Windows 11 | **Limited** | Browser sessions and MCP work. No private display, no keyring sessions. Needs Bun 1.4.2+ |
+| macOS | **Limited** | Browser sessions and install work. The resource budget is advisory, not a kernel ceiling. Real-profile sessions are refused by design |
 
-Display separation is not a security sandbox. Applications retain the OS user's permissions. Closed agent applications without custom tools are not automatically supported.
+`sbar-orbit doctor --report` prints which row applies to your machine. It needs no broker and is
+safe to paste into an issue. [Support tiers](docs/support-tiers.md) has the evidence behind each row.
+
+**The honest half of those two rows.** On Windows the suite runs on an 11 guest at 270 pass and 0
+fail with 113 skipped, and 113 skips is the honest half of that figure: the private display, the
+systemd units, D-Bus, the keyring and btrfs snapshots are Linux capabilities and are not ported.
+[What Windows measured](docs/windows-measured.md). On macOS the resource budget is **advisory**, not
+a kernel ceiling, because the platform has no cgroup and no job object; Orbit refuses work that would
+not fit instead of stopping work already over. Containment itself was measured there: a supervisor
+SIGKILLed left 0 of 9 Chrome processes alive after 60 ms, on every run.
+[What macOS measured](docs/macos-measured.md).
+
+Display separation is **not** a security sandbox: applications keep the OS user's permissions.
+
+## Documentation
 
 | Guide | Purpose |
 |---|---|
-| [Architecture](docs/architecture.md) | Components and control flow |
-| [Stories and acceptance](docs/acceptance.md) | User outcomes and checks |
-| [Roadmap](docs/roadmap.md) | Remaining milestones |
+| [CLI](docs/cli.md) | Every command, the socket API and the action set |
 | [Connectors](docs/connectors.md) | MCP host setup |
-| [Resource limits](docs/resources.md) | Aggregate CPU/RAM limits |
-| [Preview](docs/preview.md) | Viewing, takeover, tabs and surface size |
-| [Viewer design](docs/viewer-design.md) | The viewer's palette, elevation and working signals |
-| [Theming](docs/theming.md) | Matching the desktop colour scheme |
-| [Accounts](docs/accounts.md), [files](docs/files.md) | Explicit shared state |
-| [Packaging](docs/packaging.md) | Versioned source artifacts |
-| [Research](docs/research.md) | Primary technical sources |
-| [Separate workspace review](docs/separate-workspace-review.md) | Whether this is the best approach, what was refuted, and what a real session costs |
-| [Porting](docs/porting.md) | How the approach ports to other Linux desktops, to Windows and to macOS, by capability tier |
-| [What Windows measured](docs/windows-measured.md) | Every Windows result on a live guest, including the defects only a real machine found |
-| [What macOS measured](docs/macos-measured.md) | Every macOS result on a real host: the numbers, the advisory budget, and what is still not proven |
-| [Platform verification](docs/platform-testing.md) | Portable contracts, macOS service simulation, and real cloud runners without owning a Mac |
-| [macOS research](docs/research/macos/) | The sourced groundwork behind the macOS adapter, and the adversarial audit of it |
-| [Windows research](docs/research/windows/) | The sourced groundwork behind the Windows adapter, written before the port |
-| [Support tiers](docs/support-tiers.md) | What is known to work, on which host class, on what evidence, and which report to file |
-| [Autonomy](docs/autonomy.md) | Running without a human checkpoint: the policy, the prior art it borrows from, and what bounds it |
-| [Desktop presence](docs/desktop-presence.md) | Status source, edge panel and working indicator, what remains proposed |
-| [Appearance](docs/appearance.md) | Applications in a private display look like the desktop |
-| [Brand](docs/brand.md) | The mark, the name, the palette and where each asset is used |
+| [Agent interface](docs/agent-interface.md) | What an agent should do, and what each call costs it |
+| [Accounts](docs/accounts.md) | Real logins, saved state and profile clones |
+| [Architecture](docs/architecture.md) | Components and control flow |
+| [Preview](docs/preview.md) | Watching, takeover, tabs and surface size |
+| [Resource limits](docs/resources.md) | The shared CPU and memory budget |
+| [Support tiers](docs/support-tiers.md) | What is known to work, where, on what evidence |
+| [All documentation](docs/) | Research, validation, porting and platform measurements |
 
 ## Support the work
 
-Orbit is Apache-2.0, runs entirely on your own machine, and sends nothing anywhere: no telemetry, no
-account, nothing metered. That is the point of it, and it is also the reason there is nothing behind
-it but time.
-
-If it saved you some, you can buy me a coffee:
+Orbit is Apache-2.0, runs entirely on your machine and sends nothing anywhere. There is nothing
+behind it but time. If it saved you some:
 
 <a href="https://www.buymeacoffee.com/m7mmadomar"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" width="217" height="60"></a>
 
-A report from a machine this project has never touched is worth as much. Orbit is measured on exactly
-one host class, so `sbar-orbit doctor --report` from another distribution, desktop or operating system
-is evidence this project cannot produce for itself. [Support tiers](docs/support-tiers.md) says which
-report yours is, and [CONTRIBUTING.md](CONTRIBUTING.md) says where it goes.
+A report from a machine this project has never touched is worth as much. Orbit is measured on one
+host class, so `sbar-orbit doctor --report` from another system is evidence it cannot produce for
+itself.
 
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Apache-2.0 license](LICENSE)
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Changelog](CHANGELOG.md) · [Apache-2.0](LICENSE)

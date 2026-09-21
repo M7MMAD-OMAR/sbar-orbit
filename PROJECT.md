@@ -4,7 +4,7 @@ Orbit gives a tool-capable agent its own local application workspace while the u
 
 | Question | Current decision |
 |---|---|
-| Installation | Local Bun source package and CLI; Fedora/Linux alpha |
+| Installation | One command, from the npm registry or a source checkout; Bun and a Chromium browser |
 | Agent connection | MCP for compatible hosts; CLI/local API for custom tool runtimes |
 | Application access | Owned headless browser, or a private Fedora Wayland/Xwayland display |
 | Viewing | Optional authenticated loopback Canvas viewer |
@@ -24,7 +24,7 @@ The broker belongs to the OS user. MCP configuration belongs to each host, so Or
 
 Installation is one command, `./install.sh`, which shows each step as it runs and prints a remedy for every prerequisite only a package manager can supply. It reports installation state, not a measurement.
 
-The alpha has browser/native integration tests and a successful scripted 10-minute browser/viewer run. The suite reads 458 pass, 0 fail, 27 skip across 485 tests in 97 files on this host, 20 September 2026. See [validation](docs/validation.md). Display separation is not a security sandbox, and same-user applications retain filesystem permissions.
+Orbit has browser/native integration tests and a successful scripted 10-minute browser/viewer run. The suite reads 458 pass, 0 fail, 27 skip across 485 tests in 97 files on this host, 20 September 2026. See [validation](docs/validation.md). Display separation is not a security sandbox, and same-user applications retain filesystem permissions.
 
 Closed milestones since this brief was first written: account coverage against a real service, fresh-machine verification on a container with systemd as PID 1, the native runtime built from tracked source, repeatable recovery including a supervisor killed rather than asked, the first real tests on other operating systems (Windows guest, macOS runner), and managed installation with an opt-in Linux update path, all at their stated tiers.
 

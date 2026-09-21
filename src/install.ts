@@ -424,7 +424,14 @@ export async function runInstall(options: InstallOptions = {}) {
     const failed = records.filter(record => record.state === "failed");
     const prerequisiteData = records.find(record => record.id === "prerequisites")?.data as { browser?: boolean; native?: boolean } | undefined;
     return {
-      installed: !failed.length,
+      // Orbit itself, not the agent hosts. Connecting a host is the one step whose failure leaves a
+      // working installation behind: an existing `orbit` entry with different settings is REFUSED on
+      // purpose, so nothing of the person's is overwritten, and a second run of the installer hits it
+      // every time. Reporting that as "Orbit is not installed" sent people looking for a broken
+      // install that was running the whole time. The step still reports its own failure, and the
+      // summary still prints it, so nothing is hidden; it just no longer condemns the installation.
+      installed: !failed.filter(record => record.id !== "hosts").length,
+      hostsConnected: records.find(record => record.id === "hosts")?.state !== "failed",
       source, prefix, launcher,
       dryRun,
       steps: records,

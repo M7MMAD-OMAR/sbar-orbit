@@ -5,10 +5,10 @@ to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.
 on tested revision `ed355d8`. The registry archive and the GitHub registry asset are identical, SHA-256
 `dec1006fd42a20e0bb70552998e96496ddbc2e68ad48c0368ab7a9c28e80d67a`; the source archive is SHA-256
 `e0295494ec0200f3e24f5788d67c6122a54de9ffea59abc424c71ec5f32f5959`. It is a fix release, so the
-installation and migration path recorded in [the alpha.9 notes](release-alpha9.md) is unchanged from alpha.8. Before it,
+installation and migration path recorded in [the 0.1.0 notes](release-0.1.0.md) is unchanged from the alpha line. Before it,
 `0.1.0-alpha.8` was published on the same day at `6a802f5` and its published archive was installed back
 on a disposable Fedora systemd host; managed adoption, broker health, private browser capture and timer
-enable/disable passed. See [the release notes](release-alpha9.md) and [the changelog](../CHANGELOG.md).
+enable/disable passed. See [the release notes](release-0.1.0.md) and [the changelog](../CHANGELOG.md).
 
 The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`, and `0.1.0-alpha.4` followed it the same day with the packaging fixes below; a published version is immutable, so `0.1.0-alpha.3` still carries what it shipped with. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
 
@@ -127,7 +127,7 @@ lockfiles even when `files` names them. The packaging helper retains Bun's file
 selection, adds the exact source `bun.lock`, and refuses to replace an existing
 archive. Tests inspect its contents and compare the archived lock byte for byte.
 
-Linux managed installation, scheduling, upgrade and rollback are covered by the disposable systemd gate. macOS and Windows managed updates explicitly refuse. See [installation and migration](release-alpha8.md) for the measured scope and commands.
+Linux managed installation, scheduling, upgrade and rollback are covered by the disposable systemd gate. macOS and Windows managed updates explicitly refuse. See [installation and migration](release-0.1.0.md) for the measured scope and commands.
 
 Two things the registry path had wrong until 13 September 2026, both found by packing rather than by
 reading. `bun pm pack` builds from the working tree, not from the git index the source archive uses, so

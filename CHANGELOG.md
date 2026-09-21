@@ -1,12 +1,16 @@
 # Changelog
 
-Versions follow Semantic Versioning. Alpha releases are experimental and may change interfaces without compatibility guarantees.
+Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
-## Unreleased
+## 0.1.0 (21 September 2026)
+
+The first release without an alpha tag. No persisted schema and no service unit contract changed, so
+an existing installation upgrades in place. An automatic update will not cross from a prerelease to a
+release by itself: `sameLine` treats them as different lines, so an alpha machine is told a newer
+version exists and left alone. [Release notes](docs/release-0.1.0.md).
 
 Two failures with one symptom, found on 21 September 2026 when an agent driving Orbit through the MCP
-adapter answered that Orbit cannot use the person's own browser or their signed-in accounts. Both are
-fixed and both are measured on this host.
+adapter answered that Orbit cannot use the person's own browser or their signed-in accounts:
 
 - **The broker died on any response that set a cookie.** Bun sets `IncomingMessage.url` on a CLIENT
   response to the request path, where Node leaves it empty. Playwright's fetch path reads that field
@@ -22,11 +26,23 @@ fixed and both are measured on this host.
 - **The capability existed and no agent could find it.** `session.create` has taken `cloneOf` since
   the clone path closed, but the MCP adapter exposed neither `cloneOf`, nor `cloneExtensions`, nor
   `policy`, and offered no way to learn a profile path. An agent reading its own tools could only
-  conclude the product does not do this. New `profiles.list` (`orbit_profiles`) lists the person's
-  browser profiles with `canCloneProfile`'s verdict for each: a `cloneOf` path where it is allowed,
-  the measured reason where it is not. `orbit_create` now carries `cloneOf`, `cloneExtensions` and
-  `policy`, and the adapter's instructions tell an agent never to answer that Orbit cannot use the
-  real browser without calling `orbit_profiles` first.
+  conclude the product does not do this. New `profiles.list`, as `sbar-orbit profiles` and as the
+  `orbit_profiles` tool, lists the person's browser profiles with `canCloneProfile`'s verdict for
+  each: a `cloneOf` path where it is allowed, the measured reason where it is not. `orbit_create` now
+  carries `cloneOf`, `cloneExtensions` and `policy`, and the adapter's instructions tell an agent
+  never to answer that Orbit cannot use the real browser without calling `orbit_profiles` first.
+
+Two more, from reading the project as somebody meeting it for the first time:
+
+- **A rerun of the installer reported "Orbit is not installed".** Refusing to overwrite an existing
+  `orbit` entry in an agent host's configuration is correct and protects the person's own settings; it
+  was counted as an installation failure, so a second `./install.sh --connect auto` condemned a broker
+  that was running the whole time. Host connection is now reported separately, with the reason and the
+  remedy, and `tests/install-hosts-refused.test.ts` fails against the unfixed code.
+- **Project files for a public repository.** A README that leads with what Orbit is, how to install it
+  and how to use it, with the measurement tables moved into `docs/`, plus a supported-systems table on
+  the front page. New `CODE_OF_CONDUCT.md` and `.editorconfig`; `repository`, `homepage` and `bugs`
+  added to `package.json`, which were missing, so the registry page carried no links back.
 
 ## 0.1.0-alpha.9 (20 September 2026)
 

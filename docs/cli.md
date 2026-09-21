@@ -192,7 +192,7 @@ This interface requires a managed version-directory installation. On Linux use `
 from an extracted release or registry package, then invoke `~/.local/bin/sbar-orbit` so the command
 follows the active version. Linux upgrade and rollback are measured in a disposable Fedora systemd
 container. macOS and Windows managed activation and scheduling currently refuse. See
-[installation and migration](release-alpha8.md).
+[installation and migration](release-0.1.0.md).
 
 ```sh
 sbar-orbit update status     # which version is running, which are prepared, whether one is waiting

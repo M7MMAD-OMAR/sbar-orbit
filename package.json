@@ -1,8 +1,16 @@
 {
   "name": "sbar-orbit",
-  "version": "0.1.0-alpha.9",
-  "description": "Local isolated application workspaces for tool-capable AI agents.",
+  "version": "0.1.0",
+  "description": "Give an AI agent its own browser and desktop, so it stops using yours. Local, private, no telemetry.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/M7MMAD-OMAR/sbar-orbit.git"
+  },
+  "homepage": "https://github.com/M7MMAD-OMAR/sbar-orbit#readme",
+  "bugs": {
+    "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/issues"
+  },
   "type": "module",
   "bin": {
     "sbar-orbit": "bin/sbar-orbit"
@@ -21,7 +29,10 @@
     "docs/*.md",
     "docs/research/**/*.md",
     "AGENTS.md",
+    "README.md",
+    "LICENSE",
     "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
     "SECURITY.md",
     "NOTICE",
     "CHANGELOG.md"

@@ -78,6 +78,8 @@ Sbar Orbit, local agent workspace prototype
   sbar-orbit update prune        Remove prepared versions nothing would roll back to
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
+  sbar-orbit profiles            Which of your browser profiles a session can start from,
+                                 and the reason for each one it cannot
   sbar-orbit diagnostics         Prepare a private report and a GitHub issue link, also offline
   sbar-orbit preflight           Check prerequisites without starting applications
   sbar-orbit preview             Print the optional viewer link

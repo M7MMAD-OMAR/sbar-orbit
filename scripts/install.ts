@@ -106,9 +106,13 @@ if (json) {
       `    ${command} preview`,
       "",
       ...(connect ? ["  Agent hosts:", `    ${report.steps.find(step => step.id === "hosts")?.detail ?? "not configured"}`,
-        "    Restart configured hosts to load Orbit tools."]
+        ...(report.hostsConnected ? ["    Restart configured hosts to load Orbit tools."]
+          // A refused host is not a broken install, and saying so here is the difference between a
+          // person restarting their agent and a person reinstalling something that already works.
+          : ["    Orbit is installed and running; only the host's own settings were left alone.",
+            "    Remove or rename its existing `orbit` entry and rerun to connect it."])]
         : ["  Give an agent host the connector:", `    ${connectorCommand(report)}`]),
-    ], report.remedies.length ? "warn" : "good");
+    ], report.remedies.length || !report.hostsConnected ? "warn" : "good");
   } else {
     const failed = report.steps.filter(step => step.state === "failed");
     display.summary("Orbit is not installed.", failed.map(step => `  ${step.title}: ${step.detail}`), "bad");
