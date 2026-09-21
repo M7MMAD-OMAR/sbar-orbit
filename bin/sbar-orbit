@@ -42,7 +42,7 @@ export PATH="$(dirname -- "$orbit_bun"):$PATH"
 case "${1:-help}" in
   help|--help|-h)
     cat <<'HELP'
-Sbar Orbit, local agent workspace prototype
+Sbar Orbit, a private browser and desktop for your AI agent
 
   sbar-orbit install             Do the whole installation in one command
   sbar-orbit install --dry-run   Show every step without changing anything
@@ -112,7 +112,7 @@ Sbar Orbit, local agent workspace prototype
 
 Client commands default to the managed socket; ORBIT_SOCKET selects another broker.
 Set ORBIT_CONVERSATION_ID uniquely per conversation to share CLI/MCP usage state.
-Requires Bun and installed project dependencies. Fedora/Linux prototype.
+Requires Bun and a Chromium browser. The private display is Linux only; see docs/support-tiers.md.
 HELP
     ;;
   preflight)

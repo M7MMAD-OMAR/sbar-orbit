@@ -1,6 +1,6 @@
 # Local broker and CLI
 
-Implemented prototype: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; the installer can register the executable and user service.
+Implemented: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; the installer can register the executable and user service.
 
 ## Conversation usage
 

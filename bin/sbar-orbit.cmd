@@ -116,7 +116,7 @@ echo Linux only. The broker, the browser sessions and the MCP adapter are not. 1
 exit /b 2
 
 :help
-echo Sbar Orbit, local agent workspace prototype ^(Windows^)
+echo Sbar Orbit, a private browser for your AI agent ^(Windows^)
 echo.
 echo   sbar-orbit serve               Start the broker with the shared job object budget
 echo   sbar-orbit status              Sessions, tabs and windows
