@@ -41,6 +41,8 @@ export type InstallOptions = {
   connect?: "auto" | AgentHost[];
   /** Reporting hook, so the terminal display and the JSON report read the same events. */
   onStep?: (id: string, state: "running" | StepOutcome["state"], record?: StepRecord) => void;
+  /** Injected for tests, which must never read or write the real user's agent host configuration. */
+  home?: string;
   /** Injected for tests, which must never spawn a package manager. */
   install?: (source: string) => Promise<{ ok: boolean; output: string }>;
   /** Injected for tests, which must never download packages or compile anything. */
@@ -411,7 +413,7 @@ export async function runInstall(options: InstallOptions = {}) {
     const registration = await registerAgentHosts(options.connect, {
       ...connectorEntry({ launcher, source, preferInterpreter: process.platform === "win32" }),
       env: { ORBIT_SOCKET: serviceSocketPath() },
-    }, { dryRun });
+    }, { dryRun, ...(options.home === undefined ? {} : { home: options.home }) });
     const failed = registration.some(host => host.state === "failed");
     return { state: failed ? "failed" : dryRun ? "skipped" : "done",
       detail: registration.map(host => `${host.host}: ${host.state}${host.state === "failed" ? ` (${host.detail})` : ""}`).join(", "),

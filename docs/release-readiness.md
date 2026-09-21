@@ -231,6 +231,27 @@ This is the first of the intermittent failures to be explained rather than retai
 one platform, in one run: it does not explain the earlier Windows first-capture delay, and it does not
 touch the two local contention failures on this workstation.
 
+## A test that read the real home, 21 September 2026
+
+[Run 35556260365](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35556260365) at `c7e7de5`
+failed `suite` on all three platforms, and the six other jobs passed. One cause on Ubuntu and macOS,
+two on Windows.
+
+The shared one is a test defect in `tests/install-hosts-refused.test.ts`, written the same day. It
+seeded a fake `.claude.json` in a temporary directory and exported it as `process.env.HOME`. On POSIX
+`homedir()` reads the password database and not the environment, so the installer resolved the
+runner's real home instead: with no `orbit` entry there to collide with, the host step reported
+`skipped` rather than `failed` and the assertion fell over. It passed locally for the worst reason,
+which is that this workstation's own `~/.claude.json` does hold an orbit entry, so the test was
+reading the developer's real configuration and calling that a pass. `runInstall` now takes an explicit
+`home`, the test passes it, and the test is verified twice: once here and once under a `HOME` with no
+entry in it, which is the runner's condition. Reverting the product fix still fails it.
+
+The second Windows failure is the retained timing flake, not a new one. `abrupt broker death reaps its
+browser tree and a fresh broker rejects stale sessions` hit its 20-second ceiling at 20003.16 ms, which
+is a deadline and not the `RangeError` the cycle fix closed above. It is the same observation kept at
+`339dd74`, unwidened.
+
 ## All nine CI jobs at the workspace-sweep fix, 20 September 2026
 
 [Run 35505029561](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35505029561) passed all nine
