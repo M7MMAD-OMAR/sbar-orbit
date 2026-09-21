@@ -4,6 +4,14 @@ Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a pr
 
 ## 0.1.0 (21 September 2026)
 
+Published to the npm registry as `latest` and to
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0), tagged at `cfb6144`, where all
+nine CI jobs passed. The published tarball was downloaded back and is byte identical to the one built
+here, SHA-256 `d802f77380cedcfe4165113e85518b2c8eb5496bd07161f8a76b21f36e33a861` over 160 files, and
+installing it from the registry into a throwaway prefix runs `--help` and `sbar-orbit profiles`.
+`suite (windows-latest)` needed a rerun of that one job, with no code change in between; it is
+recorded in [release readiness](docs/release-readiness.md) as unexplained rather than as fixed.
+
 The first release without an alpha tag. No persisted schema and no service unit contract changed, so
 an existing installation upgrades in place. An automatic update will not cross from a prerelease to a
 release by itself: `sameLine` treats them as different lines, so an alpha machine is told a newer

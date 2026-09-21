@@ -38,6 +38,9 @@ writes the MCP configuration for detected Claude Code, Codex and Hermes hosts, a
 the installed broker answers. Restart those hosts to load Orbit's tools. Nothing needs root, and
 `--dry-run` reports every step without changing anything.
 
+Current version: **0.1.0** ([release notes](docs/release-0.1.0.md) ·
+[changelog](CHANGELOG.md)).
+
 ## Use it
 
 From an agent, through MCP: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_stop`.

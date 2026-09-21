@@ -1,8 +1,9 @@
 # Roadmap
 
-**State, 20 September 2026.** Tagged `v0.1.0-alpha.9` at `ed355d8`, and `0.1.0-alpha.9` is what the npm
-registry serves as `latest`. It is a fix release over alpha.8, which was tagged at `6a802f5`; no
-persisted schema or service unit contract changed between them. Of the seven gates below, 2, 3, 6 and 7 are closed at the tier their
+**State, 21 September 2026.** Tagged `v0.1.0` at `cfb6144`, where all nine CI jobs passed, and `0.1.0`
+is what the npm registry serves as `latest`. It is the first release without an alpha suffix; no
+persisted schema or service unit contract changed from the alpha line, and an automatic update will
+not cross from a prerelease to a release by itself. Of the seven gates below, 2, 3, 6 and 7 are closed at the tier their
 evidence supports, and gate 1 is closed by an automated reading taken on this desktop but not yet by
 the participant's own reading of the viewer's `#cost` line. Gates 4 and 5, and every claim about a
 machine with a person at it, still wait on the same thing: a host that is not this workstation, with

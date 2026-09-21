@@ -1,5 +1,10 @@
 # 0.1.0
 
+Published on 21 September 2026 to the npm registry as `latest` and to
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0), tagged at `cfb6144`, where all
+nine CI jobs passed. The published tarball was downloaded back and is byte identical to the one built
+here, SHA-256 `d802f77380cedcfe4165113e85518b2c8eb5496bd07161f8a76b21f36e33a861` over 160 files.
+
 The first release without an alpha tag. Nothing about the code became stable by renaming it: what
 changed is that the installation path, the agent surface and the documentation are now the ones a
 person meeting this project for the first time can follow without reading its history.
