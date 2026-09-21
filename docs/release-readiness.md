@@ -231,6 +231,26 @@ This is the first of the intermittent failures to be explained rather than retai
 one platform, in one run: it does not explain the earlier Windows first-capture delay, and it does not
 touch the two local contention failures on this workstation.
 
+## All nine jobs at 0.1.0, and the Windows job that needed a rerun, 21 September 2026
+
+[Run 35556878848](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35556878848) passed **all
+nine jobs** at `cfb6144`, the revision `v0.1.0` names. Ubuntu and macOS passed on the first attempt;
+`suite (windows-latest)` failed once and passed on a rerun of that job alone, with no change to the
+code in between.
+
+What it failed on is worth naming rather than hiding behind the word flake, because it sits on the
+guarantee this project is judged by. `tests/person-browser.test.ts`, the test that proves an owned
+browser is Orbit's own and the person's is left alone, ended with one pid of the stand-in browser's 14
+missing after Orbit closed its own. The close path cannot explain it: Orbit closes a Windows job
+object handle, the kernel terminates that job's members, and a process outside the job is not
+reachable from it. The same test, the same binary and the same commit then passed on the rerun, and
+Windows had passed it in the three runs before this one.
+
+So it is recorded as unexplained and NOT as fixed. Two failures on this platform in consecutive runs,
+each a different test, each passing afterwards, is a pattern about the runner rather than a finding
+about the code, and it stays an open observation beside the 20-second deadline flake from `339dd74`.
+Windows remains `Limited`, which is what that tier is for.
+
 ## A test that read the real home, 21 September 2026
 
 [Run 35556260365](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/35556260365) at `c7e7de5`
