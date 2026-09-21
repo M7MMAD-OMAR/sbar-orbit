@@ -27,7 +27,16 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     const a = await connect();
     const b = await connect();
     expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version });
-    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_diagnostics", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop", "orbit_usage"]);
+    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_diagnostics", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_profiles", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop", "orbit_usage"]);
+    // The capability an agent could not find. `cloneOf` has existed on session.create since the
+    // clone path closed, and the adapter exposed neither it nor any way to learn a profile path,
+    // so an agent asked whether Orbit could use the person's own browser answered no. Both halves
+    // are asserted: the tool that answers the question, and the parameter that acts on the answer.
+    const profiles = payload(await tool(a, "orbit_profiles")) as { profiles: { clonable: boolean; profileDirectory: string }[] };
+    expect(Array.isArray(profiles.profiles)).toBe(true);
+    for (const entry of profiles.profiles) expect(typeof entry.profileDirectory).toBe("string");
+    const createSchema = (await a.listTools()).tools.find(t => t.name === "orbit_create")!.inputSchema as { properties: Record<string, unknown> };
+    expect(Object.keys(createSchema.properties)).toEqual(expect.arrayContaining(["cloneOf", "cloneExtensions", "policy"]));
     expect(payload(await tool(a, "orbit_diagnostics"))).toMatchObject({ schemaVersion: 1 });
     const session = payload(await tool(a, "orbit_create")) as { sessionId: string };
     const act = (action: unknown, requestId = crypto.randomUUID()) => tool(a, "orbit_act", { ...session, requestId, action });

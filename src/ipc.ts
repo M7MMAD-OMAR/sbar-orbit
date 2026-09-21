@@ -12,9 +12,15 @@ import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers"
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
 import { Diagnostics, diagnosticRoot } from "./diagnostics";
+import { normaliseClientResponseUrls } from "./http-response-url";
 
 export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
   await requireResourceBudget();
+  // Before anything can make an HTTP request. A Bun client response carries the request path in
+  // `url`, where Node leaves it empty, and Playwright's fetch path feeds that field to `new URL`
+  // whenever a response sets a cookie. The throw is uncaught and takes the broker down, so every
+  // other agent's sessions die with it. See src/http-response-url.ts.
+  normaliseClientResponseUrls();
   // A broker whose renderer switch is misconfigured refuses to start, here, rather than refusing
   // every native session later with an error the agent cannot act on.
   nativeRendererFromEnv();

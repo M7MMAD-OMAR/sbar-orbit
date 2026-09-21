@@ -2,6 +2,32 @@
 
 Versions follow Semantic Versioning. Alpha releases are experimental and may change interfaces without compatibility guarantees.
 
+## Unreleased
+
+Two failures with one symptom, found on 21 September 2026 when an agent driving Orbit through the MCP
+adapter answered that Orbit cannot use the person's own browser or their signed-in accounts. Both are
+fixed and both are measured on this host.
+
+- **The broker died on any response that set a cookie.** Bun sets `IncomingMessage.url` on a CLIENT
+  response to the request path, where Node leaves it empty. Playwright's fetch path reads that field
+  as the response URL, `response.url || url.toString()` therefore never reaches its fallback, and
+  `new URL("/settings/profile")` throws inside a socket handler with nothing above it to catch. The
+  broker exited, taking every session on it, including other agents', down with it. The redirect hop
+  in `src/browser.ts` fetches documents one hop at a time precisely so a login redirect is checked,
+  so the crash fired on the first sign-in page a session visited and looked like the feature failing.
+  `src/http-response-url.ts` restores the documented empty value on client responses, prepended so it
+  runs before the caller's own listener, and `tests/http-response-url.test.ts` fails against the
+  unfixed code. Measured after the fix: a cloned session navigated to `npmjs.com/settings/profile`,
+  `x.com/home` and `youtube.com/account` and landed signed in on all three.
+- **The capability existed and no agent could find it.** `session.create` has taken `cloneOf` since
+  the clone path closed, but the MCP adapter exposed neither `cloneOf`, nor `cloneExtensions`, nor
+  `policy`, and offered no way to learn a profile path. An agent reading its own tools could only
+  conclude the product does not do this. New `profiles.list` (`orbit_profiles`) lists the person's
+  browser profiles with `canCloneProfile`'s verdict for each: a `cloneOf` path where it is allowed,
+  the measured reason where it is not. `orbit_create` now carries `cloneOf`, `cloneExtensions` and
+  `policy`, and the adapter's instructions tell an agent never to answer that Orbit cannot use the
+  real browser without calling `orbit_profiles` first.
+
 ## 0.1.0-alpha.9 (20 September 2026)
 
 Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9), tagged at `ed355d8`, where all nine CI jobs passed with 491 tests on each platform. The published tarball was downloaded back and is byte identical to the built one; the package smoke test was refused by the shared budget and is not measured. See [the release notes](docs/release-alpha9.md).

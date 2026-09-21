@@ -246,6 +246,7 @@ The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:
 | Method | Parameters |
 |---|---|
 | `doctor`, `session.list` | `{}` |
+| `profiles.list` | `{}`, the person's own browser profiles and, for each, whether a session may start from it. A clonable entry carries the `cloneOf` path to pass to `session.create`; a refused one carries the reason `canCloneProfile` gave, which is the same verdict creation applies |
 | `session.create` | `{backend:"browser"|"fedora"|"system", profileKey?:string, accountName?:string}`; `cloneOf` is an absolute path to a Chrome or Chromium profile to clone, browser backend only, bounded origins required, and `cloneExtensions: false` leaves the profile's extensions dormant in the clone: measured 14 September 2026, a proxy extension set its own proxy inside a confined clone and every origin failed as disconnected, the lease failing closed |
 | `session.account.save` | `{sessionId}`, paused named browser session only |
 | `session.act` | `{sessionId, requestId, action}` |

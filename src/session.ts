@@ -7,7 +7,7 @@ import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
-import { describeMachine, detectPlatform, type PlatformCapabilities } from "./platform";
+import { canCloneProfile, describeMachine, detectPlatform, type PlatformCapabilities } from "./platform";
 import { openEgressLease, type EgressLease } from "./egress";
 import { defaultChromeExecutable } from "./chrome";
 import { cloneProfile } from "./clone";
@@ -551,6 +551,33 @@ export class Sessions {
       // only, since it is systemd units that drift this way.
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
+    /*
+     * Which of the person's own browser profiles this session could start from, and for each one it
+     * cannot, the measured reason why.
+     *
+     * The capability existed and no agent could find it. `session.create` has taken `cloneOf` since
+     * the clone path closed, but an agent driving Orbit through the MCP adapter saw no parameter for
+     * it and no way to learn a profile path, so it answered that Orbit cannot use the person's real
+     * browser: the opposite of what this product is for. A capability an agent cannot discover is
+     * not a capability.
+     *
+     * Every refusal comes from `canCloneProfile`, so what an agent reads here is the same verdict
+     * the create path will apply rather than a second opinion that could drift from it.
+     */
+    if (request.method === "profiles.list") {
+      const capabilities = await this.capabilities();
+      const workspace = this.root;
+      const profiles = await Promise.all(capabilities.browsers.map(async install => {
+        const verdict = await canCloneProfile(install.profileDirectory, capabilities, workspace);
+        return {
+          browser: install.id, packaging: install.packaging, profileDirectory: install.profileDirectory,
+          // The field an agent passes straight back as `cloneOf`, absent when it may not.
+          ...(verdict.allowed ? { cloneOf: install.profileDirectory, reflink: verdict.reflink } : { reason: verdict.reason }),
+          clonable: verdict.allowed,
+        };
+      }));
+      return { profiles, note: "Pass cloneOf to session.create with a policy naming the origins the session may reach. The clone is a copy, deleted when the session stops, so nothing it does reaches the person's own browser." };
+    }
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
     /*
