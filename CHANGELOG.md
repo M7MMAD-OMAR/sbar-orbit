@@ -25,6 +25,7 @@ place.
 
 Local suite at this commit, Fedora 44: **468 pass, 0 fail, 27 skip, 495 tests across 100 files,
 218 s** with `ORBIT_TEST_NATIVE=1`; without the native tests, 454 pass, 0 fail, 41 skip, 182 s.
+[Release notes](docs/release-0.1.1.md).
 
 ## 0.1.0 (21 September 2026)
 
