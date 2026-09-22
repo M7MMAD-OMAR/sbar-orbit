@@ -1,6 +1,6 @@
 {
   "name": "sbar-orbit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Give an AI agent its own browser and desktop, so it stops using yours. Local, private, no telemetry.",
   "license": "Apache-2.0",
   "repository": {

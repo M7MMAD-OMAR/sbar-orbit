@@ -2,6 +2,30 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.1.1 (22 September 2026)
+
+### Fixed
+
+- **An agent opened an Orbit session to read a public page.** Every surface that decides when to use
+  Orbit said "whenever a task needs a browser", so "open this link", "review this site" and plain
+  research bought a session, an owned browser and a slice of the shared resource budget to answer
+  what a fetch answers for free, while the host's own web tools sat unused beside them. The trial in
+  [connectors](docs/connectors.md) had already measured the honest behaviour: a generic browser
+  request is a generic browser tool's job, and a host keeps it there unless its instructions say
+  otherwise. The routing rule now lives in every surface that makes the decision: the MCP adapter's
+  own instructions and the `orbit_create` description, [agent interface](docs/agent-interface.md),
+  [connectors](docs/connectors.md), the portable `orbit-usage` skill and the README. Orbit is for
+  the person's own browser and logged-in accounts, a private session they can watch or take over,
+  and real desktop applications; a link to read, a site to review or research goes to the host's own
+  web tools first. `tests/mcp.test.ts` pins both halves of the rule where an agent reads them, and
+  the new assertion was run against the unfixed adapter first, where it failed on the missing words.
+
+No persisted schema and no service unit contract changed, so an existing installation upgrades in
+place.
+
+Local suite at this commit, Fedora 44: **468 pass, 0 fail, 27 skip, 495 tests across 100 files,
+218 s** with `ORBIT_TEST_NATIVE=1`; without the native tests, 454 pass, 0 fail, 41 skip, 182 s.
+
 ## 0.1.0 (21 September 2026)
 
 Published to the npm registry as `latest` and to
