@@ -1,18 +1,25 @@
 # Source releases
 
-**Current state, 21 September 2026.** `0.1.0` is published to the npm registry as `latest` and to
-[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0), with an annotated tag on
-tested revision `cfb6144`, where all nine CI jobs passed. The published registry tarball was
+**Current state, 22 September 2026.** `0.1.1` is published to the npm registry as `latest` and to
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.1), with an annotated tag on
+tested revision `7e9c6d7`, where all nine CI jobs passed. The published registry tarball was
 downloaded back and is byte identical to the one built here, SHA-256
-`d802f77380cedcfe4165113e85518b2c8eb5496bd07161f8a76b21f36e33a861` over 160 files; the source archive
-is SHA-256 `0c761d23b8140062d6ecabaaab6a7f2a40d0b46bd258a8349884aceacb459769` over 480 files.
-Installing the published version from the registry into a throwaway `BUN_INSTALL` prefix runs
-`--help` and `sbar-orbit profiles`. It is the first release without an alpha suffix; no persisted
+`6a50331e5e5a7d9f7828489d596fbc871d462ebdeac66d2cba1774e84d7b9d42`; its listing carries 149 files in
+161 entries. The source archive is SHA-256
+`719cc0f9d3a070624ca755b14a3abdd478d6a323da1aba18665152f634aed6f0` over 481 files. Installing the
+published version from the registry into a throwaway `BUN_INSTALL` prefix runs `--help`, `preflight`
+and `install --dry-run --json`.
+
+`0.1.0` was published the same way on 21 September 2026 at tested revision `cfb6144`, and its read
+back recorded SHA-256 `d802f77380cedcfe4165113e85518b2c8eb5496bd07161f8a76b21f36e33a861` over 160
+files and a source archive of SHA-256 `0c761d23b8140062d6ecabaaab6a7f2a40d0b46bd258a8349884aceacb459769`
+over 480 files. It is the first release without an alpha suffix; no persisted
 schema and no service unit contract changed, so the installation and migration path in
 [the 0.1.0 notes](release-0.1.0.md) is unchanged from the alpha line. Before it, `0.1.0-alpha.9` was
 published at `ed355d8` and `0.1.0-alpha.8` at `6a802f5`, whose published archive was installed back on
 a disposable Fedora systemd host; managed adoption, broker health, private browser capture and timer
-enable/disable passed. See [the release notes](release-0.1.0.md) and [the changelog](../CHANGELOG.md).
+enable/disable passed. See [the 0.1.1 notes](release-0.1.1.md), [the 0.1.0 notes](release-0.1.0.md) and
+[the changelog](../CHANGELOG.md).
 
 The first release published to the npm registry is `0.1.0-alpha.3`, on 13 September 2026, as `sbar-orbit`, and `0.1.0-alpha.4` followed it the same day with the packaging fixes below; a published version is immutable, so `0.1.0-alpha.3` still carries what it shipped with. `0.1.0-alpha.1` and `0.1.0-alpha.2` were tagged and packaged locally and never published, so nothing but this repository's history refers to them. A release is a source archive requiring Bun, Linux cgroup delegation and Chrome/Chromium. Native runtime dependencies are separate. It is not a standalone installer.
 

@@ -4,6 +4,13 @@ Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a pr
 
 ## 0.1.1 (22 September 2026)
 
+Published to the npm registry as `latest` and to
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.1), tagged at `7e9c6d7`, where all
+nine CI jobs passed. The published tarball was downloaded back and is byte identical to the one built
+here, SHA-256 `6a50331e5e5a7d9f7828489d596fbc871d462ebdeac66d2cba1774e84d7b9d42`, 149 files in 161 tar
+entries, and installing it from the registry into a throwaway prefix runs `--help`, `preflight` and
+`install --dry-run --json`.
+
 ### Fixed
 
 - **An agent opened an Orbit session to read a public page.** Every surface that decides when to use

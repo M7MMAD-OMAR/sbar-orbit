@@ -1,5 +1,12 @@
 # 0.1.1
 
+Published on 22 September 2026 to the npm registry as `latest` and to
+[GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.1), tagged at `7e9c6d7`, where
+all nine CI jobs passed. The published tarball was downloaded back and is byte identical to the one
+built here, SHA-256 `6a50331e5e5a7d9f7828489d596fbc871d462ebdeac66d2cba1774e84d7b9d42`, 149 files in
+161 tar entries, and installing it from the registry into a throwaway prefix runs `--help`,
+`preflight` and `install --dry-run --json`.
+
 A fix release, and the fix is about when to use Orbit at all. No persisted schema and no service unit
 contract changed, so an existing installation upgrades in place.
 
