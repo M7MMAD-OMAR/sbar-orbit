@@ -54,7 +54,7 @@ export const arabic: Record<string, string> = {
   "Installation commands": "أوامر التثبيت",
   "Linux, macOS or Windows, with Bun and Chrome/Chromium. Linux additionally needs user cgroup delegation, and the private display for native apps is Linux only and needs the": "يعمل على لينكس وmacOS وWindows، ويحتاج إلى Bun ومتصفح Chrome أو Chromium. ويحتاج لينكس إضافة إلى ذلك تفويض cgroup للمستخدم. أما سطح المكتب الخاص لتطبيقات النظام فيعمل على لينكس وحده، راجع",
   "Fedora setup": "إعداد Fedora بالإنجليزية",
-  "Version 0.1.0": "الإصدار 0.1.0",
+  "Version 0.1.1": "الإصدار 0.1.1",
   "Measured on Fedora 44 with wlroots, on Windows, and on Apple silicon macOS. The private browser runs on all three.": "اختبر على Fedora 44 مع wlroots، وعلى Windows، وعلى macOS بمعالج Apple. المتصفح الخاص يعمل على الأنظمة الثلاثة.",
   "The resource budget is enforced by the kernel on Linux and Windows. On macOS it is advisory, because the platform offers no equivalent.": "حد الموارد تفرضه نواة النظام على لينكس وWindows. وعلى macOS يبقى الحد إرشاديا فقط، إذ لا يوفر النظام وسيلة مكافئة لفرضه.",
   "See support tiers": "تفاصيل الدعم بالإنجليزية",
