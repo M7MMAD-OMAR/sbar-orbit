@@ -80,3 +80,31 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     expect(payload(await tool(b, "orbit_status"))).toMatchObject({ code: "BROKER_UNAVAILABLE" });
   } finally { await Promise.allSettled(clients.map(c => c.close())); await broker.close(); fixture.stop(true); }
 }, 30000);
+
+// Which tool a job belongs to, asserted as the words an agent reads before it chooses one. Orbit's
+// own trial with a real host (docs/connectors.md) measured that a generic browser request stays with
+// the host's generic browser tool and reaches Orbit only when isolation is the point, while every
+// instruction this adapter shipped said the opposite: use Orbit whenever a task needs a browser. The
+// mismatch is not free. An agent following it spends a session, an owned browser and a slice of the
+// shared budget to read a page a fetch would have answered. Both halves are pinned: what Orbit is
+// for, and whose job the rest is. Shapes rather than the whole paragraph, because a gate that pins
+// prose fails on every rewording and teaches the next editor to delete it.
+test("the adapter tells an agent when a task is not Orbit's job", async () => {
+  const broker = await startBroker();
+  const transport = new StdioClientTransport({ command: process.execPath, args: ["src/mcp.ts"], cwd: process.cwd(), env: { ORBIT_SOCKET: broker.socket }, stderr: "pipe" });
+  const client = new Client({ name: "orbit-routing-check", version: "1.0.0" });
+  try {
+    await client.connect(transport);
+    const instructions = client.getInstructions() ?? "";
+    expect(instructions).toMatch(/not a general web tool/);
+    expect(instructions).toMatch(/host.s own web tools/);
+    const created = (await client.listTools()).tools.find(tool => tool.name === "orbit_create");
+    const description = created?.description ?? "";
+    expect(description).toMatch(/host.s own web tools/);
+    // And the other half: an agent that should reach for Orbit has to see why it exists at all.
+    expect(description).toMatch(/watch or take over/);
+  } finally {
+    await client.close();
+    await broker.close();
+  }
+});

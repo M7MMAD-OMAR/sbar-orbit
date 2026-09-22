@@ -65,13 +65,19 @@ sbar-orbit profiles                 # which profiles can be used, and why not wh
 An agent does the same with `orbit_profiles`, then passes `cloneOf` to `orbit_create` with the
 origins the session may reach. See [accounts](docs/accounts.md).
 
+**When to reach for it.** Orbit is for work that needs you: your own browser profile and
+logged-in accounts, a private session you can watch or take over, or a real desktop application.
+An agent asked to open a link, review a public site or do research should use its own web tools
+first: they cost no session and start instantly. [Agent interface](docs/agent-interface.md)
+carries the rule in full.
+
 Turn Orbit off for one conversation with `sbar-orbit usage off`, on again only when you ask.
 
 ## Supported systems
 
 | System | State | What that means |
 |---|---|---|
-| Fedora 44, wlroots | **Measured** | Everything: private browser, private display, real-profile sessions, kernel-enforced budget. 458 pass / 0 fail across 485 tests |
+| Fedora 44, wlroots | **Measured** | Everything: private browser, private display, real-profile sessions, kernel-enforced budget. 468 pass / 0 fail across 495 tests |
 | Other Linux | **Reasoned** | The browser backend is expected to work; no host of that class has run the suite here. A report from yours is welcome |
 | Windows 11 | **Limited** | Browser sessions and MCP work. No private display, no keyring sessions. Needs Bun 1.4.2+ |
 | macOS | **Limited** | Browser sessions and install work. The resource budget is advisory, not a kernel ceiling. Real-profile sessions are refused by design |

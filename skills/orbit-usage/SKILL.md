@@ -47,6 +47,15 @@ the installed Hermes `/tools disable` writes configuration and resets the sessio
 Do not change personal host settings merely to implement a conversation preference.
 A shared MCP process must not be described as a separate scope for each chat.
 
+## Routing first
+
+Orbit is for the person's own browser or logged-in accounts, a private session
+they can watch or take over, or a real desktop application. Reading a link,
+reviewing a public site or research is the host's own web tools' job and must
+not open a session: use the host's fetch or extract, search, or embedded browser
+tool first, and reach for Orbit only when those cannot do the job, when the
+person's identity is what the task needs, or when the person asks.
+
 ## Use only the information needed
 
 Create an owned browser or system session with `agentName` and `taskName`.

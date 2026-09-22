@@ -6,6 +6,26 @@ with no shell, extension or custom tool interface cannot integrate automatically
 This review improves data delivery and conversation opt-out; it does not certify
 all applications or model hosts.
 
+## What belongs in an Orbit session
+
+The routing decision, before any call is made. Orbit exists for three things: the
+person's own browser and logged-in accounts, reached through `orbit_profiles` and
+`cloneOf`; a private session of their own that they can watch or take over; and
+real desktop applications on the private display. Anything the person asks to run
+on the system, in their browser or in their other applications belongs here, and
+nothing belongs on their own screen.
+
+Everything that only needs the content of the web does not. Opening a link to
+read it, reviewing a public site, research and page checks are the host's own web
+tools' job: fetch or extract, search, or the host's embedded browser tool such as
+Playwright. They start instantly and cost no session, no owned browser and no
+slice of the shared budget. Reach for Orbit when those cannot do the job, when the
+person's identity is what the task needs, when the work must stay watchable in the
+viewer or bounded by a policy and a journal, or when the person asks for an Orbit
+session. `tests/mcp.test.ts` pins both halves of this rule in the adapter's own
+instructions and in the `orbit_create` description, so it cannot drift away from
+what an agent reads.
+
 ## One conversation can opt out
 
 With MCP:
