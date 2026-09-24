@@ -20,6 +20,7 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("navigate"), url: id }),
   z.object({ type: z.literal("fill"), selector, text: z.string().max(16384) }),
   z.object({ type: z.literal("click"), selector }),
+  z.object({ type: z.literal("upload"), selector, files: z.array(z.string().min(1).max(4096)).min(1).max(32) }),
   z.object({ type: z.literal("read"), selector }),
   z.object({ type: z.literal("open-tab"), url: id.optional() }),
   z.object({ type: z.literal("select-tab"), tab: z.number().int().min(1).max(64) }),
@@ -101,7 +102,7 @@ export function createMcpServer(socket: string) {
     },
   }, params => invoke("session.create", params));
   server.registerTool("orbit_act", {
-    description: "Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
+    description: "Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, upload local files to a file input or the chooser a button opens (irreversible, so the session policy must allow it), read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
     inputSchema: { sessionId: id, requestId: id, action },
   }, params => invoke("session.act", params));
   const descriptions = {

@@ -53,6 +53,8 @@ const classOfAction: Record<string, ActionClass> = {
   pointer: "write", window: "write", launch: "write",
   // Leaves the workspace for the filesystem, so stopping the session does not take it back.
   download: "irreversible",
+  // Hands local files to a page, which sends them wherever that page sends them.
+  upload: "irreversible",
 };
 
 export function classify(actionType: string): ActionClass {

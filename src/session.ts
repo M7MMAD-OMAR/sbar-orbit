@@ -98,7 +98,7 @@ interface Session {
   restoring?: boolean;
 }
 // Reported by doctor before any session exists. A live session reports its own backend's list.
-const capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
+const capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
 /**
  * The HTTP method a browser action implies, for rules that name one.
  *

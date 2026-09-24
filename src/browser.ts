@@ -1,6 +1,8 @@
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type Page } from "playwright";
+import { realpath, stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
@@ -25,7 +27,34 @@ export function captureTimeoutMs(raw = process.env.ORBIT_CAPTURE_TIMEOUT_MS): nu
 
 export type Action = { type: "navigate"; url: string } | { type: "fill"; selector: string; text: string }
   | { type: "click" | "read"; selector: string } | { type: "select-tab" | "close-tab"; tab: number }
-  | { type: "open-tab"; url?: string } | { type: "resize"; width: number; height: number } | ScrollInput;
+  | { type: "open-tab"; url?: string } | { type: "resize"; width: number; height: number } | ScrollInput
+  | { type: "upload"; selector: string; files: string[] };
+/** The most files one upload may carry, the same ceiling a native launch may reserve. */
+export const uploadFileLimit = 32;
+function uploadFiles(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > uploadFileLimit)
+    throw new OrbitError("INVALID_REQUEST", `Upload needs 1 to ${uploadFileLimit} absolute file paths`);
+  return value.map(file => {
+    if (typeof file !== "string" || !isAbsolute(file) || file.length > 4096 || file.includes("\0"))
+      throw new OrbitError("INVALID_REQUEST", "Upload files must be absolute paths");
+    return file;
+  });
+}
+/**
+ * Resolve what an upload will actually hand the page. Symbolic links are followed, so the page receives
+ * the file the path names and the result can say which one that was; anything that is not an existing
+ * regular file is refused before the page sees a thing, because a directory or a device handed to a
+ * file input is either an error in the page or a read of something nobody meant to send.
+ */
+async function resolveUploads(files: string[]): Promise<{ path: string; bytes: number }[]> {
+  return Promise.all(files.map(async file => {
+    let path: string;
+    try { path = await realpath(file); } catch { throw new OrbitError("INVALID_REQUEST", `Upload file does not exist: ${file}`); }
+    const info = await stat(path);
+    if (!info.isFile()) throw new OrbitError("INVALID_REQUEST", `Upload file is not a regular file: ${file}`);
+    return { path, bytes: info.size };
+  }));
+}
 function address(value: unknown): string {
   const url = text(value, "url");
   let parsed: URL;
@@ -44,6 +73,7 @@ export function parseAction(value: unknown, size: Viewport = defaultViewport): A
       if (typeof action.text !== "string" || action.text.length > 16384) throw new OrbitError("INVALID_REQUEST", "Invalid text");
       return { type: "fill", selector: text(action.selector, "selector"), text: action.text };
     case "click": case "read": return { type: action.type, selector: text(action.selector, "selector") };
+    case "upload": return { type: "upload", selector: text(action.selector, "selector"), files: uploadFiles(action.files) };
     case "select-tab": case "close-tab": {
       if (!Number.isInteger(action.tab) || Number(action.tab) < 1 || Number(action.tab) > 64)
         throw new OrbitError("INVALID_REQUEST", "Tab requires the 1-based number reported by observe");
@@ -61,7 +91,7 @@ function label(page: Page, title: string): string {
   } catch { return "New tab"; }
 }
 export class BrowserBackend {
-  readonly capabilities = ["navigate", "fill", "click", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
   private active: Page;
@@ -184,6 +214,30 @@ export class BrowserBackend {
     }
     return { applied: true };
   }
+  /**
+   * Hand local files to a page, the way a person picks them in a file dialog.
+   *
+   * A headless browser has no dialog to pick from, and most upload pages hide their real file input
+   * behind a styled button. Both shapes are handled: a selector that names an `<input type=file>`
+   * receives the files directly, whether or not it is visible, and any other selector is clicked
+   * while the chooser that click opens is caught and answered. A click that opens no chooser fails
+   * with the timeout rather than reading as a delivered upload.
+   *
+   * This sends local data off the machine, so the policy classes it irreversible and a session only
+   * runs it when it was created allowing that class.
+   */
+  private async upload(page: Page, selector: string, files: string[]) {
+    const resolved = await resolveUploads(files);
+    const paths = resolved.map(file => file.path);
+    const target = page.locator(selector);
+    const isFileInput = await target.evaluate(element => element instanceof HTMLInputElement && element.type === "file");
+    if (isFileInput) await target.setInputFiles(paths);
+    else {
+      const [chooser] = await Promise.all([page.waitForEvent("filechooser"), target.click()]);
+      await chooser.setFiles(paths);
+    }
+    return { applied: true, via: isFileInput ? "input" : "chooser", files: resolved.map(file => ({ name: file.path.split("/").at(-1) ?? file.path, bytes: file.bytes })) };
+  }
   private select(tab: number): Page {
     const pages = this.context.pages();
     const page = pages[tab - 1];
@@ -199,6 +253,7 @@ export class BrowserBackend {
       case "fill": await page.locator(action.selector).fill(action.text); return { applied: true };
       case "click": return this.clickThrough(page, action.selector);
       case "read": return { text: await page.locator(action.selector).innerText() };
+      case "upload": return this.upload(page, action.selector, action.files);
       case "open-tab": {
         // The same ceiling select-tab and close-tab address by number.
         if (this.context.pages().length >= 64) throw new OrbitError("LIMIT_REACHED", "This session already has 64 tabs open");
