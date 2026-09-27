@@ -50,7 +50,7 @@ const classOfAction: Record<string, ActionClass> = {
   // That is a statement about the display, not about the program: the native launcher is not
   // permission containment and does not make an arbitrary same-user command safe.
   fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
-  pointer: "write", window: "write", launch: "write",
+  pointer: "write", window: "write", launch: "write", "launch-app": "write",
   // Leaves the workspace for the filesystem, so stopping the session does not take it back.
   download: "irreversible",
   // Hands local files to a page, which sends them wherever that page sends them.

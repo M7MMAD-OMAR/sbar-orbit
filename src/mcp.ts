@@ -26,6 +26,9 @@ const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("select-tab"), tab: z.number().int().min(1).max(64) }),
   z.object({ type: z.literal("close-tab"), tab: z.number().int().min(1).max(64) }),
   z.object({ type: z.literal("launch"), argv: z.array(z.string().max(4096)).min(1).max(128), toolkit: z.enum(["wayland", "x11"]), selectedFiles: z.array(z.string().min(1).max(4096)).max(32).optional() }),
+  z.object({ type: z.literal("launch-app"), app: z.literal("vscode"), profile: z.literal("default"),
+    extensions: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(name => !name.includes(".."))).max(4),
+    openPath: z.string().startsWith("/").max(4096).optional() }).strict(),
   z.object({ type: z.literal("scroll"), x: coordinate, y: coordinate, deltaY: z.number().int().min(-20).max(20).refine(value => value !== 0) }),
   z.object({ type: z.literal("pointer"), x: coordinate, y: coordinate }),
   z.object({ type: z.literal("resize"), width: side, height: side }),
@@ -102,7 +105,7 @@ export function createMcpServer(socket: string) {
     },
   }, params => invoke("session.create", params));
   server.registerTool("orbit_act", {
-    description: "Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, upload local files to a file input or the chooser a button opens (irreversible, so the session policy must allow it), read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
+    description: "Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, upload local files to a file input or the chooser a button opens (irreversible, so the session policy must allow it), read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, or use launch-app for a private VS Code Default Profile snapshot with selected extensions and an optional shared file or folder. This copies settings, not login state. Move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
     inputSchema: { sessionId: id, requestId: id, action },
   }, params => invoke("session.act", params));
   const descriptions = {

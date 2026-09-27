@@ -9,11 +9,13 @@ import { defaultViewport, parseViewport, requireInside, type Viewport } from "./
 import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
+import { prepareVSCodeLaunch, validateVSCodeProfileRequest } from "./native-vscode";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
 import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./native-renderer";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
+  | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
@@ -38,6 +40,14 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
       throw new OrbitError("INVALID_REQUEST", "Select up to 32 absolute existing file paths");
     return { type: "launch", argv: a.argv, toolkit: a.toolkit, ...(a.selectedFiles !== undefined ? { selectedFiles: a.selectedFiles as string[] } : {}) };
   }
+  if (a.type === "launch-app") {
+    if (Object.keys(a).some(key => !["type", "app", "profile", "extensions", "openPath"].includes(key)) ||
+        a.app !== "vscode" || a.profile !== "default")
+      throw new OrbitError("INVALID_REQUEST", "Launch a supported application profile without caller launch arguments");
+    validateVSCodeProfileRequest(a as { extensions: string[]; openPath?: string });
+    return { type: "launch-app", app: "vscode", profile: "default", extensions: a.extensions as string[],
+      ...(a.openPath === undefined ? {} : { openPath: a.openPath as string }) };
+  }
   if (a.type === "pointer") {
     if (!Number.isInteger(a.x) || !Number.isInteger(a.y)) throw new OrbitError("INVALID_REQUEST", "Pointer coordinates must be whole pixels");
     const at = requireInside(size, Number(a.x), Number(a.y));
@@ -59,7 +69,7 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
       throw new OrbitError("UNSUPPORTED", "Unsupported native key");
     return { type: "key", key: String(a.key) };
   }
-  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, pointer, scroll, key, text, paste, resize and window");
+  throw new OrbitError("UNSUPPORTED", "Native backend supports launch, launch-app, pointer, scroll, key, text, paste, resize and window");
 }
 const project = resolve(import.meta.dir, "..");
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -96,7 +106,7 @@ async function sessionOf(pid: number): Promise<number | undefined> {
 export class FedoraBackend {
   parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
-  readonly capabilities = ["launch", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["launch", "launch-app", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
   // Each entry is a supervisor and the group leader it reported, so a supervisor that dies without
@@ -298,13 +308,16 @@ export class FedoraBackend {
       await this.ipc(`${target}${command}`);
       return { applied: true, command: action.command, ...(action.tab === undefined ? {} : { tab: action.tab }) };
     }
-    if (action.type === "launch") {
+    if (action.type === "launch" || action.type === "launch-app") {
       if (this.children.length >= 32) throw new OrbitError("LIMIT_REACHED", "Native session application limit reached");
-      const [executable] = action.argv;
+      const prepared = action.type === "launch"
+        ? action
+        : await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath });
+      const [executable] = prepared.argv;
       if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
-      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(action.selectedFiles ?? []), executable, ...action.argv.slice(1)], { env: { ...this.env, GDK_BACKEND: action.toolkit }, detached: true });
+      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []), executable, ...prepared.argv.slice(1)], { env: { ...this.env, GDK_BACKEND: prepared.toolkit }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
       const supervised: { child: ChildProcessWithoutNullStreams; group?: number } = { child };
       this.children.push(supervised);
@@ -344,7 +357,8 @@ export class FedoraBackend {
       child.once("exit", () => { void this.reap(supervised); });
       await this.ipc(`[con_id=${mapped}]`, "focus");
       await sleep(500);
-      return { pid: applicationPid, applied: true, selectedFiles };
+      return { pid: applicationPid, applied: true, selectedFiles,
+        ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}) };
       } catch (error) {
         if (child.pid && child.exitCode === null && child.signalCode === null) {
           const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));

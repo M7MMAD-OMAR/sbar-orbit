@@ -117,6 +117,20 @@ controls are how to remove schema overhead when their wider scope is intended.
 
 ## Observation contracts
 
+For a Fedora private display, a VS Code Default Profile launch can use
+`orbit_act` with this action, or `sbar-orbit act ID 'JSON'` from the CLI:
+
+```json
+{"type":"launch-app","app":"vscode","profile":"default","extensions":["pkief.material-icon-theme-5.38.1"],"openPath":"/absolute/path/to/work"}
+```
+
+`extensions` names exact installed extension folders. The action copies the
+Default Profile settings, keybindings, snippets and selected extensions into the
+private session. Up to four extensions and 256 MiB of files can be copied, with a
+64 MiB limit per file. `openPath` may be an existing file or directory. The result
+reports what was copied as `profileSnapshot`. Stopping the session removes the
+private snapshot. Sign-in state and other VS Code profiles are not copied.
+
 | Need | MCP | CLI | Result |
 |---|---|---|---|
 | Tab/window labels and pointer | `orbit_observe` with `mode: "metadata"` | `session observe ID --metadata` | Presence JSON, no screenshot call |
