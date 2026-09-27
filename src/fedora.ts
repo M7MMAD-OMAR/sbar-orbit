@@ -2,12 +2,13 @@ import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { requireResourceBudget } from "./resource-budget";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile, readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
+import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
 import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./native-renderer";
@@ -110,10 +111,13 @@ export class FedoraBackend {
   private swaySocket = "";
   private waylandDisplay = "";
   private clipboard?: ChildProcessWithoutNullStreams;
+  private bus?: { child: ChildProcessWithoutNullStreams; group?: number };
+  readonly busServices: string[] = [];
   private closing?: Promise<void>;
   /** What the compositor was asked to draw with, and what its log says actually bound. */
   renderer: { asked: NativeRenderer["renderer"]; bound: string; device?: string; driver?: string } = { asked: "pixman", bound: "pixman" };
-  private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams, private size: Viewport) {
+  private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams,
+    private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot) {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
@@ -131,17 +135,19 @@ export class FedoraBackend {
     const directory = await mkdtemp("/tmp/orbit-native-");
     // Until the backend exists, its close() cannot run, so the directory is removed here on any throw.
     let compositor: ChildProcessWithoutNullStreams, log: ReturnType<typeof createWriteStream>, head = "";
+    let preferenceSnapshot: NativePreferenceSnapshot = "absent";
     const env = { ...process.env };
     try {
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
       delete env[key];
-    // Private base directories, so an application cannot restore the person's own previous session
-    // or recent documents into the agent's workspace. System XDG_DATA_DIRS still resolve normally.
+    // Keep application state private so a launch cannot restore the person's own drafts. System
+    // XDG_DATA_DIRS still resolve normally, and GSettings preferences are copied separately.
     const base = { XDG_CONFIG_HOME: join(directory, "config"), XDG_DATA_HOME: join(directory, "data"), XDG_CACHE_HOME: join(directory, "cache"), XDG_STATE_HOME: join(directory, "state") };
     for (const path of Object.values(base)) await mkdir(path, { recursive: true, mode: 0o700 });
     // The person's theme, icons, cursor and fonts, so applications look the way they do on the
     // desktop. Documents, history and credentials are not part of it.
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
+    preferenceSnapshot = await seedNativePreferences(base.XDG_CONFIG_HOME);
     Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
@@ -164,7 +170,7 @@ export class FedoraBackend {
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
-    const backend = new FedoraBackend(directory, env, compositor, size);
+    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot);
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -189,6 +195,7 @@ export class FedoraBackend {
         try { const data = JSON.parse(await readFile(handoff, "utf8")); if (!/^:\d+$/.test(data.display)) return false; env.DISPLAY = data.display; return true; }
         catch { return false; }
       });
+      await backend.startBus();
       const device = spawn(join(runtime, "pointer"), [join(directory, backend.waylandDisplay)], { env });
       backend.device = device; device.stderr.resume();
       device.once("exit", () => { void backend.close(); });
@@ -201,6 +208,51 @@ export class FedoraBackend {
   onClose(listener: () => void) { this.listeners.push(listener); if (this.closed) listener(); }
   get surface(): Viewport { return this.size; }
   private ensureOpen() { if (this.closed) throw new OrbitError("SESSION_CLOSED", "Native display is closed"); }
+  private async startBus() {
+    const daemon = "/usr/bin/dbus-daemon";
+    if (!await Bun.file(daemon).exists()) return;
+    const socket = join(this.directory, "bus");
+    const address = `unix:path=${socket}`;
+    const services = join(this.directory, "bus-services");
+    await mkdir(services, { mode: 0o700 });
+    // Only dconf may be activated. Standard service directories can start GVFS and mount FUSE
+    // inside the private runtime, leaving it behind after the display closes.
+    try {
+      const entry = await readFile("/usr/share/dbus-1/services/ca.desrt.dconf.service", "utf8");
+      const executable = /^Exec=(\/[^\s]+)$/m.exec(entry)?.[1];
+      if (executable && await Bun.file(executable).exists()) {
+        await writeFile(join(services, "ca.desrt.dconf.service"),
+          `[D-BUS Service]\nName=ca.desrt.dconf\nExec=${executable}\n`, { mode: 0o600 });
+        this.busServices.push("ca.desrt.dconf");
+      }
+    } catch {}
+    const xml = (value: string) => value.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c] ?? c);
+    const config = join(this.directory, "bus.conf");
+    await writeFile(config, `<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">\n<busconfig>\n  <type>session</type>\n  <listen>${xml(address)}</listen>\n  <auth>EXTERNAL</auth>\n  <servicedir>${xml(services)}</servicedir>\n  <policy context="default">\n    <allow send_destination="*" eavesdrop="true"/>\n    <allow eavesdrop="true"/>\n    <allow own="*"/>\n  </policy>\n</busconfig>\n`, { mode: 0o600 });
+    this.env.DBUS_SESSION_BUS_ADDRESS = address;
+    const report = join(this.directory, "bus.json");
+    const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), report, daemon,
+      `--config-file=${config}`, "--nofork"], { env: this.env, detached: true });
+    this.bus = { child };
+    child.on("error", () => { void this.close(); });
+    child.stdout.resume(); child.stderr.resume();
+    await this.wait(async () => {
+      if (child.exitCode !== null || child.signalCode !== null) throw new OrbitError("BACKEND_FAILED", "Private D-Bus exited before opening its socket");
+      try {
+        const info = JSON.parse(await readFile(report, "utf8")) as { pid?: number; error?: { message: string } };
+        if (info.error) throw new OrbitError("BACKEND_FAILED", info.error.message);
+        if (!info.pid || !(await stat(socket)).isSocket()) return false;
+        const bus = this.bus;
+        if (!bus) throw new OrbitError("BACKEND_FAILED", "Private D-Bus supervisor was lost");
+        bus.group = info.pid;
+        return true;
+      } catch (error) {
+        if (error instanceof OrbitError) throw error;
+        return false;
+      }
+    });
+    child.once("exit", () => { void this.close(); });
+  }
   private async wait(probe: () => Promise<boolean>, timeoutMs = 10000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) { this.ensureOpen(); if (await probe()) return; await sleep(50); }
@@ -386,7 +438,7 @@ export class FedoraBackend {
     this.closed = true;
     this.closing = (async () => {
       const supervised = [...this.children];
-      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), this.compositor];
+      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.bus ? [this.bus.child] : []), this.compositor];
       await Promise.all(children.map(async child => {
         if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
         const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
@@ -397,7 +449,7 @@ export class FedoraBackend {
       // A live supervisor reaps its own tree on the way out, so by here every group is normally
       // gone already. The exception is the supervisor that was killed rather than asked, and that
       // is the one case where an application would otherwise survive the display it was given.
-      for (const group of [...supervised.map(entry => entry.group), this.compositorGroup])
+      for (const group of [...supervised.map(entry => entry.group), this.bus?.group, this.compositorGroup])
         if (group !== undefined) await sweepOwnedGroup(group, this.directory);
       // The runtime directory lives on tmpfs, and tmpfs pages are charged to the cgroup that wrote
       // them. Left behind, closed sessions kept filling the shared memory budget until the kernel

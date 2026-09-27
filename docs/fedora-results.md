@@ -118,7 +118,7 @@ Early attempts exposed two application details. An explicit final newline in the
 
 The same editor also passed an actual file-picker workflow. Starting with no file argument, Orbit sent Ctrl+O, opened the location field with Ctrl+L, pasted only the temporary file path and confirmed with Enter. The chooser was captured on the private display and visually inspected. Subsequent Arabic/emoji editing and Ctrl+S produced exactly the expected bytes on disk; the sentinel file stayed unchanged and the application exited after stop.
 
-[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts --dialog`. Images: `output/native/file-dialog.jpg` and `output/native/editor-dialog-result.jpg`. This tests GNOME Text Editor's chooser with private display endpoints and its host session bus removed. Portal-backed dialogs, other applications and simultaneous file editing are not proven. The application-specific focus and settle limitations above still apply.
+[validation summary](validation.md). Reproduce with `bun run scripts/limited.ts bun run experiments/native-editor.ts --dialog`. Images: `output/native/file-dialog.jpg` and `output/native/editor-dialog-result.jpg`. This tests GNOME Text Editor's chooser with private display endpoints and its host session bus removed. The current backend has a private bus for dconf; the original chooser run had no working bus. Portal-backed dialogs, other applications and simultaneous file editing are not proven. The application-specific focus and settle limitations above still apply.
 
 ## Combined-suite transport fix
 

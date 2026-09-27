@@ -33,7 +33,7 @@ fontconfig keys its cache by directory. Linking the person's fonts under the ses
 
 ## Limits
 
-An Electron application that reaches its backend over the session bus does not start in a private display, because the bus is deliberately unreachable there. Docker Desktop's launcher is one; the `Docker Desktop` binary underneath it did not map a window within thirty seconds on the software-rendered display either, and is not supported yet.
+The person's session bus stays unreachable from the private display. Orbit now starts a private bus that activates dconf only. An Electron application that needs another service still cannot use that service. Docker Desktop's launcher is one; the `Docker Desktop` binary underneath it did not map a window within thirty seconds on the software-rendered display either, and is not supported yet. Those Docker results predate the private dconf bus and have not been rerun.
 
 The settings portal is not reachable, so applications that read the colour scheme only from the portal and ignore both `settings.ini` and the libadwaita variable stay light. None of the applications tried did.
 

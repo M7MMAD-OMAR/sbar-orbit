@@ -163,7 +163,7 @@ Applications beyond those four, each launched through the broker into one privat
 
 Measured 14 September 2026: 15 of 15 mapped, in 714 ms to 2597 ms. GTK4 with libadwaita: Ptyxis, Characters, Clocks, Weather, Loupe, Papers, Showtime, Snapshot, Font Viewer. GTK3: Inkscape 1.4.4. LibreOffice Writer through its own VCL, with a file the session reserved. Qt 6 and KDE Frameworks: Konsole and Dolphin. GLFW and OpenGL: kitty. And Calculator forced onto Xwayland. Launch to first frame cost 21% to 64% of one core for all but kitty, which cost 163% while llvmpipe stood in for a GPU.
 
-Two things the run showed that a reader should know before choosing an application. Ptyxis maps and then shows `Failed to connect to user scope bus via local transport`, because it starts its shell through the systemd user bus and a private session has no session bus by design; Konsole and kitty, which start a shell themselves, run one. KFontView 6.7.4 exits 1 with nothing on stderr when handed a font file, while `--version` runs and the two KDE applications beside it map, so that is the application's own refusal and it is left out of the list rather than counted as a failure of the display.
+Two things the run showed that a reader should know before choosing an application. Ptyxis maps and then shows `Failed to connect to user scope bus via local transport`, because it starts its shell through the systemd user bus and the private display had no bus at the time; Konsole and kitty, which start a shell themselves, run one. The new private bus permits dconf only, so it does not claim to supply the systemd user service Ptyxis wants. KFontView 6.7.4 exits 1 with nothing on stderr when handed a font file, while `--version` runs and the two KDE applications beside it map, so that is the application's own refusal and it is left out of the list rather than counted as a failure of the display.
 
 The first run of this experiment is what found the launch defect fixed the same day: Writer's window belongs to `soffice.bin`, a grandchild of the launched script, and the broker waited 30 seconds for a window carrying the launched pid before giving up on an application that had been on screen since the fourth. A mapped window is now matched on the session id the supervisor gave the application, and Writer maps in 1.6 seconds.
 
@@ -171,9 +171,21 @@ Not measured: anything past the first window. No application was driven, and how
 
 ### Launching real desktop applications does not guarantee fresh state
 
-A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Native sessions now set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside the session's own directory, so an application starts without the person's configuration and cannot restore their previous session. The repeat trial opened only the disposable file it was given.
+A trial that launched GNOME Text Editor in a native session found the application had restored its own previous draft from the user's home directory, showing a personal document inside the agent's workspace. Native sessions set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` inside the session's own directory, so the application cannot restore its previous draft. The repeat trial opened only the disposable file it was given. Native sessions now copy the user's small dconf preference database into the private config directory. This carries GSettings preferences without sharing application drafts or the user's session bus.
 
 This stops session restore. It is not a security boundary: system `XDG_DATA_DIRS` still resolve, and an application keeps the OS user's filesystem permissions, so it can still read personal files if it is told to.
+
+### Native preference snapshot
+
+Measured 28 September 2026 with `ORBIT_TEST_NATIVE=1 bun run verify tests/native-preferences.test.ts`. The test creates a separate dconf database with `org.gnome.desktop.interface cursor-size` set to 47 while a fresh control database reports 24. Before the change, a GTK application in Orbit's private Wayland display reported 24, and the test failed. After copying the source dconf database into the session's private config directory, the same application reported 47 and the test passed with 11 assertions. The source database bytes remained unchanged. The native session reports `preferenceSnapshot: "copied"` or `"absent"` in its status.
+
+This proves a preference snapshot for one GSettings schema on one Fedora host. It does not prove native application login, sharing a live process, or propagation of later preference changes. Application data and state remain separate.
+
+### Restricted private session bus
+
+Measured 28 September 2026 with `ORBIT_TEST_NATIVE=1 bun run verify tests/native-private-bus.test.ts`. The new test failed against the original nonexistent bus address, then passed with a private bus that activates only dconf. A GTK application read the copied preference, wrote a new value, and a separate process read that value from the private database. The source database bytes did not change, and the test found no GVFS mount beneath the session runtime. It passed 16 assertions on this Fedora host.
+
+The first disposable bus prototype used the standard service directories. GTK activated GVFS, which left a FUSE mount in the private runtime after shutdown. The prototype mount was unmounted and removed. The implementation uses a custom bus configuration with a private service directory containing only dconf. A bus for other application services, native account credentials and Flatpak portals remains unmeasured. Session status lists `busServices` so the available activation surface is explicit.
 
 ### Identified scheduling defect
 
