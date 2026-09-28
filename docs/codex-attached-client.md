@@ -154,6 +154,15 @@ An exported app-server RPC fixture for the loaded and unloaded cases did not
 reach an assertion: its bounded build timed out at 300 seconds. Its red and
 green requests remain unmeasured. See
 `experiments/codex-thread-readonly-legacy-rpc-fixture.md`.
+An isolated standalone RPC test subsequently compiled with a smaller target.
+The ordinary unloaded read changed the fixture SQLite WAL and failed its file
+assertion. Both loaded and unloaded `readOnly: true`, `includeTurns: true`
+requests returned the fixture user and assistant text without changing the
+measured state main, WAL, SHM, or rollout files. The ordinary loaded read did
+not change those files, so the loaded assertion did not demonstrate red
+sensitivity. This is a disposable RPC measurement, not a Desktop or personal
+account measurement. See
+`experiments/codex-thread-readonly-legacy-rpc-small-target.md`.
 Neither source patch is in the staged candidate or the Orbit gate. The Desktop
 source has a dormant attach-only legacy viewer patch in commits `3b148f5` and
 `d60630e`.
@@ -314,3 +323,20 @@ project and conversation in dark mode, without a local auth file. Reproducible
 scripts and its screenshot are in the Desktop feature's `evidence/` directory.
 It does not establish a connection to the person's Desktop authority, real
 account or complete UI parity, durable state, or safe model tool access.
+
+The gate now has a dormant `allowLegacyThreadRead` option for focused tests.
+With that option selected, it accepts only `thread/read` requests carrying a
+UUID thread ID, a boolean `includeTurns`, and `readOnly: true`. Its default
+still denies every `thread/read`. The focused gate test checked both metadata
+and full-turn request shapes and rejected missing or false `readOnly`, extra
+fields, invalid IDs, and `turn/start`. This option is not passed by Orbit's
+active launch route or enabled in the Desktop viewer. It cannot safely be
+enabled against an owner executable that may ignore the added read-only RPC
+field.
+
+An additional exact-tag two-client red fixture held a model response while a
+second client sent `turn/start` to the first client's active turn. The server
+accepted the second request and returned the same turn ID. The fixture did
+not measure whether the model later consumed the second client's text. This
+is another reason the attached route continues to deny writes. See
+`experiments/codex-two-client-active-steer-red.md`.
