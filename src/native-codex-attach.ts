@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 import type { CodexDisplayEnv } from "./native-codex";
 import { seedNativePreferences } from "./native-preferences";
@@ -123,6 +123,7 @@ export async function prepareCodexAttachedLaunch(
       `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${privateSocketPath}`,
       "CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1",
       `CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(insideHome, ".codex")}`,
+      `CODEX_LINUX_APP_DIR=${dirname(executable)}`,
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
       `--user-data-dir=${join(insideHome, ".config", "Codex")}`,
     ];

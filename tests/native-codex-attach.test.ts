@@ -56,6 +56,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     "stateAnswer": state_answer,
     "attachOnly": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY"),
     "privateCodexHome": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME") == os.environ["CODEX_HOME"],
+    "appDirectory": os.environ.get("CODEX_LINUX_APP_DIR") == os.path.dirname(${JSON.stringify(executable)}),
     "gsettingsBackend": os.environ.get("GSETTINGS_BACKEND"),
     "sourceVisible": pathlib.Path(${JSON.stringify(authorityPath)}).exists(),
     "stateSourceVisible": pathlib.Path(${JSON.stringify(authorityStatePath)}).exists(),
@@ -87,6 +88,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     expect(JSON.parse(await readFile(report, "utf8")).error).toBeUndefined();
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
       answer: "fixture-authority", stateAnswer: "fixture-state", attachOnly: "1", privateCodexHome: true,
+      appDirectory: true,
       gsettingsBackend: "dconf", sourceVisible: false, stateSourceVisible: false,
       homeEntries: [".cache", ".codex", ".config", ".local"], codexEntries: [], privateSocket: true,
     });
