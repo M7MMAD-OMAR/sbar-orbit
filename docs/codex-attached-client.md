@@ -115,6 +115,18 @@ Desktop showed a shared project and conversation title, then displayed
 conversation. Its footer showed `Settings`, not the fake owner's account
 label. No personal application, account or profile was used.
 
+An exact-tag CLI source experiment in
+`experiments/codex-thread-readonly-metadata.patch` adds an opt-in
+`thread/read` request for metadata only. A red test first proved the normal
+read repaired a missing SQLite row. With the patch, three read-only tests
+passed and an ordinary owner test still repaired the row. App-server library
+and test targets compiled. This source patch is not in the staged candidate or
+the Orbit gate, and it rejects `includeTurns: true`. The Desktop source has a
+dormant attach-only legacy viewer patch in commits `3b148f5` and `d60630e`.
+Its readiness setting is off by default. These patches do not yet make
+conversation content available, and they do not establish a safe writable
+thread route.
+
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
 unsafe permissions, an unpatched ASAR and paths outside the private root. These
