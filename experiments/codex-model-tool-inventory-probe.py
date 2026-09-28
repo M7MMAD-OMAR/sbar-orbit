@@ -13,6 +13,7 @@ import json
 import runpy
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -37,6 +38,7 @@ SESSION_MCP = PROJECT / "src" / "session-mcp.ts"
 MARKETPLACE = BUNDLED["MARKETPLACE"]
 plugin_command = BUNDLED["plugin_command"]
 TOY_MCP = BUNDLED["TOY_MCP"]
+wait_for_listener = BUNDLED["helpers"]["wait_for_listener"]
 HOST_SERVERS = ("codex_app", "cua_repl", "node_repl")
 PLUGIN_NAMES = ("codex-app-tools", "unified-computer-use", "browser", "chrome")
 
@@ -74,6 +76,7 @@ def copy_plugins(root, environment):
 
 
 def main():
+    check_feature_flags = "--feature-flags" in sys.argv[1:]
     bun = shutil.which("bun")
     if not CODEX.is_file() or not MARKETPLACE.is_dir() or not bun or not SESSION_MCP.is_file():
         raise RuntimeError("Installed Codex, bundled plugins, Bun or Orbit adapter is missing")
@@ -98,6 +101,14 @@ def main():
                             "arguments": json.dumps({
                                 "requestId": "inventory-check",
                                 "action": {"type": "pointer", "x": 5, "y": 6},
+                            })}
+                elif number == 4 and check_feature_flags and "exec_command" in visible:
+                    item = {"id": "remote_call", "type": "function_call",
+                            "status": "completed", "call_id": "remote_exec_call",
+                            "name": "exec_command", "arguments": json.dumps({
+                                "cmd": 'printf %s "$ORBIT_EXEC_MARKER"',
+                                "workdir": str(root / "executor"),
+                                "yield_time_ms": 1000,
                             })}
                 else:
                     item = {"id": f"message_{number}", "type": "message",
@@ -135,6 +146,21 @@ def main():
         toy = root / "toy_mcp.py"
         toy.write_text(TOY_MCP)
         transport = {"command": "/usr/bin/python3", "args": ["-u", str(toy)]}
+        executor = None
+        remote_port = None
+        if check_feature_flags:
+            executor_dir = root / "executor"
+            executor_dir.mkdir()
+            remote_port = free_port()
+            executor = subprocess.Popen(
+                [str(CODEX), "exec-server", "--listen",
+                 f"ws://127.0.0.1:{remote_port}"],
+                cwd=executor_dir,
+                env=private_environment(executor_dir, "EXECUTOR_ONLY"),
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            wait_for_listener(remote_port, executor)
         child = subprocess.Popen(
             [str(CODEX), "app-server", "--listen", "stdio://"],
             cwd=authority, env=environment, stdin=subprocess.PIPE,
@@ -176,6 +202,32 @@ def main():
                 "type": "text", "text": "Call private Orbit action fixture.",
             }]})
             rpc.wait_for_turn(private["id"])
+            restricted = None
+            if check_feature_flags:
+                rpc.call(6, "environment/add", {"environmentId": "remote",
+                         "execServerUrl": f"ws://127.0.0.1:{remote_port}"})
+                restricted = rpc.call(7, "thread/start", {
+                    "ephemeral": True, "model": "gpt-5.1", "modelProvider": "mock",
+                    "environments": [{"environmentId": "remote",
+                                      "cwd": str(root / "executor")}],
+                    "approvalPolicy": "never", "sandbox": "danger-full-access",
+                    "config": {"features": {"plugins": False, "view_image": False,
+                                            "goals": False, "multi_agent": False,
+                                            "apps": False, "computer_use": False,
+                                            "browser_use": False},
+                               "mcp_servers": {
+                        **{name: {**transport, "enabled": False}
+                           for name in HOST_SERVERS},
+                        "orbit_private": {"command": bun, "args": [str(SESSION_MCP)],
+                                          "env": {"ORBIT_SOCKET": str(broker_socket),
+                                                  "ORBIT_SESSION_ID": SESSION_ID,
+                                                  "ORBIT_USAGE_DIR": str(root / "usage")}},
+                    }},
+                })["thread"]
+                rpc.call(8, "turn/start", {"threadId": restricted["id"],
+                         "input": [{"type": "text",
+                                    "text": "Call the disposable remote exec fixture."}]})
+                rpc.wait_for_turn(restricted["id"])
             baseline_tools = model_requests[0]["tools"]
             private_tools = model_requests[1]["tools"]
             host_namespaces = [f"mcp__{name}" for name in HOST_SERVERS]
@@ -193,14 +245,34 @@ def main():
                                           for item in broker.requests],
                 "modelRequests": len(model_requests),
             }
+            if check_feature_flags:
+                restricted_tools = model_requests[3]["tools"]
+                followup = json.dumps(model_requests[4]["input"])
+                result["restrictedModelTools"] = restricted_tools
+                result["restrictedRemoteSelected"] = (
+                    restricted["environments"][0]["environmentId"] == "remote")
+                result["restrictedRemoteOutputSeen"] = "EXECUTOR_ONLY" in followup
+                result["restrictedAuthorityOutputSeen"] = "AUTHORITY_ONLY" in followup
+                result["restrictedOrbitActionPresent"] = (
+                    "orbit_act" in restricted_tools.get("mcp__orbit_private", []))
+                result["restrictedHostNamespacesPresent"] = [
+                    name for name in host_namespaces if name in restricted_tools]
             print(json.dumps(result, sort_keys=True))
             assert set(result["baselineHostNamespacesPresent"]) == set(host_namespaces)
             assert not result["privateHostNamespacesPresent"]
             assert result["privateOrbitActionPresent"]
             assert result["privateOrbitDelivered"] == [SESSION_ID]
-            assert result["modelRequests"] == 3
+            assert result["modelRequests"] == (5 if check_feature_flags else 3)
+            if check_feature_flags:
+                assert result["restrictedRemoteSelected"]
+                assert result["restrictedRemoteOutputSeen"]
+                assert not result["restrictedAuthorityOutputSeen"]
+                assert result["restrictedOrbitActionPresent"]
+                assert not result["restrictedHostNamespacesPresent"]
+                assert "exec_command" in result["restrictedModelTools"]
         finally:
             stop_process(child)
+            stop_process(executor)
             model.shutdown()
             model.server_close()
             model_worker.join(timeout=2)
