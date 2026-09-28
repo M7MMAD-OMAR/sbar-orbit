@@ -71,5 +71,12 @@ stayed alive, created its private global-state file with one project, had no
 local auth file, and showed the shared fixture project and one assigned
 conversation in dark mode. The screenshot and reproducible scripts are in
 `codex-desktop-linux/linux-features/shared-app-server-socket/evidence/`.
-Completed model turns, every sidebar key, changes across restart, and complete
+An additional disposable run kept a local mock model inside the owner's private
+network namespace. The owner completed one turn. The Orbit client opened that
+thread in its private Wayland window, and the screenshot visibly contains the
+fixture prompt and completed answer. The runner checks the persisted answer,
+screen text, absent client `auth.json`, one private project, and unchanged owner
+socket inodes. The fixture and screenshot are in the same `evidence/` directory.
+This tests rendered completed content with synthetic credentials only. Every
+sidebar key, changes across restart, the person's real account, and complete
 host tool isolation are still unmeasured.
