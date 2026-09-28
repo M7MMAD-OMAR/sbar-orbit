@@ -56,6 +56,21 @@ test("MCP image preserves tab metadata; metadata mode never captures", async () 
   } finally { await h.close(); }
 });
 
+test("MCP accepts the private Codex launch action and rejects a relative project path", async () => {
+  const h = await harness();
+  try {
+    const client = await h.connect();
+    const action = { type: "launch-app", app: "codex", profile: "active", projectPath: "/tmp/selected-project" };
+    const accepted = await tool(client, "orbit_act", { sessionId: "fixture", requestId: "codex-launch", action });
+    expect(accepted.isError).not.toBe(true);
+    expect(h.calls).toEqual(["session.act"]);
+    const rejected = await tool(client, "orbit_act", { sessionId: "fixture", requestId: "bad-path",
+      action: { ...action, projectPath: "relative-project" } });
+    expect(rejected.isError).toBe(true);
+    expect(h.calls).toEqual(["session.act"]);
+  } finally { await h.close(); }
+});
+
 test("MCP opt-out is local, rejects all broker access and can be re-enabled", async () => {
   const h = await harness();
   try {
