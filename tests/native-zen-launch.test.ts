@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseNativeAction } from "../src/fedora";
+import { FedoraBackend, parseNativeAction } from "../src/fedora";
 import { discoverZenInstallation, prepareZenLaunch } from "../src/native-zen-launch";
 
 async function fixture() {
@@ -33,6 +33,93 @@ test("Zen launch-app accepts no caller paths or executable arguments", () => {
     { argv: ["/usr/bin/zen"] }, { sourceProfile: "/tmp/other" }, { url: "https://example.com" },
     { openPath: "/tmp/file" }, { extensions: [] },
   ]) expect(() => parseNativeAction({ type: "launch-app", app: "zen", profile: "active", ...extra })).toThrow();
+  expect(parseNativeAction({ type: "launch-app", app: "zen", profile: "active", network: "public-web" }))
+    .toEqual({ type: "launch-app", app: "zen", profile: "active", network: "public-web" });
+  expect(() => parseNativeAction({ type: "launch-app", app: "zen", profile: "active", network: "any" })).toThrow();
+});
+
+test("one private display refuses a second Zen profile copy", async () => {
+  const backend = Object.assign(Object.create(FedoraBackend.prototype), {
+    parseAction: parseNativeAction, closed: false, children: [], zenLaunchReserved: true,
+  }) as FedoraBackend;
+  await expect(backend.act({ type: "launch-app", app: "zen", profile: "active" }))
+    .rejects.toMatchObject({ code: "LIMIT_REACHED" });
+});
+
+test("Zen public web mode mounts only its lease socket and writes proxy preferences to the clone", async () => {
+  const f = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    const outside = join(f.root, "outside-user-js");
+    await writeFile(outside, "outside stays unchanged\n");
+    await symlink(outside, join(f.profile, "user.js"));
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+    expect(prepared.zenSnapshot.network).toBe("public-web");
+    const proxyMount = prepared.argv.indexOf("/orbit/zen/runtime/lease.sock");
+    expect(proxyMount).toBeGreaterThan(0);
+    const leaseSocket = prepared.argv[proxyMount - 1]!;
+    expect(leaseSocket.startsWith(f.session)).toBe(true);
+    expect((await stat(leaseSocket)).isSocket()).toBe(true);
+    expect(prepared.argv).toContain("--unshare-net");
+    expect(prepared.argv.some(value => value.includes("/usr/bin/socat"))).toBe(true);
+    expect(prepared.argv).not.toContain(f.profile);
+    const profileInside = prepared.argv.at(-1)!;
+    const cloneDirectory = prepared.argv[prepared.argv.indexOf("/orbit/zen") - 1]!;
+    const clonedPrefs = join(cloneDirectory, profileInside.split("/").at(-1)!, "user.js");
+    expect((await lstat(clonedPrefs)).isFile()).toBe(true);
+    const prefs = await readFile(clonedPrefs, "utf8");
+    expect(prefs).toContain('user_pref("network.proxy.type", 1)');
+    expect(prefs).toContain('user_pref("network.proxy.ssl", "127.0.0.1")');
+    expect(prefs).toContain('user_pref("network.proxy.ssl_port", 8888)');
+    expect(prefs).toContain('user_pref("network.proxy.allow_hijacking_localhost", true)');
+    expect(await readFile(outside, "utf8")).toBe("outside stays unchanged\n");
+    await prepared.release();
+    prepared = undefined;
+    expect(await stat(leaseSocket).then(() => true, () => false)).toBe(false);
+    expect(await stat(cloneDirectory).then(() => true, () => false)).toBe(false);
+  } finally {
+    await prepared?.release();
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("Zen public web preparation removes the lease and clone when copied preferences are unsafe", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.profile, "user.js"), "x".repeat(1024 * 1024 + 1));
+    await expect(prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web"))
+      .rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(await readdir(f.session)).toEqual(["wayland-0"]);
+  } finally {
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("Zen launch preflight failure closes the public web lease and removes the copied profile", async () => {
+  const f = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+    const backend = Object.assign(Object.create(FedoraBackend.prototype), {
+      parseAction: parseNativeAction, closed: false, children: [], zenLaunchReserved: false,
+      directory: f.session, waylandDisplay: "wayland-0", env: { LD_LIBRARY_PATH: f.libraries },
+      prepareZen: async () => ({ ...prepared!, argv: ["/orbit/nonexistent-zen-executable"] }),
+    }) as FedoraBackend;
+    await expect(backend.act({ type: "launch-app", app: "zen", profile: "active", network: "public-web" }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    prepared = undefined;
+    expect(await readdir(f.session)).toEqual(["wayland-0"]);
+    expect((backend as unknown as { zenLaunchReserved: boolean }).zenLaunchReserved).toBe(false);
+  } finally {
+    await prepared?.release();
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
 });
 
 test("Zen launcher discovers its own profile and prepares an offline mount root", async () => {

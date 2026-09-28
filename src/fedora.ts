@@ -17,7 +17,7 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
-  | { type: "launch-app"; app: "zen"; profile: "active" }
+  | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
@@ -43,8 +43,11 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
     return { type: "launch", argv: a.argv, toolkit: a.toolkit, ...(a.selectedFiles !== undefined ? { selectedFiles: a.selectedFiles as string[] } : {}) };
   }
   if (a.type === "launch-app") {
-    if (a.app === "zen" && a.profile === "active" && Object.keys(a).every(key => ["type", "app", "profile"].includes(key)))
-      return { type: "launch-app", app: "zen", profile: "active" };
+    if (a.app === "zen" && a.profile === "active" &&
+        (a.network === undefined || a.network === "offline" || a.network === "public-web") &&
+        Object.keys(a).every(key => ["type", "app", "profile", "network"].includes(key)))
+      return { type: "launch-app", app: "zen", profile: "active",
+        ...(a.network === undefined ? {} : { network: a.network }) };
     if (Object.keys(a).some(key => !["type", "app", "profile", "extensions", "openPath"].includes(key)) ||
         a.app !== "vscode" || a.profile !== "default")
       throw new OrbitError("INVALID_REQUEST", "Launch a supported application profile without caller launch arguments");
@@ -121,6 +124,8 @@ export class FedoraBackend {
   private listeners: (() => void)[] = [];
   private listenersNotified = false;
   private cleanupFailures: unknown[] = [];
+  private zenLaunchReserved = false;
+  private prepareZen = prepareZenLaunch;
   // Each entry is a supervisor and the group leader it reported, so a supervisor that dies without
   // reaping still leaves the group identifier that has to be swept.
   private children: SupervisedApplication[] = [];
@@ -405,11 +410,17 @@ export class FedoraBackend {
     }
     if (action.type === "launch" || action.type === "launch-app") {
       if (this.children.length >= 32) throw new OrbitError("LIMIT_REACHED", "Native session application limit reached");
+      const zenAction = action.type === "launch-app" && action.app === "zen";
+      if (zenAction && this.zenLaunchReserved)
+        throw new OrbitError("LIMIT_REACHED", "Zen launch is one shot in this private display; start a new session to copy the profile again");
+      if (zenAction) this.zenLaunchReserved = true;
+      try {
       const prepared = action.type === "launch"
         ? action
         : action.app === "vscode"
           ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
-          : await prepareZenLaunch(this.directory, join(this.directory, this.waylandDisplay), this.env.LD_LIBRARY_PATH ?? "");
+          : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
+            this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline");
       let cleanupManaged = false;
       try {
       const keyring = "snapshot" in prepared && prepared.snapshot.accountState === "copied";
@@ -482,6 +493,10 @@ export class FedoraBackend {
       }
       } catch (error) {
         if (!cleanupManaged && "release" in prepared) await prepared.release();
+        throw error;
+      }
+      } catch (error) {
+        if (zenAction) this.zenLaunchReserved = false;
         throw error;
       }
     }

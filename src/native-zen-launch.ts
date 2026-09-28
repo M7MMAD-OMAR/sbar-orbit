@@ -1,10 +1,13 @@
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
+import { openPublicWebLease, type PublicWebLease, type PublicWebLeaseRequest } from "./egress";
 import { snapshotZenProfile, type ZenProfileSnapshot } from "./native-zen";
 
-type ZenLocation = { home?: string; deploymentFiles?: string };
+type ZenLocation = { home?: string; deploymentFiles?: string;
+  leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest"> };
 type ZenInstallation = { deploymentFiles: string; profile: string };
 
 function selectedProfile(ini: string): string {
@@ -62,13 +65,56 @@ export type PreparedZenLaunch = {
   toolkit: "wayland";
   selectedFiles: [];
   zenSnapshot: Pick<ZenProfileSnapshot, "files" | "bytes" | "databases" | "recoveryFiles" | "recoveredTabs"> &
-    { network: "offline"; hostFiles: "unavailable" };
+    { network: "offline" | "public-web"; hostFiles: "unavailable" };
   release: () => Promise<void>;
 };
+
+export type ZenNetwork = "offline" | "public-web";
+
+const proxyPreferences = `
+user_pref("network.proxy.type", 1);
+user_pref("network.proxy.http", "127.0.0.1");
+user_pref("network.proxy.http_port", 8888);
+user_pref("network.proxy.ssl", "127.0.0.1");
+user_pref("network.proxy.ssl_port", 8888);
+user_pref("network.proxy.no_proxies_on", "");
+user_pref("network.proxy.allow_hijacking_localhost", true);
+user_pref("network.http.http3.enable", false);
+user_pref("media.peerconnection.enabled", false);
+user_pref("network.dns.disablePrefetch", true);
+user_pref("network.prefetch-next", false);
+`;
+
+async function writePrivateProxyPreferences(profile: string): Promise<void> {
+  const target = join(profile, "user.js");
+  const entry = await lstat(target).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (entry && (!entry.isFile() || entry.isSymbolicLink() || entry.size > 1024 * 1024))
+    throw new OrbitError("UNSUPPORTED", "Zen copied proxy preferences must be a regular file");
+  let existing = "";
+  if (entry) {
+    const source = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      if (!(await source.stat()).isFile()) throw new OrbitError("UNSUPPORTED", "Zen copied proxy preferences changed");
+      existing = await source.readFile({ encoding: "utf8" });
+    } finally { await source.close(); }
+  }
+  const temporary = join(profile, `.orbit-proxy-${crypto.randomUUID()}.tmp`);
+  const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    await file.writeFile(existing + proxyPreferences);
+    await file.sync();
+  } finally { await file.close(); }
+  try { await rename(temporary, target); }
+  catch (error) { await rm(temporary, { force: true }); throw error; }
+}
 
 /** Start only from a copied profile. The action caller cannot supply paths or arguments. */
 export async function prepareZenLaunch(
   sessionDirectory: string, waylandSocket: string, libraryDirectory: string, location: ZenLocation = {},
+  network: ZenNetwork = "offline",
 ): Promise<PreparedZenLaunch> {
   const session = await realpath(sessionDirectory);
   const socket = await realpath(waylandSocket);
@@ -83,11 +129,19 @@ export async function prepareZenLaunch(
   const installation = await discoverZenInstallation(location);
   const privateDirectory = await mkdtemp(join(session, "zen-"));
   await chmod(privateDirectory, 0o700);
+  let lease: PublicWebLease | undefined;
   try {
     const snapshot = await snapshotZenProfile(installation.profile, privateDirectory);
     for (const name of ["runtime", "config", "data", "cache", "state"])
       await mkdir(join(privateDirectory, name), { mode: 0o700 });
     await writeFile(join(privateDirectory, "runtime", "wayland-0"), "", { mode: 0o600 });
+    if (network === "public-web") {
+      if (!(await Bun.file("/usr/bin/socat").exists()))
+        throw new OrbitError("UNSUPPORTED", "Zen public web mode needs socat");
+      lease = await openPublicWebLease({ parentDirectory: session, ...location.leaseProbe });
+      await writePrivateProxyPreferences(snapshot.directory);
+      await writeFile(join(privateDirectory, "runtime", "lease.sock"), "", { mode: 0o600 });
+    }
     const profileInside = `/orbit/zen/${basename(snapshot.directory)}`;
     const argv = [
       "/usr/bin/bwrap", "--unshare-net", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--die-with-parent",
@@ -99,6 +153,7 @@ export async function prepareZenLaunch(
       "--ro-bind", installation.deploymentFiles, "/app", "--ro-bind", libraries, "/runtime-lib",
       "--dir", "/orbit", "--bind", privateDirectory, "/orbit/zen",
       "--ro-bind", socket, "/orbit/zen/runtime/wayland-0",
+      ...(lease ? ["--ro-bind", lease.socketPath, "/orbit/zen/runtime/lease.sock"] : []),
       "--clearenv", "--setenv", "HOME", "/orbit/zen", "--setenv", "XDG_RUNTIME_DIR", "/orbit/zen/runtime",
       "--setenv", "XDG_CONFIG_HOME", "/orbit/zen/config", "--setenv", "XDG_DATA_HOME", "/orbit/zen/data",
       "--setenv", "XDG_CACHE_HOME", "/orbit/zen/cache", "--setenv", "XDG_STATE_HOME", "/orbit/zen/state",
@@ -107,15 +162,29 @@ export async function prepareZenLaunch(
       "--setenv", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/orbit/zen/runtime/no-session-bus",
       "--setenv", "LD_LIBRARY_PATH", "/runtime-lib:/app/lib:/app/zen", "--setenv", "PATH", "/usr/bin:/bin",
       "--setenv", "LANG", "C.UTF-8", "--chdir", "/orbit/zen",
+      // The shell, bridge, and Zen all run under the same bubblewrap PID and network namespaces.
+      ...(lease ? ["/usr/bin/sh", "-c",
+        "/usr/bin/socat TCP-LISTEN:8888,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/orbit/zen/runtime/lease.sock </dev/null >/dev/null 2>&1 &\nbridge=$!\ntrap 'kill \"$bridge\" 2>/dev/null; wait \"$bridge\" 2>/dev/null' EXIT\nready=0\nfor attempt in 1 2 3 4 5 6 7 8 9 10; do\n  if /usr/bin/python3 -c 'import socket; s=socket.socket(); s.settimeout(0.2); status=s.connect_ex((\"127.0.0.1\", 8888)); s.close(); raise SystemExit(status != 0)'; then ready=1; break; fi\n  kill -0 \"$bridge\" 2>/dev/null || exit 111\n  /usr/bin/sleep 0.05\ndone\n[ \"$ready\" -eq 1 ] || exit 111\n\"$@\"",
+        "orbit-zen"] : []),
       "/app/zen/zen", "--no-remote", "--profile", profileInside,
     ];
     return { argv, toolkit: "wayland", selectedFiles: [],
       zenSnapshot: { files: snapshot.files, bytes: snapshot.bytes, databases: snapshot.databases,
         recoveryFiles: snapshot.recoveryFiles, recoveredTabs: snapshot.recoveredTabs,
-        network: "offline", hostFiles: "unavailable" },
-      release: async () => { await rm(privateDirectory, { recursive: true, force: true }); } };
+        network, hostFiles: "unavailable" },
+      release: async () => {
+        const results = await Promise.allSettled([
+          lease?.close(), rm(privateDirectory, { recursive: true, force: true }),
+        ]);
+        if (results.some(result => result.status === "rejected"))
+          throw new OrbitError("BACKEND_FAILED", "Zen private profile or web lease cleanup failed");
+      } };
   } catch (error) {
-    await rm(privateDirectory, { recursive: true, force: true }).catch(() => {});
+    const cleanup = await Promise.allSettled([
+      lease?.close(), rm(privateDirectory, { recursive: true, force: true }),
+    ]);
+    if (cleanup.some(result => result.status === "rejected"))
+      throw new OrbitError("BACKEND_FAILED", "Zen launch preparation cleanup failed");
     throw error;
   }
 }
