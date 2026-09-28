@@ -79,7 +79,7 @@ test("Codex account snapshot writes only to a private home and removes it", asyn
       expect(prepared.accountSnapshot.projects).toBe(0);
       expect(prepared.accountSnapshot.threads).toBe(0);
       expect(prepared.accountSnapshot.continuity).toBe("point-in-time");
-      expect(prepared.accountSnapshot.privateChanges).toBe("discarded-on-stop");
+      expect(prepared.accountSnapshot.snapshotStateChanges).toBe("discarded-on-stop");
       expect(prepared.accountSnapshot.sharedDesktopAuthority).toBe(false);
       expect(await readFile(join(prepared.privateHome, ".codex", "config.toml"), "utf8"))
         .toBe('model = "fixture"\n');

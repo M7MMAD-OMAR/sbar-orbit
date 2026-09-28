@@ -20,7 +20,7 @@ export type PreparedCodexLaunch = {
   privateHome: string;
   sharedProject?: { path: string; device: string; inode: string };
   accountSnapshot: { authBytes: number; mode: "chatgpt"; projects: number; threads: number; atomicAcrossStores: false;
-    continuity: "point-in-time"; privateChanges: "discarded-on-stop"; sharedDesktopAuthority: false };
+    continuity: "point-in-time"; snapshotStateChanges: "discarded-on-stop"; sharedDesktopAuthority: false };
   release: () => Promise<void>;
 };
 
@@ -208,7 +208,7 @@ export async function prepareCodexLaunch(
       argv, toolkit: "wayland", selectedFiles: [], privateHome: home,
       ...(sharedProject === undefined ? {} : { sharedProject }),
       accountSnapshot: { authBytes: auth.length, mode: "chatgpt", ...stateReport,
-        continuity: "point-in-time", privateChanges: "discarded-on-stop", sharedDesktopAuthority: false },
+        continuity: "point-in-time", snapshotStateChanges: "discarded-on-stop", sharedDesktopAuthority: false },
       release: async () => { await rm(root, { recursive: true, force: true }); },
     };
   } catch (error) {
