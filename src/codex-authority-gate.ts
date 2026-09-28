@@ -63,6 +63,8 @@ function sanitizedAccount(result: unknown) {
   const type = account?.type;
   const email = account?.email;
   const planType = account?.planType;
+  const routing = type === "chatgpt" ? record(value?.workspaceRouting) : null;
+  const accountId = routing?.chatgptAccountId;
   return {
     account: type === "chatgpt" || type === "apiKey" || type === "amazonBedrock"
       ? { type, ...(type === "chatgpt" ? {
@@ -70,6 +72,8 @@ function sanitizedAccount(result: unknown) {
         planType: typeof planType === "string" && planType.length <= 64 ? planType : null,
       } : {}) } : null,
     requiresOpenaiAuth: value?.requiresOpenaiAuth === false ? false : true,
+    workspaceRouting: typeof accountId === "string" && /^[A-Za-z0-9_-]{1,128}$/u.test(accountId)
+      ? { chatgptAccountId: accountId } : null,
   };
 }
 

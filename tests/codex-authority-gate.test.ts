@@ -138,6 +138,8 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   let ownerThreadListParams: Record<string, unknown> | undefined;
   let stateWrites = 0;
   let requirementsResult: Record<string, unknown> = { requirements: null };
+  let accountRouting: unknown = { chatgptAccountId: "fixture_selected",
+    backendOrigin: "https://secret.fixture.invalid", accountRoutingOverride: "us" };
   const owner = Bun.serve({
     unix: ownerPath,
     fetch(request, server) { return server.upgrade(request) ? undefined : new Response("WebSocket required", { status: 400 }); },
@@ -153,7 +155,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
           result = { authMethod: "chatgpt", authToken: fakeToken };
         if (message.method === "account/read")
           result = { account: { type: "chatgpt", email: fakeEmail, planType: "plus",
-            authToken: fakeToken }, requiresOpenaiAuth: true };
+            authToken: fakeToken }, requiresOpenaiAuth: true, workspaceRouting: accountRouting };
         if (message.method === "configRequirements/read") result = requirementsResult;
         if (message.method === "thread/list") result = { data: [{ id: "fixture-thread" }] };
         if (message.method === "thread/read") result = { thread: { id: "fixture-thread", turns: [] } };
@@ -246,7 +248,19 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     privateClient.send({ id: 3, method: "account/read", params: { refreshToken: true } });
     const account = await privateClient.next();
     expect(account.result?.account).toEqual({ type: "chatgpt", email: fakeEmail, planType: "plus" });
+    expect(account.result?.workspaceRouting).toEqual({ chatgptAccountId: "fixture_selected" });
     expect(JSON.stringify(account).includes(fakeToken)).toBe(false);
+    expect(JSON.stringify(account).includes("secret.fixture.invalid")).toBe(false);
+    expect(JSON.stringify(account).includes("accountRoutingOverride")).toBe(false);
+    accountRouting = { chatgptAccountId: "bad/owner", backendOrigin: "https://secret.fixture.invalid" };
+    privateClient.send({ id: "invalid-account-id", method: "account/read" });
+    expect((await privateClient.next()).result?.workspaceRouting).toBeNull();
+    accountRouting = { chatgptAccountId: "x".repeat(129) };
+    privateClient.send({ id: "oversized-account-id", method: "account/read" });
+    expect((await privateClient.next()).result?.workspaceRouting).toBeNull();
+    accountRouting = null;
+    privateClient.send({ id: "missing-account-id", method: "account/read" });
+    expect((await privateClient.next()).result?.workspaceRouting).toBeNull();
     privateClient.send({ id: 4, method: "thread/list", params: {
       limit: 100, cursor: null, modelProviders: [], sectionId: "550e8400-e29b-41d4-a716-446655440000",
       sortKey: "updated_at", useStateDbOnly: false,
