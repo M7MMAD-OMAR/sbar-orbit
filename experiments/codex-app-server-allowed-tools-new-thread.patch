@@ -1,0 +1,153 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+index 09732cf..a0cda9b 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+@@ -52,6 +52,15 @@ pub enum ThreadStartSource {
+     Clear,
+ }
+ 
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AllowedToolName {
++    pub name: String,
++    #[ts(optional = nullable)]
++    pub namespace: Option<String>,
++}
++
+ // === Threads, Turns, and Items ===
+ // Thread APIs
+ #[derive(
+@@ -149,6 +158,10 @@ pub struct ThreadStartParams {
+     )]
+     #[ts(optional = nullable)]
+     pub dynamic_tools: Option<Vec<DynamicToolSpec>>,
++    /// Optional startup ceiling for model tools. An empty list permits no tools.
++    #[experimental("thread/start.allowedTools")]
++    #[ts(optional = nullable)]
++    pub allowed_tools: Option<Vec<AllowedToolName>>,
+     /// Capability roots selected for this thread by the hosting platform.
+     #[experimental("thread/start.selectedCapabilityRoots")]
+     #[ts(optional = nullable)]
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 04c2229..be8638b 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -18,6 +18,7 @@ use codex_app_server_protocol::ThreadSection;
+ use codex_app_server_protocol::ThreadSectionAppearance;
+ use codex_app_server_protocol::ThreadSectionMoveParams;
+ use codex_app_server_protocol::ThreadSectionMoveResponse;
++use codex_extension_api::AllowedTools;
+ use codex_extension_api::ExtensionDataInit;
+ use codex_extension_api::ThreadIdleCause;
+ use codex_protocol::SanitizedGitUrl;
+@@ -1143,6 +1144,7 @@ impl ThreadRequestProcessor {
+             base_instructions,
+             developer_instructions,
+             dynamic_tools,
++            allowed_tools,
+             selected_capability_roots,
+             mock_experimental_field: _mock_experimental_field,
+             experimental_raw_events,
+@@ -1235,6 +1237,7 @@ impl ThreadRequestProcessor {
+                 config,
+                 typesafe_overrides,
+                 dynamic_tools,
++                allowed_tools,
+                 selected_capability_roots.unwrap_or_default(),
+                 history_mode.map(Into::into),
+                 session_start_source,
+@@ -1317,6 +1320,7 @@ impl ThreadRequestProcessor {
+         config_overrides: Option<HashMap<String, serde_json::Value>>,
+         typesafe_overrides: ConfigOverrides,
+         dynamic_tools: Option<Vec<DynamicToolSpec>>,
++        allowed_tools: Option<Vec<codex_app_server_protocol::AllowedToolName>>,
+         selected_capability_roots: Vec<SelectedCapabilityRoot>,
+         history_mode: Option<ThreadHistoryMode>,
+         session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
+@@ -1457,6 +1461,16 @@ impl ThreadRequestProcessor {
+                 .then_some(ThreadHistoryMode::Paginated)
+         });
+         let mut thread_extension_init = ExtensionDataInit::new();
++        if let Some(allowed_tools) = allowed_tools {
++            thread_extension_init.insert(AllowedTools(
++                allowed_tools
++                    .into_iter()
++                    .map(|tool| {
++                        codex_protocol::tool_name::ToolName::new(tool.namespace, tool.name)
++                    })
++                    .collect(),
++            ));
++        }
+         if !selected_capability_roots.is_empty() {
+             thread_extension_init.insert(selected_capability_roots);
+         }
+diff --git a/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs b/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
+index 38f3433..14e4986 100644
+--- a/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
++++ b/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
+@@ -174,6 +174,64 @@ async fn thread_start_normalizes_legacy_dynamic_tools_into_model_request() -> Re
+     Ok(())
+ }
+ 
++#[tokio::test]
++async fn thread_start_allowed_tools_limits_model_inventory() -> Result<()> {
++    let responses = vec![
++        create_final_assistant_message_sse_response("Done")?,
++        create_final_assistant_message_sse_response("Done")?,
++    ];
++    let server = create_mock_responses_server_sequence_unchecked(responses).await;
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_auto_env()
++        .build()
++        .await?;
++    timeout(DEFAULT_READ_TIMEOUT, app_server.initialize()).await??;
++
++    for allowed_tools in [json!([{"name": "exec_command"}]), json!([])] {
++        let start_request = app_server
++            .send_raw_request("thread/start", Some(json!({"allowedTools": allowed_tools})))
++            .await?;
++        let start_response = timeout(
++            DEFAULT_READ_TIMEOUT,
++            app_server.read_stream_until_response_message(RequestId::Integer(start_request)),
++        )
++        .await??;
++        let ThreadStartResponse { thread, .. } =
++            to_response::<ThreadStartResponse>(start_response)?;
++        let turn_request = app_server
++            .send_turn_start_request(TurnStartParams {
++                thread_id: thread.id,
++                input: vec![V2UserInput::Text {
++                    text: "Answer briefly".to_string(),
++                    text_elements: Vec::new(),
++                }],
++                ..Default::default()
++            })
++            .await?;
++        let turn_response = timeout(
++            DEFAULT_READ_TIMEOUT,
++            app_server.read_stream_until_response_message(RequestId::Integer(turn_request)),
++        )
++        .await??;
++        let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_response)?;
++        timeout(
++            DEFAULT_READ_TIMEOUT,
++            app_server.read_stream_until_notification_message("turn/completed"),
++        )
++        .await??;
++    }
++
++    let bodies = responses_bodies(&server).await?;
++    assert_eq!(bodies.len(), 2);
++    assert!(find_tool(&bodies[0], "exec_command").is_some());
++    assert!(find_tool(&bodies[0], "view_image").is_none());
++    assert_eq!(bodies[1]["tools"], json!([]));
++    Ok(())
++}
++
+ #[tokio::test]
+ async fn thread_start_rejects_hidden_dynamic_tools_without_namespace() -> Result<()> {
+     let server = MockServer::start().await;
