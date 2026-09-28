@@ -36,20 +36,25 @@ def private_environment(directory, marker):
     home = directory / "home"
     home.mkdir()
     (home / "codex").mkdir()
-    environment = dict(
-        os.environ,
-        HOME=str(home),
-        CODEX_HOME=str(home / "codex"),
-        XDG_CONFIG_HOME=str(home / ".config"),
-        XDG_CACHE_HOME=str(home / ".cache"),
-        XDG_DATA_HOME=str(home / ".local/share"),
-        MOCK_API_KEY="disposable-key",
-        ORBIT_EXEC_MARKER=marker,
-    )
-    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-        environment[key] = "http://127.0.0.1:9"
-    environment["NO_PROXY"] = "127.0.0.1,localhost"
-    return environment
+    runtime = directory / "runtime"
+    runtime.mkdir(mode=0o700)
+    return {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C.UTF-8",
+        "HOME": str(home),
+        "CODEX_HOME": str(home / "codex"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_DATA_HOME": str(home / ".local/share"),
+        "XDG_STATE_HOME": str(home / ".local/state"),
+        "XDG_RUNTIME_DIR": str(runtime),
+        "MOCK_API_KEY": "disposable-key",
+        "ORBIT_EXEC_MARKER": marker,
+        "HTTP_PROXY": "http://127.0.0.1:9",
+        "HTTPS_PROXY": "http://127.0.0.1:9",
+        "ALL_PROXY": "http://127.0.0.1:9",
+        "NO_PROXY": "127.0.0.1,localhost",
+    }
 
 
 def wait_for_listener(port, child):
