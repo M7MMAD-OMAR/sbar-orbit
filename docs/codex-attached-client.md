@@ -131,6 +131,16 @@ positive tool ceiling and the Desktop rendering path for one synthetic tool.
 The toy server only recorded a disposable action; this run did not reach the
 real Orbit broker.
 
+Another disposable combined run used the real session-bound Orbit MCP adapter
+and broker. The mock model saw only `mcp__orbit_private.orbit_act`, called it
+once, and received its result. The broker journal recorded one allowed pointer
+action; a blank Fedora session's private pointer presence changed from absent
+to `(317, 219)`. The completed turn appeared in both the first and reopened
+public attached Codex windows. The owner used a fake API key, and the action
+did not touch the person's pointer, app, profile or account. This test did not
+use the later read-only authority gate, edit a file, or prove that an attached
+client cannot call other owner RPCs directly.
+
 The same fixture then tested an owner restart. It sent SIGTERM only to the
 copied Desktop main process identified inside its private process tree, and
 started a new owner with the same temporary profile. The app-server resumed
