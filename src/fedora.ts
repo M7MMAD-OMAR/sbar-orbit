@@ -140,7 +140,7 @@ export class FedoraBackend {
   /** What the compositor was asked to draw with, and what its log says actually bound. */
   renderer: { asked: NativeRenderer["renderer"]; bound: string; device?: string; driver?: string } = { asked: "pixman", bound: "pixman" };
   private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams,
-    private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot) {
+    private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot, private audioSockets: string[]) {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
@@ -159,6 +159,7 @@ export class FedoraBackend {
     // Until the backend exists, its close() cannot run, so the directory is removed here on any throw.
     let compositor: ChildProcessWithoutNullStreams, log: ReturnType<typeof createWriteStream>, head = "";
     let preferenceSnapshot: NativePreferenceSnapshot = "absent";
+    const audioSockets: string[] = [];
     const env = { ...process.env };
     try {
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
@@ -178,6 +179,7 @@ export class FedoraBackend {
           if (!(await lstat(source)).isSocket()) continue;
           await mkdir(dirname(target), { recursive: true, mode: 0o700 });
           await symlink(source, target);
+          audioSockets.push(source);
           if (name === "pulse/native") pulseServer = `unix:${target}`;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -188,7 +190,8 @@ export class FedoraBackend {
     // desktop. Documents, history and credentials are not part of it.
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
     preferenceSnapshot = await seedNativePreferences(base.XDG_CONFIG_HOME);
-    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, ...(pulseServer && !process.env.PULSE_SERVER ? { PULSE_SERVER: pulseServer } : {}), WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
+    delete env.PULSE_SERVER;
+    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, ...(pulseServer ? { PULSE_SERVER: pulseServer } : {}), WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
@@ -210,7 +213,7 @@ export class FedoraBackend {
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
-    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot);
+    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets);
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -356,6 +359,33 @@ export class FedoraBackend {
       device.stdout.on("data", data); device.once("exit", fail); device.once("error", fail);
     });
   }
+  private x11SocketPath() {
+    const display = /^:([0-9]+)$/.exec(this.env.DISPLAY ?? "")?.[1];
+    if (!display) throw new OrbitError("UNSUPPORTED", "Private X11 display is unavailable");
+    return `/tmp/.X11-unix/X${display}`;
+  }
+  private async socketPolicy(toolkit: "wayland" | "x11", keyring: boolean) {
+    const paths = [join(this.directory, this.waylandDisplay)];
+    if (this.bus) paths.push(join(this.directory, "bus"));
+    if (keyring) {
+      if (!this.keyringProxy) throw new OrbitError("UNSUPPORTED", "Private keyring proxy is unavailable");
+      paths.push(join(this.directory, "keyring-proxy"));
+    }
+    paths.push(...this.audioSockets);
+    if (toolkit === "x11") {
+      // Capture one Xwayland socket inode. A rule on /tmp/.X11-unix would also
+      // permit the person's X11 socket and is never acceptable here.
+      paths.push(this.x11SocketPath());
+    }
+    return await Promise.all(paths.map(async path => {
+      let info;
+      try { info = await lstat(path, { bigint: true }); }
+      catch { throw new OrbitError("UNSUPPORTED", "An expected private application socket is unavailable"); }
+      if (!info.isSocket() || info.uid !== BigInt(process.getuid?.() ?? -1))
+        throw new OrbitError("UNSUPPORTED", "An expected application socket is not owned by this user");
+      return { path, device: String(info.dev), inode: String(info.ino) };
+    }));
+  }
   async act(value: unknown): Promise<unknown> {
     const action = this.parseAction(value);
     this.ensureOpen();
@@ -382,13 +412,20 @@ export class FedoraBackend {
           : await prepareZenLaunch(this.directory, join(this.directory, this.waylandDisplay), this.env.LD_LIBRARY_PATH ?? "");
       let cleanupManaged = false;
       try {
-      const applicationEnv = "snapshot" in prepared && prepared.snapshot.accountState === "copied"
+      const keyring = "snapshot" in prepared && prepared.snapshot.accountState === "copied";
+      const applicationEnv = keyring
         ? { ...this.env, DBUS_SESSION_BUS_ADDRESS: await this.codeKeyringProxy() } : this.env;
       const [executable] = prepared.argv;
       if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
-      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []), executable, ...prepared.argv.slice(1)], { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit }, detached: true });
+      const socketPolicy = action.type === "launch" || action.app === "vscode"
+        ? ["--socket-policy", JSON.stringify(await this.socketPolicy(prepared.toolkit, keyring))]
+        : [];
+      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),
+        ...socketPolicy, executable, ...prepared.argv.slice(1)],
+      { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit,
+        ...(prepared.toolkit === "x11" && socketPolicy.length ? { DISPLAY: this.x11SocketPath() } : {}) }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
       const supervised: SupervisedApplication = { child, ...("release" in prepared ? { release: prepared.release } : {}) };
       this.children.push(supervised);
