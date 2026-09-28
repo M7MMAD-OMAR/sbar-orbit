@@ -1,0 +1,192 @@
+diff --git a/codex-rs/app-server/tests/legacy_readonly_rpc.rs b/codex-rs/app-server/tests/legacy_readonly_rpc.rs
+new file mode 100644
+index 0000000..f0b208d
+--- /dev/null
++++ b/codex-rs/app-server/tests/legacy_readonly_rpc.rs
+@@ -0,0 +1,186 @@
++#![allow(clippy::expect_used)]
++
++use anyhow::Result;
++use app_test_support::MockResponsesConfig;
++use app_test_support::TestAppServer;
++use app_test_support::create_fake_rollout_with_text_elements;
++use app_test_support::create_mock_responses_server_repeating_assistant;
++use app_test_support::rollout_path;
++use codex_app_server_protocol::ThreadItem;
++use codex_app_server_protocol::ThreadReadParams;
++use codex_app_server_protocol::ThreadReadResponse;
++use codex_app_server_protocol::ThreadResumeParams;
++use codex_app_server_protocol::ThreadResumeResponse;
++use codex_app_server_protocol::ThreadStatus;
++use codex_app_server_protocol::UserInput;
++use codex_protocol::protocol::AgentMessageEvent;
++use codex_protocol::protocol::EventMsg;
++use codex_utils_absolute_path::test_support::PathExt;
++use pretty_assertions::assert_eq;
++use serde_json::json;
++use std::io::Write;
++use std::path::Path;
++use std::time::SystemTime;
++use tempfile::TempDir;
++use tokio::time::timeout;
++
++const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
++
++#[derive(PartialEq, Eq)]
++struct FileSnapshot {
++    bytes: Vec<u8>,
++    modified: SystemTime,
++}
++
++fn snapshot(path: &Path) -> Option<FileSnapshot> {
++    let metadata = std::fs::metadata(path).ok()?;
++    Some(FileSnapshot {
++        bytes: std::fs::read(path).expect("read disposable fixture file"),
++        modified: metadata.modified().expect("disposable fixture modification time"),
++    })
++}
++
++fn sqlite_snapshots(path: &Path) -> Vec<(&'static str, Option<FileSnapshot>)> {
++    ["", "-wal", "-shm"]
++        .into_iter()
++        .map(|suffix| {
++            let mut name = path.as_os_str().to_os_string();
++            name.push(suffix);
++            (suffix, snapshot(Path::new(&name)))
++        })
++        .collect()
++}
++
++fn assert_files_unchanged(
++    before: &[(&'static str, Option<FileSnapshot>)],
++    after: &[(&'static str, Option<FileSnapshot>)],
++) {
++    for ((before_name, before_file), (after_name, after_file)) in before.iter().zip(after) {
++        assert_eq!(before_name, after_name);
++        assert!(before_file == after_file, "state database file {before_name} changed");
++    }
++}
++
++fn append_agent_message(path: &Path, timestamp: &str, text: &str) -> Result<()> {
++    let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
++    writeln!(
++        file,
++        "{}",
++        json!({
++            "timestamp": timestamp,
++            "type": "event_msg",
++            "payload": serde_json::to_value(EventMsg::AgentMessage(AgentMessageEvent {
++                message: text.to_string(),
++                phase: None,
++                memory_citation: None,
++                delivery: None,
++                questions: None,
++            }))?,
++        })
++    )?;
++    Ok(())
++}
++
++fn user_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
++    turns
++        .iter()
++        .filter_map(|turn| match turn.items.first()? {
++            ThreadItem::UserMessage { content, .. } => match content.first()? {
++                UserInput::Text { text, .. } => Some(text.as_str()),
++                _ => None,
++            },
++            _ => None,
++        })
++        .collect()
++}
++
++fn assistant_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
++    turns
++        .iter()
++        .flat_map(|turn| &turn.items)
++        .filter_map(|item| match item {
++            ThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
++            _ => None,
++        })
++        .collect()
++}
++
++#[tokio::test]
++async fn legacy_readonly_rpc_preserves_state_files() -> Result<()> {
++    let red_mode = std::env::var("ORBIT_LEGACY_RPC_RED").unwrap_or_default();
++    assert!(matches!(red_mode.as_str(), "" | "unloaded" | "loaded"));
++    let server = create_mock_responses_server_repeating_assistant("Done").await;
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
++
++    let filename_ts = "2025-01-05T12-00-00";
++    let thread_id = create_fake_rollout_with_text_elements(
++        codex_home.path(),
++        filename_ts,
++        "2025-01-05T12:00:00Z",
++        "Saved user message",
++        vec![],
++        Some("mock_provider"),
++        /*git_info*/ None,
++    )?;
++    let rollout = rollout_path(codex_home.path(), filename_ts, &thread_id);
++    append_agent_message(&rollout, "2025-01-05T12:01:00Z", "Saved assistant reply")?;
++    let sqlite = codex_state::SqliteConfig::new_for_testing(codex_home.path().abs());
++    let state_path = sqlite.state_db_path();
++    let mut app_server = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_auto_env()
++        .build_initialized()
++        .await?;
++    let state_runtime = codex_state::StateRuntime::init(sqlite, "mock_provider".to_string()).await?;
++    let parsed_thread_id = codex_protocol::ThreadId::from_string(&thread_id)?;
++    state_runtime.delete_thread(parsed_thread_id).await?;
++    assert!(state_runtime.get_thread(parsed_thread_id).await?.is_none());
++
++    let unloaded_state_before = sqlite_snapshots(&state_path);
++    let unloaded_rollout_before = snapshot(&rollout).expect("rollout before unloaded read");
++    let request_id = app_server
++        .send_thread_read_request(ThreadReadParams {
++            thread_id: thread_id.clone(),
++            include_turns: true,
++            read_only: red_mode != "unloaded",
++        })
++        .await?;
++    let ThreadReadResponse { thread: unloaded, .. } =
++        timeout(READ_TIMEOUT, app_server.read_response(request_id)).await??;
++    assert_eq!(unloaded.status, ThreadStatus::NotLoaded);
++    assert_eq!(user_texts(&unloaded.turns), vec!["Saved user message"]);
++    assert_eq!(assistant_texts(&unloaded.turns), vec!["Saved assistant reply"]);
++    assert_files_unchanged(&unloaded_state_before, &sqlite_snapshots(&state_path));
++    assert!(snapshot(&rollout) == Some(unloaded_rollout_before), "unloaded read changed rollout");
++
++    let resume_id = app_server
++        .send_thread_resume_request(ThreadResumeParams {
++            thread_id: thread_id.clone(),
++            exclude_turns: true,
++            ..Default::default()
++        })
++        .await?;
++    let _: ThreadResumeResponse =
++        timeout(READ_TIMEOUT, app_server.read_response(resume_id)).await??;
++    state_runtime.delete_thread(parsed_thread_id).await?;
++    assert!(state_runtime.get_thread(parsed_thread_id).await?.is_none());
++
++    let loaded_state_before = sqlite_snapshots(&state_path);
++    let loaded_rollout_before = snapshot(&rollout).expect("rollout before loaded read");
++    let request_id = app_server
++        .send_thread_read_request(ThreadReadParams {
++            thread_id,
++            include_turns: true,
++            read_only: red_mode != "loaded",
++        })
++        .await?;
++    let ThreadReadResponse { thread: loaded, .. } =
++        timeout(READ_TIMEOUT, app_server.read_response(request_id)).await??;
++    assert_ne!(loaded.status, ThreadStatus::NotLoaded);
++    assert_eq!(user_texts(&loaded.turns), vec!["Saved user message"]);
++    assert_eq!(assistant_texts(&loaded.turns), vec!["Saved assistant reply"]);
++    assert_files_unchanged(&loaded_state_before, &sqlite_snapshots(&state_path));
++    assert!(snapshot(&rollout) == Some(loaded_rollout_before), "loaded read changed rollout");
++    Ok(())
++}
