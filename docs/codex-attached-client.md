@@ -71,6 +71,12 @@ that an attached Desktop `account-info` request can call the shared authority's
 `getAuthToken` route with `includeToken: true`, receiving a raw access token in
 memory. Personal account attachment must remain disabled until an attach-only
 patch prevents that response and a fake-token fixture verifies the boundary.
+The same raw socket also accepts direct app-server methods such as
+`command/exec` and local `thread/start`. A client inside Orbit could bypass its
+private file and display environment by asking the owner authority to act on
+the host. A token-only response filter or an Electron UI patch cannot close
+that route. Personal attachment needs a default-deny protocol boundary with
+session ownership and path policy before it can be enabled.
 Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
 executable it also requires the optional feature's staged manifest. That

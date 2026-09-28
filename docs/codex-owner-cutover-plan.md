@@ -18,6 +18,10 @@ have used a disposable profile and a fake model credential.
    A fake-token test must also prove the attached client never receives a raw
    owner access token through `account-info`, `getAuthToken`, `getAuthStatus`,
    or any related Desktop IPC response.
+   A default-deny protocol boundary must prevent direct attached-client RPCs
+   from running host commands, starting local host threads, or reading owner
+   files through the shared authority. Verify permitted Orbit turns are bound
+   to their own executor and tools before a personal cutover.
 3. Prepare a Codex-only launcher wrapper and a copy of the existing local
    `chatgpt.desktop` entry. The wrapper must select the pinned candidate and
    its bundled CLI, the stable user-only authority socket, the normal personal
