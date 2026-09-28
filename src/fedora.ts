@@ -21,6 +21,9 @@ export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: str
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
+export function nativeSupervisorSafetyFlags(action: NativeAction): string[] {
+  return action.type === "launch-app" && action.app === "zen" ? ["--coredump-filter-zero"] : [];
+}
 /** Window management inside the private display. Nothing here can reach a window on the person's desktop. */
 const windowCommands = ["fullscreen", "restore", "focus", "close"] as const;
 export type WindowCommand = (typeof windowCommands)[number];
@@ -434,7 +437,7 @@ export class FedoraBackend {
         ? ["--socket-policy", JSON.stringify(await this.socketPolicy(prepared.toolkit, keyring))]
         : [];
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),
-        ...socketPolicy, executable, ...prepared.argv.slice(1)],
+        ...nativeSupervisorSafetyFlags(action), ...socketPolicy, executable, ...prepared.argv.slice(1)],
       { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit,
         ...(prepared.toolkit === "x11" && socketPolicy.length ? { DISPLAY: this.x11SocketPath() } : {}) }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();

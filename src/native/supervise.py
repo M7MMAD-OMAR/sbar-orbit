@@ -35,16 +35,32 @@ signal.signal(signal.SIGINT, stop)
 arguments = sys.argv[2:]
 selected_files, lease_fds = [], []
 policy_fd = None
+zero_core_filter = False
 try:
     if arguments[:1] == ["--selected-files"]:
         selected_files, lease_fds = acquire_files(json.loads(arguments[1]))
         arguments = arguments[2:]
+    if arguments[:1] == ["--coredump-filter-zero"]:
+        zero_core_filter = True
+        arguments = arguments[1:]
     if arguments[:1] == ["--socket-policy"]:
         policy_fd = make_ruleset(json.loads(arguments[1]))
         arguments = arguments[2:]
+
+    def prepare_child():
+        if zero_core_filter:
+            # Firefox needs dumpability to map sandbox user IDs. Notes and registers can still enter a core.
+            with open("/proc/self/coredump_filter", "w", encoding="ascii") as filter_file:
+                filter_file.write("0\n")
+            with open("/proc/self/coredump_filter", "r", encoding="ascii") as filter_file:
+                if filter_file.read().strip() != "00000000":
+                    raise OSError("Cannot apply zero core mapping filter")
+        if policy_fd is not None:
+            restrict_child(policy_fd)
+
     child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, start_new_session=True,
                              pass_fds=(policy_fd,) if policy_fd is not None else (),
-                             preexec_fn=(lambda: restrict_child(policy_fd)) if policy_fd is not None else None)
+                             preexec_fn=prepare_child if zero_core_filter or policy_fd is not None else None)
 except Exception as error:
     for fd in lease_fds:
         os.close(fd)
