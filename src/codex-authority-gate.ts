@@ -6,6 +6,7 @@ import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 
 const MAX_MESSAGE = 8 * 1024 * 1024;
+const MAX_PAGE_RESPONSE = 4 * 1024 * 1024;
 const MAX_HEADER = 8192;
 const SIDEBAR_KEYS = new Set([
   "local-projects", "project-order", "project-appearances", "pinned-thread-ids",
@@ -22,6 +23,18 @@ type RpcMessage = { id?: string | number; method?: string; params?: unknown; res
 type PendingRequest = { method: string; key?: string };
 export type GateSocketIdentity = { device: string; inode: string };
 export type GateFieldShape = { key: string; kind: string; length?: number };
+export type PaginatedPageRequest = {
+  method: "thread/turns/list" | "thread/items/list";
+  params: {
+    threadId: string;
+    readOnly: true;
+    limit: number;
+    cursor?: string | null;
+    sortDirection?: "asc" | "desc";
+    itemsView?: "summary" | "full";
+    turnId?: string | null;
+  };
+};
 
 function assertSocketIdentity(path: string, identity: GateSocketIdentity) {
   if (!/^\d+$/u.test(identity.device) || !/^\d+$/u.test(identity.inode))
@@ -49,6 +62,59 @@ function parseMessage(text: string): RpcMessage {
 function requestId(value: unknown): string | null {
   return typeof value === "string" && value.length <= 128 ? `s:${value}`
     : typeof value === "number" && Number.isSafeInteger(value) ? `n:${value}` : null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const PAGE_TURN_KEYS = new Set(["threadId", "readOnly", "cursor", "limit", "sortDirection", "itemsView"]);
+const PAGE_ITEM_KEYS = new Set(["threadId", "readOnly", "turnId", "cursor", "limit", "sortDirection"]);
+
+function safePaginatedPageRequest(message: RpcMessage): PaginatedPageRequest | null {
+  const method = message.method;
+  if (method !== "thread/turns/list" && method !== "thread/items/list") return null;
+  if (requestId(message.id) === null ||
+      Object.keys(message).some(key => key !== "id" && key !== "method" && key !== "params")) return null;
+  const input = record(message.params);
+  if (!input || Object.keys(input).some(key =>
+    !(method === "thread/turns/list" ? PAGE_TURN_KEYS : PAGE_ITEM_KEYS).has(key)) ||
+      typeof input.threadId !== "string" || !UUID.test(input.threadId) || input.readOnly !== true ||
+      !Number.isSafeInteger(input.limit) || (input.limit as number) < 1 || (input.limit as number) > 50) return null;
+  if ("cursor" in input && input.cursor !== null &&
+      (typeof input.cursor !== "string" || input.cursor.length < 1 || input.cursor.length > 4096 ||
+       !/^[\x20-\x7e]+$/u.test(input.cursor))) return null;
+  if ("sortDirection" in input && input.sortDirection !== "asc" && input.sortDirection !== "desc") return null;
+  if ("itemsView" in input && input.itemsView !== "summary" && input.itemsView !== "full") return null;
+  if ("turnId" in input && input.turnId !== null &&
+      (typeof input.turnId !== "string" || !UUID.test(input.turnId))) return null;
+  const params: PaginatedPageRequest["params"] = {
+    threadId: input.threadId, readOnly: true, limit: input.limit as number,
+  };
+  if ("cursor" in input) params.cursor = input.cursor as string | null;
+  if ("sortDirection" in input) params.sortDirection = input.sortDirection as "asc" | "desc";
+  if ("itemsView" in input) params.itemsView = input.itemsView as "summary" | "full";
+  if ("turnId" in input) params.turnId = input.turnId as string | null;
+  return Object.freeze({ method, params: Object.freeze(params) });
+}
+
+function safePaginatedPageResponse(id: string | number, result: unknown,
+                                   limit: number, maxMessageBytes: number): string | null {
+  const serializedResult = JSON.stringify(result);
+  if (typeof serializedResult !== "string" ||
+      Buffer.byteLength(serializedResult) > Math.min(maxMessageBytes, MAX_PAGE_RESPONSE)) return null;
+  const value = record(JSON.parse(serializedResult));
+  if (!value || Object.keys(value).some(key =>
+    key !== "data" && key !== "nextCursor" && key !== "backwardsCursor") ||
+      !Array.isArray(value.data) || value.data.length > limit ||
+      !value.data.every(item => record(item) !== null)) return null;
+  for (const key of ["nextCursor", "backwardsCursor"] as const) {
+    const cursor = value[key];
+    if (cursor !== undefined && cursor !== null &&
+        (typeof cursor !== "string" || cursor.length < 1 || cursor.length > 4096 ||
+         !/^[\x20-\x7e]+$/u.test(cursor))) return null;
+  }
+  const serialized = JSON.stringify({ id, result: value });
+  if (Buffer.byteLength(serialized) > Math.min(maxMessageBytes, MAX_PAGE_RESPONSE) ||
+      containsCredentialField(value)) return null;
+  return serialized;
 }
 
 function sanitizedAuthStatus(result: unknown) {
@@ -179,7 +245,7 @@ function containsCredentialField(value: unknown, depth = 0): boolean {
   const object = record(value);
   if (!object) return false;
   return Object.entries(object).some(([key, item]) =>
-    /^(?:auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|authorization)$/iu.test(key) ||
+    /^(?:token|auth[_-]?token|access[_-]?token|refresh[_-]?token|id[_-]?token|bearer[_-]?token|authorization|api[_-]?key|password|secret|client[_-]?secret|cookie|credential|credentials|private[_-]?key|session[_-]?(?:key|token))$/iu.test(key) ||
     containsCredentialField(item, depth + 1));
 }
 
@@ -320,13 +386,16 @@ class OwnerWebSocket {
   close() { this.socket.destroy(); }
 }
 
-type ClientData = { owner?: OwnerWebSocket; queue: string[]; pending: Map<string, PendingRequest> };
+type ClientData = { owner?: OwnerWebSocket; queue: string[]; pending: Map<string, PendingRequest>;
+  pages: Set<string> };
 
 export async function startCodexReadOnlyGate(session: string, ownerSocketPath: string, ownerStatePath: string,
                                              options: { ownerIdentity: GateSocketIdentity;
                                                stateIdentity: GateSocketIdentity;
                                                maxMessageBytes?: number;
                                                allowLegacyThreadRead?: boolean;
+                                               allowPaginatedThreadPages?: boolean;
+                                               readPaginatedThreadPage?: (request: PaginatedPageRequest) => Promise<unknown>;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
                                                auditThreadListShape?: (fields: GateFieldShape[]) => void }) {
   const maxMessageBytes = options.maxMessageBytes === undefined ? MAX_MESSAGE
@@ -347,7 +416,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
       unix: socketPath,
       fetch(request, instance) {
         if (new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
-        if (instance.upgrade(request, { data: { queue: [], pending: new Map() } })) return undefined;
+        if (instance.upgrade(request, { data: { queue: [], pending: new Map(), pages: new Set() } })) return undefined;
         return new Response("WebSocket required", { status: 400 });
       },
       websocket: {
@@ -396,10 +465,12 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               return;
             }
             if (id === null) throw new Error("Codex RPC needs an id");
-            const safe = safeAppRequest(request, options.allowLegacyThreadRead === true);
+            const page = options.allowPaginatedThreadPages === true && options.readPaginatedThreadPage
+              ? safePaginatedPageRequest(request) : null;
+            const safe = page ? null : safeAppRequest(request, options.allowLegacyThreadRead === true);
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
-            options.auditMethod?.(methodName, safe ? "allow" : "deny");
+            options.auditMethod?.(methodName, safe || page ? "allow" : "deny");
             if (methodName === "thread/list" && options.auditThreadListShape) {
               const fields = Object.entries(record(request.params) ?? {}).slice(0, 32).map(([key, value]) => ({
                 key: /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid",
@@ -408,9 +479,40 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               }));
               options.auditThreadListShape(fields);
             }
-            if (!safe) { client.send(JSON.stringify(denied(request.id))); return; }
-            if (client.data.pending.size >= 64) throw new Error("Too many Codex gate requests");
-            if (client.data.pending.has(id)) throw new Error("Duplicate Codex RPC id");
+            if (!safe && !page) { client.send(JSON.stringify(denied(request.id))); return; }
+            if (client.data.pending.size + client.data.pages.size >= 64)
+              throw new Error("Too many Codex gate requests");
+            if (client.data.pending.has(id) || client.data.pages.has(id))
+              throw new Error("Duplicate Codex RPC id");
+            if (page) {
+              const reader = options.readPaginatedThreadPage;
+              if (!reader) throw new Error("Codex page reader is unavailable");
+              client.data.pages.add(id);
+              void (async () => {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                try {
+                  const result = await Promise.race([
+                    reader(page),
+                    new Promise<never>((_, reject) => {
+                      timer = setTimeout(() => reject(new Error("Codex page reader timed out")), 5000);
+                    }),
+                  ]);
+                  const response = safePaginatedPageResponse(request.id as string | number, result,
+                    page.params.limit, maxMessageBytes);
+                  client.send(response ?? JSON.stringify({ id: request.id,
+                    error: { code: -32000, message: "Codex page unavailable" } }));
+                } catch {
+                  try { client.send(JSON.stringify({ id: request.id,
+                    error: { code: -32000, message: "Codex page unavailable" } })); }
+                  catch { client.terminate(); }
+                } finally {
+                  if (timer) clearTimeout(timer);
+                  client.data.pages.delete(id);
+                }
+              })();
+              return;
+            }
+            if (!safe) throw new Error("Codex request is unavailable");
             client.data.pending.set(id, { method: safe.method ?? "" });
             const serialized = JSON.stringify(safe);
             if (client.data.owner && client.data.queue.length === 0) {
