@@ -44,3 +44,12 @@ Validation status in a disposable checkout at the exact tag:
 This is source and mock-model evidence only. The installed Codex executable,
 the person's running Desktop session, real account data, and model tool
 routing in an Orbit session were not changed or tested by this patch.
+
+An executable build was attempted once in the disposable checkout with
+`cargo build -p codex-cli --bin codex --locked`, one Cargo job, and the shared
+Orbit resource budget. Compilation reached `codex-cli`, but GNU `ld` was still
+linking when the 15 minute bound expired. The command exited with code 124.
+There is no completed `/var/tmp/orbit-codex-allowedtools-target/debug/codex`
+artifact, so binary version and SHA-256 are not measured. The installed CLI
+and the staged Desktop candidate were not changed. This establishes a build
+time limit for that configuration, not that the source cannot produce a CLI.
