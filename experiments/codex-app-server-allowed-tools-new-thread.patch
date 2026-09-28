@@ -30,7 +30,7 @@ index 09732cf..a0cda9b 100644
      #[experimental("thread/start.selectedCapabilityRoots")]
      #[ts(optional = nullable)]
 diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
-index 04c2229..be8638b 100644
+index 04c2229..222293a 100644
 --- a/codex-rs/app-server/src/request_processors/thread_processor.rs
 +++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
 @@ -18,6 +18,7 @@ use codex_app_server_protocol::ThreadSection;
@@ -82,14 +82,33 @@ index 04c2229..be8638b 100644
          if !selected_capability_roots.is_empty() {
              thread_extension_init.insert(selected_capability_roots);
          }
-diff --git a/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs b/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
-index 38f3433..14e4986 100644
---- a/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
-+++ b/codex-rs/app-server/tests/suite/v2/dynamic_tools.rs
-@@ -174,6 +174,64 @@ async fn thread_start_normalizes_legacy_dynamic_tools_into_model_request() -> Re
-     Ok(())
- }
- 
+diff --git a/codex-rs/app-server/tests/allowed_tools.rs b/codex-rs/app-server/tests/allowed_tools.rs
+new file mode 100644
+index 0000000..c160083
+--- /dev/null
++++ b/codex-rs/app-server/tests/allowed_tools.rs
+@@ -0,0 +1,100 @@
++use anyhow::Context;
++use anyhow::Result;
++use app_test_support::MockResponsesConfig;
++use app_test_support::TestAppServer;
++use app_test_support::create_final_assistant_message_sse_response;
++use app_test_support::create_mock_responses_server_sequence_unchecked;
++use app_test_support::to_response;
++use codex_app_server_protocol::RequestId;
++use codex_app_server_protocol::ThreadStartResponse;
++use codex_app_server_protocol::TurnStartParams;
++use codex_app_server_protocol::TurnStartResponse;
++use codex_app_server_protocol::UserInput as V2UserInput;
++use serde_json::Value;
++use serde_json::json;
++use std::time::Duration;
++use tempfile::TempDir;
++use tokio::time::timeout;
++use wiremock::MockServer;
++
++const READ_TIMEOUT: Duration = Duration::from_secs(30);
++
 +#[tokio::test]
 +async fn thread_start_allowed_tools_limits_model_inventory() -> Result<()> {
 +    let responses = vec![
@@ -104,14 +123,14 @@ index 38f3433..14e4986 100644
 +        .without_auto_env()
 +        .build()
 +        .await?;
-+    timeout(DEFAULT_READ_TIMEOUT, app_server.initialize()).await??;
++    timeout(READ_TIMEOUT, app_server.initialize()).await??;
 +
 +    for allowed_tools in [json!([{"name": "exec_command"}]), json!([])] {
 +        let start_request = app_server
 +            .send_raw_request("thread/start", Some(json!({"allowedTools": allowed_tools})))
 +            .await?;
 +        let start_response = timeout(
-+            DEFAULT_READ_TIMEOUT,
++            READ_TIMEOUT,
 +            app_server.read_stream_until_response_message(RequestId::Integer(start_request)),
 +        )
 +        .await??;
@@ -128,13 +147,13 @@ index 38f3433..14e4986 100644
 +            })
 +            .await?;
 +        let turn_response = timeout(
-+            DEFAULT_READ_TIMEOUT,
++            READ_TIMEOUT,
 +            app_server.read_stream_until_response_message(RequestId::Integer(turn_request)),
 +        )
 +        .await??;
 +        let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_response)?;
 +        timeout(
-+            DEFAULT_READ_TIMEOUT,
++            READ_TIMEOUT,
 +            app_server.read_stream_until_notification_message("turn/completed"),
 +        )
 +        .await??;
@@ -148,6 +167,36 @@ index 38f3433..14e4986 100644
 +    Ok(())
 +}
 +
- #[tokio::test]
- async fn thread_start_rejects_hidden_dynamic_tools_without_namespace() -> Result<()> {
-     let server = MockServer::start().await;
++async fn responses_bodies(server: &MockServer) -> Result<Vec<Value>> {
++    let requests = server
++        .received_requests()
++        .await
++        .context("failed to fetch received requests")?;
++    requests
++        .into_iter()
++        .filter(|request| request.url.path().ends_with("/responses"))
++        .map(|request| request.body_json::<Value>().context("request body should be JSON"))
++        .collect()
++}
++
++fn find_tool<'a>(body: &'a Value, name: &str) -> Option<&'a Value> {
++    body.get("tools")
++        .and_then(Value::as_array)
++        .and_then(|tools| {
++            tools
++                .iter()
++                .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
++        })
++}
+diff --git a/codex-rs/app-server/tests/suite/v2/skills_list.rs b/codex-rs/app-server/tests/suite/v2/skills_list.rs
+index 1b3d294..a0bbd9c 100644
+--- a/codex-rs/app-server/tests/suite/v2/skills_list.rs
++++ b/codex-rs/app-server/tests/suite/v2/skills_list.rs
+@@ -1395,6 +1395,7 @@ async fn skills_changed_notification_is_emitted_after_skill_change() -> Result<(
+             project_id: None,
+             daybreak_enabled: None,
+             dynamic_tools: None,
++            allowed_tools: None,
+             environments: None,
+             selected_capability_roots: None,
+             mock_experimental_field: None,

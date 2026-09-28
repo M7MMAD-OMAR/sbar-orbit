@@ -21,10 +21,26 @@ the same field for `thread/resume` or `thread/fork`, and a live thread cannot
 have its captured startup ceiling changed through this patch. Direct
 app-server RPC tool calls are outside this model tool inventory gate.
 
-Validation status: `git diff --check` passed in the disposable clone. A bounded
-Cargo check stopped while downloading upstream dependencies, before
-compilation. The focused app-server test has not run. Passing behavior is
-therefore not measured. Apply the patch to a clean checkout at the exact tag,
-compile both changed crates, and run
-`thread_start_allowed_tools_limits_model_inventory` before considering it for
-a user-owned Codex build.
+Validation status in a disposable checkout at the exact tag:
+
+- `git apply --check` passed against a clean checkout.
+- `cargo check -p codex-app-server -p codex-app-server-protocol --locked --offline`
+  passed after Cargo refreshed the upstream lock file in the disposable
+  checkout. The tag's original lock file records several workspace crates at
+  `0.0.0`, so the first `--locked` invocation refused to update it. The patch
+  does not include that generated lock file change.
+- The focused standalone integration test compiled and passed: 1 test, 0
+  failures. It inspected two mock model requests. One advertised
+  `exec_command` and excluded `view_image`; the other advertised no tools.
+  Run it with `cargo test -p codex-app-server --test allowed_tools
+  thread_start_allowed_tools_limits_model_inventory` after resolving the lock.
+- A baseline run with the production patch removed did not reach an assertion.
+  GNU `ld` timed out twice while linking, after 3 and 5 minutes. Test
+  sensitivity against the unpatched source is therefore not measured. A first
+  attempt to run this assertion inside the aggregate `tests/all.rs` binary
+  also timed out while linking after 10 minutes, which is why the patch now
+  carries a standalone test binary.
+
+This is source and mock-model evidence only. The installed Codex executable,
+the person's running Desktop session, real account data, and model tool
+routing in an Orbit session were not changed or tested by this patch.
