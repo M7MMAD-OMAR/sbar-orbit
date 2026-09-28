@@ -54,7 +54,24 @@ An executable build was attempted once in the disposable checkout with
 `cargo build -p codex-cli --bin codex --locked`, one Cargo job, and the shared
 Orbit resource budget. Compilation reached `codex-cli`, but GNU `ld` was still
 linking when the 15 minute bound expired. The command exited with code 124.
-There is no completed `/var/tmp/orbit-codex-allowedtools-target/debug/codex`
-artifact, so binary version and SHA-256 are not measured. The installed CLI
-and the staged Desktop candidate were not changed. This establishes a build
-time limit for that configuration, not that the source cannot produce a CLI.
+
+A second, five minute bounded attempt used Fedora's signed `mold` and
+`mimalloc` RPMs extracted under `/var/tmp/orbit-codex-linker.PU0aKm`, without
+system installation. `cargo rustc -p codex-cli --bin codex --locked --offline`
+passed Clang and mold options only to the final compiler invocation, reusing
+the existing Rust libraries. It completed in 22.55 seconds. The resulting
+`/var/tmp/orbit-codex-allowedtools-target/debug/codex` reports
+`codex-cli 0.155.0-alpha.9.2`, is 2,158,505,344 bytes with debug symbols,
+and has SHA-256
+`8b623f29d068a7c0cf6492343a23914cb195fc7873e4a8080b8b046a112157ce`.
+Its ELF `.comment` section identifies mold 2.40.4 and Clang 22.1.8. The
+installed CLI and staged Desktop candidate were not changed. The new binary
+has not been placed in the candidate or tested with the person's account.
+
+A separate copy was stripped with `strip --strip-unneeded`, leaving the debug
+binary intact. `/var/tmp/orbit-codex-linker.PU0aKm/codex-stripped` is
+388,414,840 bytes, below the candidate verifier's 512 MiB ceiling, and has
+SHA-256 `ed53e302475acec23b8be11d8da1e04f6665b96d31a963381114ea0df2c9e31a`.
+It reports the same CLI version, has no missing dynamic libraries, and retains
+the mold identifier in `.comment`. It has not been copied into the Desktop
+candidate.
