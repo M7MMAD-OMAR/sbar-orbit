@@ -77,9 +77,12 @@ async function attachCapableExecutable(path: string, session: string) {
   const resource = Array.isArray(manifest?.resources) && manifest.resources.some(entry =>
     entry?.id === "shared-app-server-socket" &&
     entry?.target === ".codex-linux/features/shared-app-server-socket/orphan-reaper.js");
+  const stateBridge = Array.isArray(manifest?.resources) && manifest.resources.some(entry =>
+    entry?.id === "shared-app-server-socket" &&
+    entry?.target === ".codex-linux/features/shared-app-server-socket/sidebar-state-bridge.js");
   const launcher = Array.isArray(manifest?.runtimeHooks) && manifest.runtimeHooks.some(entry =>
     entry?.id === "shared-app-server-socket" && entry?.key === "launcher");
-  if (!resource || !launcher)
+  if (!resource || !stateBridge || !launcher)
     throw new OrbitError("UNSUPPORTED", "Codex Desktop attach feature is not staged");
 }
 
