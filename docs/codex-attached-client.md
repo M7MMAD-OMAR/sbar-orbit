@@ -14,11 +14,29 @@ under its user runtime. The action does not accept a socket path, executable or
 project path from an agent. Project directory access through this route has not
 been implemented.
 
-The public route currently accepts only `/usr/lib/chatgpt/ChatGPT` as its
-installed executable. A verified candidate staged under `/var/tmp` is not a
-public launch target. Using that candidate without replacing the installed app
-needs a separate explicit configuration and executable identity check. This
-route does not activate the candidate or restart the person's Desktop.
+The public route uses `/usr/lib/chatgpt/ChatGPT` by default. A broker operator
+may configure a separate staged candidate with both
+`ORBIT_CODEX_CANDIDATE_EXECUTABLE` and
+`ORBIT_CODEX_CANDIDATE_MANIFEST_SHA256`. These are broker environment settings,
+not action fields an agent can supply. If only one is set, the action fails.
+The executable must be `/var/tmp/<private-root>/app/ChatGPT`, with the root
+owned by the user and mode `0700`. The candidate tree must contain only owned
+regular files and directories, with no links, special files or shared write
+permissions. Its private manifest pins the SHA-256 of every app file. The
+broker setting pins the manifest itself. The verifier also requires the copied
+Desktop binary and source ASAR to match the current installed app, the version
+to match, and the candidate ASAR to differ from that source. The CLI may have a
+different hash when a reviewed patch is added, but any change requires a new
+manifest and broker pin.
+
+After staging and finalizing all candidate files, generate its manifest with
+`bun run scripts/write-codex-candidate-manifest.ts
+/var/tmp/<private-root>/app/ChatGPT`. The script writes
+`/var/tmp/<private-root>/candidate-manifest.json` once and prints the manifest
+SHA-256 for broker configuration. It never overwrites a manifest. Build a fresh
+candidate directory after changing any file. The existing staged candidate has
+not received a manifest yet, and no broker candidate setting has been changed.
+This route does not activate the candidate or restart the person's Desktop.
 
 The owner must provide an authority socket below `/run/user/<uid>` with its
 adjacent `.state` socket and a private Orbit display. Preparation checks that
@@ -42,9 +60,12 @@ with a synthetic private dconf preference. The person's Desktop was not used.
 No account token, conversation database, project state, or application profile
 is copied. Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
-executable it also requires the optional feature's staged manifest. The
+executable it also requires the optional feature's staged manifest. That
 manifest is only a prerequisite: it does not prove that the installed bundle
-still contains a working patch.
+still contains a working patch. The staged candidate uses the broker-pinned
+complete file manifest described above. Verification happens before launch,
+but same-user changes after verification remain a race until the candidate is
+mounted from pinned immutable files.
 
 `tests/native-codex-attach.test.ts` uses temporary Unix listeners and a
 fixture executable. The fixture connected to both mounted sockets from inside
@@ -58,6 +79,11 @@ tests/agent-interface.test.ts` passed 17 tests with 93 assertions. The added
 action test verified that an absent owner returns `UNSUPPORTED` without creating
 a private home or supervised child. `bun run typecheck` also passed. This test
 did not launch the installed Desktop or use the person's account.
+
+The candidate verifier passed 21 focused tests across four files with 104
+assertions, including complete-tree pinning, changed ASAR, added files, links,
+unsafe permissions, an unpatched ASAR and paths outside the private root. These
+tests used disposable files, not the user's account or staged Desktop candidate.
 
 This establishes mount and temporary HOME behavior for disposable listeners.
 A later combined run used the same internal helper with a copied, patched

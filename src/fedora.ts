@@ -10,7 +10,7 @@ import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
 import { prepareVSCodeLaunch, validateVSCodeProfileRequest } from "./native-vscode";
-import { activeCodexAuthoritySocketPath, activeCodexExecutable, prepareCodexAttachedLaunch } from "./native-codex-attach";
+import { prepareActiveCodexAttachedLaunch } from "./native-codex-attach";
 import { prepareZenLaunch } from "./native-zen-launch";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
@@ -438,11 +438,11 @@ export class FedoraBackend {
         : action.app === "vscode"
           ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
           : action.app === "codex"
-            ? await prepareCodexAttachedLaunch(this.directory, {
+            ? await prepareActiveCodexAttachedLaunch(this.directory, {
                 runtimeDirectory: this.env.XDG_RUNTIME_DIR ?? "",
                 waylandDisplay: this.waylandDisplay,
                 libraryPath: this.env.LD_LIBRARY_PATH ?? "",
-              }, activeCodexAuthoritySocketPath(), activeCodexExecutable)
+              })
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
             this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
       let cleanupManaged = false;

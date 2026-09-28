@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 import type { CodexDisplayEnv } from "./native-codex";
+import { validateStagedCodexCandidate } from "./native-codex-candidate";
 import { seedNativePreferences } from "./native-preferences";
 
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
@@ -14,7 +15,15 @@ export function activeCodexAuthoritySocketPath(): string {
     join(`/run/user/${process.getuid?.()}`, "codex-desktop", "app-server-bridge", "app-server.sock");
 }
 
-export const activeCodexExecutable = installedExecutable;
+function activeCodexExecutable() {
+  const executable = process.env.ORBIT_CODEX_CANDIDATE_EXECUTABLE;
+  const manifestSha256 = process.env.ORBIT_CODEX_CANDIDATE_MANIFEST_SHA256;
+  if (executable === undefined && manifestSha256 === undefined)
+    return { executable: installedExecutable };
+  if (!executable || !manifestSha256)
+    throw new OrbitError("UNSUPPORTED", "Codex candidate needs both broker executable and manifest SHA-256 settings");
+  return { executable, manifestSha256 };
+}
 
 export type CodexAuthoritySocket = { path: string; device: string; inode: string };
 
@@ -68,15 +77,25 @@ async function liveAuthoritySocket(path: string): Promise<CodexAuthoritySocket> 
   return { path, device: String(before.dev), inode: String(before.ino) };
 }
 
-async function attachCapableExecutable(path: string, session: string) {
+async function attachCapableExecutable(path: string, session: string,
+                                       options: { allowFixture?: boolean; candidateManifestSha256?: string }) {
   if (path !== resolve(path))
     throw new OrbitError("INVALID_REQUEST", "Codex attach executable needs a canonical path");
   const info = await lstat(path).catch(() => undefined);
   if (!info?.isFile() || info.isSymbolicLink() || await realpath(path) !== path)
     throw new OrbitError("UNSUPPORTED", "Codex attach executable is unavailable");
-  if (path.startsWith(session + sep)) return;
-  if (path !== installedExecutable)
-    throw new OrbitError("UNSUPPORTED", "Codex attach accepts only its private fixture or installed Desktop");
+  if (path.startsWith(session + sep)) {
+    if (!options.allowFixture) throw new OrbitError("UNSUPPORTED", "Public Codex launch cannot use a session fixture executable");
+    return;
+  }
+  if (path !== installedExecutable) {
+    if (!options.candidateManifestSha256)
+      throw new OrbitError("UNSUPPORTED", "Codex candidate needs a broker-pinned manifest");
+    await validateStagedCodexCandidate(path, options.candidateManifestSha256);
+    return;
+  }
+  if (options.candidateManifestSha256)
+    throw new OrbitError("UNSUPPORTED", "Installed Codex cannot use a candidate manifest");
   let staged: unknown;
   try { staged = JSON.parse(await readFile("/usr/lib/chatgpt/.codex-linux/linux-features-staged.json", "utf8")); }
   catch { throw new OrbitError("UNSUPPORTED", "Codex Desktop attach feature is not installed"); }
@@ -98,6 +117,7 @@ export async function prepareCodexAttachedLaunch(
   display: CodexDisplayEnv,
   authoritySocketPath: string,
   executable: string,
+  options: { allowFixture?: boolean; candidateManifestSha256?: string } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
@@ -113,7 +133,7 @@ export async function prepareCodexAttachedLaunch(
     if (error instanceof OrbitError && error.code === "INVALID_REQUEST") throw error;
     throw new OrbitError("UNSUPPORTED", "Codex active profile needs a running Desktop authority with both private shared sockets");
   }
-  await attachCapableExecutable(executable, session);
+  await attachCapableExecutable(executable, session, options);
   const root = await mkdtemp(join(session, "codex-attach-"));
   try {
     await chmod(root, 0o700);
@@ -147,4 +167,13 @@ export async function prepareCodexAttachedLaunch(
     await rm(root, { recursive: true, force: true });
     throw error;
   }
+}
+
+export async function prepareActiveCodexAttachedLaunch(
+  sessionDirectory: string,
+  display: CodexDisplayEnv,
+): Promise<PreparedCodexAttachedLaunch> {
+  const target = activeCodexExecutable();
+  return prepareCodexAttachedLaunch(sessionDirectory, display, activeCodexAuthoritySocketPath(),
+    target.executable, { allowFixture: false, candidateManifestSha256: target.manifestSha256 });
 }
