@@ -96,10 +96,19 @@ function sanitizedConfigRequirements(result: unknown) {
   return { requirements: { allowedLoginMethods, application: null } };
 }
 
-function safeAppRequest(message: RpcMessage): RpcMessage | null {
+function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false): RpcMessage | null {
   if (requestId(message.id) === null || typeof message.method !== "string" ||
-      !READ_METHODS.has(message.method)) return null;
+      (!READ_METHODS.has(message.method) &&
+       !(allowLegacyThreadRead && message.method === "thread/read"))) return null;
   const params = record(message.params);
+  if (message.method === "thread/read") {
+    if (!params || Object.keys(params).length !== 3 ||
+        typeof params.threadId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(params.threadId) ||
+        typeof params.includeTurns !== "boolean" || params.readOnly !== true) return null;
+    return { id: message.id, method: message.method,
+      params: { threadId: params.threadId, includeTurns: params.includeTurns, readOnly: true } };
+  }
   if (message.method === "initialize") {
     if (!params || !record(params.clientInfo) || !record(params.capabilities)) return null;
     return { id: message.id, method: message.method,
@@ -317,6 +326,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                              options: { ownerIdentity: GateSocketIdentity;
                                                stateIdentity: GateSocketIdentity;
                                                maxMessageBytes?: number;
+                                               allowLegacyThreadRead?: boolean;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
                                                auditThreadListShape?: (fields: GateFieldShape[]) => void }) {
   const maxMessageBytes = options.maxMessageBytes === undefined ? MAX_MESSAGE
@@ -386,7 +396,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               return;
             }
             if (id === null) throw new Error("Codex RPC needs an id");
-            const safe = safeAppRequest(request);
+            const safe = safeAppRequest(request, options.allowLegacyThreadRead === true);
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
             options.auditMethod?.(methodName, safe ? "allow" : "deny");

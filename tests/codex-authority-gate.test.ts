@@ -136,6 +136,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   const reached: string[] = [];
   let ownerInitializeParams: Record<string, unknown> | undefined;
   let ownerThreadListParams: Record<string, unknown> | undefined;
+  let ownerThreadReadParams: Record<string, unknown> | undefined;
   let stateWrites = 0;
   let requirementsResult: Record<string, unknown> = { requirements: null };
   let accountRouting: unknown = { chatgptAccountId: "fixture_selected",
@@ -149,6 +150,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
         reached.push(message.method ?? "unknown");
         if (message.method === "initialize") ownerInitializeParams = message.params;
         if (message.method === "thread/list") ownerThreadListParams = message.params;
+        if (message.method === "thread/read") ownerThreadReadParams = message.params;
         if (message.id === undefined) return;
         let result: Record<string, unknown> = {};
         if (message.method === "getAuthStatus")
@@ -179,6 +181,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   await chmod(ownerPath, 0o600);
   await chmod(statePath, 0o600);
   let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let legacyGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   const probes: Probe[] = [];
   try {
     const direct = new Probe(ownerPath);
@@ -306,8 +309,40 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     oversized.sendText("x".repeat(1025));
     await oversized.closed("oversized");
     expect(reached).not.toContain("unknown");
+
+    legacyGate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
+      ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
+      allowLegacyThreadRead: true,
+    });
+    const legacyClient = new Probe(legacyGate.socketPath);
+    probes.push(legacyClient);
+    await legacyClient.opened;
+    const threadId = "550e8400-e29b-41d4-a716-446655440000";
+    const invalidReads = [
+      { threadId, includeTurns: true },
+      { threadId, includeTurns: true, readOnly: false },
+      { threadId, includeTurns: true, readOnly: true, mutation: true },
+      { threadId: "fixture-thread", includeTurns: true, readOnly: true },
+    ];
+    const reachedBeforeInvalidReads = reached.length;
+    for (const [index, params] of invalidReads.entries()) {
+      legacyClient.send({ id: `invalid-read-${index}`, method: "thread/read", params });
+      expect((await legacyClient.next()).error?.code).toBe(-32601);
+    }
+    expect(reached.length).toBe(reachedBeforeInvalidReads);
+    legacyClient.send({ id: "legacy-read", method: "thread/read",
+      params: { threadId, includeTurns: true, readOnly: true } });
+    expect((await legacyClient.next()).result?.thread).toEqual({ id: "fixture-thread", turns: [] });
+    expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: true, readOnly: true });
+    legacyClient.send({ id: "legacy-metadata", method: "thread/read",
+      params: { threadId, includeTurns: false, readOnly: true } });
+    expect((await legacyClient.next()).result?.thread).toEqual({ id: "fixture-thread", turns: [] });
+    expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: false, readOnly: true });
+    legacyClient.send({ id: "legacy-turn", method: "turn/start", params: { threadId, input: [] } });
+    expect((await legacyClient.next()).error?.code).toBe(-32601);
   } finally {
     for (const probe of probes) probe.close();
+    await legacyGate?.close();
     await gate?.close();
     owner.stop(true);
     await new Promise<void>(resolveClose => state.close(() => resolveClose()));
