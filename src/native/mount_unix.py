@@ -98,8 +98,7 @@ def render_device_mounts():
 def mount_command(arguments, report_directory, selected_files, policy):
     if (not isinstance(policy, dict)
             or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"},
-                                   {"runtime", "sockets", "privateHome", "sharedProject"},
-                                   {"runtime", "sockets", "privateHome", "authoritySocket", "authorityStateSocket"})
+                                   {"runtime", "sockets", "privateHome", "sharedProject"})
             or not isinstance(policy["runtime"], str)
             or not isinstance(policy["sockets"], list)
             or not 1 <= len(policy["sockets"]) <= 8):
@@ -182,37 +181,6 @@ def mount_command(arguments, report_directory, selected_files, policy):
                 command += ["--dir", runtime + "/pulse", "--bind-fd", str(fd), path]
                 continue
             raise PrivateMountUnavailable("Unexpected socket outside the private display")
-        if "authoritySocket" in policy:
-            authority_entry = policy["authoritySocket"]
-            state_entry = policy["authorityStateSocket"]
-            authority_path = authority_entry.get("path") if isinstance(authority_entry, dict) else None
-            state_path = state_entry.get("path") if isinstance(state_entry, dict) else None
-            if not isinstance(authority_path, str) or state_path != authority_path + ".state":
-                raise PrivateMountUnavailable("Codex authority state socket does not match")
-            for key, destination in (("authoritySocket", "orbit-codex-authority.sock"),
-                                     ("authorityStateSocket", "orbit-codex-authority.sock.state")):
-                entry = policy[key]
-                path = entry.get("path") if isinstance(entry, dict) else None
-                if (not isinstance(path, str) or not path.startswith(runtime + "/")
-                        or path in seen or path in (runtime + "/orbit-codex-authority.sock",
-                                                   runtime + "/orbit-codex-authority.sock.state")):
-                    raise PrivateMountUnavailable("Codex authority socket is outside the user runtime")
-                seen.add(path)
-                fd = open_verified_socket(entry)
-                descriptors.append(fd)
-                found = os.fstat(fd)
-                if found.st_mode & 0o077 or found.st_nlink != 1:
-                    raise PrivateMountUnavailable("Codex authority socket has unsafe permissions")
-                current = os.path.dirname(path)
-                while inside(current, runtime):
-                    info = os.lstat(current)
-                    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
-                            or info.st_mode & 0o077 or os.path.realpath(current) != current):
-                        raise PrivateMountUnavailable("Codex authority socket parent is unsafe")
-                    if current == runtime:
-                        break
-                    current = os.path.dirname(current)
-                command += ["--bind-fd", str(fd), runtime + "/" + destination]
         for path in selected_files:
             if inside(path, "/tmp") and not inside(path, session):
                 fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)

@@ -467,10 +467,6 @@ export class FedoraBackend {
           JSON.stringify(desktopMount
             ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring),
                 ...(privateHome === undefined ? {} : { privateHome }),
-                ...("authoritySocket" in prepared ? {
-                  authoritySocket: prepared.authoritySocket,
-                  authorityStateSocket: prepared.authorityStateSocket,
-                } : {}),
                 ...("sharedProject" in prepared && prepared.sharedProject
                   ? { sharedProject: prepared.sharedProject } : {}) }
             : await this.socketPolicy(prepared.toolkit, keyring))]

@@ -1,4 +1,5 @@
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -6,9 +7,9 @@ import { OrbitError } from "./errors";
 import type { CodexDisplayEnv } from "./native-codex";
 import { validateStagedCodexCandidate } from "./native-codex-candidate";
 import { seedNativePreferences } from "./native-preferences";
+import { startCodexReadOnlyGate } from "./codex-authority-gate";
 
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
-const privateSocketName = "orbit-codex-authority.sock";
 
 export function activeCodexAuthoritySocketPath(): string {
   return process.env.ORBIT_CODEX_AUTHORITY_SOCKET ??
@@ -32,8 +33,6 @@ export type PreparedCodexAttachedLaunch = {
   toolkit: "wayland";
   selectedFiles: [];
   privateHome: string;
-  authoritySocket: CodexAuthoritySocket;
-  authorityStateSocket: CodexAuthoritySocket;
   release: () => Promise<void>;
 };
 
@@ -47,7 +46,7 @@ async function ownedPrivateDirectory(path: string) {
 async function liveAuthoritySocket(path: string): Promise<CodexAuthoritySocket> {
   const runtime = `/run/user/${process.getuid?.()}`;
   if (path !== resolve(path) || !path.startsWith(runtime + sep) || path.length > 4096 || path.includes("\0") ||
-      path === join(runtime, privateSocketName))
+      path === join(runtime, "orbit-codex-authority.sock"))
     throw new OrbitError("INVALID_REQUEST", "Codex attach socket must be below the user runtime");
   const parts = path.slice(runtime.length + 1).split(sep);
   if (parts.some(part => !part || part === "." || part === ".."))
@@ -124,17 +123,18 @@ export async function prepareCodexAttachedLaunch(
       !/^[A-Za-z0-9_.-]+$/.test(display.waylandDisplay) || !display.libraryPath)
     throw new OrbitError("INVALID_REQUEST", "Codex attach needs Orbit's private display environment");
   await ownedPrivateDirectory(session);
-  let authoritySocket: CodexAuthoritySocket;
-  let authorityStateSocket: CodexAuthoritySocket;
+  let verifiedSockets: [CodexAuthoritySocket, CodexAuthoritySocket];
   try {
-    authoritySocket = await liveAuthoritySocket(authoritySocketPath);
-    authorityStateSocket = await liveAuthoritySocket(`${authoritySocketPath}.state`);
+    const owner = await liveAuthoritySocket(authoritySocketPath);
+    const state = await liveAuthoritySocket(`${authoritySocketPath}.state`);
+    verifiedSockets = [owner, state];
   } catch (error) {
     if (error instanceof OrbitError && error.code === "INVALID_REQUEST") throw error;
     throw new OrbitError("UNSUPPORTED", "Codex active profile needs a running Desktop authority with both private shared sockets");
   }
   await attachCapableExecutable(executable, session, options);
   const root = await mkdtemp(join(session, "codex-attach-"));
+  let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   try {
     await chmod(root, 0o700);
     const privateHome = join(root, "home");
@@ -142,8 +142,21 @@ export async function prepareCodexAttachedLaunch(
       join(privateHome, ".local", "share"), join(privateHome, ".local", "state"), join(privateHome, ".cache")])
       await mkdir(path, { recursive: true, mode: 0o700 });
     await seedNativePreferences(join(privateHome, ".config"));
+    const fixtureAudit = process.env.ORBIT_CODEX_GATE_METHOD_AUDIT === "1" &&
+      /^\/var\/tmp\/codex-private-smoke-[A-Za-z0-9-]+\/app\/ChatGPT$/u.test(executable);
+    const auditPath = join(dirname(dirname(executable)), "gate-audit.jsonl");
+    let auditCount = 0;
+    gate = await startCodexReadOnlyGate(session, authoritySocketPath, `${authoritySocketPath}.state`, {
+      ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
+      ...(fixtureAudit ? { auditMethod: (method: string, outcome: "allow" | "deny") => {
+        if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method, outcome }) + "\n",
+          { encoding: "utf8", mode: 0o600, flag: "a" });
+      }, auditThreadListShape: (fields: Array<{ key: string; kind: string; length?: number }>) => {
+        if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method: "thread/list", fields }) + "\n",
+          { encoding: "utf8", mode: 0o600, flag: "a" });
+      } } : {}),
+    });
     const insideHome = homedir();
-    const privateSocketPath = join(`/run/user/${process.getuid?.()}`, privateSocketName);
     const argv = [
       "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_SESSION_TYPE=wayland",
       "GSETTINGS_BACKEND=dconf",
@@ -154,16 +167,18 @@ export async function prepareCodexAttachedLaunch(
       `XDG_DATA_HOME=${join(insideHome, ".local", "share")}`,
       `XDG_STATE_HOME=${join(insideHome, ".local", "state")}`,
       `XDG_CACHE_HOME=${join(insideHome, ".cache")}`,
-      `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${privateSocketPath}`,
+      `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${gate.socketPath}`,
       "CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1",
       `CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(insideHome, ".codex")}`,
       `CODEX_LINUX_APP_DIR=${dirname(executable)}`,
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
       `--user-data-dir=${join(insideHome, ".config", "Codex")}`,
     ];
-    return { argv, toolkit: "wayland", selectedFiles: [], privateHome, authoritySocket, authorityStateSocket,
-      release: async () => { await rm(root, { recursive: true, force: true }); } };
+    const activeGate = gate;
+    return { argv, toolkit: "wayland", selectedFiles: [], privateHome,
+      release: async () => { await activeGate.close(); await rm(root, { recursive: true, force: true }); } };
   } catch (error) {
+    await gate?.close();
     await rm(root, { recursive: true, force: true });
     throw error;
   }

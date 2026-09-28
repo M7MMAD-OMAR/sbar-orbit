@@ -32,7 +32,7 @@ test("Codex active action refuses a missing owner before copying or launching", 
 });
 
 async function listen(path: string, value: string): Promise<Server> {
-  const server = createServer(socket => socket.end(value));
+  const server = createServer(socket => { if (value) socket.end(value); });
   await new Promise<void>((resolveListen, reject) => {
     server.once("error", reject);
     server.listen(path, resolveListen);
@@ -44,7 +44,7 @@ async function close(server?: Server) {
   if (server) await new Promise<void>(resolveClose => server.close(() => resolveClose()));
 }
 
-(enabled ? test : test.skip)("Codex attach mounts verified authority sockets into a fresh private home", async () => {
+(enabled ? test : test.skip)("Codex attach mounts only session gate sockets into a fresh private home", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
   const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
   const authorityPath = join(socketDirectory, "authority.sock");
@@ -60,7 +60,7 @@ async function close(server?: Server) {
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     authority = await listen(authorityPath, "fixture-authority");
-    authorityState = await listen(authorityStatePath, "fixture-state");
+    authorityState = await listen(authorityStatePath, "");
     display = await listen(displayPath, "fixture-display");
     await chmod(authorityPath, 0o600);
     await chmod(authorityStatePath, 0o600);
@@ -68,14 +68,11 @@ async function close(server?: Server) {
 import json, os, pathlib, socket
 endpoint = os.environ["CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET"]
 with socket.socket(socket.AF_UNIX) as client:
-    client.connect(endpoint)
-    answer = client.recv(100).decode()
-with socket.socket(socket.AF_UNIX) as client:
     client.connect(endpoint + ".state")
-    state_answer = client.recv(100).decode()
+    client.sendall(b'{"id":1,"method":"write","params":{"key":"project-order","value":[]}}\\n')
+    state_answer = client.recv(300).decode()
 pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
-    "answer": answer,
-    "stateAnswer": state_answer,
+    "stateDenied": "read only" in state_answer,
     "attachOnly": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY"),
     "privateCodexHome": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME") == os.environ["CODEX_HOME"],
     "appDirectory": os.environ.get("CODEX_LINUX_APP_DIR") == os.path.dirname(${JSON.stringify(executable)}),
@@ -84,7 +81,8 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     "stateSourceVisible": pathlib.Path(${JSON.stringify(authorityStatePath)}).exists(),
     "homeEntries": sorted(os.listdir(os.environ["HOME"])),
     "codexEntries": sorted(os.listdir(os.environ["CODEX_HOME"])),
-    "privateSocket": endpoint == ${JSON.stringify(join(runtime, "orbit-codex-authority.sock"))}
+    "privateSocket": endpoint.startswith(${JSON.stringify(session + "/codex-gate-")}) and pathlib.Path(endpoint).is_socket(),
+    "privateStateSocket": pathlib.Path(endpoint + ".state").is_socket()
 }))
 `;
     await writeFile(executable, program, { mode: 0o700 });
@@ -98,8 +96,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     expect(prepared.argv).toContain(`CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(homedir(), ".codex")}`);
     const displayInfo = await lstat(displayPath, { bigint: true });
     const policy = { runtime, sockets: [{ path: displayPath, device: String(displayInfo.dev), inode: String(displayInfo.ino) }],
-      privateHome: prepared.privateHome, authoritySocket: prepared.authoritySocket,
-      authorityStateSocket: prepared.authorityStateSocket };
+      privateHome: prepared.privateHome };
     child = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), report,
       "--desktop-mount-policy", JSON.stringify(policy), ...prepared.argv],
     { stdin: "pipe", stdout: "ignore", stderr: "pipe" });
@@ -109,26 +106,19 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     }
     expect(JSON.parse(await readFile(report, "utf8")).error).toBeUndefined();
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
-      answer: "fixture-authority", stateAnswer: "fixture-state", attachOnly: "1", privateCodexHome: true,
+      stateDenied: true, attachOnly: "1", privateCodexHome: true,
       appDirectory: true,
       gsettingsBackend: "dconf", sourceVisible: false, stateSourceVisible: false,
       homeEntries: [".cache", ".codex", ".config", ".local"], codexEntries: [], privateSocket: true,
+      privateStateSocket: true,
     });
     const refused = join(session, "refused.json");
     const invalid = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), refused,
       "--desktop-mount-policy", JSON.stringify({ ...policy,
-        authoritySocket: { ...prepared.authoritySocket, inode: String(BigInt(prepared.authoritySocket.inode) + 1n) } }),
+        authoritySocket: { path: authorityPath, device: "1", inode: "1" } }),
       "/usr/bin/true"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     await invalid.exited;
     expect(JSON.parse(await readFile(refused, "utf8")).error.code).toBe("UNSUPPORTED");
-    const stateRefused = join(session, "state-refused.json");
-    const invalidState = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), stateRefused,
-      "--desktop-mount-policy", JSON.stringify({ ...policy,
-        authorityStateSocket: { ...prepared.authorityStateSocket,
-          inode: String(BigInt(prepared.authorityStateSocket.inode) + 1n) } }),
-      "/usr/bin/true"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-    await invalidState.exited;
-    expect(JSON.parse(await readFile(stateRefused, "utf8")).error.code).toBe("UNSUPPORTED");
   } finally {
     if (child?.stdin && typeof child.stdin !== "number") child.stdin.end();
     if (child) await child.exited;
