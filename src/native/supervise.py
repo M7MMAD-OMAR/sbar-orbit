@@ -3,6 +3,7 @@ import ctypes
 import json
 import os
 from pathlib import Path
+import resource
 import select
 import signal
 import stat
@@ -16,6 +17,9 @@ from mount_unix import PrivateMountUnavailable, mount_command
 from zen_file_mount import ZenFileMountError, prepare_zen_file_mounts
 
 require_budget()
+# This limit is inherited by every supervised application and its descendants.
+# The host coredump helper receives it through the kernel's %c argument.
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 # Subreaping retains descendants that detach or outlive their immediate parent.
 libc = ctypes.CDLL(None, use_errno=True)
