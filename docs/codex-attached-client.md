@@ -85,6 +85,16 @@ assertions, including complete-tree pinning, changed ASAR, added files, links,
 unsafe permissions, an unpatched ASAR and paths outside the private root. These
 tests used disposable files, not the user's account or staged Desktop candidate.
 
+A later disposable fixture used a separate exact-version staged candidate and
+its pinned manifest with the public `launch-app codex active` action. The first
+Orbit private window showed the owner's fixture project, conversation and
+completed answer. After closing it, a fresh Orbit window showed the same
+content. Neither client had a local auth file, and both owner socket inodes
+stayed unchanged. The owner had a fake API key only. The reproducible
+`--public-attach` fixture and screenshot are in the Desktop feature's
+`evidence/` directory. This does not test the person's real account or
+original running Desktop.
+
 This establishes mount and temporary HOME behavior for disposable listeners.
 A later combined run used the same internal helper with a copied, patched
 Desktop and a fake-key authority. The private window showed one shared fixture
