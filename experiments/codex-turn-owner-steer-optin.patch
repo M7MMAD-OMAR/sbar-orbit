@@ -1,0 +1,147 @@
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 1de7f03..2f8baaf 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -16,0 +17 @@ use codex_protocol::protocol::TurnSettingsUpdateOutcome;
++use codex_core::StartIfIdleSubmission;
+@@ -598,0 +600,5 @@ impl TurnRequestProcessor {
++        let turn_owner_experiment =
++            std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1");
++        if turn_owner_experiment && !turn_has_input && params.tool_output.is_none() {
++            return Err(invalid_request("turn/start requires input or toolOutput"));
++        }
+@@ -653,21 +659,70 @@ impl TurnRequestProcessor {
+-        let submission = thread
+-            .start_or_steer_turn(
+-                TurnInputRequest::new(input)
+-                    .with_thread_settings(thread_settings)
+-                    .on_start(TurnStartOptions {
+-                        turn_trigger: params.turn_trigger,
+-                        final_output_json_schema: params.output_schema,
+-                        service_tier: params.service_tier_for_turn,
+-                        cyber_access_program: params.cyber_access_program.map(Into::into),
+-                        ..Default::default()
+-                    })
+-                    .with_additional_context(additional_context)
+-                    .with_responses_metadata(params.responsesapi_client_metadata)
+-                    .with_trace(self.request_trace_context(&request_id).await),
+-            )
+-            .await
+-            .map_err(|err| {
+-                let error = internal_error(format!("failed to submit turn input: {err}"));
+-                self.track_error_response(&request_id, &error, /*error_type*/ None);
+-                error
+-            })?;
++        let turn_request = TurnInputRequest::new(input)
++            .with_thread_settings(thread_settings)
++            .on_start(TurnStartOptions {
++                turn_trigger: params.turn_trigger,
++                final_output_json_schema: params.output_schema,
++                service_tier: params.service_tier_for_turn,
++                cyber_access_program: params.cyber_access_program.map(Into::into),
++                ..Default::default()
++            })
++            .with_additional_context(additional_context)
++            .with_responses_metadata(params.responsesapi_client_metadata)
++            .with_trace(self.request_trace_context(&request_id).await);
++        let submission = async {
++            let submission = if turn_owner_experiment {
++                let owner = self
++                    .thread_state_manager
++                    .thread_state(thread_id)
++                    .await
++                    .lock()
++                    .await
++                    .turn_input_owner
++                    .clone();
++                let expected_turn_id = owner
++                    .filter(|(_, connection_id)| *connection_id == request_id.connection_id)
++                    .filter(|_| matches!(&turn_request.input, TurnInput::UserInput { .. }))
++                    .map(|(turn_id, _)| turn_id);
++                if let Some(expected_turn_id) = expected_turn_id {
++                    match thread
++                        .steer_turn(turn_request.clone(), expected_turn_id)
++                        .await?
++                    {
++                        SteerSubmission::Steered { turn_id } => {
++                            TurnInputSubmission::Steered { turn_id }
++                        }
++                        SteerSubmission::NotSubmitted {
++                            reason: NotSubmittedReason::NoActiveTurn
++                                | NotSubmittedReason::ExpectedTurnMismatch { .. },
++                        } => match thread.start_turn_if_idle(turn_request).await? {
++                            StartIfIdleSubmission::Started { turn_id } => {
++                                TurnInputSubmission::Started { turn_id }
++                            }
++                            StartIfIdleSubmission::NotSubmitted { reason } => {
++                                TurnInputSubmission::NotSubmitted { reason }
++                            }
++                        },
++                        SteerSubmission::NotSubmitted { reason } => {
++                            TurnInputSubmission::NotSubmitted { reason }
++                        }
++                    }
++                } else {
++                    match thread.start_turn_if_idle(turn_request).await? {
++                        StartIfIdleSubmission::Started { turn_id } => {
++                            TurnInputSubmission::Started { turn_id }
++                        }
++                        StartIfIdleSubmission::NotSubmitted { reason } => {
++                            TurnInputSubmission::NotSubmitted { reason }
++                        }
++                    }
++                }
++            } else {
++                thread.start_or_steer_turn(turn_request).await?
++            };
++            Ok::<TurnInputSubmission, CodexErr>(submission)
++        }
++        .await
++        .map_err(|err| {
++            let error = internal_error(format!("failed to submit turn input: {err}"));
++            self.track_error_response(&request_id, &error, /*error_type*/ None);
++            error
++        })?;
+@@ -687,0 +743,9 @@ impl TurnRequestProcessor {
++        if turn_owner_experiment && started {
++            self.thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner = Some((turn_id.clone(), request_id.connection_id));
++        }
++
+@@ -1036 +1100 @@ impl TurnRequestProcessor {
+-        let (_, thread) = self
++        let (thread_id, thread) = self
+@@ -1051,0 +1116,15 @@ impl TurnRequestProcessor {
++        if std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1") {
++            let owner = self
++                .thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner
++                .clone();
++            if owner.as_ref()
++                != Some(&(params.expected_turn_id.clone(), request_id.connection_id))
++            {
++                return Err(invalid_request("turn belongs to another connection"));
++            }
++        }
+diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
+index 14012f3..c659062 100644
+--- a/codex-rs/app-server/src/thread_state.rs
++++ b/codex-rs/app-server/src/thread_state.rs
+@@ -102,0 +103 @@ pub(crate) struct ThreadState {
++    pub(crate) turn_input_owner: Option<(String, ConnectionId)>,
+@@ -194,0 +196,7 @@ impl ThreadState {
++            if self
++                .turn_input_owner
++                .as_ref()
++                .is_some_and(|(turn_id, _)| turn_id == event_turn_id)
++            {
++                self.turn_input_owner = None;
++            }
