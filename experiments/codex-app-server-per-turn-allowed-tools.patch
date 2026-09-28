@@ -1,0 +1,278 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+index 478903f..08649fa 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+@@ -4899,6 +4899,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
+     );
+ 
+     let without_override = TurnStartParams {
++        allowed_tools: None,
+         disabled_plugin_ids: None,
+         thread_id: "thread_123".to_string(),
+         client_user_message_id: None,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+index f938d17..666027a 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+@@ -159,6 +159,15 @@ pub struct TurnToolOutput {
+     pub output: FunctionCallOutputBody,
+ }
+ 
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AllowedToolName {
++    pub name: String,
++    #[ts(optional = nullable)]
++    pub namespace: Option<String>,
++}
++
+ #[derive(
+     Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS, ExperimentalApi,
+ )]
+@@ -166,6 +175,10 @@ pub struct TurnToolOutput {
+ #[ts(export_to = "v2/")]
+ pub struct TurnStartParams {
+     pub thread_id: String,
++    /// Restrict model tools for this new turn only. Empty permits no tools.
++    #[experimental("turn/start.allowedTools")]
++    #[ts(optional = nullable)]
++    pub allowed_tools: Option<Vec<AllowedToolName>>,
+     /// Replace this thread's disabled plugin IDs.
+     /// Omitted/null preserves the list; [] clears it.
+     #[ts(optional = nullable)]
+diff --git a/codex-rs/app-server/src/message_processor_tracing_tests.rs b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+index 6715805..7d33b6c 100644
+--- a/codex-rs/app-server/src/message_processor_tracing_tests.rs
++++ b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+@@ -662,6 +662,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
+             ClientRequest::TurnStart {
+                 request_id: RequestId::Integer(3),
+                 params: TurnStartParams {
++                    allowed_tools: None,
+                     disabled_plugin_ids: None,
+                     environments: None,
+                     thread_id,
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 1de7f03..f2e8465 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -528,6 +528,24 @@ impl TurnRequestProcessor {
+         app_server_client_name: Option<String>,
+         app_server_client_version: Option<String>,
+     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
++        if let Some(allowed_tools) = params.allowed_tools.as_ref() {
++            if allowed_tools.len() > 512 {
++                return Err(invalid_request("allowedTools may contain at most 512 names"));
++            }
++            for tool in allowed_tools {
++                if tool.name.is_empty()
++                    || tool.name.len() > 256
++                    || tool
++                        .namespace
++                        .as_ref()
++                        .is_some_and(|namespace| namespace.is_empty() || namespace.len() > 256)
++                {
++                    return Err(invalid_request(
++                        "allowedTools names and namespaces must be 1 to 256 bytes",
++                    ));
++                }
++            }
++        }
+         let (thread_id, thread) =
+             self.load_thread(&params.thread_id)
+                 .await
+@@ -650,11 +668,16 @@ impl TurnRequestProcessor {
+             )
+             .await?;
+ 
+-        let submission = thread
+-            .start_or_steer_turn(
+-                TurnInputRequest::new(input)
++        let has_turn_tool_ceiling = params.allowed_tools.is_some();
++        let request = TurnInputRequest::new(input)
+                     .with_thread_settings(thread_settings)
+                     .on_start(TurnStartOptions {
++                        allowed_tools: params.allowed_tools.map(|tools| {
++                            tools
++                                .into_iter()
++                                .map(|tool| codex_protocol::ToolName::new(tool.namespace, tool.name))
++                                .collect()
++                        }),
+                         turn_trigger: params.turn_trigger,
+                         final_output_json_schema: params.output_schema,
+                         service_tier: params.service_tier_for_turn,
+@@ -663,9 +686,19 @@ impl TurnRequestProcessor {
+                     })
+                     .with_additional_context(additional_context)
+                     .with_responses_metadata(params.responsesapi_client_metadata)
+-                    .with_trace(self.request_trace_context(&request_id).await),
+-            )
+-            .await
++                    .with_trace(self.request_trace_context(&request_id).await);
++        let submission = if has_turn_tool_ceiling {
++            thread.start_turn_if_idle(request).await.map(|result| match result {
++                codex_protocol::turn_input::StartIfIdleSubmission::Started { turn_id } => {
++                    TurnInputSubmission::Started { turn_id }
++                }
++                codex_protocol::turn_input::StartIfIdleSubmission::NotSubmitted { reason } => {
++                    TurnInputSubmission::NotSubmitted { reason }
++                }
++            })
++        } else {
++            thread.start_or_steer_turn(request).await
++        }
+             .map_err(|err| {
+                 let error = internal_error(format!("failed to submit turn input: {err}"));
+                 self.track_error_response(&request_id, &error, /*error_type*/ None);
+diff --git a/codex-rs/app-server/tests/suite/v2/turn_start.rs b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+index 5fb3091..aa16923 100644
+--- a/codex-rs/app-server/tests/suite/v2/turn_start.rs
++++ b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+@@ -3450,6 +3450,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
+         .request(|request_id| ClientRequest::TurnStart {
+             request_id,
+             params: TurnStartParams {
++                allowed_tools: None,
+                 disabled_plugin_ids: None,
+                 environments: None,
+                 thread_id: thread.id.clone(),
+@@ -3499,6 +3500,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
+         .request(|request_id| ClientRequest::TurnStart {
+             request_id,
+             params: TurnStartParams {
++                allowed_tools: None,
+                 disabled_plugin_ids: None,
+                 environments: Some(vec![TurnEnvironmentParams {
+                     environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index e5a21b6..4d8e5e5 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -273,6 +273,7 @@ impl std::fmt::Debug for TurnEnvironment {
+ /// Request options for one turn, separate from persistent thread settings.
+ #[derive(Default)]
+ pub(crate) struct NewTurnContextOptions {
++    pub(crate) allowed_tools: Option<Vec<codex_protocol::ToolName>>,
+     pub(crate) final_output_json_schema: Option<Value>,
+     pub(crate) cyber_access_program: Option<CyberAccessProgram>,
+ }
+@@ -1103,6 +1104,11 @@ impl Session {
+         );
+         turn_context.code_mode_available = self.services.code_mode_service.is_available();
+         turn_context.extension_data.insert(trusted_plugin_roots);
++        if let Some(allowed_tools) = options.allowed_tools {
++            turn_context
++                .extension_data
++                .insert(codex_extension_api::AllowedTools(allowed_tools));
++        }
+         turn_context.realtime_active = self.conversation.running_state().await.is_some();
+ 
+         turn_context.final_output_json_schema = options.final_output_json_schema;
+diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
+index d08dcd6..62e194d 100644
+--- a/codex-rs/core/src/session/turn_input.rs
++++ b/codex-rs/core/src/session/turn_input.rs
+@@ -126,6 +126,7 @@ impl PreparedTurnInputSettings {
+         kind: TurnStartKind,
+     ) -> CodexResult<Option<Arc<TurnContext>>> {
+         let TurnStartOptions {
++            allowed_tools,
+             turn_trigger,
+             final_output_json_schema,
+             service_tier,
+@@ -143,6 +144,7 @@ impl PreparedTurnInputSettings {
+         updates.service_tier_for_turn = service_tier;
+ 
+         let options = NewTurnContextOptions {
++            allowed_tools,
+             final_output_json_schema,
+             cyber_access_program,
+         };
+diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
+index 4c5cd6d..b8f937f 100644
+--- a/codex-rs/core/src/tasks/mod.rs
++++ b/codex-rs/core/src/tasks/mod.rs
+@@ -467,6 +467,7 @@ impl Session {
+             .new_turn_with_default_settings(
+                 sub_id,
+                 NewTurnContextOptions {
++                    allowed_tools: start_options.allowed_tools,
+                     final_output_json_schema: start_options.final_output_json_schema,
+                     cyber_access_program: start_options.cyber_access_program,
+                 },
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index ac1ca68..bdc2e52 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -150,7 +150,24 @@ pub(crate) fn build_tool_router(
+         default_agent_type_description: &default_agent_type_description,
+         wait_agent_timeouts: wait_agent_timeout_options(turn_context),
+     };
+-    let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
++    let turn_allowed = turn_context
++        .extension_data
++        .get::<codex_extension_api::AllowedTools>();
++    let allowed_tools = match (session.allowed_tools.as_ref(), turn_allowed) {
++        (Some(thread_allowed), Some(turn_allowed)) => Some(Arc::new(
++            codex_extension_api::AllowedTools(
++                turn_allowed
++                    .0
++                    .iter()
++                    .filter(|tool| thread_allowed.contains(tool))
++                    .cloned()
++                    .collect(),
++            ),
++        )),
++        (Some(thread_allowed), None) => Some(Arc::clone(thread_allowed)),
++        (None, turn_allowed) => turn_allowed,
++    };
++    let mut registry = ToolRegistry::with_allowed_tools(allowed_tools);
+     add_core_tool_sources(&context, &mut registry);
+ 
+     let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
+diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
+index b56a56f..a99fbec 100644
+--- a/codex-rs/exec/src/lib.rs
++++ b/codex-rs/exec/src/lib.rs
+@@ -1139,6 +1139,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
+                 ClientRequest::TurnStart {
+                     request_id: request_ids.next(),
+                     params: TurnStartParams {
++                        allowed_tools: None,
+                         disabled_plugin_ids: None,
+                         thread_id: primary_thread_id_for_span.clone(),
+                         turn_trigger: None,
+diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
+index 61b1ffe..12c7dbc 100644
+--- a/codex-rs/protocol/src/turn_input.rs
++++ b/codex-rs/protocol/src/turn_input.rs
+@@ -1,6 +1,7 @@
+ //! Turn-input request and result types shared by Core's submission APIs.
+ 
+ use crate::models::ResponseItem;
++use crate::ToolName;
+ use crate::protocol::AdditionalContextEntry;
+ use crate::protocol::InterAgentCommunication;
+ use crate::protocol::NonSteerableTurnKind;
+@@ -158,6 +159,8 @@ pub enum CyberAccessProgram {
+ /// child input, Core also compares root lineage to detect ambiguity.
+ #[derive(Clone, Debug, Default)]
+ pub struct TurnStartOptions {
++    /// A model tool ceiling for this turn only. A thread ceiling still applies.
++    pub allowed_tools: Option<Vec<ToolName>>,
+     /// Source classification for the caller that starts a new turn.
+     /// Ignored when the submitted input steers an active turn.
+     pub turn_trigger: Option<String>,
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index 581d758..a1efb8c 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -1337,6 +1337,7 @@ impl AppServerSession {
+             .request_typed(ClientRequest::TurnStart {
+                 request_id,
+                 params: TurnStartParams {
++                    allowed_tools: None,
+                     disabled_plugin_ids: None,
+                     thread_id: thread_id.to_string(),
+                     turn_trigger: None,
