@@ -1,0 +1,172 @@
+diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
+index e986d2e..6ae2805 100644
+--- a/codex-rs/app-server/src/bespoke_event_handling.rs
++++ b/codex-rs/app-server/src/bespoke_event_handling.rs
+@@ -1109,3 +1109,16 @@ pub(crate) async fn apply_bespoke_event_handling(
+-                let (_pending_request_id, rx) = outgoing
+-                    .send_request(ServerRequestPayload::DynamicToolCall(params))
+-                    .await;
++                let request = ServerRequestPayload::DynamicToolCall(params);
++                let (_pending_request_id, rx) =
++                    if std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                        == Ok("1")
++                    {
++                        let owner = thread_state
++                            .lock()
++                            .await
++                            .dynamic_tool_turn_owner
++                            .as_ref()
++                            .filter(|(turn_id, _)| turn_id == &event_turn_id)
++                            .map(|(_, connection_id)| *connection_id);
++                        outgoing.send_owned_dynamic_tool_request(request, owner).await
++                    } else {
++                        outgoing.send_request(request).await
++                    };
+diff --git a/codex-rs/app-server/src/outgoing_message.rs b/codex-rs/app-server/src/outgoing_message.rs
+index e6a109c..4737a68 100644
+--- a/codex-rs/app-server/src/outgoing_message.rs
++++ b/codex-rs/app-server/src/outgoing_message.rs
+@@ -150,0 +151 @@ struct PendingCallbackEntry {
++    exclusive_owner: Option<ConnectionId>,
+@@ -184,0 +186,20 @@ impl ThreadScopedOutgoingMessageSender {
++    pub(crate) async fn send_owned_dynamic_tool_request(
++        &self,
++        payload: ServerRequestPayload,
++        owner: Option<ConnectionId>,
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        let Some(owner) = owner.filter(|owner| self.connection_ids.contains(owner)) else {
++            let (tx, rx) = oneshot::channel();
++            drop(tx);
++            return (self.outgoing.next_request_id(), rx);
++        };
++        self.outgoing
++            .send_request_to_connections_inner(
++                Some(std::slice::from_ref(&owner)),
++                payload,
++                Some(self.thread_id),
++                Some(owner),
++            )
++            .await
++    }
++
+@@ -279,0 +301,16 @@ impl OutgoingMessageSender {
++        drop(request_contexts);
++        let abandoned = {
++            let mut callbacks = self.request_id_to_callback.lock().await;
++            let ids = callbacks
++                .iter()
++                .filter_map(|(id, entry)| {
++                    (entry.exclusive_owner == Some(connection_id)).then_some(id.clone())
++                })
++                .collect::<Vec<_>>();
++            ids.into_iter()
++                .filter_map(|id| callbacks.remove(&id))
++                .collect::<Vec<_>>()
++        };
++        for entry in abandoned {
++            let _ = entry.callback.send(Err(internal_error("tool owner disconnected")));
++        }
+@@ -334,0 +372,11 @@ impl OutgoingMessageSender {
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        self.send_request_to_connections_inner(connection_ids, request, thread_id, None)
++            .await
++    }
++
++    async fn send_request_to_connections_inner(
++        &self,
++        connection_ids: Option<&[ConnectionId]>,
++        request: ServerRequestPayload,
++        thread_id: Option<ThreadId>,
++        exclusive_owner: Option<ConnectionId>,
+@@ -380,0 +429 @@ impl OutgoingMessageSender {
++                    exclusive_owner,
+@@ -578,0 +628,3 @@ impl OutgoingMessageSender {
++        if entry.exclusive_owner.is_some_and(|owner| owner != connection_id) {
++            return None;
++        }
+@@ -590 +642,3 @@ impl OutgoingMessageSender {
+-                (entry.thread_id == Some(thread_id) && entry.verification_owner.is_none())
++                (entry.thread_id == Some(thread_id)
++                    && entry.verification_owner.is_none()
++                    && entry.exclusive_owner.is_none())
+@@ -1559,0 +1614,51 @@ mod tests {
++    #[tokio::test]
++    async fn owned_dynamic_tool_request_rejects_other_client_and_replay() {
++        let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(8);
++        let outgoing = Arc::new(OutgoingMessageSender::new(
++            tx,
++            codex_analytics::AnalyticsEventsClient::disabled(),
++        ));
++        let thread_id = ThreadId::new();
++        let owner = ConnectionId(1);
++        let other = ConnectionId(2);
++        let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
++            outgoing.clone(),
++            vec![owner, other],
++            thread_id,
++        );
++        let payload = ServerRequestPayload::DynamicToolCall(DynamicToolCallParams {
++            thread_id: thread_id.to_string(),
++            turn_id: "turn-1".to_string(),
++            call_id: "call-1".to_string(),
++            namespace: None,
++            tool: "tool".to_string(),
++            arguments: json!({}),
++        });
++        let (id, waiter) = thread_outgoing
++            .send_owned_dynamic_tool_request(payload, Some(owner))
++            .await;
++        assert!(matches!(
++            rx.try_recv(),
++            Ok(OutgoingEnvelope::ToConnection { connection_id, .. }) if connection_id == owner
++        ));
++        assert!(rx.try_recv().is_err());
++        assert!(outgoing.pending_requests_for_thread(thread_id).await.is_empty());
++
++        outgoing
++            .notify_client_response(other, id.clone(), json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.contains_key(&id));
++        outgoing
++            .notify_client_response(owner, id.clone(), json!({"contentItems": []}))
++            .await;
++        let result = timeout(Duration::from_secs(1), waiter)
++            .await
++            .expect("owner response should resolve")
++            .expect("owner callback should be present");
++        assert_eq!(result, Ok(json!({"contentItems": []})));
++        outgoing
++            .notify_client_response(other, id, json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.is_empty());
++    }
++
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 1de7f03..a07f1ea 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -687,0 +688,9 @@ impl TurnRequestProcessor {
++        if started
++            && std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                == Ok("1")
++        {
++            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
++            thread_state.lock().await.dynamic_tool_turn_owner =
++                Some((turn_id.clone(), request_id.connection_id));
++        }
++
+diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
+index 14012f3..e320934 100644
+--- a/codex-rs/app-server/src/thread_state.rs
++++ b/codex-rs/app-server/src/thread_state.rs
+@@ -102,0 +103 @@ pub(crate) struct ThreadState {
++    pub(crate) dynamic_tool_turn_owner: Option<(String, ConnectionId)>,
+@@ -194,0 +196,8 @@ impl ThreadState {
++            if self
++                .dynamic_tool_turn_owner
++                .as_ref()
++                .map(|(turn_id, _)| turn_id.as_str())
++                == Some(event_turn_id)
++            {
++                self.dynamic_tool_turn_owner = None;
++            }
