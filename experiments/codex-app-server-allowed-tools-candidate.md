@@ -40,6 +40,11 @@ Validation status in a disposable checkout at the exact tag:
   attempt to run this assertion inside the aggregate `tests/all.rs` binary
   also timed out while linking after 10 minutes, which is why the patch now
   carries a standalone test binary.
+- A separate copied Desktop fixture used the unchanged installed CLI. Its
+  `thread/start` request included `allowedTools: []`, but the local mock model
+  received eight tools. The restricted fixture refused the turn and stopped
+  both private windows. This measures the old executable's behavior in the
+  Desktop path. It does not substitute for a red run of the new source test.
 
 This is source and mock-model evidence only. The installed Codex executable,
 the person's running Desktop session, real account data, and model tool
