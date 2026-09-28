@@ -46,3 +46,19 @@ The same request still contains `list_mcp_resources`,
 an Orbit plus remote exec only allowlist. This is an observed tool inventory
 and one executor routing result for a disposable thread, not a general
 enforcement guarantee for all turns or future CLI versions.
+
+## Source check for the installed Desktop authority version
+
+The Desktop authority reports `0.155.0-alpha.9.2`. Its matching [Codex source
+tag](https://github.com/openai/codex/tree/rust-v0.155.0-alpha.9.2) has a
+startup `AllowedTools` type. The [tool registry](https://github.com/openai/codex/blob/rust-v0.155.0-alpha.9.2/codex-rs/core/src/tools/registry.rs)
+omits names outside that list when registering trusted and external tools, and
+the [tool plan](https://github.com/openai/codex/blob/rust-v0.155.0-alpha.9.2/codex-rs/core/src/tools/spec_plan.rs)
+also filters hosted tool specs. This is an internal positive tool ceiling.
+
+The [app-server thread start protocol](https://github.com/openai/codex/blob/rust-v0.155.0-alpha.9.2/codex-rs/app-server-protocol/src/protocol/v2/thread.rs)
+has no `allowedTools` field. Its [request processor](https://github.com/openai/codex/blob/rust-v0.155.0-alpha.9.2/codex-rs/app-server/src/request_processors/thread_processor.rs)
+creates thread extension data with selected capability roots only. Thus the
+unmodified app-server does not expose this ceiling to an Orbit client through
+`thread/start`. Using it for Orbit would require a separate, tested host
+integration. No current Orbit thread has been proved to have this ceiling.
