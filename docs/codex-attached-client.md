@@ -80,6 +80,16 @@ correctly refuses that request, so conversation content, complete account
 identity, model turns, file edits and full UI parity have not been established
 under this boundary. The personal Desktop remains on its original stdio
 app-server and has not been attached.
+Opening model turns requires more than permitting `turn/start` through this
+gate. The current gate drops owner notifications and server requests. In the
+exact-tag app-server, a second client's `turn/start` can steer an already
+active turn, while dynamic tool requests are sent to all subscribed clients
+and the first response can win. A disposable two-client probe observed that
+callback race. A private writable route therefore needs an atomic turn owner,
+tool and approval requests bound to that initiating client, private executor
+placement, a per-turn tool ceiling that also covers existing conversations,
+and filtered turn notifications. These conditions have not been implemented
+for the active route. See `experiments/codex-dynamic-tool-routing-probe.py`.
 Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
 executable it also requires the optional feature's staged manifest. That
@@ -128,6 +138,15 @@ repair, and three patched store tests passed with fixture user text and
 unchanged rollout bytes. App-server library and tests compiled. The loaded
 app-server RPC test timed out during linking before its assertion ran, and
 assistant text was absent from the fixture. Paginated reads remain denied.
+An incremental test-only patch in commit `edac120` then added user and
+assistant messages to both loaded-sequence and unloaded legacy fixtures.
+The ordinary read changed the state database WAL in both red controls.
+The read-only component calls passed with unchanged state main, WAL, SHM,
+and rollout bytes and modification times, and kept the missing row absent.
+Three tests also passed after applying the patches in a detached exact-tag
+worktree. This still does not measure the app-server RPC, Desktop rendering,
+concurrent owner writes, or personal history. See
+`experiments/codex-thread-readonly-legacy-content-files.md`.
 Neither source patch is in the staged candidate or the Orbit gate. The Desktop
 source has a dormant attach-only legacy viewer patch in commits `3b148f5` and
 `d60630e`.
