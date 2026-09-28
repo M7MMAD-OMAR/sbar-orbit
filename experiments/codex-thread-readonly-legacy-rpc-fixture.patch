@@ -1,0 +1,130 @@
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_read.rs b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+--- a/codex-rs/app-server/tests/suite/v2/thread_read.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+@@ -91,6 +91,7 @@
+ use std::io::Write;
+ use std::path::Path;
+ use std::sync::Arc;
++use std::time::SystemTime;
+ use tempfile::TempDir;
+ use tokio::time::timeout;
+ use uuid::Uuid;
+@@ -233,6 +234,118 @@
+         !mcp.pending_notification_methods()
+             .contains(&"deprecationNotice".to_string())
+     );
++
++    Ok(())
++}
++
++#[derive(PartialEq, Eq)]
++struct LegacyRpcFileSnapshot {
++    bytes: Vec<u8>,
++    modified: SystemTime,
++}
++
++fn legacy_rpc_file_snapshot(path: &Path) -> Option<LegacyRpcFileSnapshot> {
++    let metadata = std::fs::metadata(path).ok()?;
++    Some(LegacyRpcFileSnapshot {
++        bytes: std::fs::read(path).expect("read disposable fixture file"),
++        modified: metadata.modified().expect("disposable fixture modification time"),
++    })
++}
++
++fn legacy_rpc_sqlite_snapshots(path: &Path) -> Vec<(&'static str, Option<LegacyRpcFileSnapshot>)> {
++    ["", "-wal", "-shm"]
++        .into_iter()
++        .map(|suffix| {
++            let mut name = path.as_os_str().to_os_string();
++            name.push(suffix);
++            (suffix, legacy_rpc_file_snapshot(Path::new(&name)))
++        })
++        .collect()
++}
++
++fn assert_legacy_rpc_files_unchanged(
++    before: &[(&'static str, Option<LegacyRpcFileSnapshot>)],
++    after: &[(&'static str, Option<LegacyRpcFileSnapshot>)],
++) {
++    for ((before_name, before_file), (after_name, after_file)) in before.iter().zip(after) {
++        assert_eq!(before_name, after_name);
++        assert!(
++            before_file == after_file,
++            "state database file {before_name} changed during read-only RPC"
++        );
++    }
++}
++
++#[tokio::test]
++async fn thread_read_read_only_legacy_rpc_unchanged_files() -> Result<()> {
++    let red_mode = std::env::var("ORBIT_LEGACY_RPC_RED").unwrap_or_default();
++    assert!(matches!(red_mode.as_str(), "" | "unloaded" | "loaded"));
++    let server = create_mock_responses_server_repeating_assistant("Done").await;
++    let codex_home = TempDir::new()?;
++    MockResponsesConfig::new(&server.uri()).write(codex_home.path())?;
++
++    let filename_ts = "2025-01-05T12-00-00";
++    let conversation_id = create_fake_rollout_with_text_elements(
++        codex_home.path(),
++        filename_ts,
++        "2025-01-05T12:00:00Z",
++        "Saved user message",
++        vec![],
++        Some("mock_provider"),
++        /*git_info*/ None,
++    )?;
++    let rollout = rollout_path(codex_home.path(), filename_ts, &conversation_id);
++    append_agent_message(&rollout, "2025-01-05T12:01:00Z", "Saved assistant reply")?;
++    let state_path = codex_state::SqliteConfig::new_for_testing(codex_home.path().abs())
++        .state_db_path();
++    let mut mcp = TestAppServer::builder()
++        .with_codex_home(codex_home.path())
++        .without_auto_env()
++        .build_initialized()
++        .await?;
++
++    let unloaded_state_before = legacy_rpc_sqlite_snapshots(&state_path);
++    let unloaded_rollout_before = legacy_rpc_file_snapshot(&rollout).expect("rollout before read");
++    let read_id = mcp
++        .send_thread_read_request(ThreadReadParams {
++            thread_id: conversation_id.clone(),
++            include_turns: true,
++            read_only: red_mode != "unloaded",
++        })
++        .await?;
++    let ThreadReadResponse { thread: unloaded, .. } =
++        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
++    assert_eq!(unloaded.status, ThreadStatus::NotLoaded);
++    assert_eq!(turn_user_texts(&unloaded.turns), vec!["Saved user message"]);
++    assert_eq!(turn_agent_texts(&unloaded.turns), vec!["Saved assistant reply"]);
++    assert_legacy_rpc_files_unchanged(&unloaded_state_before, &legacy_rpc_sqlite_snapshots(&state_path));
++    assert!(legacy_rpc_file_snapshot(&rollout) == Some(unloaded_rollout_before), "rollout changed during unloaded read");
++
++    let resume_id = mcp
++        .send_thread_resume_request(ThreadResumeParams {
++            thread_id: conversation_id.clone(),
++            exclude_turns: true,
++            ..Default::default()
++        })
++        .await?;
++    let _: ThreadResumeResponse =
++        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(resume_id)).await??;
++    let loaded_state_before = legacy_rpc_sqlite_snapshots(&state_path);
++    let loaded_rollout_before = legacy_rpc_file_snapshot(&rollout).expect("rollout before loaded read");
++    let read_id = mcp
++        .send_thread_read_request(ThreadReadParams {
++            thread_id: conversation_id,
++            include_turns: true,
++            read_only: red_mode != "loaded",
++        })
++        .await?;
++    let ThreadReadResponse { thread: loaded, .. } =
++        timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
++    assert_ne!(loaded.status, ThreadStatus::NotLoaded);
++    assert_eq!(turn_user_texts(&loaded.turns), vec!["Saved user message"]);
++    assert_eq!(turn_agent_texts(&loaded.turns), vec!["Saved assistant reply"]);
++    assert_legacy_rpc_files_unchanged(&loaded_state_before, &legacy_rpc_sqlite_snapshots(&state_path));
++    assert!(legacy_rpc_file_snapshot(&rollout) == Some(loaded_rollout_before), "rollout changed during loaded read");
+ 
+     Ok(())
+ }
