@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test";
 import { connect, listen } from "bun";
 import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
-import { leasedAuthorities, openEgressLease } from "../src/egress";
+import { leasedAuthorities, openEgressLease, openPublicWebLease } from "../src/egress";
 import { detectPlatform } from "../src/platform";
 import { Sessions } from "../src/session";
 import type { CloneResult } from "../src/clone";
@@ -228,6 +229,159 @@ test.if(confinable)("plain HTTP Host must match the leased absolute URL", async 
     expect(matching.reply).toContain("200 OK");
     expect(reached).toBe(1);
   } finally { await lease?.close(); target.stop(true); await rm(root, { recursive: true, force: true }); }
+});
+
+test("public web lease routes two HTTP hosts on one proxy connection without cross-host forwarding", async () => {
+  const root = await fixtureRoot("orbit-public-web-http-");
+  const loopback = [127, 0, 0, 1].join(".");
+  const seenA: string[] = [], seenB: string[] = [], dialed: string[] = [], resolved: string[] = [];
+  let firstRequest = "";
+  const a = listen<undefined>({ hostname: loopback, port: 0, socket: {
+    open: () => {}, data(socket, chunk) {
+      firstRequest += new TextDecoder().decode(chunk);
+      if (!firstRequest.includes("\r\n\r\nping")) return;
+      seenA.push(firstRequest);
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nfirst-body");
+      socket.end();
+    }, close: () => {},
+  } });
+  const b = listen<undefined>({ hostname: loopback, port: 0, socket: {
+    open: () => {}, data(socket, chunk) {
+      seenB.push(new TextDecoder().decode(chunk));
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nsecond-body");
+      socket.end();
+    }, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
+  let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
+  try {
+    lease = await openPublicWebLease({ parentDirectory: root,
+      resolveHost: async host => { resolved.push(host); return host === "a.example" ? ["8.8.8.8"] : ["1.1.1.1"]; },
+      routeForTest: (address, port) => {
+        dialed.push(`${address}:${port}`);
+        return { address: loopback, port: address === "8.8.8.8" ? a.port : b.port };
+      },
+    });
+    let reply = "";
+    let closed = false;
+    client = await connect<undefined>({ unix: lease.socketPath, socket: {
+      data: (_socket, chunk) => { reply += new TextDecoder().decode(chunk); },
+      close: () => { closed = true; }, error: () => {},
+    } });
+    client.write("POST http://a.example/first HTTP/1.1\r\nHost: a.example\r\nContent-Length: 4\r\n\r\nping");
+    for (let i = 0; i < 100 && !reply.includes("first-body"); i++) await Bun.sleep(20);
+    expect(reply).toContain("first-body");
+    expect(closed).toBe(false);
+    client.write("GET http://b.example/second HTTP/1.1\r\nHost: b.example\r\n\r\n");
+    for (let i = 0; i < 100 && !reply.includes("second-body"); i++) await Bun.sleep(20);
+    expect(reply).toContain("second-body");
+    expect(seenA).toHaveLength(1);
+    expect(seenA[0]).toContain("POST /first HTTP/1.1");
+    expect(seenA[0]).toContain("\r\n\r\nping");
+    expect(seenA[0]).not.toContain("b.example");
+    expect(seenB).toHaveLength(1);
+    expect(seenB[0]).toContain("GET /second HTTP/1.1");
+    expect(dialed).toEqual(["8.8.8.8:80", "1.1.1.1:80"]);
+    expect(resolved).toEqual(["a.example", "b.example"]);
+  } finally {
+    client?.end();
+    await lease?.close();
+    a.stop(true); b.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("public web lease refuses local, private, reserved and host interface destinations", async () => {
+  const root = await fixtureRoot("orbit-public-web-private-");
+  const loopback = [127, 0, 0, 1].join(".");
+  let answer = loopback, dialed = 0;
+  let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
+  try {
+    lease = await openPublicWebLease({ parentDirectory: root,
+      resolveHost: async () => [answer],
+      routeForTest: (address, port) => { dialed++; return { address, port }; },
+    });
+    for (answer of [[127, 0, 0, 1], [10, 0, 0, 1], [100, 64, 0, 1], [169, 254, 1, 1],
+      [172, 16, 0, 1], [192, 168, 1, 1]].map(octets => octets.join(".")).concat(["::1", "fc00::1", "fe80::1", `::ffff:${loopback}`,
+      "2001:" + "db8::1"])) {
+      const result = await throughProxy(lease.socketPath,
+        "CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n");
+      expect(result.reply).toContain("403");
+    }
+    for (const details of Object.values(networkInterfaces()))
+      for (const entry of details ?? []) {
+        answer = entry.address.split("%")[0] ?? "";
+        const result = await throughProxy(lease.socketPath,
+          "CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n");
+        expect(result.reply).toContain("403");
+      }
+    for (const authority of [loopback + ":443", [10, 0, 0, 1].join(".") + ":443", "[::1]:443", "localhost:443"]) {
+      const result = await throughProxy(lease.socketPath,
+        `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);
+      expect(result.reply).toContain("403");
+    }
+    const plain = await throughProxy(lease.socketPath,
+      `GET http://${loopback}/ HTTP/1.1\r\nHost: ${loopback}\r\n\r\n`);
+    expect(plain.reply).toContain("403");
+    answer = "8.8.8.8";
+    for (const request of [
+      "CONNECT public.example:443 HTTP/1.1\r\nHost: other.example:443\r\n\r\n",
+      "CONNECT public.example:0 HTTP/1.1\r\nHost: public.example:0\r\n\r\n",
+      "CONNECT public.example:65536 HTTP/1.1\r\nHost: public.example:65536\r\n\r\n",
+      "GET http://public.example:0/ HTTP/1.1\r\nHost: public.example:0\r\n\r\n",
+    ]) expect((await throughProxy(lease.socketPath, request)).reply).toContain("403");
+    expect(dialed).toBe(0);
+    expect(lease.refused()).toContain("public.example:443");
+  } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("public web lease owns only its generated directory and closes an active CONNECT tunnel", async () => {
+  const root = await fixtureRoot("orbit-public-web-owned-");
+  const loopback = [127, 0, 0, 1].join(".");
+  const existing = join(root, "existing");
+  await mkdir(existing);
+  await writeFile(join(existing, "keep"), "untouched");
+  await symlink(existing, join(root, "existing-link"));
+  let reached = 0;
+  const target = listen<undefined>({ hostname: loopback, port: 0, socket: {
+    open(socket) { reached++; socket.write("tunnel-ready"); },
+    data: () => {}, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
+  let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
+  try {
+    lease = await openPublicWebLease({ parentDirectory: join(root, "existing-link"),
+      resolveHost: async () => ["8.8.8.8"],
+      routeForTest: (address, port) => {
+        expect(address).toBe("8.8.8.8");
+        expect(port).toBe(8443);
+        return { address: loopback, port: target.port };
+      },
+    });
+    let reply = "";
+    client = await connect<undefined>({ unix: lease.socketPath, socket: {
+      data: (_socket, chunk) => { reply += new TextDecoder().decode(chunk); },
+      close: () => {}, error: () => {},
+    } });
+    client.write("CONNECT public.example:8443 HTTP/1.1\r\nHost: public.example:8443\r\n\r\n");
+    for (let i = 0; i < 100 && !reply.includes("tunnel-ready"); i++) await Bun.sleep(20);
+    expect(reply).toContain("200 Connection Established");
+    expect(reply).toContain("tunnel-ready");
+    expect(reached).toBe(1);
+    const firstClose = lease.close();
+    expect(lease.close()).toBe(firstClose);
+    await firstClose;
+    await expect(stat(lease.socketPath)).rejects.toThrow();
+    expect((await stat(join(existing, "keep"))).isFile()).toBe(true);
+    expect((await stat(join(root, "existing-link", "keep"))).isFile()).toBe(true);
+    expect(await readdir(existing)).toEqual(["keep"]);
+    lease = undefined;
+  } finally {
+    client?.end();
+    await lease?.close();
+    target.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test.if(confinable)("a confined browser cannot dial a host Unix socket but can dial its lease", async () => {

@@ -1,6 +1,7 @@
-import { chmod, lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
-import { BlockList, isIP } from "node:net";
+import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
+import { BlockList, connect as netConnect, isIP, type Socket as NetSocket } from "node:net";
 import { networkInterfaces } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { connect, listen, type Socket, type TCPSocketListener, type UnixSocketListener } from "bun";
@@ -147,6 +148,186 @@ function matchingHttpHost(headers: string, url: URL): boolean {
   if (!host || /[\s\\/@?#%,]/.test(host)) return false;
   try { return new URL(`http://${host}/`).origin === url.origin; }
   catch { return false; }
+}
+
+function matchingRequestHost(request: IncomingMessage, url: URL): boolean {
+  const hosts: string[] = [];
+  for (let index = 0; index < request.rawHeaders.length; index += 2)
+    if (request.rawHeaders[index]?.toLowerCase() === "host") hosts.push(request.rawHeaders[index + 1] ?? "");
+  if (hosts.length !== 1) return false;
+  const host = hosts[0]?.trim() ?? "";
+  if (!host || /[\s\\/@?#%,]/.test(host)) return false;
+  try { return new URL(`http://${host}/`).origin === url.origin; }
+  catch { return false; }
+}
+
+async function publicCandidates(hostname: string, resolveHost: (hostname: string) => Promise<string[]>): Promise<string[]> {
+  const name = hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  const lower = name.toLowerCase().replace(/\.$/, "");
+  if (lower === "localhost" || lower.endsWith(".localhost") || name.includes("%")) return [];
+  const addresses = isIP(name) ? [name] : await resolveWithin(name, resolveHost).catch(() => []);
+  return [...new Set(addresses.filter(address => publicAddress(address) && !hostInterfaceAddress(address)))];
+}
+
+/**
+ * A public web route for a native browser whose own network namespace has no external interface.
+ * Its only host connection is this Unix socket. HTTP requests are parsed individually, including
+ * persistent connections and request bodies; CONNECT remains a blind tunnel at host:port resolution.
+ * This is not an HTTPS origin filter. It accepts any public destination and cannot inspect the
+ * encrypted request inside CONNECT. CONNECT accepts any valid TCP port at a public address.
+ */
+export type PublicWebLease = {
+  socketPath: string;
+  refused: () => string[];
+  close: () => Promise<void>;
+};
+
+export type PublicWebLeaseRequest = {
+  /** An existing private directory. The lease creates and owns a fresh child within it. */
+  parentDirectory: string;
+  resolveHost?: (hostname: string) => Promise<string[]>;
+  /** Fixture seam. Production leaves the checked numeric address and port unchanged. */
+  routeForTest?: (checkedAddress: string, port: number) => { address: string; port: number };
+};
+
+export async function openPublicWebLease(request: PublicWebLeaseRequest): Promise<PublicWebLease> {
+  const parent = await realpath(request.parentDirectory);
+  const directory = await mkdtemp(join(parent, "public-web-"));
+  const socketPath = join(directory, "lease.sock");
+  if (socketPath.length > 100) {
+    await rm(directory, { recursive: true, force: true });
+    throw new OrbitError("UNSUPPORTED", "Public web lease Unix socket path is too long");
+  }
+  const resolveHost = request.resolveHost ?? systemResolveHost;
+  const route = request.routeForTest ?? ((address: string, port: number) => ({ address, port }));
+  const refused: string[] = [];
+  const sockets = new Set<NetSocket>();
+  let active = true;
+  let closing: Promise<void> | undefined;
+  const refuse = (authority: string) => { if (!refused.includes(authority)) refused.push(authority); };
+  const track = (socket: NetSocket) => {
+    sockets.add(socket);
+    socket.once("close", () => { sockets.delete(socket); });
+    return socket;
+  };
+  const server = createServer((incoming, outgoing) => {
+    void (async () => {
+      let url: URL;
+      try { url = new URL(incoming.url ?? ""); }
+      catch { url = new URL("about:blank"); }
+      if (url.protocol !== "http:" || url.username || url.password || !matchingRequestHost(incoming, url)) {
+        refuse(url.host || "(unparseable)");
+        outgoing.writeHead(403, { "Content-Length": "0", Connection: "close" });
+        outgoing.end();
+        return;
+      }
+      const candidates = await publicCandidates(url.hostname, resolveHost);
+      const pinned = candidates[0];
+      if (!active || !pinned) {
+        refuse(url.host);
+        outgoing.writeHead(403, { "Content-Length": "0", Connection: "close" });
+        outgoing.end();
+        return;
+      }
+      const port = Number(url.port || 80);
+      if (port < 1 || port > 65535) {
+        refuse(url.host);
+        outgoing.writeHead(403, { "Content-Length": "0", Connection: "close" });
+        outgoing.end();
+        return;
+      }
+      const target = route(pinned, port);
+      const headers: IncomingHttpHeaders = { ...incoming.headers, host: url.host };
+      delete headers.connection;
+      delete headers["proxy-connection"];
+      delete headers["proxy-authorization"];
+      delete headers["keep-alive"];
+      delete headers["transfer-encoding"];
+      const upstream = httpRequest({ hostname: target.address, port: target.port,
+        method: incoming.method, path: `${url.pathname}${url.search}`, headers, agent: false,
+      }, response => {
+        const responseHeaders: IncomingHttpHeaders = { ...response.headers };
+        delete responseHeaders.connection;
+        delete responseHeaders["proxy-connection"];
+        delete responseHeaders["keep-alive"];
+        delete responseHeaders["transfer-encoding"];
+        outgoing.writeHead(response.statusCode ?? 502, responseHeaders);
+        response.pipe(outgoing);
+      });
+      upstream.on("socket", track);
+      upstream.on("error", () => {
+        if (!outgoing.headersSent) outgoing.writeHead(502, { "Content-Length": "0", Connection: "close" });
+        outgoing.end();
+      });
+      incoming.pipe(upstream);
+    })().catch(() => {
+      if (!outgoing.headersSent) outgoing.writeHead(502, { "Content-Length": "0", Connection: "close" });
+      outgoing.end();
+    });
+  });
+  server.on("connection", track);
+  server.on("upgrade", (_request, socket) => { socket.destroy(); });
+  server.on("connect", (incoming, client, head) => {
+    void (async () => {
+      let url: URL;
+      try { url = new URL(`http://${incoming.url}/`); }
+      catch { url = new URL("about:blank"); }
+      const authority = incoming.url ?? "(unparseable)";
+      const match = /^(?:\[[^\]]+\]|[^:/?#@\s]+):([0-9]+)$/.exec(authority);
+      const port = Number(match?.[1] ?? 0);
+      if (!match || port < 1 || port > 65535 || url.username || url.password || url.pathname !== "/" ||
+          !matchingRequestHost(incoming, url)) {
+        refuse(authority);
+        client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      const candidates = await publicCandidates(url.hostname, resolveHost);
+      const pinned = candidates[0];
+      if (!active || !pinned) {
+        refuse(authority);
+        client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      const target = route(pinned, port);
+      const upstream = track(netConnect({ host: target.address, port: target.port }));
+      upstream.once("connect", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) upstream.write(head);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      upstream.once("error", () => {
+        if (!client.destroyed) client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+      client.once("close", () => { upstream.destroy(); });
+    })().catch(() => {
+      if (!client.destroyed) client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, () => { server.off("error", reject); resolve(); });
+    });
+    await chmod(socketPath, 0o600);
+  } catch (error) {
+    active = false;
+    for (const socket of sockets) socket.destroy();
+    server.close();
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return { socketPath, refused: () => [...refused], close: () => {
+    if (!closing) {
+      active = false;
+      closing = (async () => {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+        await rm(directory, { recursive: true, force: true });
+      })();
+    }
+    return closing;
+  } };
 }
 
 function startProxy(path: string, origins: () => string[], onRefused: (authority: string) => void,
