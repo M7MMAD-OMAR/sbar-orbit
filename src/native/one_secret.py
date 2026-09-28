@@ -20,10 +20,17 @@ is OpenSession, SearchItems, GetSecrets, plus the Collections property and one I
 transfer algorithm is offered; libsecret negotiates it when no encryption is requested.
 """
 import json
+import ctypes
+import os
+import resource
 import signal
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+from pathlib import Path
+from xml.sax.saxutils import escape
 
 import gi
 gi.require_version("Secret", "1")
@@ -37,6 +44,32 @@ SESSION_PATH = SERVICE_PATH + "/session/1"
 
 # The schema Chromium's libsecret backend looks its key up under, and the attribute it matches on.
 CHROME_SCHEMA = "chrome_libsecret_os_crypt_password_v2"
+
+
+def private_bus_config(directory: Path) -> Path:
+    """Configure one service name and an empty activation directory."""
+    services = directory / "services"
+    services.mkdir(mode=0o700)
+    socket = directory / "bus"
+    config = directory / "bus.conf"
+    config.write_text(f'''<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:path={escape(str(socket))}</listen>
+  <auth>EXTERNAL</auth>
+  <servicedir>{escape(str(services))}</servicedir>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+    <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="StartServiceByName"/>
+    <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="UpdateActivationEnvironment"/>
+    <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="ReloadConfig"/>
+  </policy>
+</busconfig>
+''')
+    config.chmod(0o600)
+    return config
 
 NODE = """
 <node>
@@ -185,25 +218,7 @@ class OneSecret:
         return None
 
 
-def main():
-    if len(sys.argv) < 2:
-        raise SystemExit("usage: one_secret.py '{\"application\": \"chrome\"}'")
-    attributes = json.loads(sys.argv[1])
-    if not isinstance(attributes, dict) or not attributes:
-        raise SystemExit("Attributes must be a non-empty object")
-    label = sys.argv[2] if len(sys.argv) > 2 else "Orbit browser key"
-    secret = read_one_secret(attributes)
-
-    # A bus of its own. Nothing else is on it, so there is nothing else to reach: the browser cannot
-    # talk to systemd and move itself out of Orbit's resource scope, and cannot see the real keyring.
-    daemon = subprocess.Popen(
-        ["/usr/bin/dbus-daemon", "--session", "--nofork", "--print-address=1",
-         "--nopidfile", "--syslog-only"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    address = daemon.stdout.readline().strip()
-    if not address:
-        raise SystemExit("The private bus did not print an address")
-
+def serve_one_secret(address: str, secret: str, attributes: dict[str, str], label: str) -> int:
     connection = Gio.DBusConnection.new_for_address_sync(
         address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
         None, None)
@@ -233,16 +248,51 @@ def main():
 
     threading.Thread(target=watch_parent, daemon=True).start()
     print(json.dumps({"address": address, "items": 1}), flush=True)
+    loop.run()
+    return holder.reads
+
+
+def main():
+    if len(sys.argv) < 2:
+        raise SystemExit("usage: one_secret.py '{\"application\": \"chrome\"}'")
+    attributes = json.loads(sys.argv[1])
+    if not isinstance(attributes, dict) or not attributes:
+        raise SystemExit("Attributes must be a non-empty object")
+    label = sys.argv[2] if len(sys.argv) > 2 else "Orbit browser key"
+    os.umask(0o077)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if ctypes.CDLL(None).prctl(4, 0, 0, 0, 0) != 0:
+        raise SystemExit("The one-item secret helper could not disable core dumps")
+    secret = read_one_secret(attributes)
+
+    # The ordinary session config searches installed service files and can start their Exec commands
+    # on the host. This config names an empty private service directory and denies activation calls.
+    bus_directory = Path(tempfile.mkdtemp(prefix="orbit-secret-bus-"))
+    bus_directory.chmod(0o700)
+    daemon = None
+    reads = None
     try:
-        loop.run()
+        config = private_bus_config(bus_directory)
+        daemon = subprocess.Popen(
+            ["/usr/bin/dbus-daemon", f"--config-file={config}", "--nofork", "--print-address=1",
+             "--nopidfile", "--syslog-only"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        address = daemon.stdout.readline().strip()
+        if not address:
+            raise SystemExit("The private bus did not print an address")
+        reads = serve_one_secret(address, secret, attributes, label)
     finally:
-        daemon.terminate()
-        try:
-            daemon.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            daemon.kill()
-        # Reported on the way out so a run can say whether the browser ever asked.
-        sys.stderr.write(json.dumps({"reads": holder.reads}) + "\n")
+        if daemon is not None:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+                daemon.wait(timeout=3)
+        shutil.rmtree(bus_directory)
+    # Reported on the way out so a run can say whether the browser ever asked.
+    if reads is not None:
+        sys.stderr.write(json.dumps({"reads": reads}) + "\n")
 
 
 if __name__ == "__main__":

@@ -149,20 +149,24 @@ export class BrowserBackend {
     const owned = await launchChrome(profile, size, egress?.tier === "namespace"
       ? { ...launch, executable: egress.launch.executable, extraArgs: egress.launch.args, endpointPort: egress.endpointPort }
       : launch);
-    // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
-    // seconds with four other sessions working; that is contention, not a missing element. Ten
-    // seconds made a missing element cost every caller ten seconds, so this sits in between.
-    owned.context.setDefaultTimeout(5000);
-    owned.context.setDefaultNavigationTimeout(15000);
-    await BrowserBackend.holdOriginLease(owned.context, lease, onBlocked);
-    const backend = new BrowserBackend(owned, owned.context, owned.page, size);
-    // A site that opens a login or consent tab must become reachable, so follow the newest page
-    // the way a person would, and fall back to a survivor when the active page goes away.
-    owned.context.on("page", page => { backend.adopt(page); });
-    for (const page of owned.context.pages()) backend.watch(page);
-    try { await backend.bindPointer(owned.page); }
-    catch (error) { await owned.close(); throw error; }
-    return backend;
+    try {
+      // Several sessions share one core, and a locator that resolves in 200 ms alone took over three
+      // seconds with four other sessions working; that is contention, not a missing element. Ten
+      // seconds made a missing element cost every caller ten seconds, so this sits in between.
+      owned.context.setDefaultTimeout(5000);
+      owned.context.setDefaultNavigationTimeout(15000);
+      await BrowserBackend.holdOriginLease(owned.context, lease, onBlocked);
+      const backend = new BrowserBackend(owned, owned.context, owned.page, size);
+      // A site that opens a login or consent tab must become reachable, so follow the newest page
+      // the way a person would, and fall back to a survivor when the active page goes away.
+      owned.context.on("page", page => { backend.adopt(page); });
+      for (const page of owned.context.pages()) backend.watch(page);
+      await backend.bindPointer(owned.page);
+      return backend;
+    } catch (error) {
+      await owned.close().catch(() => {});
+      throw error;
+    }
   }
   /** Follow a newly opened tab, sizing it so reported and real dimensions agree. */
   private adopt(page: Page) {
