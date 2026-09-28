@@ -34,20 +34,45 @@ before a window or useful app log appeared. The crash metadata names
 `secret_service_ensure_session_sync`. It does not prove which part of the
 service interaction was invalid.
 
-## Next bounded pilot
+## Disposable private keyring pilot
 
-Use the installed Electron ELF directly in an Orbit-owned private display, with
-an empty disposable `0700` home, XDG directories, D-Bus bus and a full
-disposable GNOME Keyring Secret Service. Set `--password-store=gnome-libsecret`
-only for that private process. First prove that a synthetic secret can be
-stored and read on that private bus. Then run Claude for at most 90 seconds and
-record only its backend selection, secure-storage availability, window mapping,
-exit status and crash metadata. Compare with a separate empty-profile launch
-using the default backend. Keep the original Claude process and profile under
-read-only PID and hash checks, and disable core dumps for the disposable app.
+On 28 September, a private Fedora display ran the installed Electron ELF with
+an empty `0700` home, private XDG directories, Orbit's private D-Bus bus and
+`--password-store=gnome-libsecret`. The installed `AppRun` wrapper was not
+invoked because it runs global cleanup routines. Orbit's supervisor set the
+core limit to zero for Claude. The private keyring process also had a zero core
+limit and was not dumpable. The host Claude app stayed open. Its main log inode
+stayed stable, although its byte size grew during one later run while the host
+app was active; the writer was not identified. The private window mapped
+without using the host display or pointer.
 
-Call the pilot successful only if the private app maps and reports an available
-secure backend. Account sign-in, token persistence after restart and an
-authenticated service request would still need separate measurements. The
-installed `AppRun` wrapper runs global cleanup routines before launch, so the
-pilot should invoke the ELF directly while the host application is open.
+Starting `gnome-keyring-daemon` with an empty home and `--components=secrets`
+registered `org.freedesktop.secrets`, but `secret-tool store` failed because
+`/org/freedesktop/secrets/collection/login` did not exist. The private Claude
+log reported `isEncryptionAvailable=false` with backend `gnome_libsecret`.
+Merely registering the service is therefore insufficient.
+
+Adding `--unlock` and supplying a disposable private passphrase created a
+usable login collection. A synthetic secret stored through `secret-tool` was
+read back through a separate process on the same private bus. Claude mapped and
+remained alive for the bounded run. Its private startup log did not contain the
+earlier `isEncryptionAvailable=false` warning. The private window showed the
+fresh-profile "Get started" page. This proves the private Secret Service
+round trip and Claude window mapping. It does not directly prove a positive
+Electron `safeStorage.isEncryptionAvailable()` result, token persistence, or
+an authenticated Claude request.
+
+The active host OAuth token still appears to exist only in host process memory
+under the measured `basic_text` backend. An empty private keyring cannot copy
+that in-memory token. A future pilot must directly check Electron safeStorage
+availability, then establish whether an account authorized in a persistent
+private profile survives a restart and can make an authenticated request. That
+would still require a separate method to reuse the already active host login
+without signing in again.
+
+The bounded pilot can be repeated with
+`bun run scripts/limited.ts bun experiments/claude-secure-storage-pilot.ts`.
+It prints only status, counts and selected warning flags, creates its own
+private session, and removes that session on exit. `ORBIT_CLAUDE_ELF` selects
+another installed Claude ELF. The pilot does not copy or modify the host
+profile and does not request the host display.
