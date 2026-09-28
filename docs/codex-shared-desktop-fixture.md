@@ -78,5 +78,12 @@ fixture prompt and completed answer. The runner checks the persisted answer,
 screen text, absent client `auth.json`, one private project, and unchanged owner
 socket inodes. The fixture and screenshot are in the same `evidence/` directory.
 This tests rendered completed content with synthetic credentials only. Every
-sidebar key, changes across restart, the person's real account, and complete
-host tool isolation are still unmeasured.
+sidebar key, the person's real account, and complete host tool isolation are
+still unmeasured.
+
+The runner then closed the first Orbit client and launched a fresh private
+client while the same owner stayed running. Both client runs showed the project,
+conversation and completed answer. Neither private client had an `auth.json`,
+and the owner's socket inodes stayed unchanged. The second screenshot is
+`private-orbit-reopened-turn.jpg`. This measures a client window reopen, not an
+owner restart or persistence of the person's real application state.
