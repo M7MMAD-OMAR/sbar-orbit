@@ -42,3 +42,27 @@ restarted or modified. Neither the person's account and projects nor the full
 host tool isolation needed for an agent turn have been tested through these
 two windows. These results establish the shared window and visible thread path
 only for disposable state.
+
+## Later owner state fixture
+
+Source commits `aa491bc` and `dd88724` in `codex-desktop-linux` add an
+opt-in owner socket for selected sidebar keys. The second Desktop checks a
+private `CODEX_HOME`, reads the owner's sidebar state through that socket,
+forwards supported changes to the owner, and uses its own local state file.
+The owner remains the writer of its state file. Reproducible fixture scripts
+and a screenshot are in that feature's `evidence/` directory.
+
+A fresh two-window run used temporary homes, separate private displays and a
+fake API key only in the owner home. The second home had no `auth.json`. Its
+window passed onboarding and visibly rendered the fixture project and its
+assigned conversation. With synthetic dark GSettings preferences in the
+second private home, its screenshot was dark. Both processes stayed alive,
+and the owner's authority and state socket identities stayed unchanged. The
+fixture processes were then stopped.
+
+This is evidence for a disposable project, conversation title and appearance
+in a second Desktop. It has not used the person's account, original app,
+personal projects or real conversation content. The copied Desktop fixture
+has not yet been launched through Orbit's combined private socket mount.
+Completed model turns, every sidebar key, changes across restart, and complete
+host tool isolation are also unmeasured.
