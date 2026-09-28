@@ -385,3 +385,16 @@ also contained earlier legacy read-only RPC changes. Other input methods,
 tool callback ownership, per-turn tool limits, and Desktop use have not been
 tested together. The patch is not in the installed application or active gate.
 See `experiments/codex-turn-owner-steer-optin.md`.
+
+A separate exact-tag two-client fixture measured the boundary for an existing
+saved thread. On an already loaded thread, a second client's `turn/start`
+worked without `thread/resume`, but only the subscribed owner got its
+completion notification. After restarting the disposable app-server, metadata
+`thread/read` left tracked files unchanged and `turn/start` failed with
+`thread not found`. Cold `thread/resume` then appended a
+`thread_settings_applied` rollout event, changed goals, queue, state, and
+history SQLite WAL and SHM files, and created a writer lock before any new
+turn. It also subscribes the client and can update shared in-memory client
+information. A private writer for old conversations therefore needs an
+explicitly measured resume boundary, not a silent read assumption. See
+`experiments/codex-existing-thread-resume-boundary.md`.
