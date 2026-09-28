@@ -125,11 +125,16 @@ For a Fedora private display, a VS Code Default Profile launch can use
 ```
 
 `extensions` names exact installed extension folders. The action copies the
-Default Profile settings, keybindings, snippets and selected extensions into the
-private session. Up to four extensions and 256 MiB of files can be copied, with a
-64 MiB limit per file. `openPath` may be an existing file or directory. The result
-reports what was copied as `profileSnapshot`. Stopping the session removes the
-private snapshot. Sign-in state and other VS Code profiles are not copied.
+Default Profile settings, keybindings, snippets, a consistent account database
+and selected extensions into the private session. Up to four extensions and
+256 MiB of files can be copied, with a 64 MiB limit per file. `openPath` may be
+an existing file or directory. The result reports what was copied as
+`profileSnapshot`. When account state was copied, launch requires the host's
+unlocked VS Code keyring item and gives the private VS Code process access to
+the host secret service. That service can expose other keyring items too.
+Stopping the session removes the private snapshot and bus proxy. One GitHub
+identity was observed in the private account menu; Copilot access, token
+refresh and other VS Code profiles have not been verified.
 
 | Need | MCP | CLI | Result |
 |---|---|---|---|

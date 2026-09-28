@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 
 const maximumBytes = 256 * 1024 * 1024;
@@ -11,7 +11,7 @@ const extensionName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export type VSCodeProfileRequest = { extensions: string[]; openPath?: string };
 export type VSCodeProfileSource = { configHome: string; extensionsHome: string };
-export type VSCodeProfileSnapshot = { settings: "copied" | "absent"; extensions: string[] };
+export type VSCodeProfileSnapshot = { settings: "copied" | "absent"; accountState: "copied" | "absent"; extensions: string[] };
 
 export function validateVSCodeProfileRequest(request: VSCodeProfileRequest) {
   if (!Array.isArray(request.extensions) || request.extensions.length > 4 ||
@@ -24,7 +24,7 @@ export function validateVSCodeProfileRequest(request: VSCodeProfileRequest) {
     throw new OrbitError("INVALID_REQUEST", "VS Code openPath must be an absolute path");
 }
 
-/** Snapshot selected preferences and extensions without copying live account databases. */
+/** Snapshot selected preferences, account database and extensions into private paths. */
 export async function prepareVSCodeLaunch(
   sessionDirectory: string,
   request: VSCodeProfileRequest,
@@ -48,6 +48,7 @@ export async function prepareVSCodeLaunch(
   const root = join(sessionDirectory, `vscode-${crypto.randomUUID()}`);
   const data = join(root, "data");
   const extensions = join(root, "extensions");
+  const sharedData = join(root, "shared-data");
   const sourceUser = join(source.configHome, "Code", "User");
   const targetUser = join(data, "User");
   const budget = { bytes: 0, files: 0 };
@@ -118,28 +119,62 @@ export async function prepareVSCodeLaunch(
     return true;
   }
 
+  async function copySqlite(from: string, to: string): Promise<boolean> {
+    let before;
+    try { before = await lstat(from); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1)
+      throw new OrbitError("UNSUPPORTED", "VS Code account database must be a regular file without hard links");
+    if (++budget.files > maximumFiles || before.size > maximumFileBytes ||
+        budget.bytes + before.size > maximumBytes)
+      throw new OrbitError("LIMIT_REACHED", "VS Code snapshot exceeds its file or byte limit");
+    budget.bytes += before.size;
+    await mkdir(dirname(to), { mode: 0o700 });
+    const child = Bun.spawn(["/usr/bin/python3", resolve(import.meta.dir, "native/sqlite_snapshot.py"), from, to],
+      { stdout: "ignore", stderr: "ignore" });
+    const timer = setTimeout(() => child.kill(), 30000);
+    try {
+      if (await child.exited !== 0)
+        throw new OrbitError("BACKEND_FAILED", "VS Code account database could not be snapshotted");
+      const after = await lstat(from);
+      if (before.dev !== after.dev || before.ino !== after.ino || !after.isFile())
+        throw new OrbitError("BACKEND_FAILED", "VS Code account database changed identity during the snapshot");
+      return true;
+    } finally { clearTimeout(timer); }
+  }
+
   try {
     await requirePlainDirectory(source.configHome);
     await requirePlainDirectory(join(source.configHome, "Code"));
     await requirePlainDirectory(sourceUser);
+    await requirePlainDirectory(join(sourceUser, "globalStorage"));
     if (request.extensions.length) await requirePlainDirectory(source.extensionsHome);
     await mkdir(root, { mode: 0o700 });
     await mkdir(data, { mode: 0o700 });
     await mkdir(targetUser, { mode: 0o700 });
     await mkdir(extensions, { mode: 0o700 });
+    await mkdir(sharedData, { mode: 0o700 });
     const settings = await copyRegular(join(sourceUser, "settings.json"), join(targetUser, "settings.json"))
       ? "copied" : "absent";
     await copyRegular(join(sourceUser, "keybindings.json"), join(targetUser, "keybindings.json"));
     await copyDirectory(join(sourceUser, "snippets"), join(targetUser, "snippets"));
+    await copyRegular(join(source.configHome, "Code", "Local State"), join(data, "Local State"));
+    await copyRegular(join(source.configHome, "Code", "machineid"), join(data, "machineid"));
+    const accountState = await copySqlite(join(sourceUser, "globalStorage", "state.vscdb"),
+      join(targetUser, "globalStorage", "state.vscdb")) ? "copied" : "absent";
     for (const name of request.extensions)
       if (!await copyDirectory(join(source.extensionsHome, name), join(extensions, name)))
         throw new OrbitError("INVALID_REQUEST", `VS Code extension folder does not exist: ${name}`);
     return {
       argv: ["/usr/share/code/code", "--user-data-dir", data, "--extensions-dir", extensions,
+        "--shared-data-dir", sharedData,
         "--new-window", ...(openPath ? [openPath] : [])],
       toolkit: "wayland",
       selectedFiles: [],
-      snapshot: { settings, extensions: [...request.extensions] },
+      snapshot: { settings, accountState, extensions: [...request.extensions] },
     };
   } catch (error) {
     await rm(root, { recursive: true, force: true });

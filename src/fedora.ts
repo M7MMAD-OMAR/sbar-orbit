@@ -122,6 +122,7 @@ export class FedoraBackend {
   private waylandDisplay = "";
   private clipboard?: ChildProcessWithoutNullStreams;
   private bus?: { child: ChildProcessWithoutNullStreams; group?: number };
+  private keyringProxy?: { child: ChildProcessWithoutNullStreams; group?: number; address: string };
   readonly busServices: string[] = [];
   private closing?: Promise<void>;
   /** What the compositor was asked to draw with, and what its log says actually bound. */
@@ -263,6 +264,41 @@ export class FedoraBackend {
     });
     child.once("exit", () => { void this.close(); });
   }
+  private async codeKeyringProxy(): Promise<string> {
+    if (this.keyringProxy) return this.keyringProxy.address;
+    const upstream = process.env.DBUS_SESSION_BUS_ADDRESS;
+    if (!upstream || upstream === this.env.DBUS_SESSION_BUS_ADDRESS ||
+        !await Bun.file("/usr/bin/xdg-dbus-proxy").exists())
+      throw new OrbitError("UNSUPPORTED", "VS Code account state needs an available host keyring and xdg-dbus-proxy");
+    const check = Bun.spawn(["/usr/bin/python3", join(project, "src/native/keyring_item.py"), "Code"],
+      { stdout: "ignore", stderr: "ignore" });
+    const timeout = setTimeout(() => check.kill(), 5000);
+    try {
+      if (await check.exited !== 0)
+        throw new OrbitError("UNSUPPORTED", "VS Code account key is absent or locked; starting it would show a signed-out copy or a prompt on your desktop");
+    } finally { clearTimeout(timeout); }
+    const socket = join(this.directory, "keyring-proxy");
+    const address = `unix:path=${socket}`;
+    // The proxy grants only the secret service name. It cannot address the person's window manager,
+    // notifications or application buses, while Code can decrypt its copied account database.
+    const child = spawn("/usr/bin/xdg-dbus-proxy", [upstream, socket, "--filter", "--talk=org.freedesktop.secrets"],
+      { env: process.env, detached: true });
+    child.stdout.resume(); child.stderr.resume();
+    const proxy = this.keyringProxy = { child, group: child.pid, address };
+    child.on("error", () => { void this.close(); });
+    child.once("exit", () => { if (!this.closed) void this.close(); });
+    try {
+      await this.wait(async () => {
+        if (child.exitCode !== null || child.signalCode !== null) throw new OrbitError("BACKEND_FAILED", "VS Code keyring proxy exited before opening");
+        try { return (await stat(socket)).isSocket(); } catch { return false; }
+      });
+    } catch (error) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      if (this.keyringProxy === proxy) this.keyringProxy = undefined;
+      throw error;
+    }
+    return address;
+  }
   private async wait(probe: () => Promise<boolean>, timeoutMs = 10000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) { this.ensureOpen(); if (await probe()) return; await sleep(50); }
@@ -313,11 +349,13 @@ export class FedoraBackend {
       const prepared = action.type === "launch"
         ? action
         : await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath });
+      const applicationEnv = "snapshot" in prepared && prepared.snapshot.accountState === "copied"
+        ? { ...this.env, DBUS_SESSION_BUS_ADDRESS: await this.codeKeyringProxy() } : this.env;
       const [executable] = prepared.argv;
       if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
-      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []), executable, ...prepared.argv.slice(1)], { env: { ...this.env, GDK_BACKEND: prepared.toolkit }, detached: true });
+      const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []), executable, ...prepared.argv.slice(1)], { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
       const supervised: { child: ChildProcessWithoutNullStreams; group?: number } = { child };
       this.children.push(supervised);
@@ -452,7 +490,7 @@ export class FedoraBackend {
     this.closed = true;
     this.closing = (async () => {
       const supervised = [...this.children];
-      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.bus ? [this.bus.child] : []), this.compositor];
+      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.keyringProxy ? [this.keyringProxy.child] : []), ...(this.bus ? [this.bus.child] : []), this.compositor];
       await Promise.all(children.map(async child => {
         if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
         const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
@@ -463,7 +501,7 @@ export class FedoraBackend {
       // A live supervisor reaps its own tree on the way out, so by here every group is normally
       // gone already. The exception is the supervisor that was killed rather than asked, and that
       // is the one case where an application would otherwise survive the display it was given.
-      for (const group of [...supervised.map(entry => entry.group), this.bus?.group, this.compositorGroup])
+      for (const group of [...supervised.map(entry => entry.group), this.keyringProxy?.group, this.bus?.group, this.compositorGroup])
         if (group !== undefined) await sweepOwnedGroup(group, this.directory);
       // The runtime directory lives on tmpfs, and tmpfs pages are charged to the cgroup that wrote
       // them. Left behind, closed sessions kept filling the shared memory budget until the kernel

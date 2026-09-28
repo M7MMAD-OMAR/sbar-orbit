@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -59,16 +60,20 @@ test("VS Code snapshot copies Default settings and one extension without account
       { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome });
     expect(prepared.toolkit).toBe("wayland");
     expect(prepared.selectedFiles).toEqual([]);
-    expect(prepared.snapshot).toEqual({ settings: "copied", extensions: [selectedExtension] });
+    expect(prepared.snapshot).toEqual({ settings: "copied", accountState: "absent", extensions: [selectedExtension] });
     expect(prepared.argv[0]).toBe("/usr/share/code/code");
     expect(prepared.argv).toContain("--new-window");
     expect(prepared.argv).not.toContain("--reuse-window");
     const data = privateFlag(prepared.argv, "--user-data-dir");
     const extensions = privateFlag(prepared.argv, "--extensions-dir");
+    const sharedData = privateFlag(prepared.argv, "--shared-data-dir");
     expect(relative(f.sessionDirectory, data).startsWith("..")).toBe(false);
     expect(relative(f.sessionDirectory, extensions).startsWith("..")).toBe(false);
+    expect(relative(f.sessionDirectory, sharedData).startsWith("..")).toBe(false);
     expect(data).not.toBe(f.configHome);
     expect(extensions).not.toBe(f.extensionsHome);
+    expect(sharedData).not.toBe(data);
+    expect((await stat(sharedData)).mode & 0o077).toBe(0);
     expect(await readFile(join(data, "User", "settings.json"))).toEqual(f.settings);
     expect(await readFile(join(extensions, selectedExtension, "package.json"))).toEqual(f.packageJson);
     expect(await readdir(extensions)).toEqual([selectedExtension]);
@@ -94,6 +99,27 @@ test("VS Code snapshot refuses a linked source settings file and leaves no copy"
     expect(await readdir(f.sessionDirectory)).toEqual([]);
     expect(await readFile(outside, "utf8")).toBe('{"secret":"not for Orbit"}\n');
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("VS Code account snapshot includes an uncheckpointed SQLite login record", async () => {
+  const f = await fixture();
+  const source = join(f.user, "globalStorage", "state.vscdb");
+  const database = new Database(source);
+  try {
+    database.exec("PRAGMA journal_mode=WAL; CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);");
+    database.query("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run("secret://github.auth", "encrypted fixture");
+    const { prepareVSCodeLaunch } = await import("../src/native-vscode");
+    const prepared = await prepareVSCodeLaunch(f.sessionDirectory,
+      { extensions: [] }, { configHome: f.configHome, extensionsHome: f.extensionsHome });
+    expect(prepared.snapshot.accountState).toBe("copied");
+    const snapshot = new Database(join(privateFlag(prepared.argv, "--user-data-dir"), "User", "globalStorage", "state.vscdb"));
+    try {
+      expect(snapshot.query("SELECT value FROM ItemTable WHERE key = ?").get("secret://github.auth"))
+        .toEqual({ value: "encrypted fixture" });
+    } finally { snapshot.close(); }
+    expect(database.query("SELECT value FROM ItemTable WHERE key = ?").get("secret://github.auth"))
+      .toEqual({ value: "encrypted fixture" });
+  } finally { database.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
 test("VS Code snapshot refuses a linked extension file and leaves no copy", async () => {
