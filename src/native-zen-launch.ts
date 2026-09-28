@@ -6,6 +6,7 @@ import { OrbitError } from "./errors";
 import { openPublicWebLease, type PublicWebLease, type PublicWebLeaseRequest } from "./egress";
 import { snapshotZenProfile, type ZenProfileSnapshot } from "./native-zen";
 import { compileZenCoreGuard, type ZenCoreGuard } from "./native-zen-core-guard";
+import { quietZenSync } from "./native-zen-sync";
 
 type ZenLocation = { home?: string; deploymentFiles?: string;
   leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest">; guardCompiler?: string };
@@ -168,8 +169,9 @@ export async function prepareZenLaunch(
       if (!(await Bun.file("/usr/bin/socat").exists()))
         throw new OrbitError("UNSUPPORTED", "Zen public web mode needs socat");
       await mkdir(join(privateDirectory, "runtime", "no-core-proofs"), { mode: 0o700 });
-      lease = await openPublicWebLease({ parentDirectory: session, ...location.leaseProbe });
       await writePrivateProxyPreferences(snapshot.directory);
+      await quietZenSync(snapshot.directory, installation.profile);
+      lease = await openPublicWebLease({ parentDirectory: session, ...location.leaseProbe });
       await writeFile(join(privateDirectory, "runtime", "lease.sock"), "", { mode: 0o600 });
     }
     const profileInside = `/orbit/zen/${basename(snapshot.directory)}`;

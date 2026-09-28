@@ -94,6 +94,35 @@ test("Zen public web mode mounts only its lease socket and writes proxy preferen
   }
 });
 
+test("Zen public web mode removes only the copied Mozilla account and overrides Sync after proxy prefs", async () => {
+  const f = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    const sourceAccount = '{"version":1,"accountData":{"uid":"synthetic","sessionToken":"synthetic"}}';
+    const sourcePrefs = 'user_pref("services.sync.username", "synthetic");\n';
+    await writeFile(join(f.profile, "signedInUser.json"), sourceAccount);
+    await writeFile(join(f.profile, "user.js"), sourcePrefs);
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+
+    const cloneDirectory = prepared.argv[prepared.argv.indexOf("/orbit/zen") - 1]!;
+    const profileInside = prepared.argv.at(-1)!;
+    const cloneProfile = join(cloneDirectory, profileInside.split("/").at(-1)!);
+    const prefs = await readFile(join(cloneProfile, "user.js"), "utf8");
+    expect(await Bun.file(join(cloneProfile, "signedInUser.json")).exists()).toBe(false);
+    expect(prefs).toContain('user_pref("network.proxy.type", 1)');
+    expect(prefs.lastIndexOf('user_pref("services.sync.username", "");'))
+      .toBeGreaterThan(prefs.indexOf('user_pref("network.proxy.type", 1)'));
+    expect(prefs.trimEnd().endsWith('user_pref("services.sync.username", "");')).toBe(true);
+    expect(await readFile(join(f.profile, "signedInUser.json"), "utf8")).toBe(sourceAccount);
+    expect(await readFile(join(f.profile, "user.js"), "utf8")).toBe(sourcePrefs);
+  } finally {
+    await prepared?.release();
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("Zen public web mode fails closed when the guard compiler is absent", async () => {
   const f = await fixture();
   try {
