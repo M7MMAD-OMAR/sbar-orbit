@@ -121,12 +121,26 @@ An exact-tag CLI source experiment in
 `thread/read` request for metadata only. A red test first proved the normal
 read repaired a missing SQLite row. With the patch, three read-only tests
 passed and an ordinary owner test still repaired the row. App-server library
-and test targets compiled. This source patch is not in the staged candidate or
-the Orbit gate, and it rejects `includeTurns: true`. The Desktop source has a
-dormant attach-only legacy viewer patch in commits `3b148f5` and `d60630e`.
+and test targets compiled. An incremental source experiment in
+`experiments/codex-thread-readonly-legacy-history.patch` allows legacy
+`includeTurns: true` reads. Its component baseline reproduced the SQLite
+repair, and three patched store tests passed with fixture user text and
+unchanged rollout bytes. App-server library and tests compiled. The loaded
+app-server RPC test timed out during linking before its assertion ran, and
+assistant text was absent from the fixture. Paginated reads remain denied.
+Neither source patch is in the staged candidate or the Orbit gate. The Desktop
+source has a dormant attach-only legacy viewer patch in commits `3b148f5` and
+`d60630e`.
 Its readiness setting is off by default. These patches do not yet make
 conversation content available, and they do not establish a safe writable
 thread route.
+
+Desktop patch `523302a` adds an attach-only account projection from sanitized
+`getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
+A synthetic test passed and matched the copied ASAR. It returned fixture email
+and plan without asking the private client to fetch a token. A first fake
+ChatGPT UI run captured a loading screen after 10 seconds, so no account label
+was measured in the interface. No real account was used.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
