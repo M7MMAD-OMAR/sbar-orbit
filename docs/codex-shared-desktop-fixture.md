@@ -1,0 +1,44 @@
+# Disposable shared Codex Desktop windows
+
+Measured on 28 September 2026 with the installed Linux Desktop bundle copied
+into temporary storage. The optional socket feature in the local
+`codex-desktop-linux` source preserves the normal Desktop child launch
+arguments and adds an attach-only mode for a second window. It remains off in
+the installed application. The source changes are commits `7666335` and
+`cd35657` in the local `codex-desktop-linux` source checkout.
+
+The test launched two copied Desktop windows on separate private Xvnc displays,
+with separate Electron user data and temporary home directories. The first
+window owned one Codex app-server on a user-only Unix socket. The second
+connected to that same authority without replacing its socket or ownership
+lock. Two protocol clients initialized and one read a temporary thread made
+through the Desktop-owned authority. All private processes were stopped.
+
+A later run used a disposable fake API key and completed the second window's
+onboarding. Its sidebar visibly showed `Disposable fixture conversation` under
+Recents after a turn started through the first authority. It showed `No
+projects` and the light theme because the test supplied no project list or
+personal appearance state. The fake key and network isolation prevented a
+successful model turn, so this does not prove that a completed conversation is
+rendered or that the person's account works in both windows.
+
+Read-only bundle inspection located sidebar project, order, assignment and pin
+keys in the client local global state. The installed bootstrap constructs that
+state from `CODEX_HOME/.codex-global-state.json` and reads appearance settings
+from `CODEX_HOME/config.toml`. The second window's temporary copies did not
+contain the person's settings. Source inspection found that each Desktop loads
+the whole global state into its own in-memory map and persists the whole map
+through an atomic replacement. No interprocess version check or merge was
+found in that path. Atomic replacement prevents partial JSON, but two writers
+can lose each other's unrelated updates. Appearance changes are sent to the
+shared app-server as configuration edits; their concurrent behavior has not
+been measured. A fresh private copy can match the initial sidebar and theme,
+as the separate local state pilot showed, but that copy does not keep later
+changes synchronized. A shared owner for global state mutations is needed
+before both windows can safely edit the person's sidebar.
+
+The original installed Desktop still has its stdio app-server and was not
+restarted or modified. Neither the person's account and projects nor the full
+host tool isolation needed for an agent turn have been tested through these
+two windows. These results establish the shared window and visible thread path
+only for disposable state.
