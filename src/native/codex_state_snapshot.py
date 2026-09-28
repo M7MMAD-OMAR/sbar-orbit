@@ -21,7 +21,10 @@ MAX_DEPTH = 8
 MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_DATABASE_BYTES = 256 * 1024 * 1024
+MAX_HISTORY_DATABASE_BYTES = 4 * 1024 * 1024 * 1024
 ROLLOUT_DIRS = ("sessions", "archived_sessions")
+UI_STATE_KEYS = ("local-projects", "project-order", "pinned-thread-ids", "selected-project",
+                 "sidebar-project-thread-orders", "thread-project-assignments")
 
 
 class SourceChangedError(ValueError):
@@ -84,32 +87,51 @@ def write_private(path: Path, data: bytes, created: list[Path]) -> None:
         os.close(fd)
 
 
-def sqlite_backup(source: Path, target: Path, created: list[Path]) -> tuple[int, list[str]]:
-    before = plain_file(source, MAX_DATABASE_BYTES)
+def sqlite_backup(source: Path, target: Path, created: list[Path],
+                  limit_bytes: int = MAX_DATABASE_BYTES, seconds: int = 30) -> tuple[int, list[str], int] | int:
+    before = plain_file(source, limit_bytes)
     if target.exists() or target.is_symlink():
         raise ValueError("Codex private database already exists")
+    available = os.statvfs(target.parent)
+    free_bytes = available.f_bavail * available.f_frsize
+    reserve = 512 * 1024 * 1024 if before.st_size > MAX_DATABASE_BYTES else 32 * 1024 * 1024
+    if free_bytes < before.st_size + reserve:
+        raise ValueError("Codex private storage lacks space for the database snapshot")
     created.append(target)
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + seconds
 
     def check_deadline(_status: int, _remaining: int, _total: int) -> None:
         if time.monotonic() > deadline:
-            raise TimeoutError("Codex database backup exceeded 30 seconds")
+            raise TimeoutError(f"Codex database backup exceeded {seconds} seconds")
 
     with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=5)) as original:
         original.execute("PRAGMA query_only=ON")
         with closing(sqlite3.connect(target, timeout=5)) as copy:
-            original.backup(copy, pages=64, sleep=0.05, progress=check_deadline)
+            copy.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10000)
+            original.backup(copy, pages=1024 if seconds > 30 else 64, sleep=0.05,
+                            progress=check_deadline)
             if copy.execute("PRAGMA quick_check").fetchone() != ("ok",):
                 raise ValueError("Codex database snapshot failed integrity validation")
-            projects = copy.execute("SELECT count(*) FROM projects").fetchone()[0]
-            paths = [row[0] for row in copy.execute("SELECT rollout_path FROM threads")]
-    if target.stat().st_size > MAX_DATABASE_BYTES:
+            if source.name == "state_5.sqlite":
+                projects = copy.execute("SELECT count(*) FROM projects").fetchone()[0]
+                paths = [row[0] for row in copy.execute("SELECT rollout_path FROM threads")]
+                columns = {row[1] for row in copy.execute("PRAGMA table_info(threads)")}
+                paginated = (copy.execute("SELECT count(*) FROM threads WHERE history_mode='paginated'").fetchone()[0]
+                             if "history_mode" in columns else 0)
+            else:
+                projects = None
+                paths = None
+                paginated = None
+    target_bytes = target.stat().st_size
+    if target_bytes > limit_bytes:
         raise ValueError("Codex private database exceeds its size limit")
     os.chmod(target, 0o600)
     after = source.lstat()
     if not stat.S_ISREG(after.st_mode) or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
         raise SourceChangedError("Codex database source was replaced during backup")
-    return projects, paths
+    if projects is None or paths is None or paginated is None:
+        return target_bytes
+    return projects, paths, paginated
 
 
 def reflink(source: Path, target: Path, created: list[Path]) -> int:
@@ -160,7 +182,14 @@ def snapshot_once(source: Path, destination: Path) -> dict[str, int | bool]:
         config_data = read_stable(source / "config.toml", MAX_CONFIG_BYTES)
         write_private(destination / ".codex-global-state.json", global_data, created)
         write_private(destination / "config.toml", config_data, created)
-        projects, rollout_paths = sqlite_backup(source / "state_5.sqlite", destination / "state_5.sqlite", created)
+        projects, rollout_paths, paginated = sqlite_backup(source / "state_5.sqlite",
+                                                           destination / "state_5.sqlite", created)
+        history_source = source / "thread_history_1.sqlite"
+        if paginated and not (history_source.exists() or history_source.is_symlink()):
+            raise ValueError("Codex paginated threads need their history database")
+        history_bytes = (sqlite_backup(history_source, destination / "thread_history_1.sqlite", created,
+                                       MAX_HISTORY_DATABASE_BYTES, 90)
+                         if history_source.exists() or history_source.is_symlink() else 0)
         files = 0
         total = 0
         directories = 0
@@ -205,10 +234,11 @@ def snapshot_once(source: Path, destination: Path) -> dict[str, int | bool]:
                 raise ValueError("Codex database references a missing rollout")
         if identity(root_before) != identity(source.lstat()):
             raise SourceChangedError("Codex source directory changed during snapshot")
-        if global_data != read_stable(source / ".codex-global-state.json", MAX_JSON_BYTES):
-            raise SourceChangedError("Codex global state changed during snapshot")
-        return {"projects": projects, "threads": len(rollout_paths), "rollouts": files,
-                "rolloutBytes": total, "atomicAcrossStores": False}
+        current_global = json.loads(read_stable(source / ".codex-global-state.json", MAX_JSON_BYTES))
+        if any(global_state.get(key) != current_global.get(key) for key in UI_STATE_KEYS):
+            raise SourceChangedError("Codex sidebar state changed during snapshot")
+        return {"projects": projects, "threads": len(rollout_paths), "paginatedThreads": paginated, "rollouts": files,
+                "rolloutBytes": total, "historyBytes": history_bytes, "atomicAcrossStores": False}
     except BaseException:
         for path in reversed(created):
             if path.is_dir():
