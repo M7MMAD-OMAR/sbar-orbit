@@ -135,6 +135,8 @@ async def main():
             "MOCK_API_KEY": "disposable", "NO_PROXY": "127.0.0.1,localhost",
             "CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT": "1",
         }
+        if os.environ.get("ORBIT_COMBINED_EXPERIMENT") == "1":
+            environment["CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT"] = "1"
         (root / "codex" / "config.toml").write_text(
             'model = "gpt-5.1"\nmodel_provider = "mock"\nweb_search = "disabled"\n'
             '[model_providers.mock]\nname = "Local Mock"\n'

@@ -21,6 +21,7 @@ import websockets
 
 SOURCE_COMMIT = "4607249e430dac1c961df4dc615beae88e33cec8"
 CODEX = os.environ.get("ORBIT_CODEX_TEST_BINARY", "/usr/lib/chatgpt/resources/codex")
+SERVER_BINARY = os.environ.get("ORBIT_CODEX_APP_SERVER_BINARY")
 
 
 def free_port():
@@ -59,15 +60,18 @@ def response_stream(number, item):
 
 
 class Client:
-    def __init__(self, socket_connection, label, other_reply_sent, model_followup_seen):
+    def __init__(self, socket_connection, label, other_reply_sent, model_followup_seen,
+                 owner_request_seen):
         self.socket_connection = socket_connection
         self.label = label
         self.other_reply_sent = other_reply_sent
         self.model_followup_seen = model_followup_seen
+        self.owner_request_seen = owner_request_seen
         self.next_id = 1
         self.pending = {}
         self.notifications = []
         self.tool_calls = []
+        self.tool_request_ids = []
         self.reader = asyncio.create_task(self.read())
 
     async def read(self):
@@ -77,9 +81,11 @@ class Client:
                 if message["method"] != "item/tool/call":
                     raise RuntimeError(f"Unexpected server request: {message['method']}")
                 self.tool_calls.append(message["params"])
+                self.tool_request_ids.append(message["id"])
                 if self.label == "OWNER":
+                    self.owner_request_seen.set()
                     try:
-                        await asyncio.wait_for(self.other_reply_sent.wait(), 0.75)
+                        await asyncio.wait_for(self.other_reply_sent.wait(), 2)
                     except asyncio.TimeoutError:
                         pass
                     if self.other_reply_sent.is_set():
@@ -123,9 +129,11 @@ async def main():
                             text=True, capture_output=True, check=True).stdout.strip()
     if commit != SOURCE_COMMIT:
         raise RuntimeError(f"Source worktree is not the exact tag: {commit}")
-    version = subprocess.run([CODEX, "--version"], text=True,
+    executable = SERVER_BINARY or CODEX
+    version = subprocess.run([executable, "--version"], text=True,
                              capture_output=True, check=True).stdout.strip()
-    if version != "codex-cli 0.155.0-alpha.9.2":
+    expected_version = ("codex-app-server" if SERVER_BINARY else "codex-cli") + " 0.155.0-alpha.9.2"
+    if version != expected_version:
         raise RuntimeError(f"Test executable has a different version: {version}")
     with tempfile.TemporaryDirectory(prefix="orbit-red-two-client-") as temporary:
         root = Path(temporary)
@@ -136,6 +144,7 @@ async def main():
         loop = asyncio.get_running_loop()
         other_reply_sent = asyncio.Event()
         model_followup_seen = asyncio.Event()
+        owner_request_seen = asyncio.Event()
 
         class MockModel(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
@@ -172,6 +181,8 @@ async def main():
             "MOCK_API_KEY": "disposable", "NO_PROXY": "127.0.0.1,localhost",
             "CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT": "1",
         }
+        if os.environ.get("ORBIT_COMBINED_EXPERIMENT") == "1":
+            environment["CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT"] = "1"
         (root / "codex" / "config.toml").write_text(
             'model = "gpt-5.1"\nmodel_provider = "mock"\nweb_search = "disabled"\n'
             '[model_providers.mock]\nname = "Local Mock"\n'
@@ -180,8 +191,9 @@ async def main():
             'supports_websockets = false\n'
         )
         socket_path = root / "socket" / "app.sock"
+        command = [executable] + ([] if SERVER_BINARY else ["app-server"])
         authority = subprocess.Popen(
-            [CODEX, "app-server", "--listen", "unix://" + str(socket_path)],
+            command + ["--listen", "unix://" + str(socket_path)],
             cwd=root, env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
         )
@@ -200,8 +212,10 @@ async def main():
                 websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
                                         compression=None) as other_socket,
             ):
-                owner = Client(owner_socket, "OWNER", other_reply_sent, model_followup_seen)
-                other = Client(other_socket, "OTHER", other_reply_sent, model_followup_seen)
+                owner = Client(owner_socket, "OWNER", other_reply_sent, model_followup_seen,
+                               owner_request_seen)
+                other = Client(other_socket, "OTHER", other_reply_sent, model_followup_seen,
+                               owner_request_seen)
                 init = {"clientInfo": {"name": "orbit_red_fixture", "title": "Orbit red fixture",
                                        "version": "1"}, "capabilities": {"experimentalApi": True}}
                 await asyncio.gather(owner.call("initialize", init), other.call("initialize", init))
@@ -231,6 +245,12 @@ async def main():
                 await other.call("thread/resume", {"threadId": thread_id})
                 await owner.call("turn/start", {"threadId": thread_id,
                                                 "input": [{"type": "text", "text": "Call the tool."}]})
+                await asyncio.wait_for(owner_request_seen.wait(), 10)
+                await other_socket.send(json.dumps({"id": owner.tool_request_ids[0], "result": {
+                    "contentItems": [{"type": "inputText", "text": "OTHER_CALLBACK"}],
+                    "success": True,
+                }}))
+                other_reply_sent.set()
                 await wait_for_completed_turns(2)
                 followup = json.dumps(model_requests[-1].get("input", []))
                 evidence = {"sourceCommit": commit, "cliVersion": version,
@@ -241,6 +261,7 @@ async def main():
                                                other.tool_calls[0]["callId"]),
                             "modelSawOwnerResult": "OWNER_CALLBACK" in followup,
                             "modelSawOtherResult": "OTHER_CALLBACK" in followup,
+                            "nonownerForgedCallbackSent": True,
                             "completed": True}
                 print(json.dumps(evidence, sort_keys=True), flush=True)
                 owner.reader.cancel()

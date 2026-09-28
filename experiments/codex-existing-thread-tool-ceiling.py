@@ -23,6 +23,7 @@ import websockets
 
 SOURCE_COMMIT = "4607249e430dac1c961df4dc615beae88e33cec8"
 CODEX = os.environ.get("ORBIT_CODEX_TEST_BINARY")
+SERVER_BINARY = os.environ.get("ORBIT_CODEX_APP_SERVER_BINARY")
 
 
 def free_port():
@@ -115,8 +116,9 @@ class Client:
 
 
 def start_authority(binary, root, environment, socket_path):
+    command = [binary] + ([] if SERVER_BINARY else ["app-server"])
     authority = subprocess.Popen(
-        [binary, "app-server", "--listen", "unix://" + str(socket_path)],
+        command + ["--listen", "unix://" + str(socket_path)],
         cwd=root, env=environment, stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
     )
@@ -143,17 +145,19 @@ def stop_authority(authority, socket_path):
 
 async def main():
     source_root_name = os.environ.get("ORBIT_CODEX_SOURCE_ROOT")
-    if not source_root_name or not CODEX:
-        raise RuntimeError("Set ORBIT_CODEX_SOURCE_ROOT and ORBIT_CODEX_TEST_BINARY")
+    if not source_root_name or not (CODEX or SERVER_BINARY):
+        raise RuntimeError("Set ORBIT_CODEX_SOURCE_ROOT and a Codex test binary")
     source_root = Path(source_root_name).resolve()
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source_root,
                             text=True, capture_output=True, check=True).stdout.strip()
     if commit != SOURCE_COMMIT:
         raise RuntimeError(f"Source worktree has unexpected base: {commit}")
-    version = subprocess.run([CODEX, "--version"], text=True,
+    executable = SERVER_BINARY or CODEX
+    version = subprocess.run([executable, "--version"], text=True,
                              capture_output=True, check=True).stdout.strip()
-    if version != "codex-cli 0.155.0-alpha.9.2":
-        raise RuntimeError(f"Unexpected CLI version: {version}")
+    expected_version = ("codex-app-server" if SERVER_BINARY else "codex-cli") + " 0.155.0-alpha.9.2"
+    if version != expected_version:
+        raise RuntimeError(f"Unexpected executable version: {version}")
 
     with tempfile.TemporaryDirectory(prefix="orbit-existing-tool-ceiling-") as temporary:
         root = Path(temporary)
@@ -186,6 +190,9 @@ async def main():
             "XDG_STATE_HOME": str(root / "state"), "XDG_RUNTIME_DIR": str(root / "runtime"),
             "MOCK_API_KEY": "disposable", "NO_PROXY": "127.0.0.1,localhost",
         }
+        if os.environ.get("ORBIT_COMBINED_EXPERIMENT") == "1":
+            environment["CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT"] = "1"
+            environment["CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT"] = "1"
         (root / "codex" / "config.toml").write_text(
             'model = "gpt-5.1"\nmodel_provider = "mock"\nweb_search = "disabled"\n'
             '[model_providers.mock]\nname = "Local Mock"\n'
@@ -196,7 +203,7 @@ async def main():
         socket_path = root / "socket" / "app.sock"
         authority = None
         try:
-            authority = start_authority(CODEX, root, environment, socket_path)
+            authority = start_authority(executable, root, environment, socket_path)
             async with websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
                                                compression=None) as owner_socket:
                 owner = Client(owner_socket)
@@ -210,7 +217,7 @@ async def main():
                 await owner.turn(thread_id, "Owner before cold resume")
                 await owner.close()
             stop_authority(authority, socket_path)
-            authority = start_authority(CODEX, root, environment, socket_path)
+            authority = start_authority(executable, root, environment, socket_path)
             async with (
                 websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
                                             compression=None) as private_socket,

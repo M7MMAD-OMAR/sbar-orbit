@@ -1,0 +1,443 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+index 478903f..08649fa 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+@@ -4901,0 +4902 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
++        allowed_tools: None,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+index f938d17..666027a 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+@@ -161,0 +162,9 @@ pub struct TurnToolOutput {
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AllowedToolName {
++    pub name: String,
++    #[ts(optional = nullable)]
++    pub namespace: Option<String>,
++}
++
+@@ -168,0 +178,4 @@ pub struct TurnStartParams {
++    /// Restrict model tools for this new turn only. Empty permits no tools.
++    #[experimental("turn/start.allowedTools")]
++    #[ts(optional = nullable)]
++    pub allowed_tools: Option<Vec<AllowedToolName>>,
+diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
+index e986d2e..6ae2805 100644
+--- a/codex-rs/app-server/src/bespoke_event_handling.rs
++++ b/codex-rs/app-server/src/bespoke_event_handling.rs
+@@ -1109,3 +1109,16 @@ pub(crate) async fn apply_bespoke_event_handling(
+-                let (_pending_request_id, rx) = outgoing
+-                    .send_request(ServerRequestPayload::DynamicToolCall(params))
+-                    .await;
++                let request = ServerRequestPayload::DynamicToolCall(params);
++                let (_pending_request_id, rx) =
++                    if std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                        == Ok("1")
++                    {
++                        let owner = thread_state
++                            .lock()
++                            .await
++                            .dynamic_tool_turn_owner
++                            .as_ref()
++                            .filter(|(turn_id, _)| turn_id == &event_turn_id)
++                            .map(|(_, connection_id)| *connection_id);
++                        outgoing.send_owned_dynamic_tool_request(request, owner).await
++                    } else {
++                        outgoing.send_request(request).await
++                    };
+diff --git a/codex-rs/app-server/src/message_processor_tracing_tests.rs b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+index 6715805..7d33b6c 100644
+--- a/codex-rs/app-server/src/message_processor_tracing_tests.rs
++++ b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+@@ -664,0 +665 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
++                    allowed_tools: None,
+diff --git a/codex-rs/app-server/src/outgoing_message.rs b/codex-rs/app-server/src/outgoing_message.rs
+index e6a109c..4737a68 100644
+--- a/codex-rs/app-server/src/outgoing_message.rs
++++ b/codex-rs/app-server/src/outgoing_message.rs
+@@ -150,0 +151 @@ struct PendingCallbackEntry {
++    exclusive_owner: Option<ConnectionId>,
+@@ -184,0 +186,20 @@ impl ThreadScopedOutgoingMessageSender {
++    pub(crate) async fn send_owned_dynamic_tool_request(
++        &self,
++        payload: ServerRequestPayload,
++        owner: Option<ConnectionId>,
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        let Some(owner) = owner.filter(|owner| self.connection_ids.contains(owner)) else {
++            let (tx, rx) = oneshot::channel();
++            drop(tx);
++            return (self.outgoing.next_request_id(), rx);
++        };
++        self.outgoing
++            .send_request_to_connections_inner(
++                Some(std::slice::from_ref(&owner)),
++                payload,
++                Some(self.thread_id),
++                Some(owner),
++            )
++            .await
++    }
++
+@@ -279,0 +301,16 @@ impl OutgoingMessageSender {
++        drop(request_contexts);
++        let abandoned = {
++            let mut callbacks = self.request_id_to_callback.lock().await;
++            let ids = callbacks
++                .iter()
++                .filter_map(|(id, entry)| {
++                    (entry.exclusive_owner == Some(connection_id)).then_some(id.clone())
++                })
++                .collect::<Vec<_>>();
++            ids.into_iter()
++                .filter_map(|id| callbacks.remove(&id))
++                .collect::<Vec<_>>()
++        };
++        for entry in abandoned {
++            let _ = entry.callback.send(Err(internal_error("tool owner disconnected")));
++        }
+@@ -334,0 +372,11 @@ impl OutgoingMessageSender {
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        self.send_request_to_connections_inner(connection_ids, request, thread_id, None)
++            .await
++    }
++
++    async fn send_request_to_connections_inner(
++        &self,
++        connection_ids: Option<&[ConnectionId]>,
++        request: ServerRequestPayload,
++        thread_id: Option<ThreadId>,
++        exclusive_owner: Option<ConnectionId>,
+@@ -380,0 +429 @@ impl OutgoingMessageSender {
++                    exclusive_owner,
+@@ -578,0 +628,3 @@ impl OutgoingMessageSender {
++        if entry.exclusive_owner.is_some_and(|owner| owner != connection_id) {
++            return None;
++        }
+@@ -590 +642,3 @@ impl OutgoingMessageSender {
+-                (entry.thread_id == Some(thread_id) && entry.verification_owner.is_none())
++                (entry.thread_id == Some(thread_id)
++                    && entry.verification_owner.is_none()
++                    && entry.exclusive_owner.is_none())
+@@ -1559,0 +1614,51 @@ mod tests {
++    #[tokio::test]
++    async fn owned_dynamic_tool_request_rejects_other_client_and_replay() {
++        let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(8);
++        let outgoing = Arc::new(OutgoingMessageSender::new(
++            tx,
++            codex_analytics::AnalyticsEventsClient::disabled(),
++        ));
++        let thread_id = ThreadId::new();
++        let owner = ConnectionId(1);
++        let other = ConnectionId(2);
++        let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
++            outgoing.clone(),
++            vec![owner, other],
++            thread_id,
++        );
++        let payload = ServerRequestPayload::DynamicToolCall(DynamicToolCallParams {
++            thread_id: thread_id.to_string(),
++            turn_id: "turn-1".to_string(),
++            call_id: "call-1".to_string(),
++            namespace: None,
++            tool: "tool".to_string(),
++            arguments: json!({}),
++        });
++        let (id, waiter) = thread_outgoing
++            .send_owned_dynamic_tool_request(payload, Some(owner))
++            .await;
++        assert!(matches!(
++            rx.try_recv(),
++            Ok(OutgoingEnvelope::ToConnection { connection_id, .. }) if connection_id == owner
++        ));
++        assert!(rx.try_recv().is_err());
++        assert!(outgoing.pending_requests_for_thread(thread_id).await.is_empty());
++
++        outgoing
++            .notify_client_response(other, id.clone(), json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.contains_key(&id));
++        outgoing
++            .notify_client_response(owner, id.clone(), json!({"contentItems": []}))
++            .await;
++        let result = timeout(Duration::from_secs(1), waiter)
++            .await
++            .expect("owner response should resolve")
++            .expect("owner callback should be present");
++        assert_eq!(result, Ok(json!({"contentItems": []})));
++        outgoing
++            .notify_client_response(other, id, json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.is_empty());
++    }
++
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 1de7f03..072367c 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -16,0 +17 @@ use codex_protocol::protocol::TurnSettingsUpdateOutcome;
++use codex_core::StartIfIdleSubmission;
+@@ -530,0 +532,18 @@ impl TurnRequestProcessor {
++        if let Some(allowed_tools) = params.allowed_tools.as_ref() {
++            if allowed_tools.len() > 512 {
++                return Err(invalid_request("allowedTools may contain at most 512 names"));
++            }
++            for tool in allowed_tools {
++                if tool.name.is_empty()
++                    || tool.name.len() > 256
++                    || tool
++                        .namespace
++                        .as_ref()
++                        .is_some_and(|namespace| namespace.is_empty() || namespace.len() > 256)
++                {
++                    return Err(invalid_request(
++                        "allowedTools names and namespaces must be 1 to 256 bytes",
++                    ));
++                }
++            }
++        }
+@@ -598,0 +618,5 @@ impl TurnRequestProcessor {
++        let turn_owner_experiment =
++            std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1");
++        if turn_owner_experiment && !turn_has_input && params.tool_output.is_none() {
++            return Err(invalid_request("turn/start requires input or toolOutput"));
++        }
+@@ -653,21 +677,75 @@ impl TurnRequestProcessor {
+-        let submission = thread
+-            .start_or_steer_turn(
+-                TurnInputRequest::new(input)
+-                    .with_thread_settings(thread_settings)
+-                    .on_start(TurnStartOptions {
+-                        turn_trigger: params.turn_trigger,
+-                        final_output_json_schema: params.output_schema,
+-                        service_tier: params.service_tier_for_turn,
+-                        cyber_access_program: params.cyber_access_program.map(Into::into),
+-                        ..Default::default()
+-                    })
+-                    .with_additional_context(additional_context)
+-                    .with_responses_metadata(params.responsesapi_client_metadata)
+-                    .with_trace(self.request_trace_context(&request_id).await),
+-            )
+-            .await
+-            .map_err(|err| {
+-                let error = internal_error(format!("failed to submit turn input: {err}"));
+-                self.track_error_response(&request_id, &error, /*error_type*/ None);
+-                error
+-            })?;
++        let has_turn_tool_ceiling = params.allowed_tools.is_some();
++        let turn_request = TurnInputRequest::new(input)
++            .with_thread_settings(thread_settings)
++            .on_start(TurnStartOptions {
++                allowed_tools: params.allowed_tools.map(|tools| {
++                    tools
++                        .into_iter()
++                        .map(|tool| codex_protocol::ToolName::new(tool.namespace, tool.name))
++                        .collect()
++                }),
++                turn_trigger: params.turn_trigger,
++                final_output_json_schema: params.output_schema,
++                service_tier: params.service_tier_for_turn,
++                cyber_access_program: params.cyber_access_program.map(Into::into),
++                ..Default::default()
++            })
++            .with_additional_context(additional_context)
++            .with_responses_metadata(params.responsesapi_client_metadata)
++            .with_trace(self.request_trace_context(&request_id).await);
++        let submission = async {
++            let from_idle = |result: StartIfIdleSubmission| match result {
++                StartIfIdleSubmission::Started { turn_id } => TurnInputSubmission::Started { turn_id },
++                StartIfIdleSubmission::NotSubmitted { reason } => {
++                    TurnInputSubmission::NotSubmitted { reason }
++                }
++            };
++            let submission = if turn_owner_experiment {
++                if has_turn_tool_ceiling {
++                    from_idle(thread.start_turn_if_idle(turn_request).await?)
++                } else {
++                    let owner = self
++                        .thread_state_manager
++                        .thread_state(thread_id)
++                        .await
++                        .lock()
++                        .await
++                        .turn_input_owner
++                        .clone();
++                    let expected_turn_id = owner
++                        .filter(|(_, connection_id)| *connection_id == request_id.connection_id)
++                        .filter(|_| matches!(&turn_request.input, TurnInput::UserInput { .. }))
++                        .map(|(turn_id, _)| turn_id);
++                    if let Some(expected_turn_id) = expected_turn_id {
++                        match thread
++                            .steer_turn(turn_request.clone(), expected_turn_id)
++                            .await?
++                        {
++                            SteerSubmission::Steered { turn_id } => {
++                                TurnInputSubmission::Steered { turn_id }
++                            }
++                            SteerSubmission::NotSubmitted {
++                                reason: NotSubmittedReason::NoActiveTurn
++                                    | NotSubmittedReason::ExpectedTurnMismatch { .. },
++                            } => from_idle(thread.start_turn_if_idle(turn_request).await?),
++                            SteerSubmission::NotSubmitted { reason } => {
++                                TurnInputSubmission::NotSubmitted { reason }
++                            }
++                        }
++                    } else {
++                        from_idle(thread.start_turn_if_idle(turn_request).await?)
++                    }
++                }
++            } else if has_turn_tool_ceiling {
++                from_idle(thread.start_turn_if_idle(turn_request).await?)
++            } else {
++                thread.start_or_steer_turn(turn_request).await?
++            };
++            Ok::<TurnInputSubmission, CodexErr>(submission)
++        }
++        .await
++        .map_err(|err| {
++            let error = internal_error(format!("failed to submit turn input: {err}"));
++            self.track_error_response(&request_id, &error, /*error_type*/ None);
++            error
++        })?;
+@@ -687,0 +766,18 @@ impl TurnRequestProcessor {
++        if started
++            && std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                == Ok("1")
++        {
++            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
++            thread_state.lock().await.dynamic_tool_turn_owner =
++                Some((turn_id.clone(), request_id.connection_id));
++        }
++
++        if turn_owner_experiment && started {
++            self.thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner = Some((turn_id.clone(), request_id.connection_id));
++        }
++
+@@ -1036 +1132 @@ impl TurnRequestProcessor {
+-        let (_, thread) = self
++        let (thread_id, thread) = self
+@@ -1051,0 +1148,15 @@ impl TurnRequestProcessor {
++        if std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1") {
++            let owner = self
++                .thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner
++                .clone();
++            if owner.as_ref()
++                != Some(&(params.expected_turn_id.clone(), request_id.connection_id))
++            {
++                return Err(invalid_request("turn belongs to another connection"));
++            }
++        }
+diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
+index 14012f3..66a295e 100644
+--- a/codex-rs/app-server/src/thread_state.rs
++++ b/codex-rs/app-server/src/thread_state.rs
+@@ -102,0 +103,2 @@ pub(crate) struct ThreadState {
++    pub(crate) turn_input_owner: Option<(String, ConnectionId)>,
++    pub(crate) dynamic_tool_turn_owner: Option<(String, ConnectionId)>,
+@@ -193,0 +196,7 @@ impl ThreadState {
++            if self
++                .turn_input_owner
++                .as_ref()
++                .is_some_and(|(turn_id, _)| turn_id == event_turn_id)
++            {
++                self.turn_input_owner = None;
++            }
+@@ -194,0 +204,8 @@ impl ThreadState {
++            if self
++                .dynamic_tool_turn_owner
++                .as_ref()
++                .map(|(turn_id, _)| turn_id.as_str())
++                == Some(event_turn_id)
++            {
++                self.dynamic_tool_turn_owner = None;
++            }
+diff --git a/codex-rs/app-server/tests/suite/v2/turn_start.rs b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+index 5fb3091..aa16923 100644
+--- a/codex-rs/app-server/tests/suite/v2/turn_start.rs
++++ b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+@@ -3452,0 +3453 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
++                allowed_tools: None,
+@@ -3501,0 +3503 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
++                allowed_tools: None,
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index e5a21b6..4d8e5e5 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -275,0 +276 @@ pub(crate) struct NewTurnContextOptions {
++    pub(crate) allowed_tools: Option<Vec<codex_protocol::ToolName>>,
+@@ -1105,0 +1107,5 @@ impl Session {
++        if let Some(allowed_tools) = options.allowed_tools {
++            turn_context
++                .extension_data
++                .insert(codex_extension_api::AllowedTools(allowed_tools));
++        }
+diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
+index d08dcd6..62e194d 100644
+--- a/codex-rs/core/src/session/turn_input.rs
++++ b/codex-rs/core/src/session/turn_input.rs
+@@ -128,0 +129 @@ impl PreparedTurnInputSettings {
++            allowed_tools,
+@@ -145,0 +147 @@ impl PreparedTurnInputSettings {
++            allowed_tools,
+diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
+index 4c5cd6d..b8f937f 100644
+--- a/codex-rs/core/src/tasks/mod.rs
++++ b/codex-rs/core/src/tasks/mod.rs
+@@ -469,0 +470 @@ impl Session {
++                    allowed_tools: start_options.allowed_tools,
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index ac1ca68..bdc2e52 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -153 +153,18 @@ pub(crate) fn build_tool_router(
+-    let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
++    let turn_allowed = turn_context
++        .extension_data
++        .get::<codex_extension_api::AllowedTools>();
++    let allowed_tools = match (session.allowed_tools.as_ref(), turn_allowed) {
++        (Some(thread_allowed), Some(turn_allowed)) => Some(Arc::new(
++            codex_extension_api::AllowedTools(
++                turn_allowed
++                    .0
++                    .iter()
++                    .filter(|tool| thread_allowed.contains(tool))
++                    .cloned()
++                    .collect(),
++            ),
++        )),
++        (Some(thread_allowed), None) => Some(Arc::clone(thread_allowed)),
++        (None, turn_allowed) => turn_allowed,
++    };
++    let mut registry = ToolRegistry::with_allowed_tools(allowed_tools);
+diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
+index b56a56f..a99fbec 100644
+--- a/codex-rs/exec/src/lib.rs
++++ b/codex-rs/exec/src/lib.rs
+@@ -1141,0 +1142 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
++                        allowed_tools: None,
+diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
+index 61b1ffe..12c7dbc 100644
+--- a/codex-rs/protocol/src/turn_input.rs
++++ b/codex-rs/protocol/src/turn_input.rs
+@@ -3,0 +4 @@ use crate::models::ResponseItem;
++use crate::ToolName;
+@@ -160,0 +162,2 @@ pub struct TurnStartOptions {
++    /// A model tool ceiling for this turn only. A thread ceiling still applies.
++    pub allowed_tools: Option<Vec<ToolName>>,
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index 581d758..a1efb8c 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -1339,0 +1340 @@ impl AppServerSession {
++                    allowed_tools: None,

@@ -21,6 +21,7 @@ import websockets
 
 SOURCE_COMMIT = "4607249e430dac1c961df4dc615beae88e33cec8"
 CODEX = os.environ.get("ORBIT_CODEX_TEST_BINARY", "/usr/lib/chatgpt/resources/codex")
+SERVER_BINARY = os.environ.get("ORBIT_CODEX_APP_SERVER_BINARY")
 
 
 def free_port():
@@ -123,9 +124,11 @@ async def main():
                             text=True, capture_output=True, check=True).stdout.strip()
     if commit != SOURCE_COMMIT:
         raise RuntimeError(f"Source worktree is not the exact tag: {commit}")
-    version = subprocess.run([CODEX, "--version"], text=True,
+    executable = SERVER_BINARY or CODEX
+    version = subprocess.run([executable, "--version"], text=True,
                              capture_output=True, check=True).stdout.strip()
-    if version != "codex-cli 0.155.0-alpha.9.2":
+    expected_version = ("codex-app-server" if SERVER_BINARY else "codex-cli") + " 0.155.0-alpha.9.2"
+    if version != expected_version:
         raise RuntimeError(f"Test executable has a different version: {version}")
     with tempfile.TemporaryDirectory(prefix="orbit-red-two-client-") as temporary:
         root = Path(temporary)
@@ -179,8 +182,9 @@ async def main():
             'supports_websockets = false\n'
         )
         socket_path = root / "socket" / "app.sock"
+        command = [executable] + ([] if SERVER_BINARY else ["app-server"])
         authority = subprocess.Popen(
-            [CODEX, "app-server", "--listen", "unix://" + str(socket_path)],
+            command + ["--listen", "unix://" + str(socket_path)],
             cwd=root, env=environment, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
         )
