@@ -347,10 +347,19 @@ active launch route or enabled in the Desktop viewer. It cannot safely be
 enabled against an owner executable that may ignore the added read-only RPC
 field.
 The fake account's saved new-thread rollout declares `history_mode: paginated`
-under CLI `0.155.0-alpha.9.2`. The dormant Desktop viewer accepts legacy
-history only, so that particular saved conversation would still fail its
-history-mode check even if the legacy read option were enabled. A paginated
-read path must be measured and connected separately.
+under CLI `0.155.0-alpha.9.2`. The dormant legacy Desktop viewer accepts
+legacy history only, so that particular saved conversation would still fail
+its history-mode check even if the legacy read option were enabled. A
+paginated read path must be measured and connected separately.
+The external Desktop source now has a separate dormant paginated viewer flag.
+On a disposable ASAR extraction, its exact hydration method requested metadata
+and two full turn pages with `readOnly: true`, then returned two fake turn texts
+in order. The source suite passed 53 tests with one live CLI test skipped. No
+Desktop window was rendered. The Orbit gate still denies page RPCs, and a
+stock owner may ignore `readOnly`; the flag must remain off until a separate
+read-only helper and gate route are verified. See the Desktop feature report
+`linux-features/shared-app-server-socket/evidence/paginated-viewer.md` in
+`codex-desktop-linux` commit `9da0bd7`.
 
 An additional exact-tag two-client red fixture held a model response while a
 second client sent `turn/start` to the first client's active turn. The server
