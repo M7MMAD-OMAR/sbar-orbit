@@ -209,6 +209,17 @@ and cannot be used on the live owner. The active gate still denies these RPCs;
 concurrent owner writes, Desktop rendering, and personal data remain unmeasured.
 See `experiments/codex-paginated-rpc-readonly-pool.md`.
 
+A separate test-only page helper then opened both state and history through
+noncreating read-only pools inside a short-lived `bwrap` child. Six disposable
+tests covered a normal selected rollout, an alternate selected rollout, and
+synthetic fork lineage, each with a writable red mount and a read-only green
+mount. The writable controls changed state and history SHM bytes; every green
+run returned two turns and two items while state and history main, WAL, SHM,
+and watched rollout files stayed unchanged. The helper returns a summary page,
+not the Desktop's full `itemsView` response. Concurrent writes, exact Desktop
+page shape, app-server and gate routing, and personal data remain unmeasured.
+See `experiments/codex-paginated-state-history-bwrap-helper.md`.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
