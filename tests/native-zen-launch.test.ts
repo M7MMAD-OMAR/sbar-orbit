@@ -70,6 +70,10 @@ test("Zen public web mode mounts only its lease socket and writes proxy preferen
     expect(prepared.argv).toContain("/orbit/no-core/guard.so");
     expect(prepared.argv).toContain("ORBIT_NO_CORE_PROOFS");
     expect(prepared.argv.some(value => value.includes("pid-$bridge"))).toBe(true);
+    const privatePreload = prepared.argv.indexOf("/etc/ld.so.preload");
+    expect(privatePreload).toBeGreaterThan(0);
+    expect(await readFile(prepared.argv[privatePreload - 1]!, "utf8"))
+      .toBe("/orbit/no-core/guard.so\n");
     const guardDirectory = prepared.argv[guardMount - 1]!.split("/guard.so")[0]!;
     expect(prepared.argv).not.toContain(f.profile);
     const profileInside = prepared.argv.at(-1)!;
@@ -160,7 +164,29 @@ test("Zen public web guard runs after exec and records the synthetic child PID",
     const match = /^pid=(\d+) dumpable=0\n$/.exec(output);
     expect(match).not.toBeNull();
     expect(await readFile(join(proofs, `pid-${match?.[1]}`), "utf8"))
-      .toBe(`pid=${match?.[1]}\ndumpable=0\n`);
+      .toBe(`pid=${match?.[1]}\ndumpable=0\nexe=${executable}\n`);
+  } finally {
+    await prepared?.release();
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("Zen private loader protects an exec that clears LD_PRELOAD", async () => {
+  const f = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+    const command = "import ctypes,os; print('pid=%d dumpable=%d preload_env=%d' % (os.getpid(), ctypes.CDLL(None).prctl(3), int('LD_PRELOAD' in os.environ)))";
+    const child = Bun.spawn([...prepared.argv.slice(0, -8), "/usr/bin/env", "-i", "/usr/bin/python3", "-c", command],
+      { env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, stdout: "pipe", stderr: "pipe" });
+    const output = await new Response(child.stdout).text();
+    expect(await child.exited).toBe(0);
+    expect(output).toMatch(/^pid=\d+ dumpable=0 preload_env=0\n$/);
+    const cloneDirectory = prepared.argv[prepared.argv.indexOf("/orbit/zen") - 1]!;
+    const proofNames = await readdir(join(cloneDirectory, "runtime", "no-core-proofs"));
+    expect(proofNames.some(name => /^pid-\d+$/.test(name))).toBe(true);
   } finally {
     await prepared?.release();
     await new Promise<void>(resolve => f.server.close(() => resolve()));
@@ -219,6 +245,7 @@ test("Zen launcher discovers its own profile and prepares an offline mount root"
     expect(prepared.argv).toContain("--clearenv");
     expect(prepared.argv).not.toContain("LD_PRELOAD");
     expect(prepared.argv).not.toContain("/orbit/no-core/guard.so");
+    expect(prepared.argv).not.toContain("/etc/ld.so.preload");
     expect(prepared.argv).toContain("--dev");
     expect(prepared.argv).not.toContain("--dev-bind");
     expect(prepared.argv).not.toContain("/");
