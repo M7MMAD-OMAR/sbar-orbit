@@ -21,3 +21,12 @@ The rejection decision in these two RPC paths is based on Core operations, not o
 - A turn begun inside `thread/start` without a later `turn/start` has no recorded owner here, so steering it is rejected while the experiment is enabled. A disconnected owner's active turn also remains unavailable to a new connection until it ends.
 - Core's `steer_turn` currently accepts user input, not a standalone `toolOutput`. Under this opt-in route, a `toolOutput` can start an idle turn but cannot steer an active turn. The patch also rejects an empty `turn/start` with no `toolOutput` to preserve the current requirement for explicit input.
 - This patch has not been composed with the dynamic tool callback patch or the legacy read-only RPC experiment. Account continuity, Desktop rendering, existing-thread write safety, and other applications remain unmeasured by this candidate.
+
+The dynamic tool callback owner patch applies cleanly with this steering patch
+in a disposable source tree, but their two owner records and terminal cleanup
+have not been compiled or tested together. The per-turn `allowedTools` patch
+replaces the same `turn/start` submission block as the steering patch and
+requires a manual merge. In that merge, a request with a new tool ceiling must
+use `start_turn_if_idle`; only the recorded owner may use expected-ID steering
+without a new ceiling. A joint build and two-client tool inventory and
+steering fixtures are required before any combined behavior can be claimed.
