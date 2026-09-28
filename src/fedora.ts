@@ -10,12 +10,14 @@ import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
 import { prepareVSCodeLaunch, validateVSCodeProfileRequest } from "./native-vscode";
+import { prepareZenLaunch } from "./native-zen-launch";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
 import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./native-renderer";
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
+  | { type: "launch-app"; app: "zen"; profile: "active" }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
@@ -41,6 +43,8 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
     return { type: "launch", argv: a.argv, toolkit: a.toolkit, ...(a.selectedFiles !== undefined ? { selectedFiles: a.selectedFiles as string[] } : {}) };
   }
   if (a.type === "launch-app") {
+    if (a.app === "zen" && a.profile === "active" && Object.keys(a).every(key => ["type", "app", "profile"].includes(key)))
+      return { type: "launch-app", app: "zen", profile: "active" };
     if (Object.keys(a).some(key => !["type", "app", "profile", "extensions", "openPath"].includes(key)) ||
         a.app !== "vscode" || a.profile !== "default")
       throw new OrbitError("INVALID_REQUEST", "Launch a supported application profile without caller launch arguments");
@@ -76,6 +80,12 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 // One frame format for the private display. Measured on this output, PNG deflate added about 70 ms per frame
 // on top of a 7 ms raw readback, while JPEG at quality 80 added almost nothing.
 const capture = { type: "jpeg", quality: "80", mimeType: "image/jpeg" } as const;
+type SupervisedApplication = {
+  child: ChildProcessWithoutNullStreams;
+  group?: number;
+  release?: () => Promise<void>;
+  reaping?: Promise<void>;
+};
 async function command(argv: string[], env: NodeJS.ProcessEnv): Promise<Buffer> {
   const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
   const timeout = setTimeout(() => child.kill(), 5000);
@@ -109,9 +119,11 @@ export class FedoraBackend {
   readonly capabilities = ["launch", "launch-app", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
   private closed = false;
   private listeners: (() => void)[] = [];
+  private listenersNotified = false;
+  private cleanupFailures: unknown[] = [];
   // Each entry is a supervisor and the group leader it reported, so a supervisor that dies without
   // reaping still leaves the group identifier that has to be swept.
-  private children: { child: ChildProcessWithoutNullStreams; group?: number }[] = [];
+  private children: SupervisedApplication[] = [];
   private compositorGroup?: number;
   /** The compositor's process, for whoever measures it; the supervisor reports it once the display is up. */
   get compositorPid() { return this.compositorGroup; }
@@ -365,7 +377,11 @@ export class FedoraBackend {
       if (this.children.length >= 32) throw new OrbitError("LIMIT_REACHED", "Native session application limit reached");
       const prepared = action.type === "launch"
         ? action
-        : await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath });
+        : action.app === "vscode"
+          ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
+          : await prepareZenLaunch(this.directory, join(this.directory, this.waylandDisplay), this.env.LD_LIBRARY_PATH ?? "");
+      let cleanupManaged = false;
+      try {
       const applicationEnv = "snapshot" in prepared && prepared.snapshot.accountState === "copied"
         ? { ...this.env, DBUS_SESSION_BUS_ADDRESS: await this.codeKeyringProxy() } : this.env;
       const [executable] = prepared.argv;
@@ -374,8 +390,9 @@ export class FedoraBackend {
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []), executable, ...prepared.argv.slice(1)], { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
-      const supervised: { child: ChildProcessWithoutNullStreams; group?: number } = { child };
+      const supervised: SupervisedApplication = { child, ...("release" in prepared ? { release: prepared.release } : {}) };
       this.children.push(supervised);
+      cleanupManaged = true;
       let applicationPid: number | undefined;
       let selectedFiles: string[] = [];
       let mapped: number | undefined;
@@ -409,16 +426,25 @@ export class FedoraBackend {
       supervised.group = applicationPid;
       // A supervisor can die on its own, without the broker and without the display. Nothing else
       // notices, because the application it owned is not a child of this process and keeps running.
-      child.once("exit", () => { void this.reap(supervised); });
+      child.once("exit", () => { void this.reap(supervised).catch(() => {}); });
       await this.ipc(`[con_id=${mapped}]`, "focus");
       await sleep(500);
       return { pid: applicationPid, applied: true, selectedFiles,
-        ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}) };
+        ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}),
+        ...("zenSnapshot" in prepared ? { profileSnapshot: prepared.zenSnapshot } : {}) };
       } catch (error) {
-        if (child.pid && child.exitCode === null && child.signalCode === null) {
-          const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
-          child.stdin.end(); await exited;
+        try {
+          if (child.pid && child.exitCode === null && child.signalCode === null) {
+            const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+            child.stdin.end(); await exited;
+          }
+        } finally {
+          await this.reap(supervised);
         }
+        throw error;
+      }
+      } catch (error) {
+        if (!cleanupManaged && "release" in prepared) await prepared.release();
         throw error;
       }
     }
@@ -498,34 +524,74 @@ export class FedoraBackend {
     return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   /** Drop a supervisor that has exited and terminate whatever it left behind. */
-  private async reap(supervised: { child: ChildProcessWithoutNullStreams; group?: number }) {
-    this.children = this.children.filter(entry => entry !== supervised);
-    if (supervised.group !== undefined) await sweepOwnedGroup(supervised.group, this.directory);
+  private reap(supervised: SupervisedApplication): Promise<void> {
+    if (supervised.reaping) return supervised.reaping;
+    supervised.reaping = (async () => {
+      const failures: unknown[] = [];
+      if (supervised.group !== undefined) {
+        try { await sweepOwnedGroup(supervised.group, this.directory); }
+        catch (error) { failures.push(error); }
+      }
+      try { await supervised.release?.(); }
+      catch (error) { failures.push(error); }
+      if (failures.length) {
+        this.cleanupFailures.push(...failures);
+        supervised.reaping = undefined;
+        throw new OrbitError("BACKEND_FAILED", "Application cleanup failed");
+      }
+      this.children = this.children.filter(entry => entry !== supervised);
+    })();
+    return supervised.reaping;
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true;
-    this.closing = (async () => {
+    const closing = (async () => {
+      const failures: unknown[] = [];
       const supervised = [...this.children];
       const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.keyringProxy ? [this.keyringProxy.child] : []), ...(this.bus ? [this.bus.child] : []), this.compositor];
-      await Promise.all(children.map(async child => {
+      const stopped = await Promise.allSettled(children.map(async child => {
         if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
         const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
         child.kill("SIGTERM");
         const timer = setTimeout(() => child.kill("SIGKILL"), 4000);
         try { await exited; } finally { clearTimeout(timer); }
       }));
+      for (const result of stopped) if (result.status === "rejected") failures.push(result.reason);
       // A live supervisor reaps its own tree on the way out, so by here every group is normally
       // gone already. The exception is the supervisor that was killed rather than asked, and that
       // is the one case where an application would otherwise survive the display it was given.
-      for (const group of [...supervised.map(entry => entry.group), this.keyringProxy?.group, this.bus?.group, this.compositorGroup])
-        if (group !== undefined) await sweepOwnedGroup(group, this.directory);
+      const released = await Promise.allSettled(supervised.map(entry => this.reap(entry)));
+      for (const result of released) if (result.status === "rejected") failures.push(result.reason);
+      for (const group of [this.keyringProxy?.group, this.bus?.group, this.compositorGroup])
+        if (group !== undefined) {
+          try { await sweepOwnedGroup(group, this.directory); }
+          catch (error) { failures.push(error); }
+        }
       // The runtime directory lives on tmpfs, and tmpfs pages are charged to the cgroup that wrote
       // them. Left behind, closed sessions kept filling the shared memory budget until the kernel
       // throttled everything that was still running.
-      await rm(this.directory, { recursive: true, force: true }).catch(() => {});
-      for (const listener of this.listeners) listener();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try { await rm(this.directory, { recursive: true, force: true }); break; }
+        catch (error) {
+          if (attempt === 4 || !["EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+            failures.push(error);
+            break;
+          }
+          await sleep(50 * (attempt + 1));
+        }
+      }
+      failures.push(...this.cleanupFailures.splice(0));
+      if (!this.listenersNotified) {
+        this.listenersNotified = true;
+        for (const listener of this.listeners) {
+          try { listener(); } catch (error) { failures.push(error); }
+        }
+      }
+      if (failures.length) throw new OrbitError("BACKEND_FAILED", "Private display cleanup failed");
     })();
-    return this.closing;
+    this.closing = closing;
+    void closing.catch(() => { if (this.closing === closing) this.closing = undefined; });
+    return closing;
   }
 }
