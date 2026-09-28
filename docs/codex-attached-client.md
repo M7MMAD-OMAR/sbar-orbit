@@ -40,8 +40,8 @@ After staging and finalizing all candidate files, generate its manifest with
 <absolute-candidate-root>/app/ChatGPT`. The script writes
 `<absolute-candidate-root>/candidate-manifest.json` once and prints the manifest
 SHA-256 for broker configuration. It never overwrites a manifest. Build a fresh
-candidate directory after changing any file. The existing staged candidate has
-not received a manifest yet, and no broker candidate setting has been changed.
+candidate directory after changing any file. Two durable candidate copies have
+been pinned for experiments, but no broker candidate setting has been changed.
 This route does not activate the candidate or restart the person's Desktop.
 Retaining the candidate directory preserves its files, but does not itself
 prove account, thread or tool continuity after a Desktop restart.
@@ -50,12 +50,18 @@ The owner must provide an authority socket below `/run/user/<uid>` with its
 adjacent `.state` socket and a private Orbit display. Preparation checks that
 every socket parent is owned by the user and private, that both sockets have
 modes limited to the user, and that both accept a connection. It records each
-socket device and inode. The native mount helper opens those same inodes
-through descriptors immediately before launch, checks their owners and
-permissions again, and binds them as `orbit-codex-authority.sock` and
-`orbit-codex-authority.sock.state` inside the private mount namespace.
-The host runtime is hidden by a temporary filesystem. The client receives only
-the mounted authority socket, not the rest of the host runtime.
+socket device and inode. Orbit now creates separate, session-local gate sockets
+and gives their paths to the attached Desktop. The native mount helper hides
+the host runtime and does not bind either raw owner socket into the private
+namespace. The gate checks the recorded socket identities when connecting,
+forces `thread/list` to use the SQLite-only mode, and rejects unknown methods,
+`thread/read`, `thread/resume`, model turns, host commands, file reads, project
+imports and owner state writes. It strips account responses to bounded identity
+fields and never returns an access token. The gate permits only a limited
+project and conversation title view. Its 8 MiB message limit excludes larger
+responses. A hostile process running under the same user could still race a
+socket pathname, so the inode checks are a measured restriction, not complete
+same-user isolation.
 
 The client gets a fresh HOME inside the Orbit session, an empty `CODEX_HOME`,
 empty Electron user data, and `CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1`.
@@ -66,17 +72,14 @@ host's dark preference in the private display without changing host settings.
 In a later disposable combined run, an attached copied Desktop rendered dark
 with a synthetic private dconf preference. The person's Desktop was not used.
 No account token file, conversation database, project state, or application profile
-is copied. This does not establish token isolation: static inspection found
-that an attached Desktop `account-info` request can call the shared authority's
-`getAuthToken` route with `includeToken: true`, receiving a raw access token in
-memory. Personal account attachment must remain disabled until an attach-only
-patch prevents that response and a fake-token fixture verifies the boundary.
-The same raw socket also accepts direct app-server methods such as
-`command/exec` and local `thread/start`. A client inside Orbit could bypass its
-private file and display environment by asking the owner authority to act on
-the host. A token-only response filter or an Electron UI patch cannot close
-that route. Personal attachment needs a default-deny protocol boundary with
-session ownership and path policy before it can be enabled.
+is copied. An earlier raw-socket prototype could obtain a fake access token
+through `getAuthStatus` and forward `command/exec` to the host owner. The new
+gate fixture denied both, along with owner state writes. The attached Desktop
+still attempts to resume a conversation when its title is clicked. The gate
+correctly refuses that request, so conversation content, complete account
+identity, model turns, file edits and full UI parity have not been established
+under this boundary. The personal Desktop remains on its original stdio
+app-server and has not been attached.
 Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
 executable it also requires the optional feature's staged manifest. That
@@ -87,8 +90,9 @@ but same-user changes after verification remain a race until the candidate is
 mounted from pinned immutable files.
 
 `tests/native-codex-attach.test.ts` uses temporary Unix listeners and a
-fixture executable. The fixture connected to both mounted sockets from inside
-the private mount, saw the attach-only setting, and saw no copied Codex state.
+fixture executable. The fixture connected to both gate sockets from inside
+the private mount, could not see the raw owner sockets, saw the attach-only
+setting, and saw no copied Codex state.
 The same test rejected a changed inode on either socket before launch. A second test rejected
 permissive, linked, and out-of-runtime socket paths, and an unrelated executable.
 The original focused run passed with 2 tests and 10 assertions on September 28, 2026.
@@ -98,6 +102,18 @@ tests/agent-interface.test.ts` passed 17 tests with 93 assertions. The added
 action test verified that an absent owner returns `UNSUPPORTED` without creating
 a private home or supervised child. `bun run typecheck` also passed. This test
 did not launch the installed Desktop or use the person's account.
+
+The newer gate tests passed 5 focused tests with 54 assertions and typecheck.
+They exercised fake raw token and host command responses, rejection through
+the gate, owner state write denial, a changed owner socket inode, bounded
+messages and the forced `useStateDbOnly` list option. The attach-only Desktop
+patch skipped local project migration in a disposable fixture, leaving the
+owner's project records untouched. Its full external test suite had 43 passes
+and 2 test harness incompatibilities, unrelated to that patch. A gated fake
+Desktop showed a shared project and conversation title, then displayed
+`Failed to resume chat, Codex private client is read only` when opening the
+conversation. Its footer showed `Settings`, not the fake owner's account
+label. No personal application, account or profile was used.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,

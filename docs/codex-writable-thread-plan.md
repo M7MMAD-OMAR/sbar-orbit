@@ -100,8 +100,13 @@ The current patch cannot reapply `AllowedTools` on resume or fork, so those
 write paths remain denied.
 
 Every private-window RPC is denied by default. Keep the existing narrow read
-projection for `initialize`, safe account status and selected `thread/list`
-and `thread/read` responses. Do not forward `project/list` while the migration
+projection for `initialize`, safe account status and `thread/list` with
+`useStateDbOnly=true`. The current gate rejects `thread/read` because its
+rollout fallback may repair the owner's SQLite index, and it rejects
+`thread/resume` because that creates or reuses a writer. A later content viewer
+needs an owner-side request proven free of both repair and persistence, plus
+an attach-only Desktop flow that opens a conversation without resume. Do not
+forward `project/list` while the migration
 path can lead to `project/import`; any future project list must be an inert
 broker-owned projection, with import and global state writes still denied.
 The private client cannot call `thread/start`, `turn/start`, `thread/resume`,
@@ -117,7 +122,7 @@ never forwards the original request.
 
 ## Implementation sequence
 
-1. Finish and retain the read-only gate in `src/codex-authority-gate.ts` and
+1. Retain the read-only gate in `src/codex-authority-gate.ts` and
    `src/native-codex-attach.ts` as the only socket available to the private
    Desktop. Make the project migration case a regression test: a fixture
    `project/list` and any `project/import` from the private client cannot

@@ -7,6 +7,14 @@ candidate uses the same Desktop version, adds an owner-only socket, and bundles
 a Codex CLI with a per-thread model tool ceiling. All completed combined runs
 have used a disposable profile and a fake model credential.
 
+The attached client now has a read-only gate, but the gated Desktop only
+showed a fixture project and conversation title. Opening the conversation
+asked for `thread/resume` and was denied. Its account footer showed `Settings`.
+The personal cutover is therefore still blocked on safe conversation viewing,
+account identity parity and a session-bound write route. The user requires the
+same practical capabilities in every app, so a title-only viewer is not a
+successful cutover.
+
 ## Preconditions before touching the personal session
 
 1. Keep the reviewed candidate in a stable, user-owned private directory. Pin
