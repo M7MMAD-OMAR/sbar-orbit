@@ -10,7 +10,7 @@ const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
 const orphanGraceMs = 5 * 60 * 1000;
 const recordlessGraceMs = 24 * 60 * 60 * 1000;
 
-export type CodexProfileSource = { authPath?: string; executable?: string; stateHome?: string };
+export type CodexProfileSource = { authPath?: string; executable?: string; stateHome?: string; projectPath?: string };
 export type CodexDisplayEnv = { runtimeDirectory: string; waylandDisplay: string; libraryPath: string };
 
 export type PreparedCodexLaunch = {
@@ -18,9 +18,30 @@ export type PreparedCodexLaunch = {
   toolkit: "wayland";
   selectedFiles: [];
   privateHome: string;
+  sharedProject?: { path: string; device: string; inode: string };
   accountSnapshot: { authBytes: number; mode: "chatgpt"; projects: number; threads: number; atomicAcrossStores: false };
   release: () => Promise<void>;
 };
+
+async function selectedProject(path: string) {
+  const home = homedir();
+  if (!path.startsWith(home + sep) || path.length > 4096 || path.includes("\0") || path !== resolve(path))
+    throw new OrbitError("INVALID_REQUEST", "Codex project needs a canonical directory below the user's home");
+  const parts = path.slice(home.length + 1).split(sep);
+  if (!parts.length || parts[0]?.startsWith(".") || parts.some(part => !part || part === "." || part === ".."))
+    throw new OrbitError("INVALID_REQUEST", "Codex project must not contain an application profile path");
+  const uid = BigInt(process.getuid?.() ?? -1);
+  let current = home;
+  let found;
+  for (const part of ["", ...parts]) {
+    if (part) current = join(current, part);
+    found = await lstat(current, { bigint: true }).catch(() => undefined);
+    if (!found?.isDirectory() || found.isSymbolicLink() || found.uid !== uid)
+      throw new OrbitError("INVALID_REQUEST", "Codex project has an unsafe or missing directory component");
+  }
+  if (!found) throw new OrbitError("INVALID_REQUEST", "Codex project is unavailable");
+  return { path, device: String(found.dev), inode: String(found.ino) };
+}
 
 async function processStartTicks(pid: number): Promise<string | undefined> {
   const value = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
@@ -146,6 +167,7 @@ export async function prepareCodexLaunch(
   if (!(await stat(executable).then(value => value.isFile(), () => false)))
     throw new OrbitError("UNSUPPORTED", "Codex Desktop is not installed");
   const authPath = source.authPath ?? join(homedir(), ".codex", "auth.json");
+  const sharedProject = source.projectPath === undefined ? undefined : await selectedProject(source.projectPath);
   const root = await mkdtemp(join(await privateCodexStorage(), "codex-"));
   try {
     await chmod(root, 0o700);
@@ -183,6 +205,7 @@ export async function prepareCodexLaunch(
       throw new OrbitError("BACKEND_FAILED", "Codex snapshot escaped private disk storage");
     return {
       argv, toolkit: "wayland", selectedFiles: [], privateHome: home,
+      ...(sharedProject === undefined ? {} : { sharedProject }),
       accountSnapshot: { authBytes: auth.length, mode: "chatgpt", ...stateReport },
       release: async () => { await rm(root, { recursive: true, force: true }); },
     };

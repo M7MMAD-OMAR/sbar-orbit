@@ -36,6 +36,40 @@ def open_verified_socket(entry):
     return fd
 
 
+def open_verified_project(entry, host_home):
+    if (not isinstance(entry, dict) or set(entry) != {"path", "device", "inode"}
+            or not isinstance(entry["path"], str) or not inside(entry["path"], host_home)
+            or entry["path"] == host_home or len(entry["path"]) > 4096 or "\0" in entry["path"]
+            or not isinstance(entry["device"], str) or not entry["device"].isdecimal()
+            or not isinstance(entry["inode"], str) or not entry["inode"].isdecimal()):
+        raise PrivateMountUnavailable("Invalid selected Codex project")
+    parts = entry["path"][len(host_home) + 1:].split("/")
+    if not parts or parts[0].startswith(".") or any(part in ("", ".", "..") for part in parts):
+        raise PrivateMountUnavailable("Selected Codex project has an unsafe path")
+    current = os.open(host_home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        if os.fstat(current).st_uid != os.getuid():
+            raise PrivateMountUnavailable("Codex home has unsafe ownership")
+        for part in parts:
+            next_fd = os.open(part, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                              dir_fd=current)
+            os.close(current)
+            current = next_fd
+            if os.fstat(current).st_uid != os.getuid():
+                raise PrivateMountUnavailable("Selected Codex project has unsafe ownership")
+        found = os.fstat(current)
+        if found.st_dev != int(entry["device"]) or found.st_ino != int(entry["inode"]):
+            raise PrivateMountUnavailable("Selected Codex project changed before launch")
+        result = current
+        current = -1
+        return result, parts
+    except OSError as error:
+        raise PrivateMountUnavailable("Selected Codex project changed before launch") from error
+    finally:
+        if current >= 0:
+            os.close(current)
+
+
 def render_device_mounts():
     """Expose render nodes without exposing host input or display-control devices."""
     try:
@@ -63,7 +97,8 @@ def render_device_mounts():
 
 def mount_command(arguments, report_directory, selected_files, policy):
     if (not isinstance(policy, dict)
-            or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"})
+            or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"},
+                                   {"runtime", "sockets", "privateHome", "sharedProject"})
             or not isinstance(policy["runtime"], str)
             or not isinstance(policy["sockets"], list)
             or not 1 <= len(policy["sockets"]) <= 8):
@@ -114,6 +149,16 @@ def mount_command(arguments, report_directory, selected_files, policy):
                 raise PrivateMountUnavailable("Private home has unsafe ownership")
             command += ["--tmpfs", "/home", "--dir", host_home,
                         "--bind-fd", str(fd), host_home]
+            if "sharedProject" in policy:
+                if not disk_home:
+                    raise PrivateMountUnavailable("A selected Codex project needs a private disk home")
+                project_fd, parts = open_verified_project(policy["sharedProject"], host_home)
+                descriptors.append(project_fd)
+                current_path = host_home
+                for part in parts:
+                    current_path = os.path.join(current_path, part)
+                    command += ["--dir", current_path]
+                command += ["--bind-fd", str(project_fd), current_path]
         seen = set()
         for entry in policy["sockets"]:
             fd = open_verified_socket(entry)

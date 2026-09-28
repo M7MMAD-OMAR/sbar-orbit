@@ -50,6 +50,10 @@ test("Codex orphan sweep removes only an expired private snapshot", async () => 
 test("Codex launch action accepts the installed active profile without caller arguments", () => {
   expect(parseNativeAction({ type: "launch-app", app: "codex", profile: "active" })).toEqual(
     { type: "launch-app", app: "codex", profile: "active" });
+  expect(parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" }))
+    .toEqual({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" });
+  expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "relative" })).toThrow();
+  expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", other: true })).toThrow();
   expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", argv: ["/bin/sh"] })).toThrow();
 });
 
@@ -99,6 +103,63 @@ test("Codex account snapshot rejects a linked credential file", async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("Codex project selection refuses home profiles and linked directories", async () => {
+  const root = await mkdtemp("/tmp/orbit-codex-project-prepare-");
+  const project = await mkdtemp(join(homedir(), "orbit-codex-project-"));
+  const linked = join(homedir(), `orbit-codex-link-${crypto.randomUUID()}`);
+  const authPath = join(root, "auth.json");
+  const executable = join(root, "codex");
+  await writeFile(authPath, fixtureAuth, { mode: 0o600 });
+  await writeFile(executable, "fixture", { mode: 0o700 });
+  await symlink(project, linked);
+  try {
+    const stateHome = await fixtureState(root);
+    const display = { runtimeDirectory: root, waylandDisplay: "wayland-0", libraryPath: "/usr/lib" };
+    const source = { authPath, executable, stateHome };
+    const prepared = await prepareCodexLaunch(root, display, { ...source, projectPath: project });
+    try {
+      expect(prepared.sharedProject?.path).toBe(project);
+    } finally { await prepared.release(); }
+    await expect(prepareCodexLaunch(root, display, { ...source, projectPath: homedir() })).rejects.toThrow();
+    await expect(prepareCodexLaunch(root, display, { ...source, projectPath: join(homedir(), ".codex") })).rejects.toThrow();
+    await expect(prepareCodexLaunch(root, display, { ...source, projectPath: linked })).rejects.toThrow();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(project, { recursive: true, force: true });
+    await rm(linked, { force: true });
+  }
+});
+
+test("Codex project mount rejects replaced and linked source directories", async () => {
+  const project = await mkdtemp(join(homedir(), "orbit-codex-project-"));
+  const linked = join(homedir(), `orbit-codex-link-${crypto.randomUUID()}`);
+  await symlink(project, linked);
+  try {
+    const info = await lstat(project, { bigint: true });
+    const code = `import json,os,sys
+sys.path.insert(0,${JSON.stringify(resolve("src/native"))})
+from mount_unix import open_verified_project
+try:
+ fd,_ = open_verified_project(json.loads(sys.argv[1]), ${JSON.stringify(homedir())})
+ os.close(fd)
+except Exception:
+ sys.exit(0)
+sys.exit(1)`;
+    for (const sharedProject of [
+      { path: project, device: String(info.dev), inode: String(info.ino + 1n) },
+      { path: linked, device: String(info.dev), inode: String(info.ino) },
+      { path: homedir(), device: String(info.dev), inode: String(info.ino) },
+    ]) {
+      const child = Bun.spawn(["/usr/bin/python3", "-c", code, JSON.stringify(sharedProject)],
+        { stdout: "ignore", stderr: "pipe" });
+      expect(await child.exited).toBe(0);
+    }
+  } finally {
+    await rm(project, { recursive: true, force: true });
+    await rm(linked, { force: true });
+  }
+});
+
 const runtime = process.env.XDG_RUNTIME_DIR;
 const mountEnabled = process.platform === "linux" && runtime === `/run/user/${process.getuid?.()}` &&
   homedir().startsWith("/home/") && homedir().split("/").length === 3 && !!Bun.which("bwrap");
@@ -146,17 +207,21 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"m
   }
 }, 15000);
 
-(mountEnabled ? test : test.skip)("Codex disk snapshot mounts at the user's home without exposing the original home", async () => {
+(mountEnabled ? test : test.skip)("Codex private project grant writes only the selected host directory", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-test-");
   const storage = join(homedir(), ".cache", "sbar-orbit", "codex-private");
   await mkdir(storage, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(storage, "codex-"));
+  const project = await mkdtemp(join(homedir(), "orbit-codex-project-"));
+  const sibling = await mkdtemp(join(homedir(), "orbit-codex-sibling-"));
   const privateHome = join(root, "home");
   const socketPath = join(session, "private.sock");
   const output = join(session, "output.json");
   const report = join(session, "report.json");
   await mkdir(privateHome, { mode: 0o700 });
   await writeFile(join(privateHome, "marker"), "disk snapshot", { mode: 0o600 });
+  await writeFile(join(project, "marker"), "host project", { mode: 0o600 });
+  await writeFile(join(sibling, "marker"), "host sibling", { mode: 0o600 });
   const server = createServer(socket => socket.end());
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -165,10 +230,16 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"m
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
     const info = await lstat(socketPath, { bigint: true });
-    const policy = { runtime, sockets: [{ path: socketPath, device: String(info.dev), inode: String(info.ino) }], privateHome };
-    const code = `import json,pathlib
+    const projectInfo = await lstat(project, { bigint: true });
+    const policy = { runtime, sockets: [{ path: socketPath, device: String(info.dev), inode: String(info.ino) }], privateHome,
+      sharedProject: { path: project, device: String(projectInfo.dev), inode: String(projectInfo.ino) } };
+    const code = `import json,pathlib,subprocess
 home=pathlib.Path(${JSON.stringify(homedir())})
-pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"marker").read_text(),"entries":len(list(pathlib.Path("/home").iterdir()))}))`;
+project=pathlib.Path(${JSON.stringify(project)})
+sibling=pathlib.Path(${JSON.stringify(sibling)})
+(project/"marker").write_text("private edit")
+nested=subprocess.run(["/usr/bin/bwrap","--bind","/","/","/usr/bin/true"],capture_output=True)
+pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"marker").read_text(),"project":(project/"marker").read_text(),"sibling":sibling.exists(),"nested":nested.returncode,"entries":len(list(pathlib.Path("/home").iterdir()))}))`;
     child = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), report,
       "--desktop-mount-policy", JSON.stringify(policy), "/usr/bin/python3", "-c", code],
     { stdin: "pipe", stdout: "ignore", stderr: "pipe" });
@@ -177,12 +248,17 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"m
       await Bun.sleep(20);
     }
     expect(JSON.parse(await readFile(report, "utf8")).error).toBeUndefined();
-    expect(JSON.parse(await readFile(output, "utf8"))).toEqual({ marker: "disk snapshot", entries: 1 });
+    expect(JSON.parse(await readFile(output, "utf8"))).toEqual({ marker: "disk snapshot", project: "private edit",
+      sibling: false, nested: 0, entries: 1 });
+    expect(await readFile(join(project, "marker"), "utf8")).toBe("private edit");
+    expect(await readFile(join(sibling, "marker"), "utf8")).toBe("host sibling");
   } finally {
     if (child?.stdin && typeof child.stdin !== "number") child.stdin.end();
     if (child) await child.exited;
     await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(session, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
+    await rm(project, { recursive: true, force: true });
+    await rm(sibling, { recursive: true, force: true });
   }
 }, 15000);

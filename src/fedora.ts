@@ -18,7 +18,7 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
-  | { type: "launch-app"; app: "codex"; profile: "active" }
+  | { type: "launch-app"; app: "codex"; profile: "active"; projectPath?: string }
   | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web"; sharedFiles?: string[] }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
@@ -50,8 +50,14 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
   }
   if (a.type === "launch-app") {
     if (a.app === "codex" && a.profile === "active" &&
-        Object.keys(a).every(key => ["type", "app", "profile"].includes(key)))
-      return { type: "launch-app", app: "codex", profile: "active" };
+        Object.keys(a).every(key => ["type", "app", "profile", "projectPath"].includes(key))) {
+      if (a.projectPath !== undefined &&
+          (typeof a.projectPath !== "string" || !a.projectPath.startsWith("/") ||
+           a.projectPath.length > 4096 || a.projectPath.includes("\0")))
+        throw new OrbitError("INVALID_REQUEST", "Codex project path needs an absolute directory");
+      return { type: "launch-app", app: "codex", profile: "active",
+        ...(a.projectPath === undefined ? {} : { projectPath: a.projectPath }) };
+    }
     if (a.app === "zen" && a.profile === "active" &&
         (a.network === undefined || a.network === "offline" || a.network === "public-web") &&
         Object.keys(a).every(key => ["type", "app", "profile", "network", "sharedFiles"].includes(key))) {
@@ -442,7 +448,7 @@ export class FedoraBackend {
                 runtimeDirectory: this.env.XDG_RUNTIME_DIR ?? "",
                 waylandDisplay: this.waylandDisplay,
                 libraryPath: this.env.LD_LIBRARY_PATH ?? "",
-              })
+              }, { projectPath: action.projectPath })
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
             this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
       let cleanupManaged = false;
@@ -466,7 +472,9 @@ export class FedoraBackend {
         ? [desktopMount ? "--desktop-mount-policy" : "--socket-policy",
           JSON.stringify(desktopMount
             ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring),
-                ...(privateHome === undefined ? {} : { privateHome }) }
+                ...(privateHome === undefined ? {} : { privateHome }),
+                ...("sharedProject" in prepared && prepared.sharedProject
+                  ? { sharedProject: prepared.sharedProject } : {}) }
             : await this.socketPolicy(prepared.toolkit, keyring))]
         : [];
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),

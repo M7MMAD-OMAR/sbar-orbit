@@ -45,8 +45,29 @@ const backend = await FedoraBackend.create();
 try {
   const storage = join(homedir(), ".cache", "sbar-orbit", "codex-private");
   const previousHomes = new Set(await readdir(storage).catch(() => []));
-  const launch = await backend.act({ type: "launch-app", app: "codex", profile: "active" });
+  const projectPath = process.env.ORBIT_CODEX_PROJECT_PATH;
+  const launch = await backend.act({ type: "launch-app", app: "codex", profile: "active",
+    ...(projectPath === undefined ? {} : { projectPath }) });
   await Bun.sleep(18000);
+  if (projectPath && process.env.ORBIT_CODEX_OPEN_PROJECT) {
+    await backend.act({ type: "key", key: "Ctrl+O" });
+    await Bun.sleep(1500);
+    if (["home", "select"].includes(process.env.ORBIT_CODEX_OPEN_PROJECT)) {
+      await backend.act({ type: "pointer", x: 698, y: 107 });
+      await Bun.sleep(2000);
+      if (process.env.ORBIT_CODEX_OPEN_PROJECT === "select") {
+        await backend.act({ type: "pointer", x: 935, y: 140 });
+        await backend.act({ type: "pointer", x: 1210, y: 779 });
+        await Bun.sleep(12000);
+      }
+    }
+    if (process.env.ORBIT_CODEX_OPEN_PROJECT === "1") {
+      await backend.act({ type: "key", key: "Ctrl+L" });
+      await backend.act({ type: "paste", text: projectPath });
+      await backend.act({ type: "key", key: "Enter" });
+      await Bun.sleep(12000);
+    }
+  }
   if (process.env.ORBIT_CODEX_OPEN_PINNED) {
     const selected = Number(process.env.ORBIT_CODEX_OPEN_PINNED);
     if (!Number.isInteger(selected) || selected < 1 || selected > 2) throw new Error("Invalid pinned choice");
