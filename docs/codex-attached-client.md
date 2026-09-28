@@ -243,6 +243,15 @@ No real account or personal profile was used, and the installed app was not
 modified or launched. See
 `docs/codex-attached-fake-account.md`.
 
+A later copied candidate combined that fake plus-account projection with the
+patched startup `allowedTools` CLI. Its local mock model saw zero tools for
+one new turn while the dark private UI showed the fake email, project, and
+saved conversation title. The full fixture still exited 1 because opening
+the conversation did not show its answer: the attach-only viewer was
+unavailable. This does not extend the startup ceiling to existing threads or
+prove real-account work. See
+`experiments/codex-combined-fake-account-zero-tools.md`.
+
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
 unsafe permissions, an unpatched ASAR and paths outside the private root. These
