@@ -62,7 +62,14 @@ fixture processes were then stopped.
 
 This is evidence for a disposable project, conversation title and appearance
 in a second Desktop. It has not used the person's account, original app,
-personal projects or real conversation content. The copied Desktop fixture
-has not yet been launched through Orbit's combined private socket mount.
+personal projects or real conversation content.
+
+An additional fresh run, recorded by external source commit `2f84a68`,
+launched the copied second Desktop through Orbit's private Wayland supervisor.
+The supervisor verified and mounted both owner sockets. The second Desktop
+stayed alive, created its private global-state file with one project, had no
+local auth file, and showed the shared fixture project and one assigned
+conversation in dark mode. The screenshot and reproducible scripts are in
+`codex-desktop-linux/linux-features/shared-app-server-socket/evidence/`.
 Completed model turns, every sidebar key, changes across restart, and complete
-host tool isolation are also unmeasured.
+host tool isolation are still unmeasured.

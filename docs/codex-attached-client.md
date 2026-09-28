@@ -22,7 +22,8 @@ It receives a private snapshot of the host GSettings database and uses the
 `dconf` backend, matching the normal private Codex launcher. The installed
 Desktop defaults its appearance to the system setting, so this supplies the
 host's dark preference in the private display without changing host settings.
-Actual dark rendering in an attached Desktop has not been observed yet.
+In a later disposable combined run, an attached copied Desktop rendered dark
+with a synthetic private dconf preference. The person's Desktop was not used.
 No account token, conversation database, project state, or application profile
 is copied. Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
@@ -37,8 +38,10 @@ The same test rejected a changed inode on either socket before launch. A second 
 permissive, linked, and out-of-runtime socket paths, and an unrelated executable.
 The focused run passed with 2 tests and 10 assertions on September 28, 2026.
 
-This establishes mount and temporary HOME behavior for a disposable listener.
-It does not establish a connection to the person's Desktop authority, account
-or UI parity, durable state, or safe model tool access. A future private client
-experiment needs a verified patched Desktop binary and a disposable Desktop
-authority before any connection to a personal authority is considered.
+This establishes mount and temporary HOME behavior for disposable listeners.
+A later combined run used the same internal helper with a copied, patched
+Desktop and a fake-key authority. The private window showed one shared fixture
+project and conversation in dark mode, without a local auth file. Reproducible
+scripts and its screenshot are in the Desktop feature's `evidence/` directory.
+It does not establish a connection to the person's Desktop authority, real
+account or complete UI parity, durable state, or safe model tool access.
