@@ -333,6 +333,11 @@ fields, invalid IDs, and `turn/start`. This option is not passed by Orbit's
 active launch route or enabled in the Desktop viewer. It cannot safely be
 enabled against an owner executable that may ignore the added read-only RPC
 field.
+The fake account's saved new-thread rollout declares `history_mode: paginated`
+under CLI `0.155.0-alpha.9.2`. The dormant Desktop viewer accepts legacy
+history only, so that particular saved conversation would still fail its
+history-mode check even if the legacy read option were enabled. A paginated
+read path must be measured and connected separately.
 
 An additional exact-tag two-client red fixture held a model response while a
 second client sent `turn/start` to the first client's active turn. The server
