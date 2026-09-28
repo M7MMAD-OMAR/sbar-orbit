@@ -50,6 +50,20 @@ bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-model-pr
 bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-model-probe.py --read-only
 ```
 
+`experiments/codex-real-orbit-mcp-probe.py` tested one complete action with a
+disposable Codex home, a local mock model, a real Orbit broker, a fresh private
+browser profile and a local fixture page. The model called the session-bound
+`orbit_act` tool to click `#increment`. The private page changed `#state` from
+0 to 1, the fixture received exactly one POST, and the Codex turn and MCP item
+completed. This measured model to Codex to bound MCP to broker to private
+browser routing. It used no personal app, account, browser profile or shared
+Desktop authority. It does not establish live account continuity, other app
+behavior or isolation from a person's active Desktop.
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/codex-real-orbit-mcp-probe.py
+```
+
 This is a tool interface boundary, not an operating system boundary. A process
 that can reach Orbit's general broker socket as the same user can still call
 its general RPC methods. The adapter is not currently attached to a shared
