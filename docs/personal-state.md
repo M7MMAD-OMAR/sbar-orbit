@@ -1,6 +1,6 @@
 # Working beside the person with their applications
 
-The acceptance target is an agent working on a private display with its own pointer and windows, using the person's installed applications, accounts, files and settings. When an application supports collaboration on a shared file or service, both people should see the same underlying work. The agent must not move or control the person's windows.
+The acceptance target covers all of the person's applications: an agent working on a private display with its own pointer and windows, using the person's installed applications, accounts, files and settings. An application counts as supported only when the agent can act on the same account and existing work with the actions the person can perform, including continuing an existing conversation where the application permits it. When an application supports collaboration on a shared file or service, both people should see the same underlying work. The agent must not move or control the person's windows. A copied appearance, account label, project list, or conversation title alone does not satisfy this target.
 
 This is an application compatibility target, not a single switch. A private Wayland display cannot take ownership of a window that is already connected to the person's compositor. Sharing the person's D-Bus session can redirect a new application launch into the process on their desktop. Orbit therefore needs a separate application instance and a measured path to the same account or document for each application family.
 
@@ -37,6 +37,7 @@ The current public Codex `active` action attaches only through the running owner
 1. Open the installed application version on Orbit's private display without opening or focusing a window on the person's desktop.
 2. Match the person's relevant preferences and authenticated identity in a separate instance.
 3. Read and write the intended shared file or service, then confirm the other instance sees the change in the way that application supports.
+   For Codex, this includes reading and continuing an existing conversation, with model tools bound to Orbit's private session.
 4. Restart the Orbit instance and confirm the expected account and work persist.
 5. Verify that stopping Orbit does not terminate the person's application or alter its local profile unexpectedly.
 6. Measure processor, memory and startup cost inside Orbit's shared resource budget.
