@@ -196,6 +196,19 @@ test, app-server RPC, Orbit gate, or Desktop rendering. The active gate still
 denies paginated reads. See
 `experiments/codex-paginated-framed-helper-prototype.md`.
 
+A later exact-tag app-server RPC probe used the request shape the Desktop sends
+for paginated hydration. On a cloned fake account, `thread/turns/list` returned
+the fixture user and assistant text, and two `thread/items/list` pages returned
+user and assistant items. The writable red control changed the history SQLite
+WAL and SHM after initialization. An opt-in SQLx read-only pool under a
+`bwrap` read-only history mount returned the same content without changing any
+watched state or history main, WAL, SHM, or rollout file. The original fake
+fixture was also unchanged. This is one saved turn, so turn cursor traversal
+was not tested. The opt-in pool blocks ordinary history writes in that process
+and cannot be used on the live owner. The active gate still denies these RPCs;
+concurrent owner writes, Desktop rendering, and personal data remain unmeasured.
+See `experiments/codex-paginated-rpc-readonly-pool.md`.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
