@@ -46,9 +46,9 @@ Validation status in a disposable checkout at the exact tag:
   both private windows. This measures the old executable's behavior in the
   Desktop path. It does not substitute for a red run of the new source test.
 
-This is source and mock-model evidence only. The installed Codex executable,
-the person's running Desktop session, real account data, and model tool
-routing in an Orbit session were not changed or tested by this patch.
+The source checks above did not change the installed Codex executable or the
+person's running Desktop session. Their unpatched-source sensitivity remains
+not measured.
 
 An executable build was attempted once in the disposable checkout with
 `cargo build -p codex-cli --bin codex --locked`, one Cargo job, and the shared
@@ -66,12 +66,24 @@ and has SHA-256
 `8b623f29d068a7c0cf6492343a23914cb195fc7873e4a8080b8b046a112157ce`.
 Its ELF `.comment` section identifies mold 2.40.4 and Clang 22.1.8. The
 installed CLI and staged Desktop candidate were not changed. The new binary
-has not been placed in the candidate or tested with the person's account.
+has not been tested with the person's account.
 
 A separate copy was stripped with `strip --strip-unneeded`, leaving the debug
 binary intact. `/var/tmp/orbit-codex-linker.PU0aKm/codex-stripped` is
 388,414,840 bytes, below the candidate verifier's 512 MiB ceiling, and has
 SHA-256 `ed53e302475acec23b8be11d8da1e04f6665b96d31a963381114ea0df2c9e31a`.
 It reports the same CLI version, has no missing dynamic libraries, and retains
-the mold identifier in `.comment`. It has not been copied into the Desktop
-candidate.
+the mold identifier in `.comment`.
+
+A new disposable candidate was reflinked from the separately staged Desktop.
+Its bundled CLI was replaced with that stripped copy, then its complete app
+tree was pinned by a fresh manifest. The existing staged candidate and
+installed application kept their original CLI files. A private fixture used
+Orbit's public `launch-app codex active` action twice against one disposable
+owner. With `allowedTools: []`, the mock model received zero tools and the
+turn completed. The first and reopened client windows both showed the fixture
+project, conversation and answer. Neither client had a local auth file, and
+the owner's socket inodes stayed unchanged. The runner stopped all private
+processes. This measures the empty-list ceiling in the copied Desktop path.
+It does not measure an allowed Orbit action, real account continuity, owner
+restart, or isolation of every host tool.

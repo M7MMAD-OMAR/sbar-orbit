@@ -95,6 +95,13 @@ stayed unchanged. The owner had a fake API key only. The reproducible
 `evidence/` directory. This does not test the person's real account or
 original running Desktop.
 
+The same public action then passed a second disposable fixture with a patched
+Codex CLI inside a newly pinned candidate. The owner started a thread with
+`allowedTools: []`, and its local mock model received zero tools. A completed
+answer remained visible after the Orbit client window was closed and reopened.
+The copied candidate and its manifest stayed separate from the installed app.
+This test does not show an allowed Orbit tool action or account continuity.
+
 This establishes mount and temporary HOME behavior for disposable listeners.
 A later combined run used the same internal helper with a copied, patched
 Desktop and a fake-key authority. The private window showed one shared fixture
