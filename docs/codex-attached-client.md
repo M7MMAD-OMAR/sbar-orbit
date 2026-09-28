@@ -135,12 +135,31 @@ Its readiness setting is off by default. These patches do not yet make
 conversation content available, and they do not establish a safe writable
 thread route.
 
+The separate paginated history experiment in
+`experiments/codex-paginated-readonly-cached-pool-negative.md` remains a
+negative result. Ordinary turn and item page reads created a missing history
+database. A proposed cached-pool path refused the missing database and
+returned two fixture pages, but its SQLite `-shm` file changed during SELECT.
+The main database and WAL bytes stayed stable in that run. The proposed patch
+was not exported or enabled; paginated reads remain denied by the gate.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
 and plan without asking the private client to fetch a token. A first fake
 ChatGPT UI run captured a loading screen after 10 seconds, so no account label
-was measured in the interface. No real account was used.
+was measured in the interface. A second disposable UI run reached the dark
+window after 40 seconds with one fixture project, but its footer said
+`Settings`. Direct RPC inspection found that this fixture's custom model
+provider did not require OpenAI authentication. Its `getAuthStatus` returned
+no auth method and `account/read` returned no account, so the run cannot
+measure ChatGPT identity projection. With authentication required, a fake JWT
+carrying an account ID made `account/read` fail while the offline fixture
+could not complete workspace discovery. A separate fake JWT without an account
+ID returned ChatGPT email and plan to direct RPC, but the Desktop displayed
+`Unable to load sign-in requirements` after 40 seconds. The footer was not
+measured. Neither synthetic JWT reproduces a complete real account session,
+and no real account was used.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
