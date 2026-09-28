@@ -8,6 +8,7 @@ The Codex home, broker, browser profile, and web page are disposable fixtures.
 No installed desktop application or personal browser profile is opened.
 """
 
+import asyncio
 import http.client
 import http.server
 import json
@@ -20,6 +21,8 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import websockets
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -86,7 +89,132 @@ def wait_for_turn(rpc, thread_id):
     raise TimeoutError("Codex turn did not complete")
 
 
-def main():
+async def shared_request(connection, request_id, method, params, events):
+    await connection.send(json.dumps({"id": request_id, "method": method,
+                                      "params": params}))
+    while True:
+        message = json.loads(await asyncio.wait_for(connection.recv(), timeout=10))
+        if message.get("id") == request_id:
+            return message
+        if isinstance(message.get("method"), str):
+            events.append(message)
+
+
+async def shared_authority_turn(app, socket_path, authority, bun, broker_socket,
+                                session_id, root):
+    deadline = time.monotonic() + 15
+    while not socket_path.exists() and time.monotonic() < deadline:
+        if app.poll() is not None:
+            raise RuntimeError("Disposable Codex authority exited before opening its socket")
+        await asyncio.sleep(0.05)
+    if not socket_path.exists():
+        raise TimeoutError("Disposable Codex authority did not open its socket")
+    async with (
+        websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
+                                compression=None) as first,
+        websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
+                                compression=None) as second,
+    ):
+        first_events = []
+        second_events = []
+        initialized = {"clientInfo": {"name": "orbit-shared-browser-probe",
+                     "title": "Orbit Shared Browser Probe", "version": "1"},
+                     "capabilities": {"experimentalApi": True}}
+        first_init, second_init = await asyncio.gather(
+            shared_request(first, 1, "initialize", initialized, first_events),
+            shared_request(second, 1, "initialize", initialized, second_events),
+        )
+        if "result" not in first_init or "result" not in second_init:
+            raise RuntimeError(f"Disposable clients did not initialize: {first_init}, {second_init}")
+        await first.send(json.dumps({"method": "initialized"}))
+        await second.send(json.dumps({"method": "initialized"}))
+        started = await shared_request(first, 2, "thread/start", {
+            "ephemeral": False, "model": "gpt-5.1", "modelProvider": "mock",
+            "cwd": str(authority), "approvalPolicy": "never",
+            "sandbox": "danger-full-access", "config": {"mcp_servers": {
+                "orbit_private": {"command": bun, "args": [str(SESSION_MCP)],
+                                  "env": {"ORBIT_SOCKET": str(broker_socket),
+                                          "ORBIT_SESSION_ID": session_id,
+                                          "ORBIT_USAGE_DIR": str(root / "usage")}},
+            }},
+        }, first_events)
+        thread_id = started.get("result", {}).get("thread", {}).get("id")
+        if not isinstance(thread_id, str):
+            raise RuntimeError(f"Disposable thread did not start: {started}")
+        initial_read = await shared_request(second, 2, "thread/read", {
+            "threadId": thread_id, "includeTurns": False,
+        }, second_events)
+        if initial_read.get("result", {}).get("thread", {}).get("id") != thread_id:
+            raise RuntimeError(f"Second client could not read thread: {initial_read}")
+        turn_start = await shared_request(first, 3, "turn/start", {
+            "threadId": thread_id, "input": [{"type": "text",
+            "text": "Click the private fixture button."}],
+        }, first_events)
+        if "result" not in turn_start:
+            raise RuntimeError(f"Turn did not start: {turn_start}")
+        completed = None
+        while completed is None:
+            event = json.loads(await asyncio.wait_for(first.recv(), timeout=60))
+            if isinstance(event.get("method"), str):
+                first_events.append(event)
+                if event["method"] == "turn/completed" and event.get(
+                        "params", {}).get("threadId") == thread_id:
+                    completed = event["params"]["turn"]
+        final_read = await shared_request(second, 3, "thread/read", {
+            "threadId": thread_id, "includeTurns": False,
+        }, second_events)
+        thread = final_read.get("result", {}).get("thread", {})
+        turns_page = await shared_request(second, 4, "thread/turns/list", {
+            "threadId": thread_id, "limit": 10,
+        }, second_events)
+        turns = turns_page.get("result", {}).get("data", [])
+        completed_turn_read = any(turn.get("id") == completed.get("id") and
+                                  turn.get("status") == "completed" for turn in turns)
+        idle_seen = any(event.get("method") == "thread/status/changed" and
+                        event.get("params", {}).get("threadId") == thread_id and
+                        event.get("params", {}).get("status", {}).get("type") ==
+                        "idle" for event in second_events)
+        await second.close()
+        async with websockets.unix_connect(str(socket_path), uri="ws://localhost/rpc",
+                                           compression=None) as reopened:
+            reopened_events = []
+            reconnect_init = await shared_request(reopened, 1, "initialize",
+                                                  initialized, reopened_events)
+            await reopened.send(json.dumps({"method": "initialized"}))
+            reconnect_read = await shared_request(reopened, 2, "thread/read", {
+                "threadId": thread_id, "includeTurns": False,
+            }, reopened_events)
+            reconnect_turns = await shared_request(reopened, 3,
+                                                  "thread/turns/list", {
+                "threadId": thread_id, "limit": 10,
+            }, reopened_events)
+            reconnect_saw_thread = reconnect_read.get("result", {}).get(
+                "thread", {}).get("id") == thread_id
+            reconnect_saw_completed = any(turn.get("id") == completed.get("id")
+                and turn.get("status") == "completed" for turn in
+                reconnect_turns.get("result", {}).get("data", []))
+        tool_events = [event.get("params", {}).get("item") for event in first_events
+            if isinstance(event, dict) and event.get("method") == "item/completed"
+            and event.get("params", {}).get("threadId") == thread_id
+            and event.get("params", {}).get("item", {}).get("type") == "mcpToolCall"]
+        return {"threadId": thread_id, "completed": completed,
+                "toolEvents": tool_events, "shared": {
+                    "twoClientsInitialized": True,
+                    "sameCodexHome": first_init["result"].get("codexHome") ==
+                                     second_init["result"].get("codexHome"),
+                    "secondClientReadThread": thread.get("id") == thread_id,
+                    "secondClientSawStartNotification": any(event.get("method") ==
+                        "thread/started" for event in second_events),
+                    "secondClientSawIdleStatus": idle_seen,
+                    "secondClientReadCompletedTurn": completed_turn_read,
+                    "reconnectedClientReadSameThread": reconnect_saw_thread,
+                    "reconnectedClientReadCompletedTurn": reconnect_saw_completed,
+                    "reconnectedClientUsedSameHome": reconnect_init.get("result", {}).get(
+                        "codexHome") == first_init["result"].get("codexHome"),
+                }}
+
+
+def main(shared_clients=False):
     bun = shutil.which("bun")
     if not bun or not CODEX.is_file() or not SESSION_MCP.is_file():
         raise RuntimeError("Bun, installed Codex, or the session adapter is unavailable")
@@ -203,30 +331,43 @@ def main():
                     'env_key = "MOCK_API_KEY"\nwire_api = "responses"\n'
                     'supports_websockets = false\n'
                 )
-                app = subprocess.Popen([str(CODEX), "app-server", "--listen", "stdio://"],
+                app_socket = root / "app.sock"
+                listen = "unix://" + str(app_socket) if shared_clients else "stdio://"
+                app = subprocess.Popen([str(CODEX), "app-server", "--listen", listen],
                                        cwd=authority, env=environment,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stdin=subprocess.DEVNULL if shared_clients else subprocess.PIPE,
+                                       stdout=subprocess.DEVNULL if shared_clients else subprocess.PIPE,
                                        stderr=subprocess.DEVNULL, bufsize=0,
                                        start_new_session=True)
-                rpc = JsonRpc(app)
-                rpc.call(1, "initialize", {"clientInfo": {
-                    "name": "orbit_real_mcp_probe", "title": "Orbit real MCP probe",
-                    "version": "1",
-                }, "capabilities": {"experimentalApi": True}})
-                rpc.send("initialized")
-                thread = rpc.call(2, "thread/start", {
-                    "ephemeral": True, "model": "gpt-5.1", "modelProvider": "mock",
-                    "cwd": str(authority), "approvalPolicy": "never",
-                    "sandbox": "danger-full-access", "config": {"mcp_servers": {
-                        "orbit_private": {"command": bun, "args": [str(SESSION_MCP)],
-                                          "env": {"ORBIT_SOCKET": str(broker_socket),
-                                                  "ORBIT_SESSION_ID": session_id,
-                                                  "ORBIT_USAGE_DIR": str(root / "usage")}},
-                    }},
-                })["thread"]
-                rpc.call(3, "turn/start", {"threadId": thread["id"], "input": [
-                    {"type": "text", "text": "Click the private fixture button."}]})
-                completed = wait_for_turn(rpc, thread["id"])
+                if shared_clients:
+                    shared_result = asyncio.run(shared_authority_turn(
+                        app, app_socket, authority, bun, broker_socket, session_id, root))
+                    completed = shared_result["completed"]
+                    tool_events = shared_result["toolEvents"]
+                else:
+                    rpc = JsonRpc(app)
+                    rpc.call(1, "initialize", {"clientInfo": {
+                        "name": "orbit_real_mcp_probe", "title": "Orbit real MCP probe",
+                        "version": "1",
+                    }, "capabilities": {"experimentalApi": True}})
+                    rpc.send("initialized")
+                    thread = rpc.call(2, "thread/start", {
+                        "ephemeral": True, "model": "gpt-5.1", "modelProvider": "mock",
+                        "cwd": str(authority), "approvalPolicy": "never",
+                        "sandbox": "danger-full-access", "config": {"mcp_servers": {
+                            "orbit_private": {"command": bun, "args": [str(SESSION_MCP)],
+                                              "env": {"ORBIT_SOCKET": str(broker_socket),
+                                                      "ORBIT_SESSION_ID": session_id,
+                                                      "ORBIT_USAGE_DIR": str(root / "usage")}},
+                        }},
+                    })["thread"]
+                    rpc.call(3, "turn/start", {"threadId": thread["id"], "input": [
+                        {"type": "text", "text": "Click the private fixture button."}]})
+                    completed = wait_for_turn(rpc, thread["id"])
+                    tool_events = [message.get("params", {}).get("item")
+                        for message in rpc.messages if message.get("method") == "item/completed"
+                        and message.get("params", {}).get("threadId") == thread["id"]
+                        and message.get("params", {}).get("item", {}).get("type") == "mcpToolCall"]
                 deadline = time.monotonic() + 5
                 while not clicks and time.monotonic() < deadline:
                     time.sleep(0.05)
@@ -239,10 +380,6 @@ def main():
                     if after == {"text": "1"}:
                         break
                     time.sleep(0.05)
-                tool_events = [message.get("params", {}).get("item")
-                    for message in rpc.messages if message.get("method") == "item/completed"
-                    and message.get("params", {}).get("threadId") == thread["id"]
-                    and message.get("params", {}).get("item", {}).get("type") == "mcpToolCall"]
                 tools = model_requests[0].get("tools", []) if model_requests else []
                 namespace = next((tool for tool in tools if tool.get("name") ==
                                   "mcp__orbit_private"), None)
@@ -256,6 +393,8 @@ def main():
                           "fixtureRequests": fixture_requests,
                           "before": before, "after": after,
                           "boundSession": session_id}
+                if shared_clients:
+                    result["sharedAuthority"] = shared_result["shared"]
                 print(json.dumps(result, sort_keys=True))
                 assert result["advertised"] is True, result
                 assert result["turnStatus"] == "completed", result
@@ -263,6 +402,8 @@ def main():
                 assert result["modelRequests"] == 2, result
                 assert result["fixtureClicks"] == 1, result
                 assert result["after"] == {"text": "1"}, result
+                if shared_clients:
+                    assert all(value is True for value in shared_result["shared"].values()), result
         finally:
             stop_process(app)
             if session_id:
