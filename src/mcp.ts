@@ -16,7 +16,7 @@ const selector = z.string().min(1).max(16384);
 const coordinate = z.number().int().min(0).max(viewportLimits.maximum - 1);
 const side = z.number().int().min(viewportLimits.minimum).max(viewportLimits.maximum);
 const viewport = z.object({ width: side, height: side });
-const action = z.union([
+export const orbitActionSchema = z.union([
   z.object({ type: z.literal("navigate"), url: id }),
   z.object({ type: z.literal("fill"), selector, text: z.string().max(16384) }),
   z.object({ type: z.literal("click"), selector }),
@@ -110,7 +110,7 @@ export function createMcpServer(socket: string) {
   }, params => invoke("session.create", params));
   server.registerTool("orbit_act", {
     description: "Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, upload local files to a file input or the chooser a button opens (irreversible, so the session policy must allow it), read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, or use launch-app for a private VS Code Default Profile snapshot with selected extensions and an optional shared file or folder. The VS Code snapshot copies settings, not login state. Codex launch-app opens a private snapshot of local history and account identity; projectPath grants one selected project directory live writable access. This is a point in time copy, so private-only changes are lost on close. Zen launch-app copies the locally active Zen profile into the private display. Zen starts offline by default; set network to public-web explicitly to reach public internet addresses through its private proxy. The optional sharedFiles list grants its private Zen up to 16 exact host files at /orbit/shared, with live in-place file writes. It does not grant directories or safe-save through rename. Move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
-    inputSchema: { sessionId: id, requestId: id, action },
+    inputSchema: { sessionId: id, requestId: id, action: orbitActionSchema },
   }, params => invoke("session.act", params));
   const descriptions = {
     pause: "Pause one Orbit session so a person can take over in the viewer. Rejects new actions and waits for accepted work to drain before acknowledging.",
