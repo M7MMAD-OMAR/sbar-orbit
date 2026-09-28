@@ -22,6 +22,12 @@ The rejection decision in these two RPC paths is based on Core operations, not o
 - Core's `steer_turn` currently accepts user input, not a standalone `toolOutput`. Under this opt-in route, a `toolOutput` can start an idle turn but cannot steer an active turn. The patch also rejects an empty `turn/start` with no `toolOutput` to preserve the current requirement for explicit input.
 - This patch has not been composed with the dynamic tool callback patch or the legacy read-only RPC experiment. Account continuity, Desktop rendering, existing-thread write safety, and other applications remain unmeasured by this candidate.
 
+## Integration map
+
+The dynamic tool owner patch applies cleanly over this steering patch, but both add owner fields and terminal cleanup in `thread_state.rs` and owner registration in `turn_processor.rs`. A combined implementation must retain both routes and test their shared lifecycle. The per-turn `allowedTools` patch applies over the dynamic tool owner patch. It conflicts textually with this steering patch at the `turn/start` submission block in `turn_processor.rs` around the exact-tag line 650.
+
+The merge order is dynamic tool owner, per-turn `allowedTools`, then a manual merge of steering in `turn/start`. A request carrying a new per-turn tool ceiling must use Core's idle-only start. Only a recorded owner request without a new ceiling may steer the expected active turn. Non-owner input must stay on the idle-only path. Both owner registration and terminal cleanup blocks must remain. This is a source merge plan; the three patches together require compilation and a joint client and tool-ceiling runtime test before any combined behavior claim.
+
 The dynamic tool callback owner patch applies cleanly with this steering patch
 in a disposable source tree, but their two owner records and terminal cleanup
 have not been compiled or tested together. The per-turn `allowedTools` patch
