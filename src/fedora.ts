@@ -17,7 +17,7 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
-  | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web" }
+  | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web"; sharedFiles?: string[] }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
@@ -48,9 +48,17 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
   if (a.type === "launch-app") {
     if (a.app === "zen" && a.profile === "active" &&
         (a.network === undefined || a.network === "offline" || a.network === "public-web") &&
-        Object.keys(a).every(key => ["type", "app", "profile", "network"].includes(key)))
+        Object.keys(a).every(key => ["type", "app", "profile", "network", "sharedFiles"].includes(key))) {
+      if (a.sharedFiles !== undefined && (!Array.isArray(a.sharedFiles) || !a.sharedFiles.length ||
+          a.sharedFiles.length > 16 || a.sharedFiles.some(path => typeof path !== "string" ||
+            !path.startsWith("/") || path.length > 4096 || path.includes("\0") ||
+            path.split("/").slice(1).some(part => !part || part === "." || part === "..")) ||
+          new Set(a.sharedFiles).size !== a.sharedFiles.length))
+        throw new OrbitError("INVALID_REQUEST", "Select 1 to 16 distinct canonical host files for Zen");
       return { type: "launch-app", app: "zen", profile: "active",
-        ...(a.network === undefined ? {} : { network: a.network }) };
+        ...(a.network === undefined ? {} : { network: a.network }),
+        ...(a.sharedFiles === undefined ? {} : { sharedFiles: a.sharedFiles as string[] }) };
+    }
     if (Object.keys(a).some(key => !["type", "app", "profile", "extensions", "openPath"].includes(key)) ||
         a.app !== "vscode" || a.profile !== "default")
       throw new OrbitError("INVALID_REQUEST", "Launch a supported application profile without caller launch arguments");
@@ -424,7 +432,7 @@ export class FedoraBackend {
         : action.app === "vscode"
           ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
-            this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline");
+            this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
       let cleanupManaged = false;
       try {
       const keyring = "snapshot" in prepared && prepared.snapshot.accountState === "copied";
@@ -448,7 +456,10 @@ export class FedoraBackend {
             : await this.socketPolicy(prepared.toolkit, keyring))]
         : [];
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),
-        ...nativeSupervisorSafetyFlags(action), ...socketPolicy, executable, ...prepared.argv.slice(1)],
+        ...nativeSupervisorSafetyFlags(action),
+        ...("zenFilePolicy" in prepared && prepared.zenFilePolicy
+          ? ["--zen-file-policy", JSON.stringify(prepared.zenFilePolicy)] : []),
+        ...socketPolicy, executable, ...prepared.argv.slice(1)],
       { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit,
         ...(prepared.toolkit === "x11" && socketPolicy.length ? { DISPLAY: this.x11SocketPath() } : {}) }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();

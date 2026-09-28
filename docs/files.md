@@ -56,3 +56,23 @@ ORBIT_TEST_NATIVE=1 bun run verify tests/file-leases.test.ts tests/native-file-l
 ```
 
 The subsequent [validation summary](validation.md) passed 7 tests and 63 assertions, including the stronger partial-acquisition rollback case. TypeScript checking also passed. All test processes exited after the runs.
+
+## Optional Zen exact-file bridge
+
+Zen can request up to 16 existing host files at launch. The option is explicit and applies only to that private Zen instance:
+
+```json
+{
+  "type": "launch-app",
+  "app": "zen",
+  "profile": "active",
+  "network": "public-web",
+  "sharedFiles": ["/absolute/project/notes.txt"]
+}
+```
+
+The selected file appears at `/orbit/shared/1/notes.txt` inside private Zen. Orbit mounts that exact host file by a verified file descriptor, so an in-place write changes the same inode the host sees. No neighboring file or parent directory is mounted. This is separate from Zen's copied browser profile and does not grant the browser access to the person's display or pointer. Omitting `sharedFiles` leaves the existing private Zen filesystem unchanged.
+
+The bridge rejects symbolic path components, directories, sockets, files with multiple hard links, and files inside the live Zen Flatpak data tree, Orbit session directory or host user runtime. Orbit's selected-file lease applies for the lifetime of the private application tree. The lease coordinates cooperating Orbit launches; another host process may still edit or replace a file.
+
+This first tier supports direct reads and in-place writes to selected files. Applications that save through a temporary file and atomic rename may fail because only a file, not its parent directory, is mounted. If the host replaces the selected pathname, Zen can keep writing the old inode. The bridge does not yet provide a safe-save protocol, directory collaboration, automatic conflict resolution, or direct host download export. A website upload still sends a snapshot of file bytes to that service; live collaboration inside a website depends on the website's own account and document model.

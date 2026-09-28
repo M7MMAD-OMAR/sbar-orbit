@@ -44,6 +44,38 @@ test("Zen launch-app accepts no caller paths or executable arguments", () => {
     .toEqual([]);
 });
 
+test("Zen shared files require an explicit bounded list of canonical paths", () => {
+  expect(parseNativeAction({ type: "launch-app", app: "zen", profile: "active", sharedFiles: ["/tmp/notes.txt"] }))
+    .toEqual({ type: "launch-app", app: "zen", profile: "active", sharedFiles: ["/tmp/notes.txt"] });
+  for (const sharedFiles of [[], ["relative.txt"], ["/tmp/../secret"], ["/tmp//secret"],
+    ["/tmp/notes.txt", "/tmp/notes.txt"], Array.from({ length: 17 }, (_, index) => `/tmp/${index}`)])
+    expect(() => parseNativeAction({ type: "launch-app", app: "zen", profile: "active", sharedFiles })).toThrow();
+});
+
+test("Zen shared files are described without mounting a host directory", async () => {
+  const f = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    const document = join(f.root, "notes.txt");
+    await writeFile(document, "host copy");
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "offline", [document]);
+    expect(prepared.selectedFiles).toEqual([document]);
+    expect(prepared.zenFilePolicy?.paths).toEqual([document]);
+    expect(prepared.zenFilePolicy?.protectedDirectories).toContain(f.session);
+    expect(prepared.zenFilePolicy?.protectedDirectories).toContain(join(f.home, ".var/app/app.zen_browser.zen"));
+    expect(prepared.zenSnapshot.hostFiles).toBe("selected-live");
+    expect(prepared.zenSnapshot.sharedFiles).toEqual([
+      { hostPath: document, privatePath: "/orbit/shared/1/notes.txt" },
+    ]);
+    expect(prepared.argv).not.toContain(document);
+  } finally {
+    await prepared?.release();
+    f.server.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("one private display refuses a second Zen profile copy", async () => {
   const backend = Object.assign(Object.create(FedoraBackend.prototype), {
     parseAction: parseNativeAction, closed: false, children: [], zenLaunchReserved: true,

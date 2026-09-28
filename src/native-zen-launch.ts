@@ -9,7 +9,7 @@ import { quietZenSync } from "./native-zen-sync";
 
 type ZenLocation = { home?: string; deploymentFiles?: string;
   leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest"> };
-type ZenInstallation = { deploymentFiles: string; profile: string };
+type ZenInstallation = { deploymentFiles: string; profile: string; appRoot: string };
 
 function selectedProfile(ini: string): string {
   const sections = new Map<string, Map<string, string>>();
@@ -42,6 +42,9 @@ export async function discoverZenInstallation(location: ZenLocation = {}): Promi
     throw new OrbitError("UNSUPPORTED", "Zen Flatpak profile directory is unavailable");
   const profileName = selectedProfile(await readFile(join(base, "profiles.ini"), "utf8"));
   const baseReal = await realpath(base);
+  const appRoot = await realpath(resolve(home, ".var/app/app.zen_browser.zen"));
+  if (!baseReal.startsWith(appRoot + sep))
+    throw new OrbitError("UNSUPPORTED", "Zen profile directory escaped its application data root");
   const profile = await realpath(resolve(base, profileName)).catch(() => "");
   if (!profile.startsWith(baseReal + sep) || !(await lstat(profile).catch(() => undefined))?.isDirectory())
     throw new OrbitError("UNSUPPORTED", "Zen active profile must be a real directory inside its installation");
@@ -56,7 +59,7 @@ export async function discoverZenInstallation(location: ZenLocation = {}): Promi
     if (!files) continue;
     const executable = await lstat(join(files, "zen/zen")).catch(() => undefined);
     if (executable?.isFile() && executable.mode & 0o111)
-      return { deploymentFiles: files, profile };
+      return { deploymentFiles: files, profile, appRoot };
   }
   throw new OrbitError("UNSUPPORTED", "The installed Zen Flatpak ELF was not found");
 }
@@ -64,9 +67,11 @@ export async function discoverZenInstallation(location: ZenLocation = {}): Promi
 export type PreparedZenLaunch = {
   argv: string[];
   toolkit: "wayland";
-  selectedFiles: [];
+  selectedFiles: string[];
+  zenFilePolicy?: { paths: string[]; protectedDirectories: string[] };
   zenSnapshot: Pick<ZenProfileSnapshot, "files" | "bytes" | "databases" | "recoveryFiles" | "recoveredTabs"> &
-    { network: "offline" | "public-web"; hostFiles: "unavailable" };
+    { network: "offline" | "public-web"; hostFiles: "unavailable" | "selected-live";
+      sharedFiles?: { hostPath: string; privatePath: string }[] };
   release: () => Promise<void>;
 };
 
@@ -130,6 +135,7 @@ const publicWebScript = [
 export async function prepareZenLaunch(
   sessionDirectory: string, waylandSocket: string, libraryDirectory: string, location: ZenLocation = {},
   network: ZenNetwork = "offline",
+  sharedFiles: string[] = [],
 ): Promise<PreparedZenLaunch> {
   const session = await realpath(sessionDirectory);
   const socket = await realpath(waylandSocket);
@@ -142,6 +148,10 @@ export async function prepareZenLaunch(
   if (!(await Bun.file("/usr/bin/bwrap").exists()))
     throw new OrbitError("UNSUPPORTED", "Zen private launch needs bubblewrap");
   const installation = await discoverZenInstallation(location);
+  if (!Array.isArray(sharedFiles) || sharedFiles.length > 16 ||
+      sharedFiles.some(path => typeof path !== "string" || !path.startsWith("/") || path.length > 4096 ||
+        path.includes("\0") || path.split("/").slice(1).some(part => !part || part === "." || part === "..")))
+    throw new OrbitError("INVALID_REQUEST", "Zen can share up to 16 canonical absolute files");
   const privateDirectory = await mkdtemp(join(session, "zen-"));
   await chmod(privateDirectory, 0o700);
   let lease: PublicWebLease | undefined;
@@ -183,10 +193,18 @@ export async function prepareZenLaunch(
       ...(lease ? ["/usr/bin/sh", "-c", publicWebScript, "orbit-zen"] : []),
       "/app/zen/zen", "--no-remote", "--profile", profileInside,
     ];
-    return { argv, toolkit: "wayland", selectedFiles: [],
+    const uid = process.getuid?.();
+    if (sharedFiles.length && uid === undefined)
+      throw new OrbitError("UNSUPPORTED", "Zen shared files need a Unix user runtime");
+    const zenFilePolicy = sharedFiles.length ? { paths: sharedFiles,
+      protectedDirectories: [installation.appRoot, session, `/run/user/${uid}`] } : undefined;
+    return { argv, toolkit: "wayland", selectedFiles: sharedFiles,
+      ...(zenFilePolicy ? { zenFilePolicy } : {}),
       zenSnapshot: { files: snapshot.files, bytes: snapshot.bytes, databases: snapshot.databases,
         recoveryFiles: snapshot.recoveryFiles, recoveredTabs: snapshot.recoveredTabs,
-        network, hostFiles: "unavailable" },
+        network, hostFiles: sharedFiles.length ? "selected-live" : "unavailable",
+        ...(sharedFiles.length ? { sharedFiles: sharedFiles.map((hostPath, index) => ({
+          hostPath, privatePath: `/orbit/shared/${index + 1}/${basename(hostPath)}` })) } : {}) },
       release: async () => {
         const results = await Promise.allSettled([
           lease?.close(), rm(privateDirectory, { recursive: true, force: true }),

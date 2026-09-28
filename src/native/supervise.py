@@ -13,6 +13,7 @@ from budget import require_budget
 from file_leases import acquire_files, FileLeaseError
 from landlock_unix import LandlockUnavailable, make_abstract_ruleset, make_ruleset, restrict_child
 from mount_unix import PrivateMountUnavailable, mount_command
+from zen_file_mount import ZenFileMountError, prepare_zen_file_mounts
 
 require_budget()
 
@@ -45,6 +46,22 @@ try:
     if arguments[:1] == ["--coredump-filter-zero"]:
         zero_core_filter = True
         arguments = arguments[1:]
+    if arguments[:1] == ["--zen-file-policy"]:
+        zen_policy = json.loads(arguments[1])
+        if (not isinstance(zen_policy, dict) or set(zen_policy) != {"paths", "protectedDirectories"}
+                or not isinstance(zen_policy["paths"], list)
+                or any(not isinstance(path, str) for path in zen_policy["paths"])
+                or sorted(zen_policy["paths"]) != selected_files):
+            raise ZenFileMountError("Shared Zen files differ from their reserved paths")
+        zen_mounts, zen_fds, _ = prepare_zen_file_mounts(
+            zen_policy["paths"], zen_policy["protectedDirectories"])
+        mount_fds.extend(zen_fds)
+        arguments = arguments[2:]
+        if (not arguments or arguments[0] != "/usr/bin/bwrap"
+                or arguments.count("--clearenv") != 1):
+            raise ZenFileMountError("Shared Zen files need the private browser mount")
+        before_env = arguments.index("--clearenv")
+        arguments = arguments[:before_env] + zen_mounts + arguments[before_env:]
     if arguments[:1] == ["--socket-policy"]:
         policy_fd = make_ruleset(json.loads(arguments[1]))
         arguments = arguments[2:]
@@ -70,8 +87,8 @@ try:
 except Exception as error:
     for fd in lease_fds:
         os.close(fd)
-    code = error.code if isinstance(error, FileLeaseError) else "UNSUPPORTED" if isinstance(error, (LandlockUnavailable, PrivateMountUnavailable)) else "BACKEND_FAILED"
-    message = str(error) if isinstance(error, (FileLeaseError, LandlockUnavailable, PrivateMountUnavailable)) else "Application could not start"
+    code = error.code if isinstance(error, FileLeaseError) else "INVALID_REQUEST" if isinstance(error, ZenFileMountError) else "UNSUPPORTED" if isinstance(error, (LandlockUnavailable, PrivateMountUnavailable)) else "BACKEND_FAILED"
+    message = str(error) if isinstance(error, (FileLeaseError, ZenFileMountError, LandlockUnavailable, PrivateMountUnavailable)) else "Application could not start"
     report.write_text(json.dumps({"error": {"code": code, "message": message}}))
     sys.exit(73 if code == "FILE_BUSY" else 1)
 finally:
