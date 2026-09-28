@@ -74,7 +74,7 @@ index 04c2229..be8638b 100644
 +                allowed_tools
 +                    .into_iter()
 +                    .map(|tool| {
-+                        codex_protocol::tool_name::ToolName::new(tool.namespace, tool.name)
++                        codex_protocol::ToolName::new(tool.namespace, tool.name)
 +                    })
 +                    .collect(),
 +            ));
