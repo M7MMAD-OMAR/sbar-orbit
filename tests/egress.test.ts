@@ -14,14 +14,14 @@ import { fixtureRoot } from "./platform-support";
 const confinable = (await detectPlatform()).confinedEgress;
 
 /** Speak to the lease the way a browser does, and report exactly what came back. */
-async function throughProxy(socketPath: string, request: string, expectBytes = true): Promise<{ reply: string }> {
+async function throughProxy(socketPath: string, request: string, expectBytes = true, maxAttempts = 100): Promise<{ reply: string }> {
   let reply = "";
   const client = await connect<undefined>({
     unix: socketPath,
     socket: { data: (_socket, chunk) => { reply += new TextDecoder().decode(chunk); }, close: () => {}, error: () => {} },
   });
   client.write(request);
-  for (let attempt = 0; attempt < 100 && (expectBytes ? !reply : attempt < 20); attempt++) await Bun.sleep(20);
+  for (let attempt = 0; attempt < maxAttempts && (expectBytes ? !reply : attempt < 20); attempt++) await Bun.sleep(20);
   client.end();
   return { reply };
 }
@@ -125,6 +125,109 @@ test.if(confinable)("the lease forwards the authorities it holds and refuses the
     // route out nothing is watching.
     await expect(stat(join(root, "egress"))).rejects.toThrow();
   } finally { target.stop(true); await rm(root, { recursive: true, force: true }); }
+});
+
+test.if(confinable)("a leased public name cannot rebind to a loopback address", async () => {
+  const root = await fixtureRoot("orbit-egress-rebind-");
+  let reached = 0;
+  const target = listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: {
+    open(socket) { reached++; socket.end(); }, data: () => {}, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({
+      directory: join(root, "egress"), executable: "/usr/bin/python3", profile: join(root, "profile"),
+      confinable: true, origins: () => [`https://allowed.example:${target.port}`],
+      resolveHost: async () => ["127.0.0.1"],
+    });
+    const denied = await throughProxy(join(root, "egress", "lease.sock"),
+      `CONNECT allowed.example:${target.port} HTTP/1.1\r\nHost: allowed.example:${target.port}\r\n\r\n`);
+    expect(denied.reply).toContain("403");
+    expect(reached).toBe(0);
+    expect(lease.refused()).toContain(`allowed.example:${target.port}`);
+  } finally { await lease?.close(); target.stop(true); await rm(root, { recursive: true, force: true }); }
+});
+
+test.if(confinable)("public names refuse private, reserved and IPv4 mapped DNS answers", async () => {
+  const root = await fixtureRoot("orbit-egress-private-dns-");
+  let answer = "127.0.0.1";
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({ directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), confinable: true, origins: () => ["https://allowed.example"],
+      resolveHost: async () => [answer] });
+    for (answer of ["127.0.0.1", [10, 0, 0, 1].join("."), "100.64.0.1", "169.254.1.1",
+      [172, 16, 0, 1].join("."), [192, 168, 1, 1].join("."), "::1", "fc00::1", "fe80::1",
+      "::ffff:127.0.0.1", "2001:db8::1"]) {
+      const denied = await throughProxy(join(root, "egress", "lease.sock"),
+        "CONNECT allowed.example:443 HTTP/1.1\r\nHost: allowed.example:443\r\n\r\n");
+      expect(denied.reply).toContain("403");
+    }
+  } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test.if(confinable)("a DNS resolver that never answers cannot hold the proxy open forever", async () => {
+  const root = await fixtureRoot("orbit-egress-dns-timeout-");
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({ directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), confinable: true, origins: () => ["https://allowed.example"],
+      resolveHost: async () => new Promise<string[]>(() => {}) });
+    const denied = await throughProxy(join(root, "egress", "lease.sock"),
+      "CONNECT allowed.example:443 HTTP/1.1\r\nHost: allowed.example:443\r\n\r\n", true, 400);
+    expect(denied.reply).toContain("403");
+  } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }
+}, 12000);
+
+test.if(confinable)("an explicitly leased localhost name reaches loopback only", async () => {
+  const root = await fixtureRoot("orbit-egress-localhost-");
+  let answers = ["::1", "127.0.0.1"];
+  let reached = 0;
+  const target = listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: {
+    open(socket) { reached++; socket.end(); }, data: () => {}, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({ directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), confinable: true,
+      origins: () => [`http://localhost:${target.port}`], resolveHost: async () => answers });
+    const request = `CONNECT localhost:${target.port} HTTP/1.1\r\nHost: localhost:${target.port}\r\n\r\n`;
+    const allowed = await throughProxy(join(root, "egress", "lease.sock"), request);
+    expect(allowed.reply).toContain("200 Connection Established");
+    expect(reached).toBe(1);
+    answers = [[10, 0, 0, 1].join(".")];
+    const denied = await throughProxy(join(root, "egress", "lease.sock"), request);
+    expect(denied.reply).toContain("403");
+    expect(reached).toBe(1);
+  } finally { await lease?.close(); target.stop(true); await rm(root, { recursive: true, force: true }); }
+});
+
+test.if(confinable)("plain HTTP Host must match the leased absolute URL", async () => {
+  const root = await fixtureRoot("orbit-egress-host-");
+  let reached = 0;
+  const target = listen<undefined>({ hostname: "127.0.0.1", port: 0, socket: {
+    open(socket) { reached++; socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"); socket.end(); }, data: () => {}, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({ directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), confinable: true,
+      origins: () => [`http://127.0.0.1:${target.port}`] });
+    const socketPath = join(root, "egress", "lease.sock");
+    const url = `http://127.0.0.1:${target.port}/`;
+    const wrong = await throughProxy(socketPath, `GET ${url} HTTP/1.1\r\nHost: other.test\r\n\r\n`);
+    expect(wrong.reply).toContain("403");
+    const duplicate = await throughProxy(socketPath, `GET ${url} HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\nHost: other.test\r\n\r\n`);
+    expect(duplicate.reply).toContain("403");
+    const paddedName = await throughProxy(socketPath, `GET ${url} HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\nHost : other.test\r\n\r\n`);
+    expect(paddedName.reply).toContain("403");
+    const bareLf = await throughProxy(socketPath, `GET ${url} HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\nX-Filler: ok\nHost: other.test\r\n\r\n`);
+    expect(bareLf.reply).toContain("403");
+    expect(reached).toBe(0);
+    const matching = await throughProxy(socketPath, `GET ${url} HTTP/1.1\r\nHost: 127.0.0.1:${target.port}\r\n\r\n`);
+    expect(matching.reply).toContain("200 OK");
+    expect(reached).toBe(1);
+  } finally { await lease?.close(); target.stop(true); await rm(root, { recursive: true, force: true }); }
 });
 
 test.if(confinable)("a confined browser cannot dial a host Unix socket but can dial its lease", async () => {

@@ -1,4 +1,7 @@
 import { chmod, lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { connect, listen, type Socket, type TCPSocketListener, type UnixSocketListener } from "bun";
 import { OrbitError } from "./errors";
@@ -21,7 +24,8 @@ import { OrbitError } from "./errors";
  *   in the browser   per origin, and a document's redirect target is checked a hop at a time.
  *   below it         per authority, because CONNECT tells a proxy `host:port` and nothing else.
  * Neither replaces the other. The inner one knows the scheme and the path; the outer one is the only
- * one a misbehaving renderer cannot talk its way past.
+ * one a misbehaving renderer cannot talk its way past. CONNECT does not prove TLS SNI or the HTTP
+ * origin inside its encrypted stream.
  */
 
 export type EgressTier =
@@ -60,7 +64,7 @@ export function leasedAuthorities(origins: string[]): string[] {
   }))];
 }
 
-type Pending = { buffer: Uint8Array; upstream?: Socket<unknown>; piping: boolean };
+type Pending = { buffer: Uint8Array; upstream?: Socket<unknown>; piping: boolean; closed: boolean };
 type RelayPending = { buffer: Uint8Array; peer?: Socket<RelayPending>; closed: boolean };
 
 function append(left: Uint8Array, right: Uint8Array): Uint8Array {
@@ -77,42 +81,131 @@ function append(left: Uint8Array, right: Uint8Array): Uint8Array {
  * measured this mechanism used plain HTTP fixtures and therefore proved nothing about the transport
  * that matters, which is why this is bytes on a socket rather than a request handler.
  */
-function startProxy(path: string, origins: () => string[], onRefused: (authority: string) => void): UnixSocketListener<Pending> {
+const nonPublicV4 = new BlockList();
+for (const [a, b, c, d, prefix] of [
+  [0, 0, 0, 0, 8], [10, 0, 0, 0, 8], [100, 64, 0, 0, 10], [127, 0, 0, 0, 8],
+  [169, 254, 0, 0, 16], [172, 16, 0, 0, 12], [192, 0, 0, 0, 24],
+  [192, 0, 2, 0, 24], [192, 168, 0, 0, 16], [198, 18, 0, 0, 15],
+  [198, 51, 100, 0, 24], [203, 0, 113, 0, 24], [224, 0, 0, 0, 3],
+] as const) nonPublicV4.addSubnet([a, b, c, d].join("."), prefix, "ipv4");
+const publicV6 = new BlockList();
+publicV6.addSubnet("2000::", 3, "ipv6");
+const nonPublicV6 = new BlockList();
+for (const [address, prefix] of [
+  ["2001::", 32], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20],
+] as const) nonPublicV6.addSubnet(address, prefix, "ipv6");
+const loopbackV4 = new BlockList();
+loopbackV4.addSubnet("127.0.0.0", 8, "ipv4");
+
+function publicAddress(address: string): boolean {
+  const family = isIP(address);
+  if (family === 4) return !nonPublicV4.check(address, "ipv4");
+  if (family === 6) return publicV6.check(address, "ipv6") && !nonPublicV6.check(address, "ipv6");
+  return false;
+}
+
+function loopbackAddress(address: string): boolean {
+  return isIP(address) === 4 ? loopbackV4.check(address, "ipv4") : address === "::1";
+}
+
+function hostInterfaceAddress(address: string): boolean {
+  const family = isIP(address);
+  if (!family) return false;
+  const interfaces = new BlockList();
+  for (const details of Object.values(networkInterfaces()))
+    for (const entry of details ?? []) {
+      const candidate = entry.address.split("%")[0] ?? "";
+      const entryFamily = isIP(candidate);
+      if (!entryFamily) continue;
+      try { interfaces.addAddress(candidate, entryFamily === 4 ? "ipv4" : "ipv6"); }
+      catch { return true; }
+    }
+  try { return interfaces.check(address, family === 4 ? "ipv4" : "ipv6"); }
+  catch { return true; }
+}
+
+async function systemResolveHost(hostname: string): Promise<string[]> {
+  return (await lookup(hostname, { all: true, verbatim: true })).map(answer => answer.address);
+}
+
+async function resolveWithin(hostname: string, resolver: (hostname: string) => Promise<string[]>): Promise<string[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => resolver(hostname)),
+      new Promise<string[]>(resolve => { timer = setTimeout(() => resolve([]), 5000); }),
+    ]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+function matchingHttpHost(headers: string, url: URL): boolean {
+  const lines = headers.split("\r\n");
+  if (lines.some(line => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+:/.test(line))) return false;
+  const hosts = lines.filter(line => /^host:/i.test(line));
+  if (hosts.length !== 1) return false;
+  const host = hosts[0]?.slice(5).trim() ?? "";
+  if (!host || /[\s\\/@?#%,]/.test(host)) return false;
+  try { return new URL(`http://${host}/`).origin === url.origin; }
+  catch { return false; }
+}
+
+function startProxy(path: string, origins: () => string[], onRefused: (authority: string) => void,
+  resolveHost: (hostname: string) => Promise<string[]>): UnixSocketListener<Pending> {
   const refuse = (client: Socket<Pending>, authority: string) => {
     onRefused(authority);
     client.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
     client.end();
   };
-  const pipeTo = (client: Socket<Pending>, host: string, port: number, first?: Uint8Array, announce?: string) => {
+  const pipeTo = (client: Socket<Pending>, host: string, port: number, authority: string,
+    first?: Uint8Array, announce?: string) => {
     client.data.piping = true;
-    connect<unknown>({
-      hostname: host, port,
-      socket: {
-        open(upstream) {
-          // One upstream per client, for the reason written against the CDP relay below.
-          if (client.data.upstream) return void upstream.end();
-          client.data.upstream = upstream;
-          if (announce) client.write(announce);
-          if (first?.length) upstream.write(first);
-          // Whatever arrived while the connection was being made.
-          if (client.data.buffer.length) { upstream.write(client.data.buffer); client.data.buffer = new Uint8Array(0); }
-        },
-        data: (_upstream, chunk) => { client.write(chunk); },
-        close: () => { client.end(); },
-        error: () => { client.end(); },
-        connectError: () => {
-          // The authority was leased and did not answer. This is not a refusal, so it is not recorded
-          // as one: a session that cannot tell the two apart cannot be reviewed afterwards.
+    // Resolve on the host once, reject private answers for names other than explicit localhost, and
+    // dial the selected numeric address. A second DNS lookup inside connect would reopen rebinding.
+    // Private intranet names are refused until the policy can authorize them explicitly.
+    void (async () => {
+      const name = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+      const addresses = isIP(name) ? [name] : await resolveWithin(name, resolveHost).catch(() => []);
+      const candidates = [...new Set(isIP(name) ? [name] : name === "localhost"
+        ? addresses.filter(loopbackAddress) : addresses.filter(address => publicAddress(address) && !hostInterfaceAddress(address)))];
+      if (!candidates.length) return refuse(client, authority);
+      if (client.data.closed) return;
+      const attempt = (index: number): void => {
+        if (client.data.closed) return;
+        const pinned = candidates[index];
+        if (!pinned) {
+          // Every permitted answer failed to connect. This is a transport failure, not a refusal.
           client.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
           client.end();
-        },
-      },
-    }).catch(() => { client.end(); });
+          return;
+        }
+        let settled = false;
+        const next = () => { if (settled) return; settled = true; attempt(index + 1); };
+        connect<unknown>({
+          hostname: pinned, port,
+          socket: {
+            open(upstream) {
+              if (settled || client.data.upstream) return void upstream.end();
+              settled = true;
+              client.data.upstream = upstream;
+              if (announce) client.write(announce);
+              if (first?.length) upstream.write(first);
+              // Whatever arrived while the connection was being made.
+              if (client.data.buffer.length) { upstream.write(client.data.buffer); client.data.buffer = new Uint8Array(0); }
+            },
+            data: (_upstream, chunk) => { client.write(chunk); },
+            close: () => { client.end(); },
+            error: () => { client.end(); },
+            connectError: next,
+          },
+        }).catch(next);
+      };
+      attempt(0);
+    })().catch(() => { if (!client.data.closed) refuse(client, authority); });
   };
   return listen<Pending>({
     unix: path,
     socket: {
-      open(client) { client.data = { buffer: new Uint8Array(0), piping: false }; },
+      open(client) { client.data = { buffer: new Uint8Array(0), piping: false, closed: false }; },
       data(client, chunk) {
         if (client.data.piping) {
           // Past the first request the connection is a tunnel, and its authority was fixed when it
@@ -130,6 +223,8 @@ function startProxy(path: string, origins: () => string[], onRefused: (authority
           if (client.data.buffer.length > 65536) client.end();
           return;
         }
+        const headerBlock = text.slice(0, headerEnd + 4);
+        if (/(^|[^\r])\n|\r(?!\n)/.test(headerBlock)) return refuse(client, "(malformed headers)");
         const [requestLine = ""] = text.split("\r\n");
         const [method = "", target = ""] = requestLine.split(" ");
         const allowed = origins();
@@ -137,21 +232,25 @@ function startProxy(path: string, origins: () => string[], onRefused: (authority
           const authority = target.includes(":") ? target : `${target}:443`;
           client.data.buffer = client.data.buffer.slice(headerEnd + 4);
           if (!leasedAuthorities(allowed).includes(authority)) return refuse(client, authority);
-          const [host = "", port = "443"] = authority.split(":");
-          return pipeTo(client, host, Number(port), undefined, "HTTP/1.1 200 Connection Established\r\n\r\n");
+          const endpoint = new URL(`http://${authority}/`);
+          return pipeTo(client, endpoint.hostname, Number(endpoint.port || 80), authority,
+            undefined, "HTTP/1.1 200 Connection Established\r\n\r\n");
         }
         // Plain HTTP arrives as an absolute URI, which carries the scheme, so here the lease is
         // checked at the resolution it was written at rather than by authority.
         let url: URL;
         try { url = new URL(target); } catch { return refuse(client, "(unparseable)"); }
-        if (!allowed.includes(url.origin)) return refuse(client, url.host);
+        if (url.protocol !== "http:" || url.username || url.password || !allowed.includes(url.origin))
+          return refuse(client, url.host);
+        const headers = text.slice(requestLine.length + 2, headerEnd);
+        if (!matchingHttpHost(headers, url)) return refuse(client, url.host);
         const request = client.data.buffer.slice(0, headerEnd + 4);
         client.data.buffer = client.data.buffer.slice(headerEnd + 4);
-        const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
-        return pipeTo(client, url.hostname, port, request);
+        const port = Number(url.port || 80);
+        return pipeTo(client, url.hostname, port, url.host, request);
       },
-      close(client) { void client.data.upstream?.end(); },
-      error(client) { void client.data.upstream?.end(); client.end(); },
+      close(client) { client.data.closed = true; void client.data.upstream?.end(); },
+      error(client) { client.data.closed = true; void client.data.upstream?.end(); client.end(); },
     },
   });
 }
@@ -338,6 +437,8 @@ export type EgressLeaseRequest = {
    * to an origin the session no longer holds.
    */
   origins: () => string[];
+  /** Substitute name resolution in a local proxy fixture without changing system DNS. */
+  resolveHost?: (hostname: string) => Promise<string[]>;
 };
 
 /**
@@ -366,7 +467,8 @@ export async function openEgressLease(request: EgressLeaseRequest & { confinable
   let proxy: UnixSocketListener<Pending> | undefined;
   let relay: ReturnType<typeof startCdpRelay> | undefined;
   try {
-    proxy = startProxy(proxySocket, request.origins, authority => { if (!refused.includes(authority)) refused.push(authority); });
+    proxy = startProxy(proxySocket, request.origins, authority => { if (!refused.includes(authority)) refused.push(authority); },
+      request.resolveHost ?? systemResolveHost);
     relay = startCdpRelay(cdpSocket);
     await chmod(proxySocket, 0o600);
     await chmod(cdpSocket, 0o600);
