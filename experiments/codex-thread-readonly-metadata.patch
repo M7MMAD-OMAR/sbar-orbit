@@ -1,0 +1,733 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+index 09732cf..94c8910 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+@@ -1678,2 +1678,6 @@ pub struct ThreadReadParams {
+     pub include_turns: bool,
++    /// Read metadata without repairing the owner's persistent indexes.
++    /// Full turn hydration remains unavailable in this mode.
++    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++    pub read_only: bool,
+ }
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 04c2229..b1b9fae 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -2795,4 +2795,9 @@ impl ThreadRequestProcessor {
+             include_turns,
++            read_only,
+         } = params;
+ 
++        if read_only && include_turns {
++            return Err(invalid_request("readOnly thread/read requires includeTurns=false"));
++        }
++
+         let thread_uuid = ThreadId::from_string(&thread_id)
+@@ -2801,3 +2806,3 @@ impl ThreadRequestProcessor {
+         let thread = self
+-            .read_thread_view(thread_uuid, include_turns)
++            .read_thread_view(thread_uuid, include_turns, read_only)
+             .await
+@@ -2812,2 +2817,3 @@ impl ThreadRequestProcessor {
+         include_turns: bool,
++        read_only: bool,
+     ) -> Result<Thread, ThreadReadViewError> {
+@@ -2830,3 +2836,3 @@ impl ThreadRequestProcessor {
+                 let persisted_thread = self
+-                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ false)
++                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ false, read_only)
+                     .await?;
+@@ -2837,2 +2843,3 @@ impl ThreadRequestProcessor {
+                     persisted_thread,
++                    read_only,
+                 )
+@@ -2840,3 +2847,3 @@ impl ThreadRequestProcessor {
+             } else if let Some(thread) = self
+-                .load_persisted_thread_for_read(thread_id, include_turns)
++                .load_persisted_thread_for_read(thread_id, include_turns, read_only)
+                 .await?
+@@ -2852,3 +2859,3 @@ impl ThreadRequestProcessor {
+         } else if let Some(thread) = self
+-            .load_persisted_thread_for_read(thread_id, include_turns)
++            .load_persisted_thread_for_read(thread_id, include_turns, read_only)
+             .await?
+@@ -2856,4 +2863,10 @@ impl ThreadRequestProcessor {
+             if let Some(loaded_thread) = loaded_thread.as_ref() {
+-                self.load_live_thread_view(thread_id, include_turns, loaded_thread, Some(thread))
+-                    .await?
++                self.load_live_thread_view(
++                    thread_id,
++                    include_turns,
++                    loaded_thread,
++                    Some(thread),
++                    read_only,
++                )
++                .await?
+             } else {
+@@ -2869,2 +2882,3 @@ impl ThreadRequestProcessor {
+                 /*persisted_thread*/ None,
++                read_only,
+             )
+@@ -2902,2 +2916,3 @@ impl ThreadRequestProcessor {
+         include_turns: bool,
++        read_only: bool,
+     ) -> Result<Option<Thread>, ThreadReadViewError> {
+@@ -2906,3 +2921,3 @@ impl ThreadRequestProcessor {
+             let Some(stored_thread) = self
+-                .read_stored_thread_for_read(thread_id, /*include_history*/ false)
++                .read_stored_thread_for_read(thread_id, /*include_history*/ false, read_only)
+                 .await?
+@@ -2922,3 +2937,3 @@ impl ThreadRequestProcessor {
+         let Some(stored_thread) = self
+-            .read_stored_thread_for_read(thread_id, /*include_history*/ include_turns)
++            .read_stored_thread_for_read(thread_id, /*include_history*/ include_turns, read_only)
+             .await?
+@@ -2939,12 +2954,15 @@ impl ThreadRequestProcessor {
+         include_history: bool,
++        read_only: bool,
+     ) -> Result<Option<StoredThread>, ThreadReadViewError> {
+-        match self
+-            .thread_store
+-            .read_thread(StoreReadThreadParams {
+-                thread_id,
+-                include_archived: true,
+-                include_history,
+-            })
+-            .await
+-        {
++        let params = StoreReadThreadParams {
++            thread_id,
++            include_archived: true,
++            include_history,
++        };
++        let result = if read_only {
++            self.thread_store.read_thread_read_only(params).await
++        } else {
++            self.thread_store.read_thread(params).await
++        };
++        match result {
+             Ok(stored_thread) => Ok(Some(stored_thread)),
+@@ -2977,2 +2995,3 @@ impl ThreadRequestProcessor {
+         persisted_thread: Option<Thread>,
++        read_only: bool,
+     ) -> Result<Thread, ThreadReadViewError> {
+@@ -2998,3 +3017,5 @@ impl ThreadRequestProcessor {
+         apply_live_thread_settings(&mut thread, &config_snapshot);
+-        self.apply_thread_read_store_fields(thread_id, &mut thread, include_turns, loaded_thread)
++        self.apply_thread_read_store_fields(
++            thread_id, &mut thread, include_turns, loaded_thread, read_only,
++        )
+             .await?;
+@@ -3009,4 +3030,5 @@ impl ThreadRequestProcessor {
+         loaded_thread: &CodexThread,
++        read_only: bool,
+     ) -> Result<(), ThreadReadViewError> {
+-        self.attach_thread_name(thread_id, thread).await;
++        self.attach_thread_name_with_mode(thread_id, thread, read_only).await;
+ 
+@@ -4773,10 +4795,22 @@ impl ThreadRequestProcessor {
+     async fn attach_thread_name(&self, thread_id: ThreadId, thread: &mut Thread) {
+-        if let Ok(stored_thread) = self
+-            .thread_store
+-            .read_thread(StoreReadThreadParams {
+-                thread_id,
+-                include_archived: true,
+-                include_history: false,
+-            })
+-            .await
++        self.attach_thread_name_with_mode(thread_id, thread, false).await;
++    }
++
++    async fn attach_thread_name_with_mode(
++        &self,
++        thread_id: ThreadId,
++        thread: &mut Thread,
++        read_only: bool,
++    ) {
++        let params = StoreReadThreadParams {
++            thread_id,
++            include_archived: true,
++            include_history: false,
++        };
++        let result = if read_only {
++            self.thread_store.read_thread_read_only(params).await
++        } else {
++            self.thread_store.read_thread(params).await
++        };
++        if let Ok(stored_thread) = result
+             && let Some(title) = stored_thread.name.as_deref().map(str::trim)
+diff --git a/codex-rs/app-server/tests/suite/v2/analytics.rs b/codex-rs/app-server/tests/suite/v2/analytics.rs
+index 50fdb0c..2f123ba 100644
+--- a/codex-rs/app-server/tests/suite/v2/analytics.rs
++++ b/codex-rs/app-server/tests/suite/v2/analytics.rs
+@@ -364,2 +364,3 @@ async fn multi_agent_v2_tools_emit_collaborator_analytics() -> Result<()> {
+                 include_turns: true,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs b/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
+index fea72f3..0fcaab9 100644
+--- a/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
++++ b/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
+@@ -65,2 +65,3 @@ async fn thread_start_stages_daybreak_until_persistence() -> Result<()> {
+                     include_turns: false,
++                    read_only: false,
+                 },
+@@ -92,2 +93,3 @@ async fn thread_start_stages_daybreak_until_persistence() -> Result<()> {
+                     include_turns: false,
++                    read_only: false,
+                 },
+@@ -267,2 +269,3 @@ async fn daybreak_thread_metadata_persists_independently_across_restart_and_fork
+                     include_turns: false,
++                    read_only: false,
+                 },
+diff --git a/codex-rs/app-server/tests/suite/v2/external_agent_config.rs b/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
+index 4b1306b..5c9b255 100644
+--- a/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
++++ b/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
+@@ -636,2 +636,3 @@ source = {:?}
+             include_turns: true,
++            read_only: false,
+         })
+@@ -2008,2 +2009,3 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+@@ -2083,2 +2085,3 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs b/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
+index 48fc7b5..455df47 100644
+--- a/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
++++ b/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
+@@ -314,2 +314,3 @@ async fn managed_reviewers_reuse_fork_and_resume_after_parent_shutdown(
+                 include_turns: true,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs b/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
+index e92bb49..e06e0df 100644
+--- a/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
++++ b/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
+@@ -293,2 +293,3 @@ async fn transparent_image_preserves_output_metadata_and_persisted_history() ->
+             include_turns: true,
++            read_only: false,
+         })
+@@ -564,2 +565,3 @@ async fn image_generation_usage_limit_preserves_correlated_failure_metadata() ->
+             include_turns: true,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs b/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
+index 60d4a65..fec6505 100644
+--- a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
++++ b/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
+@@ -944,2 +944,3 @@ async fn metadata_and_mcp_requests_complete_while_unrelated_resume_loads_config(
+                 include_turns: false,
++                read_only: false,
+             },
+@@ -1227,2 +1228,3 @@ async fn resume_revalidates_persisted_thread_after_config_load(
+                         include_turns: false,
++                        read_only: false,
+                     },
+diff --git a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
+index a0c313b..fbf3fd0 100644
+--- a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
++++ b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
+@@ -1174,2 +1174,3 @@ async fn mcp_tool_call_hint_survives_mid_call_thread_read_and_resume() -> Result
+             include_turns: true,
++            read_only: false,
+         })
+@@ -1249,2 +1250,3 @@ async fn mcp_tool_call_hint_survives_mid_call_thread_read_and_resume() -> Result
+             include_turns: true,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs b/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
+index d4e0c71..e4ef6cb 100644
+--- a/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
++++ b/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
+@@ -838,2 +838,3 @@ features.shell_tool = false
+                 include_turns: true,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/projects.rs b/codex-rs/app-server/tests/suite/v2/projects.rs
+index cb22954..113356d 100644
+--- a/codex-rs/app-server/tests/suite/v2/projects.rs
++++ b/codex-rs/app-server/tests/suite/v2/projects.rs
+@@ -314,2 +314,3 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
+                 include_turns: false,
++                read_only: false,
+             },
+@@ -690,2 +691,3 @@ async fn deleted_project_is_dropped_before_first_durable_thread_persistence() ->
+                 include_turns: false,
++                read_only: false,
+             },
+@@ -957,2 +959,3 @@ async fn projects_validate_filters_cursors_and_sqlite_less_assignment() -> Resul
+                 include_turns: false,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+index da20bdb..468d7e2 100644
+--- a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
++++ b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+@@ -91,2 +91,3 @@ async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context()
+                     include_turns: false,
++                    read_only: false,
+                 })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_environments.rs b/codex-rs/app-server/tests/suite/v2/thread_environments.rs
+index c9bc999..b40812f 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_environments.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_environments.rs
+@@ -144,2 +144,3 @@ async fn assert_read_and_list_environments(
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_fork.rs b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+index 3690b3e..2704dde 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_fork.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+@@ -1279,2 +1279,3 @@ async fn thread_fork_can_cut_before_unfinished_stored_turn() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_list.rs b/codex-rs/app-server/tests/suite/v2/thread_list.rs
+index 036dd05..e898d25 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_list.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_list.rs
+@@ -776,2 +776,3 @@ async fn thread_search_returns_content_matches() -> Result<()> {
+                 include_turns: false,
++                read_only: false,
+             })
+@@ -2726,2 +2727,3 @@ async fn thread_originator_is_preserved_in_list_read_and_resume(originator: &str
+                     include_turns: false,
++                    read_only: false,
+                 },
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+index 799b58d..f61070b 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+@@ -639,2 +639,3 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread()
+             include_turns: false,
++            read_only: false,
+         })
+@@ -733,2 +734,3 @@ async fn thread_metadata_update_sanitizes_git_origin_before_persisting() -> Resu
+             include_turns: false,
++            read_only: false,
+         })
+@@ -1152,2 +1154,3 @@ async fn thread_metadata_update_can_clear_stored_git_fields() -> Result<()> {
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_queue.rs b/codex-rs/app-server/tests/suite/v2/thread_queue.rs
+index caaf4f7..c96faee 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_queue.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_queue.rs
+@@ -486,2 +486,3 @@ async fn cold_thread_resume_dispatches_a_persisted_queued_submission() -> Result
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_read.rs b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+index 860f150..0994611 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_read.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+@@ -136,2 +136,3 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
+             include_turns: false,
++            read_only: false,
+         })
+@@ -206,2 +207,3 @@ async fn thread_read_can_include_turns() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+@@ -277,2 +279,3 @@ async fn thread_read_preserves_file_id_from_completed_turn() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+@@ -298,2 +301,3 @@ async fn thread_read_preserves_file_id_from_completed_turn() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+@@ -336,2 +340,3 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
+             include_turns: false,
++            read_only: false,
+         })
+@@ -351,2 +356,3 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
+             include_turns: true,
++            read_only: false,
+         })
+@@ -978,2 +984,3 @@ async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_pa
+                 include_turns: true,
++                read_only: false,
+             },
+@@ -1129,2 +1136,3 @@ async fn thread_read_can_return_archived_threads_by_id() -> Result<()> {
+             include_turns: false,
++            read_only: false,
+         })
+@@ -1315,2 +1323,3 @@ async fn thread_read_returns_forked_from_id_for_forked_threads() -> Result<()> {
+             include_turns: false,
++            read_only: false,
+         })
+@@ -1354,2 +1363,3 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
+             include_turns: false,
++            read_only: false,
+         })
+@@ -1414,2 +1424,3 @@ async fn paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
+             include_turns: false,
++            read_only: false,
+         })
+@@ -1559,2 +1570,3 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
+             include_turns: true,
++            read_only: false,
+         })
+@@ -1794,2 +1806,3 @@ async fn paginated_history_lists_and_legacy_reads_use_projected_turns_and_items(
+             include_turns: true,
++            read_only: false,
+         })
+@@ -2059,2 +2072,3 @@ async fn paginated_history_lists_and_legacy_reads_use_projected_turns_and_items(
+             include_turns: true,
++            read_only: false,
+         })
+@@ -2157,2 +2171,3 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_resume.rs b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+index 8638286..59ca167 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_resume.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+@@ -1392,2 +1392,3 @@ async fn thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewe
+                 include_turns: false,
++                read_only: false,
+             })
+@@ -4642,2 +4643,3 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
+             include_turns: true,
++            read_only: false,
+         })
+@@ -4673,2 +4675,3 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
+             include_turns: false,
++            read_only: false,
+         })
+@@ -4748,2 +4751,3 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
+             include_turns: false,
++            read_only: false,
+         })
+@@ -6083,2 +6087,3 @@ async fn start_materialized_thread_and_restart(
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_sections.rs b/codex-rs/app-server/tests/suite/v2/thread_sections.rs
+index e374d6e..6f4d0ed 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_sections.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_sections.rs
+@@ -267,2 +267,3 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+                 include_turns: false,
++                read_only: false,
+             },
+@@ -286,2 +287,3 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+                 include_turns: false,
++                read_only: false,
+             },
+@@ -320,2 +322,3 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+                 include_turns: false,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs b/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
+index 52725e5..03e55c0 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
+@@ -311,2 +311,3 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
+                 include_turns,
++                read_only: false,
+             })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+index a9c2dd1..b259b19 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+@@ -134,2 +134,3 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
+                 include_turns: true,
++                read_only: false,
+             },
+@@ -355,2 +356,3 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+                 include_turns: true,
++                read_only: false,
+             },
+@@ -387,2 +389,3 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+                 include_turns: true,
++                read_only: false,
+             },
+@@ -524,2 +527,3 @@ async fn thread_shell_command_rejects_invalid_timeouts_before_execution() -> Res
+                 include_turns: false,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs b/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
+index 3af590c..f7cf6ca 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
+@@ -122,2 +122,3 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
+             include_turns: false,
++            read_only: false,
+         })
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs b/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
+index cddbccb..9e198d9 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
+@@ -421,2 +421,3 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
+                 include_turns: false,
++                read_only: false,
+             },
+diff --git a/codex-rs/app-server/tests/suite/v2/web_search.rs b/codex-rs/app-server/tests/suite/v2/web_search.rs
+index e282c4d..a1b09dd 100644
+--- a/codex-rs/app-server/tests/suite/v2/web_search.rs
++++ b/codex-rs/app-server/tests/suite/v2/web_search.rs
+@@ -342,2 +342,3 @@ async fn assert_standalone_web_search_round_trips_output(
+             include_turns: true,
++            read_only: false,
+         })
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 0e170c2..9a11887 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -557,2 +557,6 @@ impl ThreadStore for LocalThreadStore {
+ 
++    fn read_thread_read_only(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
++        Box::pin(async move { read_thread::read_thread_read_only(self, params).await })
++    }
++
+     fn read_thread_by_rollout_path(
+diff --git a/codex-rs/thread-store/src/local/read_thread.rs b/codex-rs/thread-store/src/local/read_thread.rs
+index a14dcd8..55afa2a 100644
+--- a/codex-rs/thread-store/src/local/read_thread.rs
++++ b/codex-rs/thread-store/src/local/read_thread.rs
+@@ -32,2 +32,22 @@ pub(super) async fn read_thread(
+     params: ReadThreadParams,
++) -> ThreadStoreResult<StoredThread> {
++    read_thread_with_mode(store, params, false).await
++}
++
++pub(super) async fn read_thread_read_only(
++    store: &LocalThreadStore,
++    params: ReadThreadParams,
++) -> ThreadStoreResult<StoredThread> {
++    if params.include_history {
++        return Err(ThreadStoreError::InvalidRequest {
++            message: "read-only thread/read requires includeTurns=false".to_string(),
++        });
++    }
++    read_thread_with_mode(store, params, true).await
++}
++
++async fn read_thread_with_mode(
++    store: &LocalThreadStore,
++    params: ReadThreadParams,
++    read_only: bool,
+ ) -> ThreadStoreResult<StoredThread> {
+@@ -48,3 +68,3 @@ pub(super) async fn read_thread(
+                 )))
+-        && (!params.include_history
++        && (!(params.include_history || read_only)
+             || sqlite_rollout_path_can_load_history_for_thread(&metadata.rollout_path, thread_id)
+@@ -90,4 +110,9 @@ pub(super) async fn read_thread(
+ 
+-    let resolved = if params.include_archived {
++    let resolved = if params.include_archived && read_only {
++        thread_rollout_resolver::resolve_current_including_archived_read_only(store, thread_id)
++            .await?
++    } else if params.include_archived {
+         thread_rollout_resolver::resolve_current_including_archived(store, thread_id).await?
++    } else if read_only {
++        thread_rollout_resolver::resolve_current_read_only(store, thread_id).await?
+     } else {
+@@ -580,2 +605,133 @@ mod tests {
+ 
++    #[tokio::test]
++    async fn readonly_read_does_not_repair_missing_sqlite_row() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(229);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        let rollout_path =
++            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert_eq!(thread.rollout_path, Some(rollout_path));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++    }
++
++    #[tokio::test]
++    async fn readonly_read_without_state_runtime_does_not_create_sqlite() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let state_db_path = config.sqlite.state_db_path();
++        let uuid = Uuid::from_u128(232);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        assert!(!state_db_path.exists());
++        let store = LocalThreadStore::new(config, /*state_db*/ None);
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert_eq!(thread.thread_id, thread_id);
++        assert!(!state_db_path.exists());
++    }
++
++    #[tokio::test]
++    async fn normal_read_repairs_missing_sqlite_row() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(230);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++
++        store
++            .read_thread(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_some());
++    }
++
++    #[tokio::test]
++    async fn readonly_read_uses_rollout_when_sqlite_path_is_stale() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(231);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        let rollout_path =
++            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let stale_path = home.path().join("missing-rollout.jsonl");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let mut builder = ThreadMetadataBuilder::new(
++            thread_id,
++            stale_path.clone(),
++            Utc::now(),
++            SessionSource::Cli,
++        );
++        builder.model_provider = Some(config.default_model_provider_id.clone());
++        runtime
++            .upsert_thread(&builder.build(config.default_model_provider_id.as_str()))
++            .await
++            .expect("seed stale row");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read fallback rollout");
++
++        assert_eq!(thread.rollout_path, Some(rollout_path));
++        assert_eq!(
++            runtime
++                .get_thread(thread_id)
++                .await
++                .expect("read row")
++                .expect("stale row")
++                .rollout_path,
++            stale_path,
++        );
++    }
++
+     #[tokio::test]
+diff --git a/codex-rs/thread-store/src/local/thread_rollout_resolver.rs b/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
+index 5fad0ed..4a070a0 100644
+--- a/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
++++ b/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
+@@ -41,3 +41,3 @@ pub(super) async fn resolve_current(
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+-    resolve(store, thread_id, LookupScope::ExcludeArchived).await
++    resolve(store, thread_id, LookupScope::ExcludeArchived, false).await
+ }
+@@ -48,3 +48,17 @@ pub(super) async fn resolve_current_including_archived(
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+-    resolve(store, thread_id, LookupScope::IncludeArchived).await
++    resolve(store, thread_id, LookupScope::IncludeArchived, false).await
++}
++
++pub(super) async fn resolve_current_read_only(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
++    resolve(store, thread_id, LookupScope::ExcludeArchived, true).await
++}
++
++pub(super) async fn resolve_current_including_archived_read_only(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
++    resolve(store, thread_id, LookupScope::IncludeArchived, true).await
+ }
+@@ -76,2 +90,3 @@ async fn resolve(
+     scope: LookupScope,
++    read_only: bool,
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+@@ -118,2 +133,3 @@ async fn resolve(
+     }
++    let fallback_state_db_ctx = if read_only { None } else { state_db_ctx.as_deref() };
+     if let Some(path) = find_thread_path_by_id_str(
+@@ -121,3 +137,3 @@ async fn resolve(
+         &thread_id.to_string(),
+-        state_db_ctx.as_deref(),
++        fallback_state_db_ctx,
+     )
+@@ -136,3 +152,3 @@ async fn resolve(
+         &thread_id.to_string(),
+-        state_db_ctx.as_deref(),
++        fallback_state_db_ctx,
+     )
+diff --git a/codex-rs/thread-store/src/store.rs b/codex-rs/thread-store/src/store.rs
+index 58c54db..59e19bb 100644
+--- a/codex-rs/thread-store/src/store.rs
++++ b/codex-rs/thread-store/src/store.rs
+@@ -218,2 +218,12 @@ pub trait ThreadStore: Any + Send + Sync {
+ 
++    /// Reads thread metadata without repairing persistent indexes.
++    /// Stores that cannot guarantee this must reject the request.
++    fn read_thread_read_only(&self, _params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
++        Box::pin(async {
++            Err(ThreadStoreError::Unsupported {
++                operation: "read_thread_read_only",
++            })
++        })
++    }
++
+     /// Reads a rollout-backed thread by path when the store supports path-addressed lookups.
