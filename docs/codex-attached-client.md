@@ -274,6 +274,15 @@ unavailable. This does not extend the startup ceiling to existing threads or
 prove real-account work. See
 `experiments/codex-combined-fake-account-zero-tools.md`.
 
+A separate exact-tag candidate added a turn-scoped `allowedTools` field for
+saved threads. Its unfixed red fixture advertised the same eight tools to the
+owner and private turns. The candidate green fixture advertised zero tools
+on a private turn in the saved thread, then restored the owner's identical
+eight tool names on the next turn. Both fixtures used temporary homes and a
+local mock model. This source patch has not been combined with the turn-owner
+or dynamic callback owner patches, and no Desktop window used it. See
+`experiments/codex-app-server-per-turn-allowed-tools.md`.
+
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
 unsafe permissions, an unpatched ASAR and paths outside the private root. These
