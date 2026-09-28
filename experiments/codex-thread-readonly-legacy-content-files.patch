@@ -1,0 +1,151 @@
+diff --git a/codex-rs/thread-store/src/local/read_thread.rs b/codex-rs/thread-store/src/local/read_thread.rs
+--- a/codex-rs/thread-store/src/local/read_thread.rs
++++ b/codex-rs/thread-store/src/local/read_thread.rs
+@@ -570,7 +570,9 @@
+ #[cfg(test)]
+ mod tests {
+     use std::io::Write;
++    use std::path::Path;
+     use std::path::PathBuf;
++    use std::time::SystemTime;
+ 
+     use chrono::Utc;
+     use codex_protocol::ThreadId;
+@@ -601,14 +603,67 @@
+     use crate::local::test_support::write_session_file_with_fork;
+     use crate::local::test_support::write_session_file_with_history_mode;
+ 
++    #[derive(PartialEq, Eq)]
++    struct FileSnapshot {
++        bytes: Vec<u8>,
++        modified: SystemTime,
++    }
++
++    fn file_snapshot(path: &Path) -> Option<FileSnapshot> {
++        let metadata = std::fs::metadata(path).ok()?;
++        Some(FileSnapshot {
++            bytes: std::fs::read(path).expect("read fixture file"),
++            modified: metadata.modified().expect("fixture modification time"),
++        })
++    }
++
++    fn sqlite_snapshots(path: &Path) -> Vec<(&'static str, Option<FileSnapshot>)> {
++        ["", "-wal", "-shm"]
++            .into_iter()
++            .map(|suffix| {
++                let mut name = path.as_os_str().to_os_string();
++                name.push(suffix);
++                (suffix, file_snapshot(Path::new(&name)))
++            })
++            .collect()
++    }
++
++    fn assert_files_unchanged(
++        before: &[(&'static str, Option<FileSnapshot>)],
++        after: &[(&'static str, Option<FileSnapshot>)],
++    ) {
++        for ((before_name, before_file), (after_name, after_file)) in before.iter().zip(after) {
++            assert_eq!(before_name, after_name);
++            assert!(
++                before_file == after_file,
++                "state database file {before_name} changed during read-only request"
++            );
++        }
++    }
++
++    fn append_assistant_message(path: &Path) {
++        let event = serde_json::json!({
++            "timestamp": "2025-01-03T12:00:01Z",
++            "type": "event_msg",
++            "payload": {"type": "agent_message", "message": "Hello from assistant"},
++        });
++        let mut file = std::fs::OpenOptions::new()
++            .append(true)
++            .open(path)
++            .expect("open fixture rollout for assistant message");
++        writeln!(file, "{event}").expect("append fixture assistant message");
++    }
++
+     #[tokio::test]
+     async fn legacy_loaded_read_missing_sqlite_row_after_writer_closes() {
+         let home = TempDir::new().expect("temp dir");
+         let config = test_config(home.path());
++        let state_path = config.sqlite.state_db_path();
+         let uuid = Uuid::from_u128(233);
+         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+         let rollout_path =
+             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        append_assistant_message(&rollout_path);
+         let runtime = codex_state::StateRuntime::init(
+             config.sqlite.clone(),
+             config.default_model_provider_id.clone(),
+@@ -633,7 +688,8 @@
+         store.shutdown_thread(thread_id).await.expect("close writer");
+         runtime.delete_thread(thread_id).await.expect("remove metadata row");
+         assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
+-        let rollout_before = std::fs::read(&rollout_path).expect("read rollout");
++        let state_before = sqlite_snapshots(&state_path);
++        let rollout_before = file_snapshot(&rollout_path).expect("read rollout");
+ 
+         for _ in 0..2 {
+             store
+@@ -655,22 +711,28 @@
+             .expect("read legacy history");
+ 
+         let history = thread.history.expect("legacy history");
+-        assert_eq!(history.items.len(), 2);
++        assert_eq!(history.items.len(), 3);
+         assert!(history.items.iter().any(|item| {
+             matches!(item, RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "Hello from user")
+         }));
++        assert!(history.items.iter().any(|item| {
++            matches!(item, RolloutItem::EventMsg(EventMsg::AgentMessage(event)) if event.message == "Hello from assistant")
++        }));
++        assert_files_unchanged(&state_before, &sqlite_snapshots(&state_path));
++        assert!(file_snapshot(&rollout_path) == Some(rollout_before), "rollout changed");
+         assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
+-        assert_eq!(std::fs::read(&rollout_path).expect("read rollout"), rollout_before);
+     }
+ 
+     #[tokio::test]
+     async fn readonly_read_does_not_repair_missing_sqlite_row() {
+         let home = TempDir::new().expect("temp dir");
+         let config = test_config(home.path());
++        let state_path = config.sqlite.state_db_path();
+         let uuid = Uuid::from_u128(229);
+         let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
+         let rollout_path =
+             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        append_assistant_message(&rollout_path);
+         let runtime = codex_state::StateRuntime::init(
+             config.sqlite.clone(),
+             config.default_model_provider_id.clone(),
+@@ -679,6 +741,8 @@
+         .expect("state db should initialize");
+         let store = LocalThreadStore::new(config, Some(runtime.clone()));
+         assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++        let state_before = sqlite_snapshots(&state_path);
++        let rollout_before = file_snapshot(&rollout_path).expect("read rollout");
+ 
+         let thread = store
+             .read_thread_read_only(ReadThreadParams {
+@@ -691,10 +755,18 @@
+ 
+         assert_eq!(thread.rollout_path, Some(rollout_path));
+         let history = thread.history.expect("legacy history");
+-        assert_eq!(history.items.len(), 2);
++        assert_eq!(history.items.len(), 3);
+         assert!(history.items.iter().any(|item| {
+             matches!(item, RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "Hello from user")
+         }));
++        assert!(history.items.iter().any(|item| {
++            matches!(item, RolloutItem::EventMsg(EventMsg::AgentMessage(event)) if event.message == "Hello from assistant")
++        }));
++        assert_files_unchanged(&state_before, &sqlite_snapshots(&state_path));
++        assert!(
++            file_snapshot(&thread.rollout_path.expect("rollout path")) == Some(rollout_before),
++            "rollout changed"
++        );
+         assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
+     }
+ 
