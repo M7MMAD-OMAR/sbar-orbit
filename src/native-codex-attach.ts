@@ -17,6 +17,7 @@ export type PreparedCodexAttachedLaunch = {
   selectedFiles: [];
   privateHome: string;
   authoritySocket: CodexAuthoritySocket;
+  authorityStateSocket: CodexAuthoritySocket;
   release: () => Promise<void>;
 };
 
@@ -95,6 +96,7 @@ export async function prepareCodexAttachedLaunch(
   await ownedPrivateDirectory(session);
   await attachCapableExecutable(executable, session);
   const authoritySocket = await liveAuthoritySocket(authoritySocketPath);
+  const authorityStateSocket = await liveAuthoritySocket(`${authoritySocketPath}.state`);
   const root = await mkdtemp(join(session, "codex-attach-"));
   try {
     await chmod(root, 0o700);
@@ -121,7 +123,7 @@ export async function prepareCodexAttachedLaunch(
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
       `--user-data-dir=${join(insideHome, ".config", "Codex")}`,
     ];
-    return { argv, toolkit: "wayland", selectedFiles: [], privateHome, authoritySocket,
+    return { argv, toolkit: "wayland", selectedFiles: [], privateHome, authoritySocket, authorityStateSocket,
       release: async () => { await rm(root, { recursive: true, force: true }); } };
   } catch (error) {
     await rm(root, { recursive: true, force: true });

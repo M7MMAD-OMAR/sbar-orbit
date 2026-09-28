@@ -5,13 +5,14 @@ Codex Desktop client for the optional shared app-server socket feature. Nothing
 in the public `launch-app` action calls it. The installed Desktop and its
 personal profile are not changed by this path.
 
-The caller must provide a socket below `/run/user/<uid>` and a private Orbit
-display. Preparation checks that every socket parent is owned by the user and
-private, that the socket has mode limited to the user, and that it accepts a
-connection. It records the socket device and inode. The native mount helper
-opens that same inode through a descriptor immediately before launch, checks
-its owner and permissions again, and binds the descriptor at
-`/run/user/<uid>/orbit-codex-authority.sock` inside the private mount namespace.
+The caller must provide an authority socket below `/run/user/<uid>` with its
+adjacent `.state` socket and a private Orbit display. Preparation checks that
+every socket parent is owned by the user and private, that both sockets have
+modes limited to the user, and that both accept a connection. It records each
+socket device and inode. The native mount helper opens those same inodes
+through descriptors immediately before launch, checks their owners and
+permissions again, and binds them as `orbit-codex-authority.sock` and
+`orbit-codex-authority.sock.state` inside the private mount namespace.
 The host runtime is hidden by a temporary filesystem. The client receives only
 the mounted authority socket, not the rest of the host runtime.
 
@@ -29,10 +30,10 @@ executable it also requires the optional feature's staged manifest. The
 manifest is only a prerequisite: it does not prove that the installed bundle
 still contains a working patch.
 
-`tests/native-codex-attach.test.ts` uses a temporary Unix listener and a
-fixture executable. The fixture connected to the mounted socket from inside
+`tests/native-codex-attach.test.ts` uses temporary Unix listeners and a
+fixture executable. The fixture connected to both mounted sockets from inside
 the private mount, saw the attach-only setting, and saw no copied Codex state.
-The same test rejected a changed inode before launch. A second test rejected
+The same test rejected a changed inode on either socket before launch. A second test rejected
 permissive, linked, and out-of-runtime socket paths, and an unrelated executable.
 The focused run passed with 2 tests and 10 assertions on September 28, 2026.
 
