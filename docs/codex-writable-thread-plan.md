@@ -6,7 +6,11 @@ gate. This plan concerns a new Orbit-owned thread on the same owner authority,
 not writes to any existing personal thread, project entry or application
 profile. The first writable tier is a new conversation and bounded private
 display actions. A selected project file grant is a later gate within this
-plan. It does not authorize a personal cutover.
+plan. It does not authorize a personal cutover. The user's acceptance criterion
+is broader: Orbit must eventually do the same work the person can do in the
+same account, including existing conversations, files and devices, from its
+own display. The new-thread tier is an intermediate measurement, not success
+against that criterion.
 
 ## Evidence and boundaries
 
@@ -238,3 +242,14 @@ Unknown measurements remain `not measured`. In particular, a selected remote
 environment alone does not confine MCP or direct RPC calls, the current
 display mount does not isolate an executor's files, and a user-owned Unix
 socket does not separate processes running under the same user identity.
+
+## Existing conversation parity
+
+The current candidate's `allowedTools` ceiling is captured only at
+`thread/start`. It cannot constrain a new turn in an existing owner thread.
+The gate must continue to deny `thread/resume` and `turn/start` from the
+private window. Safe existing-thread work needs an owner-side per-turn tool
+ceiling, a condition that atomically rejects a turn while the owner thread is
+busy, and checks that a turn cannot change the owner's persistent cwd,
+sandbox or environment settings. Direct host RPC and MCP dispatch need the
+same thread ownership policy. None of these is implemented or measured.
