@@ -5,9 +5,10 @@ import { basename, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 import { openPublicWebLease, type PublicWebLease, type PublicWebLeaseRequest } from "./egress";
 import { snapshotZenProfile, type ZenProfileSnapshot } from "./native-zen";
+import { compileZenCoreGuard, type ZenCoreGuard } from "./native-zen-core-guard";
 
 type ZenLocation = { home?: string; deploymentFiles?: string;
-  leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest"> };
+  leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest">; guardCompiler?: string };
 type ZenInstallation = { deploymentFiles: string; profile: string };
 
 function selectedProfile(ini: string): string {
@@ -111,6 +112,32 @@ async function writePrivateProxyPreferences(profile: string): Promise<void> {
   catch (error) { await rm(temporary, { force: true }); throw error; }
 }
 
+const publicWebScript = [
+  'proofs="$ORBIT_NO_CORE_PROOFS"',
+  '[ -r "$proofs/pid-$$" ] || exit 125',
+  '/usr/bin/socat TCP-LISTEN:8888,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/orbit/zen/runtime/lease.sock </dev/null >/dev/null 2>&1 &',
+  'bridge=$!',
+  'trap \'kill "$bridge" 2>/dev/null; wait "$bridge" 2>/dev/null\' EXIT',
+  'ready=0',
+  'for attempt in 1 2 3 4 5 6 7 8 9 10; do',
+  '  if /usr/bin/python3 -c \'import socket; s=socket.socket(); s.settimeout(0.2); status=s.connect_ex(("127.0.0.1", 8888)); s.close(); raise SystemExit(status != 0)\'; then ready=1; break; fi',
+  '  kill -0 "$bridge" 2>/dev/null || exit 111',
+  '  /usr/bin/sleep 0.05',
+  'done',
+  '[ "$ready" -eq 1 ] || exit 111',
+  '[ -r "$proofs/pid-$bridge" ] || exit 125',
+  '"$@" &',
+  'zen=$!',
+  'zen_ready=0',
+  'for attempt in 1 2 3 4 5 6 7 8 9 10; do',
+  '  if [ -r "$proofs/pid-$zen" ]; then zen_ready=1; break; fi',
+  '  kill -0 "$zen" 2>/dev/null || break',
+  '  /usr/bin/sleep 0.05',
+  'done',
+  '[ "$zen_ready" -eq 1 ] || { kill "$zen" 2>/dev/null; wait "$zen" 2>/dev/null; exit 125; }',
+  'wait "$zen"',
+].join("\n");
+
 /** Start only from a copied profile. The action caller cannot supply paths or arguments. */
 export async function prepareZenLaunch(
   sessionDirectory: string, waylandSocket: string, libraryDirectory: string, location: ZenLocation = {},
@@ -130,7 +157,9 @@ export async function prepareZenLaunch(
   const privateDirectory = await mkdtemp(join(session, "zen-"));
   await chmod(privateDirectory, 0o700);
   let lease: PublicWebLease | undefined;
+  let guard: ZenCoreGuard | undefined;
   try {
+    if (network === "public-web") guard = await compileZenCoreGuard(session, location.guardCompiler);
     const snapshot = await snapshotZenProfile(installation.profile, privateDirectory);
     for (const name of ["runtime", "config", "data", "cache", "state"])
       await mkdir(join(privateDirectory, name), { mode: 0o700 });
@@ -138,6 +167,7 @@ export async function prepareZenLaunch(
     if (network === "public-web") {
       if (!(await Bun.file("/usr/bin/socat").exists()))
         throw new OrbitError("UNSUPPORTED", "Zen public web mode needs socat");
+      await mkdir(join(privateDirectory, "runtime", "no-core-proofs"), { mode: 0o700 });
       lease = await openPublicWebLease({ parentDirectory: session, ...location.leaseProbe });
       await writePrivateProxyPreferences(snapshot.directory);
       await writeFile(join(privateDirectory, "runtime", "lease.sock"), "", { mode: 0o600 });
@@ -151,7 +181,8 @@ export async function prepareZenLaunch(
       "--dir", "/etc", "--ro-bind", "/etc/fonts", "/etc/fonts", "--ro-bind", "/etc/passwd", "/etc/passwd",
       "--ro-bind", "/etc/group", "/etc/group", "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",
       "--ro-bind", installation.deploymentFiles, "/app", "--ro-bind", libraries, "/runtime-lib",
-      "--dir", "/orbit", "--bind", privateDirectory, "/orbit/zen",
+      ...(guard ? ["--dir", "/orbit", "--dir", "/orbit/no-core", "--ro-bind", guard.library, "/orbit/no-core/guard.so"] : []),
+      ...(guard ? [] : ["--dir", "/orbit"]), "--bind", privateDirectory, "/orbit/zen",
       "--ro-bind", socket, "/orbit/zen/runtime/wayland-0",
       ...(lease ? ["--ro-bind", lease.socketPath, "/orbit/zen/runtime/lease.sock"] : []),
       "--clearenv", "--setenv", "HOME", "/orbit/zen", "--setenv", "XDG_RUNTIME_DIR", "/orbit/zen/runtime",
@@ -161,11 +192,11 @@ export async function prepareZenLaunch(
       "--setenv", "MOZ_ENABLE_WAYLAND", "1", "--setenv", "NO_AT_BRIDGE", "1",
       "--setenv", "DBUS_SESSION_BUS_ADDRESS", "unix:path=/orbit/zen/runtime/no-session-bus",
       "--setenv", "LD_LIBRARY_PATH", "/runtime-lib:/app/lib:/app/zen", "--setenv", "PATH", "/usr/bin:/bin",
+      ...(guard ? ["--setenv", "LD_PRELOAD", "/orbit/no-core/guard.so",
+        "--setenv", "ORBIT_NO_CORE_PROOFS", "/orbit/zen/runtime/no-core-proofs"] : []),
       "--setenv", "LANG", "C.UTF-8", "--chdir", "/orbit/zen",
       // The shell, bridge, and Zen all run under the same bubblewrap PID and network namespaces.
-      ...(lease ? ["/usr/bin/sh", "-c",
-        "/usr/bin/socat TCP-LISTEN:8888,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/orbit/zen/runtime/lease.sock </dev/null >/dev/null 2>&1 &\nbridge=$!\ntrap 'kill \"$bridge\" 2>/dev/null; wait \"$bridge\" 2>/dev/null' EXIT\nready=0\nfor attempt in 1 2 3 4 5 6 7 8 9 10; do\n  if /usr/bin/python3 -c 'import socket; s=socket.socket(); s.settimeout(0.2); status=s.connect_ex((\"127.0.0.1\", 8888)); s.close(); raise SystemExit(status != 0)'; then ready=1; break; fi\n  kill -0 \"$bridge\" 2>/dev/null || exit 111\n  /usr/bin/sleep 0.05\ndone\n[ \"$ready\" -eq 1 ] || exit 111\n\"$@\"",
-        "orbit-zen"] : []),
+      ...(lease ? ["/usr/bin/sh", "-c", publicWebScript, "orbit-zen"] : []),
       "/app/zen/zen", "--no-remote", "--profile", profileInside,
     ];
     return { argv, toolkit: "wayland", selectedFiles: [],
@@ -174,14 +205,14 @@ export async function prepareZenLaunch(
         network, hostFiles: "unavailable" },
       release: async () => {
         const results = await Promise.allSettled([
-          lease?.close(), rm(privateDirectory, { recursive: true, force: true }),
+          lease?.close(), guard?.release(), rm(privateDirectory, { recursive: true, force: true }),
         ]);
         if (results.some(result => result.status === "rejected"))
           throw new OrbitError("BACKEND_FAILED", "Zen private profile or web lease cleanup failed");
       } };
   } catch (error) {
     const cleanup = await Promise.allSettled([
-      lease?.close(), rm(privateDirectory, { recursive: true, force: true }),
+      lease?.close(), guard?.release(), rm(privateDirectory, { recursive: true, force: true }),
     ]);
     if (cleanup.some(result => result.status === "rejected"))
       throw new OrbitError("BACKEND_FAILED", "Zen launch preparation cleanup failed");
