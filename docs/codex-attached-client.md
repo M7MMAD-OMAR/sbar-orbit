@@ -398,3 +398,14 @@ turn. It also subscribes the client and can update shared in-memory client
 information. A private writer for old conversations therefore needs an
 explicitly measured resume boundary, not a silent read assumption. See
 `experiments/codex-existing-thread-resume-boundary.md`.
+
+The turn-owner, dynamic callback owner, and saved-thread per-turn tool ceiling
+patches were then combined in one clean exact-tag app-server source tree. One
+disposable binary passed three green fixtures with both owner flags enabled:
+the second client could not steer the owner's active turn, could not answer
+its dynamic tool callback, and a private turn advertised zero tools while the
+owner retained the same eight names before and after. Turning the owner flags
+off on that same binary reproduced the two prior cross-client failures. The
+combined candidate is not wired into the Desktop or Orbit gate. Other input
+methods, resume effects, private executor placement, and account continuity
+remain unmeasured. See `experiments/codex-combined-owner-ceiling.md`.
