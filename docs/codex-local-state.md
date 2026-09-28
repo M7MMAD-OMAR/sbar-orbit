@@ -1,6 +1,14 @@
 # Codex Desktop private state follow-up
 
-Measured 28 September 2026 on the installed Linux desktop app. These findings supplement `docs/validation.md`. They do not establish that the private app can use the account service or open existing conversations.
+Measured 28 September 2026 on the installed Linux desktop app. These findings supplement `docs/validation.md`. The earlier experiments below are retained as their original results; the later result is recorded here.
+
+## Later private state result
+
+`launch-app codex` now creates a private disk home while leaving the installed app and original home in place. It reads the original Codex state, then copies the global sidebar state, configuration and dconf preferences. SQLite online backup captures both `state_5.sqlite` and `thread_history_1.sqlite`, including uncheckpointed WAL rows. Rollout JSONL files use Btrfs reflinks. The account copy has its refresh token cleared. The private mount hides the original `/home` and presents the private home at the expected path. The snapshot checks source identity, rejects links and oversized files, and retries a source change up to three times. A failed attempt removes its partial private copy.
+
+In the final private pilot, the report counted 23 projects, 687 threads, 687 paginated threads, 690 rollout files, and a 2,165,903,360 byte private history database. The UI displayed the user's dark theme, pinned conversations, project names and account identity. After opening one older pinned conversation and waiting up to 60 seconds, the historical message content appeared. An earlier 45 second observation of the same conversation still showed a loading spinner, so the delay matters. The app-server log recorded `thread/read` requests without a logged thread, SQLite or rollout failure. It also reported missing plugin cache paths, MCP startup problems and an unavailable keyring provider. These did not stop the observed historical content from loading, but tool parity remains unmeasured.
+
+During a private pilot, the original `auth.json` and `config.toml` SHA-256 values matched before and after. The copied state is not atomic across the JSON and SQLite stores, and it is a point in time copy. The original project directories are hidden inside the private app, so their names in the sidebar do not prove file access. Sending a prompt through the private account, token refresh, plugin use, project file edits, and retention of changes made only in the private app after closing it have not been measured. A broker crash can leave a private disk copy until a later launch sweeps it; the sweep checks the owner's process identity and keeps recent or active copies.
 
 ## Auth-only private session
 

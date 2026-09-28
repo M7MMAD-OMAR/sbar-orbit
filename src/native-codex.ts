@@ -1,13 +1,16 @@
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
+import { seedNativePreferences } from "./native-preferences";
 
 const maximumAuthBytes = 1024 * 1024;
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
+const orphanGraceMs = 5 * 60 * 1000;
+const recordlessGraceMs = 24 * 60 * 60 * 1000;
 
-export type CodexProfileSource = { authPath?: string; executable?: string };
+export type CodexProfileSource = { authPath?: string; executable?: string; stateHome?: string };
 export type CodexDisplayEnv = { runtimeDirectory: string; waylandDisplay: string; libraryPath: string };
 
 export type PreparedCodexLaunch = {
@@ -15,9 +18,74 @@ export type PreparedCodexLaunch = {
   toolkit: "wayland";
   selectedFiles: [];
   privateHome: string;
-  accountSnapshot: { authBytes: number; mode: "chatgpt" };
+  accountSnapshot: { authBytes: number; mode: "chatgpt"; projects: number; threads: number; atomicAcrossStores: false };
   release: () => Promise<void>;
 };
+
+async function processStartTicks(pid: number): Promise<string | undefined> {
+  const value = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => undefined);
+  if (!value) return undefined;
+  const afterName = value.slice(value.lastIndexOf(")") + 1).trim().split(/\s+/);
+  const start = afterName[19];
+  return start && /^\d+$/.test(start) ? start : undefined;
+}
+
+export async function cleanOrphanCodexSnapshots(root: string, now = Date.now()) {
+  const removed: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^codex-[A-Za-z0-9]{6}$/.test(entry.name)) continue;
+    try {
+      const directory = join(root, entry.name);
+      const info = await lstat(directory);
+      if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() ||
+          (info.mode & 0o077) !== 0 || await realpath(directory) !== directory) continue;
+      let owner: { pid?: unknown; startTicks?: unknown } | undefined;
+      try { owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")); } catch {}
+      const age = now - info.mtimeMs;
+      if (typeof owner?.pid === "number" && Number.isSafeInteger(owner.pid) && owner.pid > 0 &&
+          typeof owner.startTicks === "string" && /^\d+$/.test(owner.startTicks)) {
+        if (await processStartTicks(owner.pid) === owner.startTicks || age < orphanGraceMs) continue;
+      } else if (age < recordlessGraceMs) continue;
+      await rm(directory, { recursive: true, force: true });
+      removed.push(entry.name);
+    } catch {
+      // A damaged old snapshot must not prevent a fresh private launch.
+    }
+  }
+  return removed;
+}
+
+async function privateCodexStorage() {
+  const root = join(homedir(), ".cache", "sbar-orbit", "codex-private");
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const info = await lstat(root);
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.() ||
+      (info.mode & 0o077) !== 0 || await realpath(root) !== root)
+    throw new OrbitError("UNSUPPORTED", "Codex private storage is not an owned private directory");
+  const filesystem = await statfs(root);
+  if ([0x01021994, 0x858458f6].includes(filesystem.type))
+    throw new OrbitError("UNSUPPORTED", "Codex conversation snapshot needs disk storage");
+  await cleanOrphanCodexSnapshots(root);
+  return root;
+}
+
+async function snapshotLocalState(source: string, destination: string) {
+  const helper = resolve(import.meta.dir, "native/codex_state_snapshot.py");
+  const child = Bun.spawn(["/usr/bin/python3", helper, source, destination],
+    { stdout: "pipe", stderr: "ignore" });
+  const timer = setTimeout(() => child.kill(), 100000);
+  try {
+    const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    if (code !== 0) throw new OrbitError("BACKEND_FAILED", "Codex local projects could not be snapshotted");
+    const report: unknown = JSON.parse(output);
+    if (typeof report !== "object" || report === null ||
+        typeof (report as { projects?: unknown }).projects !== "number" ||
+        typeof (report as { threads?: unknown }).threads !== "number" ||
+        (report as { atomicAcrossStores?: unknown }).atomicAcrossStores !== false)
+      throw new OrbitError("BACKEND_FAILED", "Codex local state snapshot returned an invalid report");
+    return report as { projects: number; threads: number; atomicAcrossStores: false };
+  } finally { clearTimeout(timer); }
+}
 
 async function readStableAuth(path: string): Promise<Buffer> {
   let file;
@@ -78,9 +146,13 @@ export async function prepareCodexLaunch(
   if (!(await stat(executable).then(value => value.isFile(), () => false)))
     throw new OrbitError("UNSUPPORTED", "Codex Desktop is not installed");
   const authPath = source.authPath ?? join(homedir(), ".codex", "auth.json");
-  const root = await mkdtemp(join(session, "codex-"));
+  const root = await mkdtemp(join(await privateCodexStorage(), "codex-"));
   try {
     await chmod(root, 0o700);
+    const startTicks = await processStartTicks(process.pid);
+    if (!startTicks) throw new OrbitError("UNSUPPORTED", "Codex private storage needs process identity");
+    await writeFile(join(root, "owner.json"), JSON.stringify({ pid: process.pid, startTicks }),
+      { flag: "wx", mode: 0o600 });
     const home = join(root, "home");
     const codex = join(home, ".codex");
     const config = join(home, ".config");
@@ -89,11 +161,14 @@ export async function prepareCodexLaunch(
     const cache = join(home, ".cache");
     for (const path of [home, codex, config, join(config, "Codex"), join(home, ".local"), data, state, cache])
       await mkdir(path, { recursive: true, mode: 0o700 });
+    await seedNativePreferences(config);
+    const stateReport = await snapshotLocalState(source.stateHome ?? join(homedir(), ".codex"), codex);
     const auth = await readStableAuth(authPath);
     await writeFile(join(codex, "auth.json"), auth, { flag: "wx", mode: 0o600 });
     const insideHome = homedir();
     const argv = [
       "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_SESSION_TYPE=wayland",
+      "GSETTINGS_BACKEND=dconf",
       `XDG_RUNTIME_DIR=${display.runtimeDirectory}`, `WAYLAND_DISPLAY=${display.waylandDisplay}`,
       `LD_LIBRARY_PATH=${display.libraryPath}`,
       `HOME=${insideHome}`, `CODEX_HOME=${join(insideHome, ".codex")}`,
@@ -104,10 +179,11 @@ export async function prepareCodexLaunch(
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
       `--user-data-dir=${join(insideHome, ".config", "Codex")}`,
     ];
-    if (!home.startsWith(session + sep)) throw new OrbitError("BACKEND_FAILED", "Codex snapshot escaped the session");
+    if (!home.startsWith(join(homedir(), ".cache", "sbar-orbit", "codex-private") + sep))
+      throw new OrbitError("BACKEND_FAILED", "Codex snapshot escaped private disk storage");
     return {
       argv, toolkit: "wayland", selectedFiles: [], privateHome: home,
-      accountSnapshot: { authBytes: auth.length, mode: "chatgpt" },
+      accountSnapshot: { authBytes: auth.length, mode: "chatgpt", ...stateReport },
       release: async () => { await rm(root, { recursive: true, force: true }); },
     };
   } catch (error) {

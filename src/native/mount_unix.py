@@ -89,12 +89,23 @@ def mount_command(arguments, report_directory, selected_files, policy):
         if "privateHome" in policy:
             private_home = policy["privateHome"]
             host_home = pwd.getpwuid(os.getuid()).pw_dir
+            disk_root = os.path.join(host_home, ".cache", "sbar-orbit", "codex-private")
+            disk_parts = (os.path.relpath(private_home, disk_root).split("/")
+                          if isinstance(private_home, str) and inside(private_home, disk_root) else [])
+            disk_home = (len(disk_parts) == 2 and re.fullmatch(r"codex-[A-Za-z0-9]{6}", disk_parts[0])
+                         and disk_parts[1] == "home")
             if (not isinstance(private_home, str) or not private_home.startswith("/")
                     or "\0" in private_home or len(private_home) > 4096
-                    or not inside(private_home, session) or private_home == session
+                    or (not inside(private_home, session) and not disk_home) or private_home == session
                     or os.path.realpath(private_home) != private_home
                     or not inside(host_home, "/home") or host_home.count("/") != 2):
                 raise PrivateMountUnavailable("Private home path is unavailable")
+            if disk_home:
+                for candidate in (disk_root, os.path.dirname(private_home)):
+                    check = os.lstat(candidate)
+                    if (not stat.S_ISDIR(check.st_mode) or check.st_uid != os.getuid()
+                            or check.st_mode & 0o077 or os.path.realpath(candidate) != candidate):
+                        raise PrivateMountUnavailable("Private disk home root is unsafe")
             fd = os.open(private_home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
             descriptors.append(fd)
             found = os.fstat(fd)
