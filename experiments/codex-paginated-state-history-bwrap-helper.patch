@@ -1,0 +1,526 @@
+diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
+index b0d2b15..756b6e4 100644
+--- a/codex-rs/thread-store/Cargo.toml
++++ b/codex-rs/thread-store/Cargo.toml
+@@ -38,6 +38,7 @@ zstd = { workspace = true }
+ [dev-dependencies]
+ codex-utils-absolute-path = { workspace = true }
+ pretty_assertions = { workspace = true }
++sha2 = { workspace = true }
+ tempfile = { workspace = true }
+ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+ uuid = { workspace = true }
+diff --git a/codex-rs/thread-store/src/local/rollout_lineage.rs b/codex-rs/thread-store/src/local/rollout_lineage.rs
+index ae3e1be..83021a6 100644
+--- a/codex-rs/thread-store/src/local/rollout_lineage.rs
++++ b/codex-rs/thread-store/src/local/rollout_lineage.rs
+@@ -37,6 +37,21 @@ impl LocalThreadStore {
+         self.resolve_rollout_lineage_with_representation(
+             requested_thread_id,
+             LineageRepresentation::Existing,
++            None,
++        )
++        .await
++    }
++
++    #[cfg(test)]
++    pub(super) async fn resolve_rollout_lineage_from_selected_rollout(
++        &self,
++        requested_thread_id: ThreadId,
++        selected_rollout: PathBuf,
++    ) -> ThreadStoreResult<RolloutLineage> {
++        self.resolve_rollout_lineage_with_representation(
++            requested_thread_id,
++            LineageRepresentation::Existing,
++            Some(selected_rollout),
+         )
+         .await
+     }
+@@ -48,6 +63,7 @@ impl LocalThreadStore {
+         self.resolve_rollout_lineage_with_representation(
+             requested_thread_id,
+             LineageRepresentation::PlainForReference,
++            None,
+         )
+         .await
+     }
+@@ -56,6 +72,7 @@ impl LocalThreadStore {
+         &self,
+         requested_thread_id: ThreadId,
+         representation: LineageRepresentation,
++        mut selected_rollout: Option<PathBuf>,
+     ) -> ThreadStoreResult<RolloutLineage> {
+         let mut segments = Vec::new();
+         let mut seen = HashSet::new();
+@@ -78,15 +95,26 @@ impl LocalThreadStore {
+                     (rollout_id, rollout_path)
+                 }
+                 None => {
+-                    let resolved = thread_rollout_resolver::resolve_current_including_archived(
+-                        self,
+-                        requested_thread_id,
+-                    )
+-                    .await?
+-                    .ok_or_else(|| {
+-                        malformed_lineage(requested_thread_id, "missing source rollout")
+-                    })?;
+-                    (resolved.rollout_id, resolved.path)
++                    if let Some(path) = selected_rollout.take() {
++                        let rollout_id =
++                            thread_rollout_resolver::rollout_id_from_path_or_legacy_thread_id(
++                                path.as_path(),
++                                requested_thread_id,
++                                ThreadHistoryMode::Paginated,
++                            )?;
++                        (rollout_id, path)
++                    } else {
++                        let resolved =
++                            thread_rollout_resolver::resolve_current_including_archived(
++                                self,
++                                requested_thread_id,
++                            )
++                            .await?
++                            .ok_or_else(|| {
++                                malformed_lineage(requested_thread_id, "missing source rollout")
++                            })?;
++                        (resolved.rollout_id, resolved.path)
++                    }
+                 }
+             };
+             if !seen.insert(rollout_id) {
+diff --git a/codex-rs/thread-store/src/local/thread_history/read_tests.rs b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+index 06eaaca..1a5c623 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+@@ -1,4 +1,7 @@
+ use std::fs;
++use std::io::BufRead;
++use std::io::Read;
++use std::io::Write;
+ use std::time::Duration;
+ 
+ use chrono::Utc;
+@@ -19,6 +22,8 @@ use codex_protocol::realtime::RealtimeTranscriptRole;
+ use codex_rollout::RolloutItem;
+ use codex_rollout::RolloutLine;
+ use pretty_assertions::assert_eq;
++use sha2::Digest;
++use sha2::Sha256;
+ use tempfile::TempDir;
+ 
+ use super::*;
+@@ -30,6 +35,414 @@ use crate::StoredTurnError;
+ use crate::StoredTurnStatus;
+ use crate::local::test_support::test_config;
+ 
++fn history_file_snapshots(
++    path: &std::path::Path,
++) -> Vec<(&'static str, Option<HistoryFileSnapshot>)> {
++    ["", "-wal", "-shm"]
++        .into_iter()
++        .map(|suffix| {
++            let mut file_name = path.as_os_str().to_os_string();
++            file_name.push(suffix);
++            let path = std::path::PathBuf::from(file_name);
++            if !path.exists() {
++                return (suffix, None);
++            }
++            let metadata = fs::metadata(&path).expect("history file metadata");
++            let bytes = fs::read(&path).expect("read history file");
++            let digest = Sha256::digest(&bytes);
++            (
++                suffix,
++                Some(HistoryFileSnapshot {
++                    sha256: format!("{digest:x}"),
++                    len: metadata.len(),
++                    modified: metadata.modified().expect("history file modification time"),
++                    readonly: metadata.permissions().readonly(),
++                    bytes,
++                }),
++            )
++        })
++        .collect()
++}
++
++#[derive(PartialEq, Eq)]
++struct HistoryFileSnapshot {
++    sha256: String,
++    len: u64,
++    modified: std::time::SystemTime,
++    readonly: bool,
++    bytes: Vec<u8>,
++}
++
++impl std::fmt::Debug for HistoryFileSnapshot {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("HistoryFileSnapshot")
++            .field("sha256", &self.sha256)
++            .field("len", &self.len)
++            .field("modified", &self.modified)
++            .field("readonly", &self.readonly)
++            .finish()
++    }
++}
++
++fn report_history_file_changes(
++    phase: &str,
++    before: &[(&'static str, Option<HistoryFileSnapshot>)],
++    after: &[(&'static str, Option<HistoryFileSnapshot>)],
++) -> bool {
++    let mut changed = false;
++    for ((before_name, before_file), (after_name, after_file)) in before.iter().zip(after) {
++        assert_eq!(before_name, after_name);
++        let changed_offsets = match (before_file, after_file) {
++            (Some(before_file), Some(after_file)) => Some(
++                before_file
++                    .bytes
++                    .iter()
++                    .zip(&after_file.bytes)
++                    .filter(|(left, right)| left != right)
++                    .count()
++                    + before_file.bytes.len().abs_diff(after_file.bytes.len()),
++            ),
++            _ => None,
++        };
++        eprintln!(
++            "{phase} history{before_name}: before={before_file:?} after={after_file:?} changed_offsets={changed_offsets:?}"
++        );
++        changed |= before_file != after_file;
++    }
++    changed
++}
++
++#[tokio::test]
++async fn bwrap_paginated_page_helper_child() {
++    if std::env::var_os("ORBIT_BWRAP_PAGE_HELPER").is_none() {
++        return;
++    }
++    let stdin = std::io::stdin();
++    let mut input = stdin.lock();
++    let mut header = String::new();
++    input.read_line(&mut header).expect("read request length");
++    let length: usize = header.trim_end().parse().expect("parse request length");
++    assert!((1..=4096).contains(&length));
++    let mut request_bytes = vec![0; length];
++    input.read_exact(&mut request_bytes).expect("read request body");
++    let request: serde_json::Value =
++        serde_json::from_slice(&request_bytes).expect("parse page request");
++    let thread_id = ThreadId::from_string(
++        request["threadId"].as_str().expect("thread ID must be a string"),
++    )
++    .expect("valid thread ID");
++    let kind = request["kind"].as_str().expect("page kind must be a string");
++    assert!(matches!(kind, "turns" | "items"));
++    let limit = request["limit"].as_u64().expect("page limit must be an integer");
++    assert!((1..=100).contains(&limit));
++    let cursor = match request.get("cursor") {
++        None | Some(serde_json::Value::Null) => None,
++        Some(value) => {
++            let cursor = value.as_str().expect("cursor must be a string");
++            assert!(cursor.len() <= 4096);
++            Some(cursor.to_string())
++        }
++    };
++    let config = test_config(std::path::Path::new("/fixture"));
++    let state_reader = config
++        .sqlite
++        .open_read_only_pool(
++            config.sqlite.state_db_path().as_path(),
++            Some(Duration::from_secs(5)),
++        )
++        .await
++        .expect("open state pool inside bwrap without migration");
++    let selected: (String, String) = sqlx::query_as(
++        "SELECT history_mode, rollout_path FROM threads WHERE id = ?",
++    )
++    .bind(thread_id.to_string())
++    .fetch_one(&state_reader)
++    .await
++    .expect("read selected paginated rollout from state");
++    assert_eq!(selected.0, "paginated");
++    let selected_path = std::path::PathBuf::from(selected.1);
++    let canonical_path = fs::canonicalize(&selected_path).expect("canonical selected rollout");
++    let session_root = fs::canonicalize("/fixture/sessions").expect("canonical sessions root");
++    assert!(canonical_path.starts_with(session_root));
++    assert_eq!(selected_path, canonical_path);
++    state_reader.close().await;
++
++    let history_path = config.sqlite.thread_history_db_path();
++    let reader = sqlx::sqlite::SqlitePoolOptions::new()
++        .max_connections(1)
++        .connect_with(
++            sqlx::sqlite::SqliteConnectOptions::new()
++                .filename(history_path.as_path())
++                .create_if_missing(false)
++                .read_only(true)
++                .busy_timeout(Duration::from_secs(5)),
++        )
++        .await
++        .expect("open page helper pool inside bwrap");
++    let store = LocalThreadStore::new(config, None);
++    let lineage = store
++        .resolve_rollout_lineage_from_selected_rollout(thread_id, selected_path)
++        .await
++        .expect("resolve exact-tag selected rollout lineage");
++    let result = if kind == "turns" {
++        let page = page_turn_rows(
++            &reader,
++            thread_id,
++            &lineage,
++            cursor.as_deref(),
++            limit as usize,
++            SortDirection::Asc,
++            StoredTurnItemsView::Summary,
++        )
++        .await
++        .expect("read turn page");
++        let data = page
++            .rows
++            .into_iter()
++            .map(|row| {
++                let items = row
++                    .summary_items
++                    .iter()
++                    .map(|item| {
++                        serde_json::json!({
++                            "itemId": item.item_id,
++                            "content": serde_json::from_slice::<serde_json::Value>(&item.item_json)
++                                .expect("decode stored item content"),
++                        })
++                    })
++                    .collect::<Vec<_>>();
++                serde_json::json!({"turnId": row.turn_id, "items": items})
++            })
++            .collect::<Vec<_>>();
++        serde_json::json!({
++            "data": data,
++            "nextCursor": page.next_cursor,
++            "backwardsCursor": page.backwards_cursor,
++        })
++    } else {
++        let page = page_item_rows(
++            &reader,
++            &lineage,
++            &item_params(thread_id, None, cursor, limit as usize, SortDirection::Asc),
++        )
++        .await
++        .expect("read item page");
++        let data = page
++            .rows
++            .into_iter()
++            .map(|row| {
++                serde_json::json!({
++                    "turnId": row.item.turn_id,
++                    "itemId": row.item.item_id,
++                    "content": serde_json::from_slice::<serde_json::Value>(&row.item.item_json)
++                        .expect("decode stored item content"),
++                })
++            })
++            .collect::<Vec<_>>();
++        serde_json::json!({
++            "data": data,
++            "nextCursor": page.next_cursor,
++            "backwardsCursor": page.backwards_cursor,
++        })
++    };
++    reader.close().await;
++    let response = serde_json::to_string(&result).expect("serialize page response");
++    assert!(response.len() <= 1024 * 1024);
++    println!("ORBIT_PAGE_RESPONSE:{}:{response}", response.len());
++}
++
++fn run_bwrap_page_helper(
++    fixture_root: &std::path::Path,
++    request: &serde_json::Value,
++) -> serde_json::Value {
++    let request_bytes = serde_json::to_vec(request).expect("serialize page request");
++    assert!(request_bytes.len() <= 4096);
++    let test_binary = std::env::current_exe().expect("current test binary");
++    let mount_mode = if std::env::var_os("ORBIT_PAGE_HELPER_RED_WRITABLE").is_some() {
++        "--bind"
++    } else {
++        "--ro-bind"
++    };
++    let mut child = std::process::Command::new("/usr/bin/bwrap")
++        .args([
++            "--die-with-parent",
++            "--unshare-all",
++            "--new-session",
++            "--clearenv",
++            "--ro-bind",
++            "/usr",
++            "/usr",
++            "--symlink",
++            "usr/bin",
++            "/bin",
++            "--symlink",
++            "usr/lib",
++            "/lib",
++            "--symlink",
++            "usr/lib64",
++            "/lib64",
++            "--dev",
++            "/dev",
++            "--proc",
++            "/proc",
++            "--tmpfs",
++            "/tmp",
++        ])
++        .arg(mount_mode)
++        .arg(fixture_root)
++        .arg("/fixture")
++        .arg("--ro-bind")
++        .arg(test_binary)
++        .args([
++            "/reader",
++            "--setenv",
++            "HOME",
++            "/tmp",
++            "--setenv",
++            "ORBIT_BWRAP_PAGE_HELPER",
++            "1",
++            "--",
++            "/reader",
++            "bwrap_paginated_page_helper_child",
++            "--nocapture",
++        ])
++        .stdin(std::process::Stdio::piped())
++        .stdout(std::process::Stdio::piped())
++        .stderr(std::process::Stdio::piped())
++        .spawn()
++        .expect("start bwrap page helper");
++    let mut stdin = child.stdin.take().expect("page helper stdin");
++    write!(stdin, "{}\n", request_bytes.len()).expect("write request length");
++    stdin.write_all(&request_bytes).expect("write request body");
++    drop(stdin);
++    let output = child.wait_with_output().expect("wait for bwrap page helper");
++    assert!(
++        output.status.success(),
++        "page helper failed: stdout={} stderr={}",
++        String::from_utf8_lossy(&output.stdout),
++        String::from_utf8_lossy(&output.stderr)
++    );
++    let output_text = std::str::from_utf8(&output.stdout).expect("UTF-8 helper output");
++    let frame = output_text
++        .lines()
++        .find_map(|line| line.strip_prefix("ORBIT_PAGE_RESPONSE:"))
++        .expect("page helper response frame");
++    let (length, body) = frame.split_once(':').expect("response length separator");
++    assert_eq!(length.parse::<usize>().expect("response length"), body.len());
++    serde_json::from_str(body).expect("parse page response")
++}
++
++#[tokio::test]
++async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
++    let (home, store, thread_id) = store_with_mode(ThreadHistoryMode::Paginated).await;
++    let original_rollout = rollout_path(home.path(), thread_id);
++    let forked = std::env::var_os("ORBIT_PAGE_HELPER_FORKED").is_some();
++    let selected_rollout_id = if std::env::var_os("ORBIT_PAGE_HELPER_SELECTED_ALTERNATE").is_some() {
++        ThreadId::default()
++    } else {
++        thread_id
++    };
++    assert!(!forked || selected_rollout_id == thread_id);
++    let rollout = rollout_path(home.path(), selected_rollout_id);
++    let fork_root = if forked {
++        let root_id = ThreadId::default();
++        let root_path = rollout_path(home.path(), root_id);
++        write_rollout_with_end(&root_path, root_id, None, 13);
++        let base = history_position(&root_path, root_id, 12);
++        write_rollout_with_end(&rollout, thread_id, Some(base), 10);
++        Some((root_id, root_path))
++    } else {
++        None
++    };
++    if selected_rollout_id != thread_id {
++        write_rollout(&rollout, thread_id, None);
++    }
++    let first_rollout_id = fork_root.as_ref().map_or(selected_rollout_id, |(id, _)| *id);
++    let writer = history_db(&store).await;
++    let _held_writer_connection = writer.acquire().await.expect("hold writer connection");
++    insert_turn(writer, first_rollout_id, "turn-1", 10, "completed", None, Some("user-1"), None).await;
++    insert_item(writer, first_rollout_id, "turn-1", "user-1", 11).await;
++    insert_turn(writer, selected_rollout_id, "turn-2", 20, "completed", None, None, Some("agent-2")).await;
++    insert_item(writer, selected_rollout_id, "turn-2", "agent-2", 21).await;
++    let mounted_rollout = std::path::Path::new("/fixture")
++        .join(rollout.strip_prefix(home.path()).expect("fixture rollout relative path"));
++    let state = store.state_db().await.expect("fixture state runtime");
++    assert!(
++        state
++            .replace_rollout_path_if_current(thread_id, &original_rollout, &mounted_rollout)
++            .await
++            .expect("select mounted rollout path")
++    );
++    let state_path = store.config.sqlite.state_db_path();
++    let history_path = store.config.sqlite.thread_history_db_path();
++    let state_before = history_file_snapshots(state_path.as_path());
++    let before = history_file_snapshots(history_path.as_path());
++    let mut watched_rollouts = vec![original_rollout.clone()];
++    if selected_rollout_id != thread_id {
++        watched_rollouts.push(rollout.clone());
++    }
++    if let Some((_, path)) = &fork_root {
++        watched_rollouts.push(path.clone());
++    }
++    let rollout_before = watched_rollouts
++        .iter()
++        .map(|path| {
++            (
++                fs::read(path).expect("read fixture rollout before helper"),
++                fs::metadata(path)
++                    .expect("rollout metadata before helper")
++                    .modified()
++                    .expect("rollout modified before helper"),
++            )
++        })
++        .collect::<Vec<_>>();
++    assert!(state_before.iter().all(|(_, file)| file.is_some()));
++    assert!(before.iter().all(|(_, file)| file.is_some()));
++
++    let request = |kind: &str, cursor: Option<&str>| serde_json::json!({
++        "kind": kind,
++        "threadId": thread_id.to_string(),
++        "cursor": cursor,
++        "limit": 1,
++    });
++    let first_turn = run_bwrap_page_helper(home.path(), &request("turns", None));
++    assert_eq!(first_turn["data"][0]["turnId"], "turn-1");
++    assert_eq!(first_turn["data"][0]["items"][0]["content"]["content"][0]["text"], "user-1");
++    let turn_cursor = first_turn["nextCursor"].as_str().expect("next turn cursor");
++    let second_turn = run_bwrap_page_helper(home.path(), &request("turns", Some(turn_cursor)));
++    assert_eq!(second_turn["data"][0]["turnId"], "turn-2");
++    assert_eq!(second_turn["data"][0]["items"][0]["content"]["text"], "agent-2 item");
++
++    let first_item = run_bwrap_page_helper(home.path(), &request("items", None));
++    assert_eq!(first_item["data"][0]["itemId"], "user-1");
++    assert_eq!(first_item["data"][0]["content"]["content"][0]["text"], "user-1");
++    let item_cursor = first_item["nextCursor"].as_str().expect("next item cursor");
++    let second_item = run_bwrap_page_helper(home.path(), &request("items", Some(item_cursor)));
++    assert_eq!(second_item["data"][0]["itemId"], "agent-2");
++    assert_eq!(second_item["data"][0]["content"]["text"], "agent-2 item");
++
++    let state_after = history_file_snapshots(state_path.as_path());
++    let after = history_file_snapshots(history_path.as_path());
++    let state_changed = report_history_file_changes("state after page helper", &state_before, &state_after);
++    let history_changed = report_history_file_changes("history after page helper", &before, &after);
++    for (path, (bytes, modified)) in watched_rollouts.iter().zip(rollout_before) {
++        assert_eq!(fs::read(path).expect("read fixture rollout after helper"), bytes);
++        assert_eq!(
++            fs::metadata(path)
++                .expect("rollout metadata after helper")
++                .modified()
++                .expect("rollout modified after helper"),
++            modified,
++        );
++    }
++    if std::env::var_os("ORBIT_PAGE_HELPER_RED_WRITABLE").is_some() {
++        assert!(state_changed || history_changed, "writable mount did not expose a change");
++    } else {
++        assert!(!state_changed, "framed page helper changed state database files");
++        assert!(!history_changed, "framed page helper changed history database files");
++    }
++}
++
+ #[tokio::test]
+ async fn list_turns_pages_projected_rows_and_applies_item_views() {
+     let (_home, store, thread_id) = store_with_mode(ThreadHistoryMode::Paginated).await;
