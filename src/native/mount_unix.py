@@ -1,6 +1,7 @@
 """Hide host desktop sockets while allowing an application's nested mount sandbox."""
 
 import os
+import pwd
 import stat
 
 
@@ -35,7 +36,8 @@ def open_verified_socket(entry):
 
 
 def mount_command(arguments, report_directory, selected_files, policy):
-    if (not isinstance(policy, dict) or set(policy) != {"runtime", "sockets"}
+    if (not isinstance(policy, dict)
+            or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"})
             or not isinstance(policy["runtime"], str)
             or not isinstance(policy["sockets"], list)
             or not 1 <= len(policy["sockets"]) <= 8):
@@ -58,6 +60,23 @@ def mount_command(arguments, report_directory, selected_files, policy):
                "--tmpfs", runtime]
     descriptors = []
     try:
+        if "privateHome" in policy:
+            private_home = policy["privateHome"]
+            host_home = pwd.getpwuid(os.getuid()).pw_dir
+            if (not isinstance(private_home, str) or not private_home.startswith("/")
+                    or "\0" in private_home or len(private_home) > 4096
+                    or not inside(private_home, session) or private_home == session
+                    or os.path.realpath(private_home) != private_home
+                    or not inside(host_home, "/home") or host_home.count("/") != 2):
+                raise PrivateMountUnavailable("Private home path is unavailable")
+            fd = os.open(private_home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            descriptors.append(fd)
+            found = os.fstat(fd)
+            if (not stat.S_ISDIR(found.st_mode) or found.st_uid != os.getuid()
+                    or found.st_mode & 0o077):
+                raise PrivateMountUnavailable("Private home has unsafe ownership")
+            command += ["--tmpfs", "/home", "--dir", host_home,
+                        "--bind-fd", str(fd), host_home]
         seen = set()
         for entry in policy["sockets"]:
             fd = open_verified_socket(entry)

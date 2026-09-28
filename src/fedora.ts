@@ -10,6 +10,7 @@ import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
 import { prepareVSCodeLaunch, validateVSCodeProfileRequest } from "./native-vscode";
+import { prepareCodexLaunch } from "./native-codex";
 import { prepareZenLaunch } from "./native-zen-launch";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
@@ -17,12 +18,14 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
+  | { type: "launch-app"; app: "codex"; profile: "active" }
   | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web"; sharedFiles?: string[] }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
   | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
 export function nativeSupervisorSafetyFlags(action: NativeAction): string[] {
-  return action.type === "launch-app" && action.app === "zen" ? ["--coredump-filter-zero"] : [];
+  return action.type === "launch-app" && (action.app === "zen" || action.app === "codex")
+    ? ["--coredump-filter-zero"] : [];
 }
 /** Window management inside the private display. Nothing here can reach a window on the person's desktop. */
 const windowCommands = ["fullscreen", "restore", "focus", "close"] as const;
@@ -46,6 +49,9 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
     return { type: "launch", argv: a.argv, toolkit: a.toolkit, ...(a.selectedFiles !== undefined ? { selectedFiles: a.selectedFiles as string[] } : {}) };
   }
   if (a.type === "launch-app") {
+    if (a.app === "codex" && a.profile === "active" &&
+        Object.keys(a).every(key => ["type", "app", "profile"].includes(key)))
+      return { type: "launch-app", app: "codex", profile: "active" };
     if (a.app === "zen" && a.profile === "active" &&
         (a.network === undefined || a.network === "offline" || a.network === "public-web") &&
         Object.keys(a).every(key => ["type", "app", "profile", "network", "sharedFiles"].includes(key))) {
@@ -431,6 +437,12 @@ export class FedoraBackend {
         ? action
         : action.app === "vscode"
           ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
+          : action.app === "codex"
+            ? await prepareCodexLaunch(this.directory, {
+                runtimeDirectory: this.env.XDG_RUNTIME_DIR ?? "",
+                waylandDisplay: this.waylandDisplay,
+                libraryPath: this.env.LD_LIBRARY_PATH ?? "",
+              })
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
             this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
       let cleanupManaged = false;
@@ -445,14 +457,16 @@ export class FedoraBackend {
       // Inkscape and Writer spawn glycin, whose own bubblewrap needs to make mounts. Keep the
       // pathname Landlock policy on other apps. These two system launchers use a private mount and
       // PID namespace that hides the host runtime and temporary sockets instead.
-      const desktopMount = action.type === "launch" &&
-        (executable === "/usr/bin/inkscape" || executable === "/usr/bin/libreoffice");
+      const privateHome = "privateHome" in prepared ? prepared.privateHome : undefined;
+      const desktopMount = privateHome !== undefined || (action.type === "launch" &&
+        (executable === "/usr/bin/inkscape" || executable === "/usr/bin/libreoffice"));
       if (desktopMount && !this.hostRuntime)
         throw new OrbitError("UNSUPPORTED", "GTK3 private launch needs the host user runtime path");
-      const socketPolicy = action.type === "launch" || action.app === "vscode"
+      const socketPolicy = action.type === "launch" || action.app === "vscode" || action.app === "codex"
         ? [desktopMount ? "--desktop-mount-policy" : "--socket-policy",
           JSON.stringify(desktopMount
-            ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring) }
+            ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring),
+                ...(privateHome === undefined ? {} : { privateHome }) }
             : await this.socketPolicy(prepared.toolkit, keyring))]
         : [];
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),
@@ -504,6 +518,7 @@ export class FedoraBackend {
       await sleep(500);
       return { pid: applicationPid, applied: true, selectedFiles,
         ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}),
+        ...("accountSnapshot" in prepared ? { profileSnapshot: prepared.accountSnapshot } : {}),
         ...("zenSnapshot" in prepared ? { profileSnapshot: prepared.zenSnapshot } : {}) };
       } catch (error) {
         try {
