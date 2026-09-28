@@ -1,0 +1,31 @@
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 0e170c2..eb74d9c 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -46,6 +46,7 @@ use std::collections::HashMap;
+ use std::collections::hash_map::Entry;
+ use std::path::PathBuf;
+ use std::sync::Arc;
++use std::time::Duration;
+ use tokio::sync::Mutex;
+ use tokio::sync::OnceCell;
+ use tokio::sync::OwnedMutexGuard;
+@@ -273,6 +274,18 @@ impl LocalThreadStore {
+         }
+         self.thread_history_db
+             .get_or_try_init(|| async {
++                if std::env::var_os("ORBIT_PAGINATED_READ_ONLY_EXPERIMENT").is_some() {
++                    return Ok(sqlx::sqlite::SqlitePoolOptions::new()
++                        .max_connections(1)
++                        .connect_with(
++                            sqlx::sqlite::SqliteConnectOptions::new()
++                                .filename(self.config.sqlite.thread_history_db_path().as_path())
++                                .create_if_missing(false)
++                                .read_only(true)
++                                .busy_timeout(Duration::from_secs(5)),
++                        )
++                        .await?);
++                }
+                 codex_state::open_thread_history_db(&self.config.sqlite).await
+             })
+             .await

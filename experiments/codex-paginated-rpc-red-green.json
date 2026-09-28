@@ -1,0 +1,117 @@
+[
+  {
+    "changedFiles": [
+      "thread_history_1.sqlite-shm",
+      "thread_history_1.sqlite-wal"
+    ],
+    "filePresence": [
+      "sessions/2026/09/29/rollout-2026-09-29T02-24-17-01a0ea1e-6c7d-7b51-bbd1-e40266406dc9.jsonl",
+      "state_5.sqlite",
+      "state_5.sqlite-shm",
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-shm",
+      "thread_history_1.sqlite-wal"
+    ],
+    "fixtureAssistantTextPresent": true,
+    "fixtureUserTextPresent": true,
+    "itemEntryFields": [
+      "item",
+      "turnId"
+    ],
+    "itemFields": [
+      "clientId",
+      "content",
+      "id",
+      "type"
+    ],
+    "itemTypes": [
+      "userMessage",
+      "agentMessage"
+    ],
+    "itemsCursorPresent": true,
+    "itemsFirstCount": 1,
+    "itemsResponseFields": [
+      "backwardsCursor",
+      "data",
+      "nextCursor"
+    ],
+    "itemsSecondCount": 1,
+    "mount": "writable",
+    "originalFixtureChangedFiles": [],
+    "turnFields": [
+      "completedAt",
+      "durationMs",
+      "error",
+      "id",
+      "items",
+      "itemsView",
+      "startedAt",
+      "status"
+    ],
+    "turnsCursorPresent": false,
+    "turnsFirstCount": 1,
+    "turnsResponseFields": [
+      "backwardsCursor",
+      "data",
+      "nextCursor"
+    ],
+    "turnsSecondCount": null
+  },
+  {
+    "changedFiles": [],
+    "filePresence": [
+      "sessions/2026/09/29/rollout-2026-09-29T02-24-17-01a0ea1e-6c7d-7b51-bbd1-e40266406dc9.jsonl",
+      "state_5.sqlite",
+      "state_5.sqlite-shm",
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-shm",
+      "thread_history_1.sqlite-wal"
+    ],
+    "fixtureAssistantTextPresent": true,
+    "fixtureUserTextPresent": true,
+    "itemEntryFields": [
+      "item",
+      "turnId"
+    ],
+    "itemFields": [
+      "clientId",
+      "content",
+      "id",
+      "type"
+    ],
+    "itemTypes": [
+      "userMessage",
+      "agentMessage"
+    ],
+    "itemsCursorPresent": true,
+    "itemsFirstCount": 1,
+    "itemsResponseFields": [
+      "backwardsCursor",
+      "data",
+      "nextCursor"
+    ],
+    "itemsSecondCount": 1,
+    "mount": "historyReadOnly",
+    "originalFixtureChangedFiles": [],
+    "turnFields": [
+      "completedAt",
+      "durationMs",
+      "error",
+      "id",
+      "items",
+      "itemsView",
+      "startedAt",
+      "status"
+    ],
+    "turnsCursorPresent": false,
+    "turnsFirstCount": 1,
+    "turnsResponseFields": [
+      "backwardsCursor",
+      "data",
+      "nextCursor"
+    ],
+    "turnsSecondCount": null
+  }
+]
