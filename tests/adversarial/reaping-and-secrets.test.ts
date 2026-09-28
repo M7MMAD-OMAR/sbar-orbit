@@ -82,11 +82,11 @@ test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker kill
     const opened = during.filter(entry => !before.includes(entry));
     expect(session.egressTier).toBe("namespace");
     {
-      // The lease is real on this host, so there is something to leak.
-      expect(opened.length).toBe(1);
-      const directory = join(egressRoot, opened[0]!);
-      // And while it exists it is private, because what is in it is a route out of a confined browser.
-      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      // The host launcher is a sibling, not mounted into the browser with its writable lease.
+      const leaseName = session.sessionId.slice(0, 8);
+      expect(opened.sort()).toEqual([leaseName, `${leaseName}-host`].sort());
+      for (const name of opened)
+        expect((await stat(join(egressRoot, name))).mode & 0o777).toBe(0o700);
     }
 
     broker.kill("SIGKILL");
@@ -108,8 +108,8 @@ test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker kill
     // broker is followed by another one within seconds. This asserts that mechanism, since asserting
     // the directory vanishes on its own would be asserting something no code does.
     expect(left).not.toEqual([]);
-    const survivor = join(egressRoot, left[0]!);
-    expect(await stat(survivor).then(() => true, () => false)).toBe(true);
+    for (const name of left)
+      expect(await stat(join(egressRoot, name)).then(() => true, () => false)).toBe(true);
 
     // The successor, started the same way systemd starts it. Its sweep is what reclaims the corpse.
     //
@@ -119,10 +119,12 @@ test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker kill
     // exists to protect a session that is still binding and this one is seconds old.
     const { cleanEgress } = await import("../../src/workspace-storage");
     const when = new Date(Date.now() - 10 * 60 * 1000);
-    await utimes(survivor, when, when);
+    for (const name of left) await utimes(join(egressRoot, name), when, when);
     const swept = await cleanEgress(egressRoot);
-    expect(swept.removed).toContain(left[0]!);
-    expect(await stat(survivor).then(() => true, () => false)).toBe(false);
+    for (const name of left) {
+      expect(swept.removed).toContain(name);
+      expect(await stat(join(egressRoot, name)).then(() => true, () => false)).toBe(false);
+    }
   } finally {
     if (broker.exitCode === null) broker.kill("SIGKILL");
     await broker.exited;

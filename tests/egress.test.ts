@@ -1,11 +1,13 @@
 import { test, expect } from "bun:test";
 import { connect, listen } from "bun";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { leasedAuthorities, openEgressLease } from "../src/egress";
 import { detectPlatform } from "../src/platform";
 import { Sessions } from "../src/session";
+import type { CloneResult } from "../src/clone";
+import { AccountLease } from "../src/profiles";
 import { expectPrivatePath } from "./private-path";
 import { fixtureRoot } from "./platform-support";
 
@@ -124,6 +126,170 @@ test.if(confinable)("the lease forwards the authorities it holds and refuses the
     await expect(stat(join(root, "egress"))).rejects.toThrow();
   } finally { target.stop(true); await rm(root, { recursive: true, force: true }); }
 });
+
+test.if(confinable)("a confined browser cannot dial a host Unix socket but can dial its lease", async () => {
+  const root = await fixtureRoot("orbit-egress-unix-");
+  const hostSocket = join(root, "host.sock");
+  const busSocket = join(root, "private-bus.sock");
+  await mkdir(join(root, "profile"));
+  const host = listen<undefined>({ unix: hostSocket, socket: { open: socket => { socket.end(); }, data: () => {}, close: () => {} } });
+  const bus = listen<undefined>({ unix: busSocket, socket: { open: socket => { socket.end(); }, data: () => {}, close: () => {} } });
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({
+      directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), sessionBus: `unix:path=${busSocket},guid=test`,
+      confinable: true, origins: () => ["https://example.test"],
+    });
+    expect(lease.tier).toBe("namespace");
+    const script = [
+      "import os, socket, sys",
+      "def can_connect(path):",
+      "    connection = socket.socket(socket.AF_UNIX)",
+      "    try:",
+      "        connection.connect(path)",
+      "        return True",
+      "    except OSError:",
+      "        return False",
+      "    finally:",
+      "        connection.close()",
+      "def can_write(path):",
+      "    try:",
+      "        with open(path, 'a') as file:",
+      "            file.write('\\n# probe\\n')",
+      "        return True",
+      "    except OSError:",
+      "        return False",
+      "def can_unlink(path):",
+      "    try:",
+      "        os.unlink(path)",
+      "        return True",
+      "    except OSError:",
+      "        return False",
+      "print(f'host={can_connect(sys.argv[1])} lease={can_connect(sys.argv[2])} bus={can_connect(sys.argv[3])} wrapper={can_write(sys.argv[4])} cdp_unlink={can_unlink(sys.argv[5])}')",
+    ].join("\n");
+    const child = Bun.spawn([lease.launch.executable, "-c", script, hostSocket, join(root, "egress", "lease.sock"), busSocket,
+      lease.launch.executable, join(root, "egress", "cdp.sock")], {
+      stdout: "pipe", stderr: "pipe",
+    });
+    const output = await new Response(child.stdout).text();
+    const error = await new Response(child.stderr).text();
+    expect(await child.exited).toBe(0);
+    expect(error).toBe("");
+    expect(output.trim()).toBe("host=False lease=True bus=True wrapper=False cdp_unlink=False");
+    await lease.close();
+    lease = undefined;
+    await expect(stat(join(root, "egress-host"))).rejects.toThrow();
+  } finally {
+    await lease?.close();
+    host.stop(true);
+    bus.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30000);
+
+test.if(confinable)("a replaced CDP socket name never makes the host dial another Unix service", async () => {
+  const root = await fixtureRoot("orbit-egress-cdp-symlink-");
+  const hostSocket = join(root, "host.sock");
+  let hostConnections = 0;
+  const host = listen<undefined>({ unix: hostSocket, socket: {
+    open(socket) { hostConnections++; socket.end(); }, data: () => {}, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openEgressLease>> | undefined;
+  try {
+    lease = await openEgressLease({ directory: join(root, "egress"), executable: "/usr/bin/python3",
+      profile: join(root, "profile"), confinable: true, origins: () => ["https://example.test"] });
+    expect(lease.tier).toBe("namespace");
+    const cdpSocket = join(root, "egress", "cdp.sock");
+    await rm(cdpSocket);
+    await symlink(hostSocket, cdpSocket);
+    const client = await connect<undefined>({ hostname: "127.0.0.1", port: lease.endpointPort,
+      socket: { data: () => {}, close: () => {}, error: () => {} } });
+    await Bun.sleep(150);
+    client.end();
+    expect(hostConnections).toBe(0);
+  } finally {
+    await lease?.close();
+    host.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30000);
+
+test.if(confinable)("a home-installed browser fails closed when its files cannot be mounted safely", async () => {
+  const root = await fixtureRoot("orbit-egress-home-install-");
+  try {
+    await expect(openEgressLease({
+      directory: join(root, "egress"), executable: import.meta.path,
+      profile: join(root, "profile"), confinable: true, origins: () => ["https://example.test"],
+    })).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(stat(join(root, "egress"))).rejects.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test.if(confinable)("a failed cloned session removes its account copy and closes its helper", async () => {
+  const root = await createWorkspaceDirectory("egress-clone-cleanup-test");
+  const platform = await detectPlatform();
+  try {
+    for (const scenario of [
+      { name: "home executable", executable: import.meta.path, confinedEgress: true },
+      { name: "missing private bus", executable: "/usr/bin/python3", sessionBus: "unix:path=/tmp/orbit-missing-private-bus", confinedEgress: true },
+      { name: "namespace unavailable", executable: "/usr/bin/python3", confinedEgress: false },
+    ]) {
+      const caseRoot = await mkdtemp(join(root, "case-"));
+      let helperClosed = 0;
+      class FixtureSessions extends Sessions {
+        protected override cloneProfileForSession = async (_source: string, profile: string): Promise<CloneResult> => {
+          await writeFile(join(profile, "synthetic-account.json"), "fixture", { mode: 0o600 });
+          return { sourceProfile: "fixture", reflinked: false, readOnly: [],
+            launch: { executable: scenario.executable, ...(scenario.sessionBus ? { sessionBus: scenario.sessionBus } : {}) },
+            close: async () => { helperClosed++; } };
+        };
+        protected override capabilities() { return Promise.resolve({ ...platform, confinedEgress: scenario.confinedEgress }); }
+      }
+      const sessions = new FixtureSessions(caseRoot, join(caseRoot, "accounts"));
+      try {
+        await expect(sessions.create({ backend: "browser", cloneOf: "fixture",
+          policy: { mode: "autonomous", origins: ["https://example.test"], allow: ["read", "navigate", "write"] },
+        })).rejects.toMatchObject({ code: "UNSUPPORTED" });
+        expect(helperClosed).toBe(1);
+        expect((await readdir(caseRoot)).filter(entry => entry.startsWith("profile-"))).toEqual([]);
+      } finally { await sessions.close(); }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 30000);
+
+test.if(confinable)("a bounded saved account refuses a host without namespace confinement", async () => {
+  const root = await createWorkspaceDirectory("egress-account-gate-test");
+  const accounts = join(root, "accounts");
+  const platform = await detectPlatform();
+  class NoNamespaceSessions extends Sessions {
+    protected override capabilities() { return Promise.resolve({ ...platform, confinedEgress: false }); }
+  }
+  const sessions = new NoNamespaceSessions(root, accounts);
+  try {
+    await expect(sessions.create({ backend: "browser", accountName: "fixture",
+      policy: { mode: "autonomous", origins: ["https://example.test"], allow: ["read", "navigate", "write"] },
+    })).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect((await readdir(root)).filter(entry => entry.startsWith("profile-"))).toEqual([]);
+    const account = await AccountLease.acquire(accounts, "fixture");
+    await account.release();
+  } finally { await sessions.close(); await rm(root, { recursive: true, force: true }); }
+}, 30000);
+
+test.if(confinable)("a failure after browser startup closes the backend, profile and saved account lease", async () => {
+  const root = await createWorkspaceDirectory("egress-post-start-cleanup-test");
+  const accounts = join(root, "accounts");
+  await writeFile(join(root, "journals"), "fixture", { mode: 0o600 });
+  const sessions = new Sessions(root, accounts);
+  try {
+    await expect(sessions.create({ backend: "browser", accountName: "fixture",
+      policy: { mode: "autonomous", origins: ["https://example.test"], allow: ["read", "navigate", "write"] },
+    })).rejects.toThrow();
+    expect((await readdir(root)).filter(entry => entry.startsWith("profile-"))).toEqual([]);
+    const account = await AccountLease.acquire(accounts, "fixture");
+    await account.release();
+  } finally { await sessions.close(); await rm(root, { recursive: true, force: true }); }
+}, 30000);
 
 test.if(confinable)("a leased session browses through a network of its own, and an unleased origin is unreachable", async () => {
   const workspace = await createWorkspaceDirectory("egress-session-test");

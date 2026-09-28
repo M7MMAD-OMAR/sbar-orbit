@@ -1,6 +1,7 @@
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, lstat, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { connect, listen, type Socket, type TCPSocketListener, type UnixSocketListener } from "bun";
+import { OrbitError } from "./errors";
 
 /**
  * The origin lease, held below the browser instead of inside it.
@@ -60,6 +61,7 @@ export function leasedAuthorities(origins: string[]): string[] {
 }
 
 type Pending = { buffer: Uint8Array; upstream?: Socket<unknown>; piping: boolean };
+type RelayPending = { buffer: Uint8Array; peer?: Socket<RelayPending>; closed: boolean };
 
 function append(left: Uint8Array, right: Uint8Array): Uint8Array {
   const joined = new Uint8Array(left.length + right.length);
@@ -155,65 +157,63 @@ function startProxy(path: string, origins: () => string[], onRefused: (authority
 }
 
 /**
- * Carry CDP across the namespace boundary.
- *
- * A network namespace is exactly what it says: the browser's 127.0.0.1 is not this process's, so the
- * endpoint it publishes is not reachable from here. A unix socket is filesystem rather than network
- * and crosses for free, so socat inside the sandbox exports the browser's debugging port onto one,
- * and this relay puts it back on a loopback port the existing WebSocket client can dial.
+ * Carry CDP across the namespace boundary without connecting to a name the browser can replace.
+ * The host creates the Unix listener first, and a helper inside the namespace connects outward to
+ * it after Chrome publishes its debugging port. The host pairs that connection with its local CDP
+ * client. Connecting from the host to a socket created in the browser's writable directory allowed
+ * a symlink there to redirect the host to an unrelated Unix service.
  */
-function startCdpRelay(socketPath: string): TCPSocketListener<{ upstream?: Socket<unknown>; buffer: Uint8Array }> {
-  return listen<{ upstream?: Socket<unknown>; buffer: Uint8Array }>({
-    hostname: "127.0.0.1", port: 0,
-    socket: {
-      open(client) {
-        client.data = { buffer: new Uint8Array(0) };
-        // The far end of this socket is created inside the sandbox, and only once the browser has
-        // published the port it chose, so the first dial can legitimately arrive before there is
-        // anything to dial. Retried rather than failed: the alternative is a session that starts or
-        // not depending on which of two processes won.
-        // The far end of this socket is created inside the sandbox, and only once the browser has
-        // published the port it chose, so the first dial can legitimately arrive before there is
-        // anything to dial. Retried rather than failed: the alternative is a session that starts or
-        // not depending on which of two processes won.
-        //
-        // Exactly one retry per failure, and exactly one upstream per client. Written the obvious way,
-        // `connectError` and the promise's own rejection both fired, so every retry doubled the number
-        // of connections; four of them then wrote into one browser socket, and the first to close took
-        // the session's CDP channel with it. It presented as an intermittent 20 second timeout.
-        const attach = (attempt: number) => {
-          let retried = false;
-          const again = () => {
-            if (retried) return;
-            retried = true;
-            if (attempt >= 200 || client.data.upstream) return void client.end();
-            setTimeout(() => attach(attempt + 1), 50);
-          };
-          connect<unknown>({
-            unix: socketPath,
-            socket: {
-              open(upstream) {
-                if (client.data.upstream) return void upstream.end();
-                client.data.upstream = upstream;
-                if (client.data.buffer.length) { upstream.write(client.data.buffer); client.data.buffer = new Uint8Array(0); }
-              },
-              data: (_upstream, chunk) => { client.write(chunk); },
-              close: () => { client.end(); },
-              error: () => { client.end(); },
-              connectError: again,
-            },
-          }).catch(again);
-        };
-        attach(0);
-      },
-      data(client, chunk) {
-        if (client.data.upstream) client.data.upstream.write(chunk);
-        else client.data.buffer = append(client.data.buffer, chunk);
-      },
-      close(client) { void client.data.upstream?.end(); },
-      error(client) { void client.data.upstream?.end(); },
-    },
-  });
+function startCdpRelay(socketPath: string): { local: TCPSocketListener<RelayPending>; browser: UnixSocketListener<RelayPending> } {
+  const waitingLocal: Socket<RelayPending>[] = [];
+  const waitingBrowser: Socket<RelayPending>[] = [];
+  const pair = (local: Socket<RelayPending>, browser: Socket<RelayPending>) => {
+    local.data.peer = browser;
+    browser.data.peer = local;
+    if (local.data.buffer.length) browser.write(local.data.buffer);
+    if (browser.data.buffer.length) local.write(browser.data.buffer);
+    local.data.buffer = browser.data.buffer = new Uint8Array(0);
+  };
+  const opened = (socket: Socket<RelayPending>, mine: Socket<RelayPending>[], other: Socket<RelayPending>[], fromBrowser: boolean) => {
+    socket.data = { buffer: new Uint8Array(0), closed: false };
+    let peer: Socket<RelayPending> | undefined;
+    while ((peer = other.shift())) {
+      if (!peer.data.closed) return fromBrowser ? pair(peer, socket) : pair(socket, peer);
+    }
+    if (mine.length >= 8) return void socket.end();
+    mine.push(socket);
+    if (!fromBrowser) setTimeout(() => { if (!socket.data.peer && !socket.data.closed) socket.end(); }, 10000);
+  };
+  const received = (socket: Socket<RelayPending>, chunk: Uint8Array) => {
+    if (socket.data.peer) socket.data.peer.write(chunk);
+    else {
+      socket.data.buffer = append(socket.data.buffer, chunk);
+      if (socket.data.buffer.length > 65536) socket.end();
+    }
+  };
+  const closed = (socket: Socket<RelayPending>, queue: Socket<RelayPending>[]) => {
+    if (socket.data.closed) return;
+    socket.data.closed = true;
+    const index = queue.indexOf(socket);
+    if (index >= 0) queue.splice(index, 1);
+    const peer = socket.data.peer;
+    socket.data.peer = undefined;
+    if (peer && !peer.data.closed) { peer.data.peer = undefined; peer.end(); }
+  };
+  const browser = listen<RelayPending>({ unix: socketPath, socket: {
+    open: socket => opened(socket, waitingBrowser, waitingLocal, true),
+    data: received,
+    close: socket => closed(socket, waitingBrowser),
+    error: socket => { closed(socket, waitingBrowser); socket.end(); },
+  } });
+  try {
+    const local = listen<RelayPending>({ hostname: "127.0.0.1", port: 0, socket: {
+      open: socket => opened(socket, waitingLocal, waitingBrowser, false),
+      data: received,
+      close: socket => closed(socket, waitingLocal),
+      error: socket => { closed(socket, waitingLocal); socket.end(); },
+    } });
+    return { local, browser };
+  } catch (error) { browser.stop(true); throw error; }
 }
 
 /**
@@ -232,30 +232,84 @@ function startCdpRelay(socketPath: string): TCPSocketListener<{ upstream?: Socke
  * listens and writes no file at all, and only `=0` publishes one. So a fixed port would have been
  * simpler and would have left the launcher with no way to learn the path half of the endpoint.
  */
-async function writeWrapper(directory: string, executable: string, profile: string, proxySocket: string, cdpSocket: string): Promise<string> {
-  const wrapper = join(directory, "confined-browser.sh");
+function quoteShell(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
+
+function busSocketPath(address?: string): string | undefined {
+  if (!address) return undefined;
+  const match = /^unix:path=([^,;]+)/.exec(address);
+  if (!match?.[1]) throw new OrbitError("UNSUPPORTED", "A confined browser needs a filesystem path for its private secret bus");
+  let path: string;
+  try { path = decodeURIComponent(match[1]); }
+  catch { throw new OrbitError("UNSUPPORTED", "The private secret bus has an invalid socket path"); }
+  if (!isAbsolute(path) || path.includes("\0"))
+    throw new OrbitError("UNSUPPORTED", "The private secret bus needs an absolute socket path");
+  return path;
+}
+
+async function writeWrapper(directory: string, executable: string, profile: string, proxySocket: string, cdpSocket: string, sessionBus?: string): Promise<string> {
+  const resolvedExecutable = await realpath(executable).catch(() => "");
+  if (!resolvedExecutable.startsWith("/usr/") && !resolvedExecutable.startsWith("/opt/"))
+    throw new OrbitError("UNSUPPORTED", "A confined browser must be installed under /usr or /opt; mounting a home install could expose host sockets");
+  const busSocket = busSocketPath(sessionBus);
+  if (busSocket && !(await lstat(busSocket).catch(() => undefined))?.isSocket())
+    throw new OrbitError("UNSUPPORTED", "The private secret bus socket is unavailable");
+  // A read-only bind of / still permits AF_UNIX connect to host sockets. Start with an empty root,
+  // expose only system application files, the private profile and this lease, then mount the one
+  // private secret bus socket when a cloned profile needs it. A home-installed browser fails closed.
+  const sandbox = [
+    "/usr/bin/bwrap", "--unshare-net", "--unshare-pid", "--tmpfs", "/",
+    "--ro-bind", "/usr", "/usr", "--ro-bind", "/etc", "/etc",
+    "--ro-bind-try", "/opt", "/opt", "--ro-bind-try", "/sys", "/sys",
+    "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
+    "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+    "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp",
+    "--bind", profile, profile, "--ro-bind", proxySocket, proxySocket,
+    "--ro-bind", cdpSocket, cdpSocket,
+    ...(busSocket ? ["--ro-bind", busSocket, busSocket] : []),
+    "--setenv", "HOME", profile, "--setenv", "XDG_CONFIG_HOME", join(profile, "config"),
+    "--setenv", "XDG_CACHE_HOME", join(profile, "cache"), "--setenv", "XDG_RUNTIME_DIR", profile,
+    "--setenv", "TMPDIR", "/tmp", "--chdir", "/", "--die-with-parent",
+  ];
+  // Keep the executable wrapper in an unmounted sibling. Mounting it with any writable lease
+  // directory would let a browser rewrite it for the next restore or relaunch.
+  const wrapperDirectory = `${directory}-host`;
+  await mkdir(wrapperDirectory, { mode: 0o700 });
+  await chmod(wrapperDirectory, 0o700);
+  const wrapper = join(wrapperDirectory, "confined-browser.sh");
   await writeFile(wrapper, `#!/bin/sh
-# An empty network namespace: no route, no DNS, nothing but its own loopback. Both ways out are unix
-# sockets, which are filesystem rather than network, so they cross a boundary that packets do not.
-exec /usr/bin/bwrap --unshare-net --unshare-pid --dev-bind / / --proc /proc --die-with-parent /bin/sh -c '
-  /usr/bin/socat TCP-LISTEN:${CONFINED_PROXY_PORT},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:${proxySocket} &
+# No host runtime directories enter this mount namespace. Only the lease and optional private bus
+# cross it, so a browser cannot use a host Unix socket as an unfiltered route around the proxy.
+exec ${sandbox.map(quoteShell).join(" ")} /bin/sh -c '
+  proxy_socket=$1
+  cdp_socket=$2
+  profile=$3
+  executable=$4
+  shift 4
+  /usr/bin/socat TCP-LISTEN:${CONFINED_PROXY_PORT},bind=127.0.0.1,fork,reuseaddr "UNIX-CONNECT:$proxy_socket" &
   (
     attempt=0
-    while [ ! -s "${profile}/DevToolsActivePort" ] && [ $attempt -lt 600 ]; do
+    while [ ! -s "$profile/DevToolsActivePort" ] && [ $attempt -lt 600 ]; do
       /usr/bin/sleep 0.05
       attempt=$((attempt + 1))
     done
-    port=$(/usr/bin/head -1 "${profile}/DevToolsActivePort")
+    port=$(/usr/bin/head -1 "$profile/DevToolsActivePort")
     case "$port" in
       "" | *[!0-9]* ) exit 1 ;;
     esac
-    # unlink-early, because a restore starts a second browser on the same lease: the socket file from the
-    # first one is still on disk, and socat would refuse to bind over it while the relay waited out its
-    # deadline on a browser that had started perfectly.
-    exec /usr/bin/socat UNIX-LISTEN:${cdpSocket},fork,mode=600,unlink-early TCP:127.0.0.1:$port
+    # The host owns this socket. Connect outward instead of asking the host to connect to a path
+    # a browser could replace with a symlink. Keep three connections ready for simultaneous CDP use.
+    for worker in 1 2 3; do
+      (
+        while :; do
+          /usr/bin/socat "TCP:127.0.0.1:$port" "UNIX-CONNECT:$cdp_socket"
+          /usr/bin/sleep 0.05
+        done
+      ) &
+    done
+    wait
   ) &
-  exec ${executable} "$@"
-' confined-browser "$@"
+  exec "$executable" "$@"
+' confined-browser ${[proxySocket, cdpSocket, profile, executable].map(quoteShell).join(" ")} "$@"
 `, { mode: 0o700 });
   await chmod(wrapper, 0o700);
   return wrapper;
@@ -276,6 +330,8 @@ export type EgressLeaseRequest = {
    * point taken from it.
    */
   profile: string;
+  /** The one-item secret bus of a cloned profile, never the person's whole session bus. */
+  sessionBus?: string;
   /**
    * Read on every request rather than copied once. `session.narrow` and an immune deny both tighten a
    * running session's policy, and a lease that had taken a snapshot at creation would keep forwarding
@@ -305,13 +361,16 @@ export async function openEgressLease(request: EgressLeaseRequest & { confinable
   await chmod(request.directory, 0o700);
   const proxySocket = join(request.directory, "lease.sock");
   const cdpSocket = join(request.directory, "cdp.sock");
+  const wrapperDirectory = `${request.directory}-host`;
   const refused: string[] = [];
   let proxy: UnixSocketListener<Pending> | undefined;
-  let relay: TCPSocketListener<{ upstream?: Socket<unknown>; buffer: Uint8Array }> | undefined;
+  let relay: ReturnType<typeof startCdpRelay> | undefined;
   try {
     proxy = startProxy(proxySocket, request.origins, authority => { if (!refused.includes(authority)) refused.push(authority); });
     relay = startCdpRelay(cdpSocket);
-    const wrapper = await writeWrapper(request.directory, request.executable, request.profile, proxySocket, cdpSocket);
+    await chmod(proxySocket, 0o600);
+    await chmod(cdpSocket, 0o600);
+    const wrapper = await writeWrapper(request.directory, request.executable, request.profile, proxySocket, cdpSocket, request.sessionBus);
     const held = { proxy, relay };
     return {
       tier: "namespace",
@@ -322,16 +381,19 @@ export async function openEgressLease(request: EgressLeaseRequest & { confinable
         // listening there. Found by the measurement failing rather than by reading the flag list.
         args: [`--proxy-server=127.0.0.1:${CONFINED_PROXY_PORT}`, "--proxy-bypass-list=<-loopback>"],
       },
-      endpointPort: held.relay.port,
+      endpointPort: held.relay.local.port,
       refused: () => [...refused],
       close: async () => {
-        held.proxy.stop(true); held.relay.stop(true);
+        held.proxy.stop(true); held.relay.local.stop(true); held.relay.browser.stop(true);
+        await rm(wrapperDirectory, { recursive: true, force: true }).catch(() => {});
         await rm(request.directory, { recursive: true, force: true }).catch(() => {});
       },
     };
-  } catch {
-    proxy?.stop(true); relay?.stop(true);
+  } catch (error) {
+    proxy?.stop(true); relay?.local.stop(true); relay?.browser.stop(true);
+    await rm(wrapperDirectory, { recursive: true, force: true }).catch(() => {});
     await rm(request.directory, { recursive: true, force: true }).catch(() => {});
+    if (error instanceof OrbitError) throw error;
     return unconfined;
   }
 }

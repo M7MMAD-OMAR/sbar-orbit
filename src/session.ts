@@ -132,7 +132,9 @@ export class Sessions {
    */
   private probed?: Promise<PlatformCapabilities>;
   constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics"))) {}
-  private capabilities() { return this.probed ??= detectPlatform(); }
+  protected capabilities() { return this.probed ??= detectPlatform(); }
+  /** A test fixture can supply a clone without reading a person's browser profile. */
+  protected cloneProfileForSession: typeof cloneProfile = cloneProfile;
   /** Where a session's route out lives. Short, because what goes in it are unix sockets. */
   private get egressRoot() { return join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress"); }
   private get(id: unknown): Session {
@@ -177,6 +179,10 @@ export class Sessions {
     if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Profile key is leased to another session");
     this.leases.add(lease);
     let account: AccountLease | undefined;
+    let profileOwned: string | undefined;
+    let cloneOwned: Awaited<ReturnType<typeof cloneProfile>> | undefined;
+    let egressOwned: EgressLease | undefined;
+    let backendOwned: BrowserBackend | FedoraBackend | undefined;
     try {
       if (input.accountName !== undefined) {
         if (input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Saved accounts require the browser backend");
@@ -184,6 +190,7 @@ export class Sessions {
       }
       const restoredState = await account?.restore();
       const profile = await mkdtemp(join(this.root, "profile-"));
+      profileOwned = profile;
       // A plain directory cannot be snapshotted, so the profile is made a subvolume where the
       // filesystem allows it. Where it does not, restore points are simply absent rather than
       // promised and missing.
@@ -194,7 +201,8 @@ export class Sessions {
       // case the policy exists to prevent.
       if (input.cloneOf !== undefined && input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Cloning a profile requires the browser backend");
       if (input.cloneOf !== undefined && account) throw new OrbitError("INVALID_REQUEST", "A session takes either a saved account or a cloned profile, not both");
-      const clone = input.cloneOf === undefined ? undefined : await cloneProfile(text(input.cloneOf, "cloneOf"), profile, policy);
+      const clone = input.cloneOf === undefined ? undefined : await this.cloneProfileForSession(text(input.cloneOf, "cloneOf"), profile, policy);
+      cloneOwned = clone;
       // The person's extensions travel with the clone by default. `cloneExtensions: false` leaves them
       // dormant, for a caller that wants the logins and not the add-ons: measured 14 September 2026, a
       // proxy extension in the person's profile set its own proxy inside the confined clone, where the
@@ -223,12 +231,16 @@ export class Sessions {
         directory: join(this.egressRoot, id.slice(0, 8)),
         executable: clone?.launch.executable ?? defaultChromeExecutable() ?? "",
         profile,
+        sessionBus: clone?.launch.sessionBus,
         confinable: (await this.capabilities()).confinedEgress,
         origins: () => {
           const current = live?.policy.origins ?? policy.origins;
           return current === "any" ? [] : current;
         },
       });
+      egressOwned = egress;
+      if ((clone || account) && policy.origins !== "any" && egress?.tier !== "namespace")
+        throw new OrbitError("UNSUPPORTED", "A cloned profile or saved account requires a confined network namespace");
       const queued = Date.now();
       const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
@@ -238,12 +250,10 @@ export class Sessions {
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
       this.creationTail = start.catch(() => {});
-      let backend: BrowserBackend | FedoraBackend;
-      try { backend = await start; }
-      catch (error) { await egress?.close(); await clone?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
+      const backend = await start;
+      backendOwned = backend;
       if (account && backend instanceof BrowserBackend) {
-        try { if (restoredState) await backend.context.setStorageState(restoredState); }
-        catch (error) { await backend.close(); await egress?.close(); await rm(profile, { recursive: true, force: true }).catch(() => {}); throw error; }
+        if (restoredState) await backend.context.setStorageState(restoredState);
       }
       const journals = join(this.root, "journals");
       await mkdir(journals, { recursive: true, mode: 0o700 });
@@ -291,7 +301,11 @@ export class Sessions {
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);
     } catch (error) {
-      await account?.release();
+      await backendOwned?.close().catch(() => {});
+      await egressOwned?.close().catch(() => {});
+      await cloneOwned?.close().catch(() => {});
+      if (profileOwned) await rm(profileOwned, { recursive: true, force: true }).catch(() => {});
+      await account?.release().catch(() => {});
       this.leases.delete(lease);
       const failure = error as { code?: string; syscall?: string } | null;
       if (failure?.code === "EAGAIN" && ["posix_spawn", "spawn"].includes(failure.syscall ?? ""))
