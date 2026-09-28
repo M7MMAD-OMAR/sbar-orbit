@@ -11,7 +11,8 @@ import sys
 import time
 from budget import require_budget
 from file_leases import acquire_files, FileLeaseError
-from landlock_unix import LandlockUnavailable, make_ruleset, restrict_child
+from landlock_unix import LandlockUnavailable, make_abstract_ruleset, make_ruleset, restrict_child
+from mount_unix import PrivateMountUnavailable, mount_command
 
 require_budget()
 
@@ -35,6 +36,7 @@ signal.signal(signal.SIGINT, stop)
 arguments = sys.argv[2:]
 selected_files, lease_fds = [], []
 policy_fd = None
+mount_fds = []
 zero_core_filter = False
 try:
     if arguments[:1] == ["--selected-files"]:
@@ -46,6 +48,10 @@ try:
     if arguments[:1] == ["--socket-policy"]:
         policy_fd = make_ruleset(json.loads(arguments[1]))
         arguments = arguments[2:]
+    elif arguments[:1] == ["--desktop-mount-policy"]:
+        policy_fd = make_abstract_ruleset()
+        arguments, mount_fds = mount_command(arguments[2:], report.parent, selected_files,
+                                             json.loads(arguments[1]))
 
     def prepare_child():
         if zero_core_filter:
@@ -59,18 +65,20 @@ try:
             restrict_child(policy_fd)
 
     child = subprocess.Popen(arguments, stdin=subprocess.DEVNULL, start_new_session=True,
-                             pass_fds=(policy_fd,) if policy_fd is not None else (),
+                             pass_fds=tuple(mount_fds) + ((policy_fd,) if policy_fd is not None else ()),
                              preexec_fn=prepare_child if zero_core_filter or policy_fd is not None else None)
 except Exception as error:
     for fd in lease_fds:
         os.close(fd)
-    code = error.code if isinstance(error, FileLeaseError) else "UNSUPPORTED" if isinstance(error, LandlockUnavailable) else "BACKEND_FAILED"
-    message = str(error) if isinstance(error, (FileLeaseError, LandlockUnavailable)) else "Application could not start"
+    code = error.code if isinstance(error, FileLeaseError) else "UNSUPPORTED" if isinstance(error, (LandlockUnavailable, PrivateMountUnavailable)) else "BACKEND_FAILED"
+    message = str(error) if isinstance(error, (FileLeaseError, LandlockUnavailable, PrivateMountUnavailable)) else "Application could not start"
     report.write_text(json.dumps({"error": {"code": code, "message": message}}))
     sys.exit(73 if code == "FILE_BUSY" else 1)
 finally:
     if policy_fd is not None:
         os.close(policy_fd)
+    for fd in mount_fds:
+        os.close(fd)
 
 # The application never inherits this pipe, so broker death always produces EOF.
 try:

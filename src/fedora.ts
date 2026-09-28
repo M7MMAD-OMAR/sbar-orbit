@@ -148,7 +148,8 @@ export class FedoraBackend {
   /** What the compositor was asked to draw with, and what its log says actually bound. */
   renderer: { asked: NativeRenderer["renderer"]; bound: string; device?: string; driver?: string } = { asked: "pixman", bound: "pixman" };
   private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams,
-    private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot, private audioSockets: string[]) {
+    private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot, private audioSockets: string[],
+    private hostRuntime: string | undefined) {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
@@ -168,6 +169,7 @@ export class FedoraBackend {
     let compositor: ChildProcessWithoutNullStreams, log: ReturnType<typeof createWriteStream>, head = "";
     let preferenceSnapshot: NativePreferenceSnapshot = "absent";
     const audioSockets: string[] = [];
+    const hostRuntime = process.env.XDG_RUNTIME_DIR;
     const env = { ...process.env };
     try {
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
@@ -178,7 +180,6 @@ export class FedoraBackend {
     for (const path of Object.values(base)) await mkdir(path, { recursive: true, mode: 0o700 });
     // Audio servers are shared user services, not display or input sockets. Link only their socket
     // files into this session's private runtime so applications can use the person's sound stack.
-    const hostRuntime = process.env.XDG_RUNTIME_DIR;
     let pulseServer: string | undefined;
     if (hostRuntime && resolve(hostRuntime) !== resolve(directory)) {
       for (const name of ["pipewire-0", "pulse/native"]) {
@@ -221,7 +222,7 @@ export class FedoraBackend {
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
-    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets);
+    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets, hostRuntime);
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -433,8 +434,18 @@ export class FedoraBackend {
       if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
+      // Inkscape and Writer spawn glycin, whose own bubblewrap needs to make mounts. Keep the
+      // pathname Landlock policy on other apps. These two system launchers use a private mount and
+      // PID namespace that hides the host runtime and temporary sockets instead.
+      const desktopMount = action.type === "launch" &&
+        (executable === "/usr/bin/inkscape" || executable === "/usr/bin/libreoffice");
+      if (desktopMount && !this.hostRuntime)
+        throw new OrbitError("UNSUPPORTED", "GTK3 private launch needs the host user runtime path");
       const socketPolicy = action.type === "launch" || action.app === "vscode"
-        ? ["--socket-policy", JSON.stringify(await this.socketPolicy(prepared.toolkit, keyring))]
+        ? [desktopMount ? "--desktop-mount-policy" : "--socket-policy",
+          JSON.stringify(desktopMount
+            ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring) }
+            : await this.socketPolicy(prepared.toolkit, keyring))]
         : [];
       const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), pidFile, "--selected-files", JSON.stringify(prepared.selectedFiles ?? []),
         ...nativeSupervisorSafetyFlags(action), ...socketPolicy, executable, ...prepared.argv.slice(1)],

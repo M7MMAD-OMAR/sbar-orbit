@@ -95,6 +95,18 @@ def make_ruleset(sockets):
         raise
 
 
+def make_abstract_ruleset():
+    """Block connections to abstract UNIX sockets outside this process tree."""
+    try:
+        abi = syscall(CREATE_RULESET, None, 0, CREATE_RULESET_VERSION)
+        if abi < 9:
+            raise LandlockUnavailable("Abstract UNIX socket isolation needs Landlock ABI 9")
+        attr = Ruleset(0, 0, SCOPE_ABSTRACT_UNIX_SOCKET)
+        return syscall(CREATE_RULESET, ctypes.byref(attr), ctypes.sizeof(attr), 0)
+    except OSError as error:
+        raise LandlockUnavailable("Landlock abstract UNIX socket isolation is unavailable") from error
+
+
 def restrict_child(ruleset_fd):
     if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
         error = ctypes.get_errno()
