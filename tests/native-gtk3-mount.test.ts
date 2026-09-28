@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { existsSync } from "node:fs";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -29,6 +29,11 @@ async function listen(path: string): Promise<Server> {
   const servers: Server[] = [];
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
+    const renderNodes = existsSync("/dev/dri")
+      ? (await Promise.all((await readdir("/dev/dri")).filter(name => /^renderD[0-9]+$/.test(name))
+        .map(async name => ({ name, entry: await lstat(join("/dev/dri", name)) }))))
+        .filter(({ entry }) => entry.isCharacterDevice()).map(({ name }) => name).sort()
+      : [];
     servers.push(await listen(privateSocket), await listen(hostSocket), await listen(hostRuntimeSocket));
     await writeFile(document, "before");
     const info = await lstat(privateSocket, { bigint: true });
@@ -44,7 +49,8 @@ document=pathlib.Path(${JSON.stringify(document)})
 text=document.read_text();document.write_text("after")
 nested=subprocess.run(["/usr/bin/bwrap","--bind","/","/","/usr/bin/true"],capture_output=True,text=True,timeout=8)
 random=os.read(os.open("/dev/urandom",os.O_RDONLY),8)
-pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"private":connect(${JSON.stringify(privateSocket)}),"host":connect(${JSON.stringify(hostSocket)}),"hostRuntime":connect(${JSON.stringify(hostRuntimeSocket)}),"text":text,"nested":nested.returncode,"nestedError":nested.stderr[-300:],"randomBytes":len(random),"uinputVisible":pathlib.Path("/dev/uinput").exists(),"hostProcVisible":pathlib.Path("/proc/${process.pid}/root").exists()}))`;
+render=sorted(path.name for path in pathlib.Path("/dev/dri").glob("renderD*") if path.is_char_device())
+pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"private":connect(${JSON.stringify(privateSocket)}),"host":connect(${JSON.stringify(hostSocket)}),"hostRuntime":connect(${JSON.stringify(hostRuntimeSocket)}),"text":text,"nested":nested.returncode,"nestedError":nested.stderr[-300:],"randomBytes":len(random),"renderNodes":render,"cardVisible":pathlib.Path("/dev/dri/card0").exists(),"uinputVisible":pathlib.Path("/dev/uinput").exists(),"hostProcVisible":pathlib.Path("/proc/${process.pid}/root").exists()}))`;
     child = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), report,
       "--selected-files", JSON.stringify([document]), "--desktop-mount-policy", JSON.stringify(policy),
       "/usr/bin/python3", "-c", code], { stdin: "pipe", stdout: "ignore", stderr: "pipe" });
@@ -56,7 +62,8 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"private":connect
     expect(reportData.error).toBeUndefined();
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
       private: "connected", host: "ENOENT", hostRuntime: "ENOENT", text: "before", nested: 0,
-      nestedError: "", randomBytes: 8, uinputVisible: false, hostProcVisible: false,
+      nestedError: "", randomBytes: 8, renderNodes, cardVisible: false,
+      uinputVisible: false, hostProcVisible: false,
     });
     expect(await readFile(document, "utf8")).toBe("after");
   } finally {

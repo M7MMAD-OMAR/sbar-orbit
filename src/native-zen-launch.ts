@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -10,6 +10,24 @@ import { quietZenSync } from "./native-zen-sync";
 type ZenLocation = { home?: string; deploymentFiles?: string;
   leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest"> };
 type ZenInstallation = { deploymentFiles: string; profile: string; appRoot: string };
+
+async function renderDeviceMounts(): Promise<string[]> {
+  let names: string[];
+  try { names = await readdir("/dev/dri"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const nodes: string[] = [];
+  for (const name of names.sort()) {
+    if (!/^renderD[0-9]+$/.test(name)) continue;
+    const node = join("/dev/dri", name);
+    const entry = await lstat(node);
+    if (entry.isCharacterDevice() && entry.uid === 0) nodes.push(node);
+  }
+  if (nodes.length > 16) throw new OrbitError("UNSUPPORTED", "Too many render devices for private Zen");
+  return nodes.length ? ["--dir", "/dev/dri", ...nodes.flatMap(node => ["--dev-bind", node, node])] : [];
+}
 
 function selectedProfile(ini: string): string {
   const sections = new Map<string, Map<string, string>>();
@@ -173,7 +191,7 @@ export async function prepareZenLaunch(
       "/usr/bin/bwrap", "--unshare-net", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--die-with-parent",
       "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
       "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
-      "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
+      "--dev", "/dev", ...await renderDeviceMounts(), "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run",
       "--dir", "/etc",
       "--ro-bind", "/etc/fonts", "/etc/fonts", "--ro-bind", "/etc/passwd", "/etc/passwd",
       "--ro-bind", "/etc/group", "/etc/group", "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",

@@ -2,6 +2,7 @@
 
 import os
 import pwd
+import re
 import stat
 
 
@@ -35,6 +36,31 @@ def open_verified_socket(entry):
     return fd
 
 
+def render_device_mounts():
+    """Expose render nodes without exposing host input or display-control devices."""
+    try:
+        with os.scandir("/dev/dri") as scan:
+            entries = sorted(scan, key=lambda entry: entry.name)
+    except FileNotFoundError:
+        return []
+    nodes = []
+    for entry in entries:
+        if not re.fullmatch(r"renderD[0-9]+", entry.name):
+            continue
+        info = entry.stat(follow_symlinks=False)
+        if not stat.S_ISCHR(info.st_mode) or info.st_uid != 0:
+            continue
+        nodes.append(entry.path)
+    if len(nodes) > 16:
+        raise PrivateMountUnavailable("Too many render devices for a private desktop")
+    if not nodes:
+        return []
+    command = ["--dir", "/dev/dri"]
+    for node in nodes:
+        command.extend(["--dev-bind", node, node])
+    return command
+
+
 def mount_command(arguments, report_directory, selected_files, policy):
     if (not isinstance(policy, dict)
             or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"})
@@ -55,7 +81,7 @@ def mount_command(arguments, report_directory, selected_files, policy):
             or runtime_info.st_uid != os.getuid()):
         raise PrivateMountUnavailable("Private session or host runtime has unsafe ownership")
     command = ["/usr/bin/bwrap", "--unshare-pid", "--unshare-ipc", "--die-with-parent",
-               "--bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+               "--bind", "/", "/", "--dev", "/dev", *render_device_mounts(), "--proc", "/proc",
                "--tmpfs", "/tmp", "--bind", session, session,
                "--tmpfs", runtime]
     descriptors = []

@@ -208,7 +208,21 @@ test("Zen launcher discovers its own profile and prepares an offline mount root"
     expect(prepared.argv).not.toContain("/orbit/no-core/guard.so");
     expect(prepared.argv).not.toContain("/etc/ld.so.preload");
     expect(prepared.argv).toContain("--dev");
-    expect(prepared.argv).not.toContain("--dev-bind");
+    const renderNodes = await readdir("/dev/dri").catch(() => [] as string[]);
+    const expectedDevices: string[] = [];
+    for (const name of renderNodes.sort()) {
+      if (!/^renderD[0-9]+$/.test(name)) continue;
+      const node = join("/dev/dri", name);
+      const entry = await lstat(node);
+      if (entry.isCharacterDevice() && entry.uid === 0) expectedDevices.push(node, node);
+    }
+    const exposedDevices: string[] = [];
+    for (let index = 0; index < prepared.argv.length; index++)
+      if (prepared.argv[index] === "--dev-bind")
+        exposedDevices.push(prepared.argv[index + 1] ?? "", prepared.argv[index + 2] ?? "");
+    expect(exposedDevices).toEqual(expectedDevices);
+    expect(prepared.argv).not.toContain("/dev/uinput");
+    expect(prepared.argv).not.toContain("/dev/dri/card0");
     expect(prepared.argv).not.toContain("/");
     expect(prepared.argv).not.toContain(f.profile);
     expect(prepared.argv).not.toContain(f.home);
