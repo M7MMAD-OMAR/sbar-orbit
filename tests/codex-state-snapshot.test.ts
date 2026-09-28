@@ -113,3 +113,39 @@ test("Codex state snapshot rejects database paths missing from its private rollo
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+test("Codex state snapshot retries a transient source change and cleans the failed attempt", async () => {
+  const f = await fixture();
+  try {
+    const code = `import json, pathlib, sys
+sys.path.insert(0, ${JSON.stringify(resolve(import.meta.dir, "../src/native"))})
+import codex_state_snapshot as snapshot
+original = snapshot.read_stable
+calls = 0
+def transient(path, limit):
+    global calls
+    calls += 1
+    if calls == 3:
+        raise snapshot.SourceChangedError("fixture source change")
+    return original(path, limit)
+snapshot.read_stable = transient
+print(json.dumps(snapshot.snapshot(pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]))))`;
+    const process = Bun.spawn(["/usr/bin/python3", "-c", code, f.source, f.destination],
+      { stdout: "pipe", stderr: "pipe" });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      process.exited,
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+    ]);
+    if (exitCode !== 0) {
+      expect(stderr).toContain("reflink-capable private destination");
+      return;
+    }
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toMatchObject({ attempts: 2, projects: 1, threads: 2 });
+    expect(await readdir(f.destination)).toContain("state_5.sqlite");
+  } finally {
+    f.database.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});

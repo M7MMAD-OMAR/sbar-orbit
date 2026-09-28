@@ -24,6 +24,10 @@ MAX_DATABASE_BYTES = 256 * 1024 * 1024
 ROLLOUT_DIRS = ("sessions", "archived_sessions")
 
 
+class SourceChangedError(ValueError):
+    """A live Codex source changed while it was being snapshotted."""
+
+
 def identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
@@ -48,7 +52,7 @@ def read_stable(path: Path, limit: int) -> bytes:
     try:
         opened = os.fstat(fd)
         if identity(before) != identity(opened):
-            raise ValueError(f"Codex source changed while opening: {path.name}")
+            raise SourceChangedError(f"Codex source changed while opening: {path.name}")
         chunks = []
         total = 0
         while True:
@@ -60,9 +64,9 @@ def read_stable(path: Path, limit: int) -> bytes:
                 raise ValueError(f"Codex source exceeds its size limit: {path.name}")
             chunks.append(chunk)
         if identity(opened) != identity(os.fstat(fd)) or total != opened.st_size:
-            raise ValueError(f"Codex source changed during read: {path.name}")
+            raise SourceChangedError(f"Codex source changed during read: {path.name}")
         if identity(before) != identity(path.lstat()):
-            raise ValueError(f"Codex source path changed during read: {path.name}")
+            raise SourceChangedError(f"Codex source path changed during read: {path.name}")
         return b"".join(chunks)
     finally:
         os.close(fd)
@@ -104,7 +108,7 @@ def sqlite_backup(source: Path, target: Path, created: list[Path]) -> tuple[int,
     os.chmod(target, 0o600)
     after = source.lstat()
     if not stat.S_ISREG(after.st_mode) or (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
-        raise ValueError("Codex database source was replaced during backup")
+        raise SourceChangedError("Codex database source was replaced during backup")
     return projects, paths
 
 
@@ -116,7 +120,7 @@ def reflink(source: Path, target: Path, created: list[Path]) -> int:
     try:
         opened = os.fstat(source_fd)
         if identity(before) != identity(opened):
-            raise ValueError("Codex rollout changed while opening")
+            raise SourceChangedError("Codex rollout changed while opening")
         target_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
         created.append(target)
         try:
@@ -125,7 +129,7 @@ def reflink(source: Path, target: Path, created: list[Path]) -> int:
             except OSError as error:
                 raise ValueError("Codex rollouts need a reflink-capable private destination") from error
             if identity(opened) != identity(os.fstat(source_fd)) or identity(before) != identity(source.lstat()):
-                raise ValueError("Codex rollout changed during snapshot")
+                raise SourceChangedError("Codex rollout changed during snapshot")
             if os.fstat(target_fd).st_size != opened.st_size:
                 raise ValueError("Codex rollout reflink has the wrong size")
             os.fchmod(target_fd, 0o600)
@@ -137,7 +141,7 @@ def reflink(source: Path, target: Path, created: list[Path]) -> int:
     return before.st_size
 
 
-def snapshot(source: Path, destination: Path) -> dict[str, int | bool]:
+def snapshot_once(source: Path, destination: Path) -> dict[str, int | bool]:
     source = source.absolute()
     destination = destination.absolute()
     if source == destination or source in destination.parents or destination in source.parents:
@@ -183,7 +187,7 @@ def snapshot(source: Path, destination: Path) -> dict[str, int | bool]:
                 else:
                     raise ValueError("Codex session tree contains a link or special file")
             if identity(directory_before) != identity(from_dir.lstat()):
-                raise ValueError("Codex session directory changed during snapshot")
+                raise SourceChangedError("Codex session directory changed during snapshot")
 
         for name in ROLLOUT_DIRS:
             from_dir = source / name
@@ -200,9 +204,9 @@ def snapshot(source: Path, destination: Path) -> dict[str, int | bool]:
                     not (destination / relative).is_file()):
                 raise ValueError("Codex database references a missing rollout")
         if identity(root_before) != identity(source.lstat()):
-            raise ValueError("Codex source directory changed during snapshot")
+            raise SourceChangedError("Codex source directory changed during snapshot")
         if global_data != read_stable(source / ".codex-global-state.json", MAX_JSON_BYTES):
-            raise ValueError("Codex global state changed during snapshot")
+            raise SourceChangedError("Codex global state changed during snapshot")
         return {"projects": projects, "threads": len(rollout_paths), "rollouts": files,
                 "rolloutBytes": total, "atomicAcrossStores": False}
     except BaseException:
@@ -212,6 +216,17 @@ def snapshot(source: Path, destination: Path) -> dict[str, int | bool]:
             else:
                 path.unlink(missing_ok=True)
         raise
+
+
+def snapshot(source: Path, destination: Path) -> dict[str, int | bool]:
+    for attempt in range(1, 4):
+        try:
+            return {**snapshot_once(source, destination), "attempts": attempt}
+        except SourceChangedError:
+            if attempt == 3:
+                raise
+            time.sleep(0.1 * attempt)
+    raise AssertionError("Unreachable Codex snapshot retry state")
 
 
 if __name__ == "__main__":
