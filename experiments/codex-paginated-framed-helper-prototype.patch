@@ -1,0 +1,348 @@
+diff --git a/codex-rs/thread-store/Cargo.toml b/codex-rs/thread-store/Cargo.toml
+--- a/codex-rs/thread-store/Cargo.toml
++++ b/codex-rs/thread-store/Cargo.toml
+@@ -38,6 +38,7 @@
+ [dev-dependencies]
+ codex-utils-absolute-path = { workspace = true }
+ pretty_assertions = { workspace = true }
++sha2 = { workspace = true }
+ tempfile = { workspace = true }
+ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+ uuid = { workspace = true }
+diff --git a/codex-rs/thread-store/src/local/thread_history/read_tests.rs b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+--- a/codex-rs/thread-store/src/local/thread_history/read_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+@@ -1,4 +1,7 @@
+ use std::fs;
++use std::io::BufRead;
++use std::io::Read;
++use std::io::Write;
+ use std::time::Duration;
+ 
+ use chrono::Utc;
+@@ -19,6 +22,8 @@
+ use codex_rollout::RolloutItem;
+ use codex_rollout::RolloutLine;
+ use pretty_assertions::assert_eq;
++use sha2::Digest;
++use sha2::Sha256;
+ use tempfile::TempDir;
+ 
+ use super::*;
+@@ -28,7 +33,316 @@
+ use crate::SortDirection;
+ use crate::StoredTurnError;
+ use crate::StoredTurnStatus;
++use crate::local::rollout_lineage::RolloutLineageSegment;
+ use crate::local::test_support::test_config;
++
++fn history_file_snapshots(
++    path: &std::path::Path,
++) -> Vec<(&'static str, Option<HistoryFileSnapshot>)> {
++    ["", "-wal", "-shm"]
++        .into_iter()
++        .map(|suffix| {
++            let mut file_name = path.as_os_str().to_os_string();
++            file_name.push(suffix);
++            let path = std::path::PathBuf::from(file_name);
++            if !path.exists() {
++                return (suffix, None);
++            }
++            let metadata = fs::metadata(&path).expect("history file metadata");
++            let bytes = fs::read(&path).expect("read history file");
++            let digest = Sha256::digest(&bytes);
++            (
++                suffix,
++                Some(HistoryFileSnapshot {
++                    sha256: format!("{digest:x}"),
++                    len: metadata.len(),
++                    modified: metadata.modified().expect("history file modification time"),
++                    bytes,
++                }),
++            )
++        })
++        .collect()
++}
++
++#[derive(PartialEq, Eq)]
++struct HistoryFileSnapshot {
++    sha256: String,
++    len: u64,
++    modified: std::time::SystemTime,
++    bytes: Vec<u8>,
++}
++
++impl std::fmt::Debug for HistoryFileSnapshot {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.debug_struct("HistoryFileSnapshot")
++            .field("sha256", &self.sha256)
++            .field("len", &self.len)
++            .field("modified", &self.modified)
++            .finish()
++    }
++}
++
++fn report_history_file_changes(
++    phase: &str,
++    before: &[(&'static str, Option<HistoryFileSnapshot>)],
++    after: &[(&'static str, Option<HistoryFileSnapshot>)],
++) -> bool {
++    let mut changed = false;
++    for ((before_name, before_file), (after_name, after_file)) in before.iter().zip(after) {
++        assert_eq!(before_name, after_name);
++        let changed_offsets = match (before_file, after_file) {
++            (Some(before_file), Some(after_file)) => Some(
++                before_file
++                    .bytes
++                    .iter()
++                    .zip(&after_file.bytes)
++                    .filter(|(left, right)| left != right)
++                    .count()
++                    + before_file.bytes.len().abs_diff(after_file.bytes.len()),
++            ),
++            _ => None,
++        };
++        eprintln!(
++            "{phase} history{before_name}: before={before_file:?} after={after_file:?} changed_offsets={changed_offsets:?}"
++        );
++        changed |= before_file != after_file;
++    }
++    changed
++}
++
++#[tokio::test]
++async fn bwrap_paginated_page_helper_child() {
++    if std::env::var_os("ORBIT_BWRAP_PAGE_HELPER").is_none() {
++        return;
++    }
++    let stdin = std::io::stdin();
++    let mut input = stdin.lock();
++    let mut header = String::new();
++    input.read_line(&mut header).expect("read request length");
++    let length: usize = header.trim_end().parse().expect("parse request length");
++    assert!((1..=4096).contains(&length));
++    let mut request_bytes = vec![0; length];
++    input.read_exact(&mut request_bytes).expect("read request body");
++    let request: serde_json::Value =
++        serde_json::from_slice(&request_bytes).expect("parse page request");
++    let thread_id = ThreadId::from_string(
++        request["threadId"].as_str().expect("thread ID must be a string"),
++    )
++    .expect("valid thread ID");
++    let kind = request["kind"].as_str().expect("page kind must be a string");
++    assert!(matches!(kind, "turns" | "items"));
++    let limit = request["limit"].as_u64().expect("page limit must be an integer");
++    assert!((1..=100).contains(&limit));
++    let cursor = match request.get("cursor") {
++        None | Some(serde_json::Value::Null) => None,
++        Some(value) => {
++            let cursor = value.as_str().expect("cursor must be a string");
++            assert!(cursor.len() <= 4096);
++            Some(cursor.to_string())
++        }
++    };
++    let config = test_config(std::path::Path::new("/fixture"));
++    let history_path = config.sqlite.thread_history_db_path();
++    let reader = sqlx::sqlite::SqlitePoolOptions::new()
++        .max_connections(1)
++        .connect_with(
++            sqlx::sqlite::SqliteConnectOptions::new()
++                .filename(history_path.as_path())
++                .create_if_missing(false)
++                .read_only(true)
++                .busy_timeout(Duration::from_secs(5)),
++        )
++        .await
++        .expect("open page helper pool inside bwrap");
++    let lineage = RolloutLineage {
++        segments: vec![RolloutLineageSegment {
++            rollout_id: thread_id,
++            rollout_path: std::path::PathBuf::from("/fixture/unused-rollout"),
++            start_ordinal: 1,
++            end: None,
++        }],
++    };
++    let result = if kind == "turns" {
++        let page = page_turn_rows(
++            &reader,
++            thread_id,
++            &lineage,
++            cursor.as_deref(),
++            limit as usize,
++            SortDirection::Asc,
++            StoredTurnItemsView::Summary,
++        )
++        .await
++        .expect("read turn page");
++        let data = page
++            .rows
++            .into_iter()
++            .map(|row| {
++                let items = row
++                    .summary_items
++                    .iter()
++                    .map(|item| {
++                        serde_json::json!({
++                            "itemId": item.item_id,
++                            "content": serde_json::from_slice::<serde_json::Value>(&item.item_json)
++                                .expect("decode stored item content"),
++                        })
++                    })
++                    .collect::<Vec<_>>();
++                serde_json::json!({"turnId": row.turn_id, "items": items})
++            })
++            .collect::<Vec<_>>();
++        serde_json::json!({
++            "data": data,
++            "nextCursor": page.next_cursor,
++            "backwardsCursor": page.backwards_cursor,
++        })
++    } else {
++        let page = page_item_rows(
++            &reader,
++            &lineage,
++            &item_params(thread_id, None, cursor, limit as usize, SortDirection::Asc),
++        )
++        .await
++        .expect("read item page");
++        let data = page
++            .rows
++            .into_iter()
++            .map(|row| {
++                serde_json::json!({
++                    "turnId": row.item.turn_id,
++                    "itemId": row.item.item_id,
++                    "content": serde_json::from_slice::<serde_json::Value>(&row.item.item_json)
++                        .expect("decode stored item content"),
++                })
++            })
++            .collect::<Vec<_>>();
++        serde_json::json!({
++            "data": data,
++            "nextCursor": page.next_cursor,
++            "backwardsCursor": page.backwards_cursor,
++        })
++    };
++    reader.close().await;
++    let response = serde_json::to_string(&result).expect("serialize page response");
++    assert!(response.len() <= 1024 * 1024);
++    println!("ORBIT_PAGE_RESPONSE:{}:{response}", response.len());
++}
++
++fn run_bwrap_page_helper(
++    fixture_root: &std::path::Path,
++    request: &serde_json::Value,
++) -> serde_json::Value {
++    let request_bytes = serde_json::to_vec(request).expect("serialize page request");
++    assert!(request_bytes.len() <= 4096);
++    let test_binary = std::env::current_exe().expect("current test binary");
++    let mut child = std::process::Command::new("/usr/bin/bwrap")
++        .args([
++            "--die-with-parent",
++            "--unshare-all",
++            "--new-session",
++            "--clearenv",
++            "--ro-bind",
++            "/usr",
++            "/usr",
++            "--symlink",
++            "usr/bin",
++            "/bin",
++            "--symlink",
++            "usr/lib",
++            "/lib",
++            "--symlink",
++            "usr/lib64",
++            "/lib64",
++            "--dev",
++            "/dev",
++            "--proc",
++            "/proc",
++            "--tmpfs",
++            "/tmp",
++            "--ro-bind",
++        ])
++        .arg(fixture_root)
++        .args(["/fixture", "--ro-bind"])
++        .arg(test_binary)
++        .args([
++            "/reader",
++            "--setenv",
++            "HOME",
++            "/tmp",
++            "--setenv",
++            "ORBIT_BWRAP_PAGE_HELPER",
++            "1",
++            "--",
++            "/reader",
++            "bwrap_paginated_page_helper_child",
++            "--nocapture",
++        ])
++        .stdin(std::process::Stdio::piped())
++        .stdout(std::process::Stdio::piped())
++        .stderr(std::process::Stdio::piped())
++        .spawn()
++        .expect("start bwrap page helper");
++    let mut stdin = child.stdin.take().expect("page helper stdin");
++    write!(stdin, "{}\n", request_bytes.len()).expect("write request length");
++    stdin.write_all(&request_bytes).expect("write request body");
++    drop(stdin);
++    let output = child.wait_with_output().expect("wait for bwrap page helper");
++    assert!(
++        output.status.success(),
++        "page helper failed: stdout={} stderr={}",
++        String::from_utf8_lossy(&output.stdout),
++        String::from_utf8_lossy(&output.stderr)
++    );
++    let output_text = std::str::from_utf8(&output.stdout).expect("UTF-8 helper output");
++    let frame = output_text
++        .lines()
++        .find_map(|line| line.strip_prefix("ORBIT_PAGE_RESPONSE:"))
++        .expect("page helper response frame");
++    let (length, body) = frame.split_once(':').expect("response length separator");
++    assert_eq!(length.parse::<usize>().expect("response length"), body.len());
++    serde_json::from_str(body).expect("parse page response")
++}
++
++#[tokio::test]
++async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
++    let (home, store, thread_id) = store_with_mode(ThreadHistoryMode::Paginated).await;
++    let writer = history_db(&store).await;
++    let _held_writer_connection = writer.acquire().await.expect("hold writer connection");
++    insert_turn(writer, thread_id, "turn-1", 10, "completed", None, Some("user-1"), None).await;
++    insert_item(writer, thread_id, "turn-1", "user-1", 11).await;
++    insert_turn(writer, thread_id, "turn-2", 20, "completed", None, None, Some("agent-2")).await;
++    insert_item(writer, thread_id, "turn-2", "agent-2", 21).await;
++    let history_path = store.config.sqlite.thread_history_db_path();
++    let before = history_file_snapshots(history_path.as_path());
++    assert!(before.iter().all(|(_, file)| file.is_some()));
++
++    let request = |kind: &str, cursor: Option<&str>| serde_json::json!({
++        "kind": kind,
++        "threadId": thread_id.to_string(),
++        "cursor": cursor,
++        "limit": 1,
++    });
++    let first_turn = run_bwrap_page_helper(home.path(), &request("turns", None));
++    assert_eq!(first_turn["data"][0]["turnId"], "turn-1");
++    assert_eq!(first_turn["data"][0]["items"][0]["content"]["content"][0]["text"], "user-1");
++    let turn_cursor = first_turn["nextCursor"].as_str().expect("next turn cursor");
++    let second_turn = run_bwrap_page_helper(home.path(), &request("turns", Some(turn_cursor)));
++    assert_eq!(second_turn["data"][0]["turnId"], "turn-2");
++    assert_eq!(second_turn["data"][0]["items"][0]["content"]["text"], "agent-2 item");
++
++    let first_item = run_bwrap_page_helper(home.path(), &request("items", None));
++    assert_eq!(first_item["data"][0]["itemId"], "user-1");
++    assert_eq!(first_item["data"][0]["content"]["content"][0]["text"], "user-1");
++    let item_cursor = first_item["nextCursor"].as_str().expect("next item cursor");
++    let second_item = run_bwrap_page_helper(home.path(), &request("items", Some(item_cursor)));
++    assert_eq!(second_item["data"][0]["itemId"], "agent-2");
++    assert_eq!(second_item["data"][0]["content"]["text"], "agent-2 item");
++
++    let after = history_file_snapshots(history_path.as_path());
++    let changed = report_history_file_changes("framed page helper", &before, &after);
++    assert!(!changed, "framed page helper changed owner database files");
++}
+ 
+ #[tokio::test]
+ async fn list_turns_pages_projected_rows_and_applies_item_views() {
