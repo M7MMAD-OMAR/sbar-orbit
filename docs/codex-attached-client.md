@@ -214,11 +214,27 @@ login route in synthetic tests. The installed-ASAR staging path was corrected
 to include the account, project, preload, viewer, identity, and composer
 patches. A disposable public stage passed 57 targeted tests, with one
 documented CLI integration skip, and its fake ChatGPT UI showed the fixture
-email in the Codex section footer. That fixture lacked Codex entitlement, so
-the UI said it had no Codex access and did not show its projects or chats. This
+email in the Codex section footer. That fixture lacked a projected account id, so
+the UI said it had no Codex access and did not show its projects or chats. A
+later source trace identified a more specific cause: the private account
+projection omitted the account id required by the local Codex access check.
+That UI result therefore does not measure the fixture's entitlement. It also
 does not establish real account parity, existing conversation access, tool
 actions, or persistence. The original personal Desktop and account were not
 used or changed.
+
+Orbit commit `4379d5b` and Desktop commit `f6f45f6` project only the selected
+workspace account id from the owner after a successful fake `accounts/check`.
+The gate validates its ASCII shape and length, and the private Desktop keeps
+`hasChatGptToken` false. A public-staged fake plus-account fixture then showed
+the fake owner email, one project, and a saved conversation title in the dark
+Codex UI. Clicking the conversation returned `Attach-only conversation viewer
+is unavailable`, so its answer text was not shown. A separate optional tool
+ceiling check failed: the mock model received 12 tools instead of zero. The
+UI result establishes neither a writable session nor isolated model tools.
+No real account or personal profile was used, and the installed app was not
+modified or launched. See
+`docs/codex-attached-fake-account.md`.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
