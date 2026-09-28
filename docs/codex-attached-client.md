@@ -85,7 +85,10 @@ gate. The current gate drops owner notifications and server requests. In the
 exact-tag app-server, a second client's `turn/start` can steer an already
 active turn, while dynamic tool requests are sent to all subscribed clients
 and the first response can win. A disposable two-client probe observed that
-callback race. A private writable route therefore needs an atomic turn owner,
+callback race. A later deterministic red fixture confirmed that both clients
+received the same dynamic tool callback and the model accepted the nonowner's
+reply. See `experiments/codex-two-client-tool-owner-red.md`. A private
+writable route therefore needs an atomic turn owner,
 tool and approval requests bound to that initiating client, private executor
 placement, a per-turn tool ceiling that also covers existing conversations,
 and filtered turn notifications. These conditions have not been implemented
@@ -147,6 +150,10 @@ Three tests also passed after applying the patches in a detached exact-tag
 worktree. This still does not measure the app-server RPC, Desktop rendering,
 concurrent owner writes, or personal history. See
 `experiments/codex-thread-readonly-legacy-content-files.md`.
+An exported app-server RPC fixture for the loaded and unloaded cases did not
+reach an assertion: its bounded build timed out at 300 seconds. Its red and
+green requests remain unmeasured. See
+`experiments/codex-thread-readonly-legacy-rpc-fixture.md`.
 Neither source patch is in the staged candidate or the Orbit gate. The Desktop
 source has a dormant attach-only legacy viewer patch in commits `3b148f5` and
 `d60630e`.
