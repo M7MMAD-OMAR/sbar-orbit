@@ -358,3 +358,12 @@ accepted the second request and returned the same turn ID. The fixture did
 not measure whether the model later consumed the second client's text. This
 is another reason the attached route continues to deny writes. See
 `experiments/codex-two-client-active-steer-red.md`.
+
+An opt-in source patch then bound `turn/start` and `turn/steer` to the client
+that began an active turn. A disposable two-client green fixture rejected both
+methods from the other client and accepted both from the owner. The mock model
+had received only the warm-up and owner requests before release. This binary
+also contained earlier legacy read-only RPC changes. Other input methods,
+tool callback ownership, per-turn tool limits, and Desktop use have not been
+tested together. The patch is not in the installed application or active gate.
+See `experiments/codex-turn-owner-steer-optin.md`.
