@@ -25,9 +25,22 @@ The second client does not receive the detailed `turn/completed` notification;
 the completed turn is verified by reading it after the first client's
 completion event.
 
+A separate disposable probe tests authority restart persistence:
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/codex-authority-restart-probe.py
+```
+
+It creates one durable thread and completes one mock model turn in a temporary
+Codex home. It then stops the app-server, starts a new app-server with that same
+temporary home, and reads the same thread ID and completed turn ID. The model
+received one request. This proves durable turn recovery across an app-server
+restart in the fixture. It does not exercise a Desktop window, account, plugin,
+private Orbit browser or concurrent tool routing.
+
 This is a local fixture result. It does not attach to the person's running
-Codex Desktop authority, use the person's real accounts or projects, test
-authority restart persistence, enforce a positive allowlist of every host tool,
+Codex Desktop authority, use the person's real accounts or projects, enforce a
+positive allowlist of every host tool,
 or prove that a real model can use all installed applications. The broker,
 browser profile, model, app-server home, and page are disposable. No personal
 application profile is opened or changed.
