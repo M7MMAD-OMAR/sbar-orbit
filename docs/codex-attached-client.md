@@ -65,8 +65,13 @@ Desktop defaults its appearance to the system setting, so this supplies the
 host's dark preference in the private display without changing host settings.
 In a later disposable combined run, an attached copied Desktop rendered dark
 with a synthetic private dconf preference. The person's Desktop was not used.
-No account token, conversation database, project state, or application profile
-is copied. Its temporary HOME is removed on release. The preparation helper
+No account token file, conversation database, project state, or application profile
+is copied. This does not establish token isolation: static inspection found
+that an attached Desktop `account-info` request can call the shared authority's
+`getAuthToken` route with `includeToken: true`, receiving a raw access token in
+memory. Personal account attachment must remain disabled until an attach-only
+patch prevents that response and a fake-token fixture verifies the boundary.
+Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
 executable it also requires the optional feature's staged manifest. That
 manifest is only a prerequisite: it does not prove that the installed bundle
@@ -112,6 +117,26 @@ Codex CLI inside a newly pinned candidate. The owner started a thread with
 answer remained visible after the Orbit client window was closed and reopened.
 The copied candidate and its manifest stayed separate from the installed app.
 This test does not show an allowed Orbit tool action or account continuity.
+
+A later disposable Desktop fixture exposed exactly one named toy Orbit MCP tool
+to the mock model. The model called it, received its result, and completed a
+turn visible in two sequential public Orbit attached windows. This proves the
+positive tool ceiling and the Desktop rendering path for one synthetic tool.
+The toy server only recorded a disposable action; this run did not reach the
+real Orbit broker.
+
+The same fixture then tested an owner restart. It sent SIGTERM only to the
+copied Desktop main process identified inside its private process tree, and
+started a new owner with the same temporary profile. The app-server resumed
+the thread, the sidebar bridge returned the same project, and a new public
+Orbit client displayed the project, tool item, prompt and completed answer.
+The new owner had a different PID, and both authority socket inodes changed.
+No client auth file was present. This used a fake API key, a private display and
+a copied candidate, not the person's running Desktop or account. A stale
+sidebar socket found by the fixture was fixed in the optional Desktop source:
+the new owner probes it and removes it only after a refused connection and an
+unchanged inode check. Its focused source tests passed 3/3. The screenshot is
+`codex-desktop-linux/linux-features/shared-app-server-socket/evidence/private-public-owner-restarted.jpg`.
 
 This establishes mount and temporary HOME behavior for disposable listeners.
 A later combined run used the same internal helper with a copied, patched

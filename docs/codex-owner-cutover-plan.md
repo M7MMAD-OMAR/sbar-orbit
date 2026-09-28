@@ -15,6 +15,9 @@ have used a disposable profile and a fake model credential.
 2. Complete a disposable end-to-end run with one permitted Orbit tool and no
    exposed host tools. Close and reopen both the Orbit client and its owner
    Desktop in separate tests, then verify the same project, thread and answer.
+   A fake-token test must also prove the attached client never receives a raw
+   owner access token through `account-info`, `getAuthToken`, `getAuthStatus`,
+   or any related Desktop IPC response.
 3. Prepare a Codex-only launcher wrapper and a copy of the existing local
    `chatgpt.desktop` entry. The wrapper must select the pinned candidate and
    its bundled CLI, the stable user-only authority socket, the normal personal
@@ -42,9 +45,9 @@ have used a disposable profile and a fake model credential.
 4. Start one Orbit private client through `launch-app codex active`. Verify the
    original Desktop and Orbit show the same selected project and conversation.
    Check the user's account identity and dark appearance in the real owner
-   window, and confirm that Orbit's client can read the conversation without a
-   copied login token. Do not run a personal model turn or edit a project as
-   part of this check.
+   window, and confirm that Orbit's client can read the conversation while the
+   tested token boundary remains active. Do not run a personal model turn or
+   edit a project as part of this check.
 5. Only after those checks, install the Codex-only local launcher override
    atomically. Close and reopen Codex through that launcher and repeat the
    owner socket, account, project and conversation checks. Confirm that a fresh
