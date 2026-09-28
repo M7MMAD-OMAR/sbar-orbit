@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
-import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { validateStagedCodexCandidate, writeStagedCodexCandidateManifest } from "../src/native-codex-candidate";
 
-async function fixture() {
-  const root = await mkdtemp("/var/tmp/orbit-codex-candidate-test-");
+async function fixture(location: "temporary" | "durable" = "temporary") {
+  const sandbox = location === "durable" ? await mkdtemp("/var/tmp/orbit-codex-home-test-") : undefined;
+  const home = sandbox ? join(sandbox, "home") : undefined;
+  const base = home ? join(home, ".local", "share", "sbar-orbit", "codex-candidates") : undefined;
+  if (base) await mkdir(base, { recursive: true, mode: 0o700 });
+  const root = await mkdtemp(base ? join(base, "candidate-") : "/var/tmp/orbit-codex-candidate-test-");
   const app = join(root, "app");
   const source = join(root, "source");
   const feature = join(app, ".codex-linux", "features", "shared-app-server-socket");
@@ -21,7 +25,7 @@ async function fixture() {
   await writeFile(join(source, "ChatGPT"), "fixture desktop binary", { mode: 0o700 });
   await writeFile(join(source, "version"), "42.3.0", { mode: 0o600 });
   await writeFile(join(source, "resources", "app.asar"), "original fixture ASAR", { mode: 0o600 });
-  return { root, app, source, executable };
+  return { root, app, source, executable, home, base, cleanup: sandbox ?? root };
 }
 
 test("broker-pinned Codex manifest verifies the complete private candidate tree", async () => {
@@ -77,4 +81,42 @@ test("Codex candidate rejects an unpatched ASAR and a path outside its private r
     await expect(validateStagedCodexCandidate(join(f.root, "other", "ChatGPT"), "0".repeat(64), f.source))
       .rejects.toMatchObject({ code: "UNSUPPORTED" });
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test("durable Codex candidate verifies again from its private Orbit directory", async () => {
+  const f = await fixture("durable");
+  try {
+    if (!f.home || !f.base) throw new Error("Durable fixture is missing its home or base");
+    const { manifestSha256 } = await writeStagedCodexCandidateManifest(f.executable, f.source, f.home);
+    await expect(validateStagedCodexCandidate(f.executable, manifestSha256, f.source, f.home))
+      .resolves.toBeUndefined();
+    await expect(validateStagedCodexCandidate(f.executable, manifestSha256, f.source, f.home))
+      .resolves.toBeUndefined();
+    const sibling = join(dirname(f.base), "other-candidates", basename(f.root), "app", "ChatGPT");
+    await expect(validateStagedCodexCandidate(sibling, manifestSha256, f.source, f.home))
+      .rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { await rm(f.cleanup, { recursive: true, force: true }); }
+});
+
+test("durable Codex candidate rejects a shared or linked Orbit parent", async () => {
+  const f = await fixture("durable");
+  try {
+    if (!f.home || !f.base) throw new Error("Durable fixture is missing its home or base");
+    const { manifestSha256 } = await writeStagedCodexCandidateManifest(f.executable, f.source, f.home);
+    await chmod(f.base, 0o755);
+    await expect(validateStagedCodexCandidate(f.executable, manifestSha256, f.source, f.home))
+      .rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await chmod(f.base, 0o700);
+    await rename(f.base, `${f.base}-real`);
+    await symlink(`${f.base}-real`, f.base);
+    await expect(validateStagedCodexCandidate(f.executable, manifestSha256, f.source, f.home))
+      .rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await rm(f.base);
+    await rename(`${f.base}-real`, f.base);
+    const local = join(f.home, ".local");
+    await rename(local, `${local}-real`);
+    await symlink(`${local}-real`, local);
+    await expect(validateStagedCodexCandidate(f.executable, manifestSha256, f.source, f.home))
+      .rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { await rm(f.cleanup, { recursive: true, force: true }); }
 });

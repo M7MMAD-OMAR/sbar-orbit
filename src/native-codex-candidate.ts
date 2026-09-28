@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 
@@ -27,14 +28,25 @@ function refuse(message: string): never {
   throw new OrbitError("UNSUPPORTED", message);
 }
 
-function candidateRoot(executable: string): string {
+type CandidateLocation = { root: string; durableAncestors?: string[]; durableBase?: string };
+
+function candidateLocation(executable: string, home: string): CandidateLocation {
   if (executable !== resolve(executable) || executable.length > 4096 || executable.includes("\0") ||
       basename(executable) !== "ChatGPT" || basename(dirname(executable)) !== "app")
     refuse("Codex candidate executable needs a canonical staged app path");
   const root = dirname(dirname(executable));
-  if (dirname(root) !== "/var/tmp" || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(basename(root)))
-    refuse("Codex candidate must be under one private /var/tmp directory");
-  return root;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(basename(root)))
+    refuse("Codex candidate root name is invalid");
+  if (dirname(root) === "/var/tmp") return { root };
+  if (home !== resolve(home) || home.length > 4096 || home.includes("\0"))
+    refuse("Codex candidate home needs a canonical path");
+  const local = join(home, ".local");
+  const share = join(local, "share");
+  const orbit = join(share, "sbar-orbit");
+  const durableBase = join(orbit, "codex-candidates");
+  if (dirname(root) !== durableBase)
+    refuse("Codex candidate must use the private Orbit candidate directory");
+  return { root, durableAncestors: [home, local, share, orbit], durableBase };
 }
 
 async function checkedEntry(path: string, directory: boolean, privateDirectory = false,
@@ -49,11 +61,17 @@ async function checkedEntry(path: string, directory: boolean, privateDirectory =
   return info;
 }
 
-async function scanCandidate(root: string) {
-  const temporary = await lstat("/var/tmp", { bigint: true });
-  if (!temporary.isDirectory() || temporary.uid !== 0n || (temporary.mode & 0o1000n) === 0n ||
-      await realpath("/var/tmp") !== "/var/tmp")
-    refuse("Codex candidate temporary parent is unsafe");
+async function scanCandidate(location: CandidateLocation) {
+  const { root, durableAncestors, durableBase } = location;
+  if (durableAncestors && durableBase) {
+    for (const ancestor of durableAncestors) await checkedEntry(ancestor, true);
+    await checkedEntry(durableBase, true, true);
+  } else {
+    const temporary = await lstat("/var/tmp", { bigint: true });
+    if (!temporary.isDirectory() || temporary.uid !== 0n || (temporary.mode & 0o1000n) === 0n ||
+        await realpath("/var/tmp") !== "/var/tmp")
+      refuse("Codex candidate temporary parent is unsafe");
+  }
   await checkedEntry(root, true, true);
   const pending = [join(root, "app")];
   const files: string[] = [];
@@ -130,11 +148,13 @@ export async function validateStagedCodexCandidate(
   executable: string,
   pinnedManifestSha256: string,
   sourceRoot = installedRoot,
+  candidateHome = homedir(),
 ): Promise<void> {
   if (!digestPattern.test(pinnedManifestSha256))
     refuse("Codex candidate needs a broker-pinned manifest SHA-256");
-  const root = candidateRoot(executable);
-  const candidateFiles = await scanCandidate(root);
+  const location = candidateLocation(executable, candidateHome);
+  const { root } = location;
+  const candidateFiles = await scanCandidate(location);
   const manifestPath = join(root, "candidate-manifest.json");
   const manifestInfo = await checkedEntry(manifestPath, false);
   if (manifestInfo.size > 2n * 1024n * 1024n || (manifestInfo.mode & 0o077n) !== 0n)
@@ -166,9 +186,12 @@ export async function validateStagedCodexCandidate(
   }
 }
 
-export async function writeStagedCodexCandidateManifest(executable: string, sourceRoot = installedRoot) {
-  const root = candidateRoot(executable);
-  const candidateFiles = await scanCandidate(root);
+export async function writeStagedCodexCandidateManifest(
+  executable: string, sourceRoot = installedRoot, candidateHome = homedir(),
+) {
+  const location = candidateLocation(executable, candidateHome);
+  const { root } = location;
+  const candidateFiles = await scanCandidate(location);
   const sourceVersion = (await readFile(join(sourceRoot, "version"), "utf8")).trim();
   if (!/^\d+\.\d+\.\d+$/.test(sourceVersion) ||
       (await readFile(join(root, "app", "version"), "utf8")).trim() !== sourceVersion)
@@ -185,7 +208,7 @@ export async function writeStagedCodexCandidateManifest(executable: string, sour
   const manifestSha256 = createHash("sha256").update(bytes).digest("hex");
   const manifestPath = join(root, "candidate-manifest.json");
   await writeFile(manifestPath, bytes, { flag: "wx", mode: 0o600 });
-  try { await validateStagedCodexCandidate(executable, manifestSha256, sourceRoot); }
+  try { await validateStagedCodexCandidate(executable, manifestSha256, sourceRoot, candidateHome); }
   catch (error) {
     await rm(manifestPath, { force: true });
     throw error;

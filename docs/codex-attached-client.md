@@ -19,8 +19,14 @@ may configure a separate staged candidate with both
 `ORBIT_CODEX_CANDIDATE_EXECUTABLE` and
 `ORBIT_CODEX_CANDIDATE_MANIFEST_SHA256`. These are broker environment settings,
 not action fields an agent can supply. If only one is set, the action fails.
-The executable must be `/var/tmp/<private-root>/app/ChatGPT`, with the root
-owned by the user and mode `0700`. The candidate tree must contain only owned
+The executable may be `/var/tmp/<private-root>/app/ChatGPT` for a disposable
+fixture, or
+`~/.local/share/sbar-orbit/codex-candidates/<private-root>/app/ChatGPT`
+for a candidate retained across application restarts. Broker configuration
+must use the expanded absolute path. The candidate root and
+the dedicated `codex-candidates` directory must belong to the user and have
+mode `0700`. Every ancestor under the user's home must be owned by that user,
+canonical and free of shared write permissions. The candidate tree must contain only owned
 regular files and directories, with no links, special files or shared write
 permissions. Its private manifest pins the SHA-256 of every app file. The
 broker setting pins the manifest itself. The verifier also requires the copied
@@ -31,12 +37,14 @@ manifest and broker pin.
 
 After staging and finalizing all candidate files, generate its manifest with
 `bun run scripts/write-codex-candidate-manifest.ts
-/var/tmp/<private-root>/app/ChatGPT`. The script writes
-`/var/tmp/<private-root>/candidate-manifest.json` once and prints the manifest
+<absolute-candidate-root>/app/ChatGPT`. The script writes
+`<absolute-candidate-root>/candidate-manifest.json` once and prints the manifest
 SHA-256 for broker configuration. It never overwrites a manifest. Build a fresh
 candidate directory after changing any file. The existing staged candidate has
 not received a manifest yet, and no broker candidate setting has been changed.
 This route does not activate the candidate or restart the person's Desktop.
+Retaining the candidate directory preserves its files, but does not itself
+prove account, thread or tool continuity after a Desktop restart.
 
 The owner must provide an authority socket below `/run/user/<uid>` with its
 adjacent `.state` socket and a private Orbit display. Preparation checks that
@@ -80,10 +88,13 @@ action test verified that an absent owner returns `UNSUPPORTED` without creating
 a private home or supervised child. `bun run typecheck` also passed. This test
 did not launch the installed Desktop or use the person's account.
 
-The candidate verifier passed 21 focused tests across four files with 104
+The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
 unsafe permissions, an unpatched ASAR and paths outside the private root. These
 tests used disposable files, not the user's account or staged Desktop candidate.
+The disposable tests also cover a durable candidate path, a rejected sibling
+directory, and linked or shared-write Orbit parent directories. They do not
+measure an actual Desktop restart.
 
 A later disposable fixture used a separate exact-version staged candidate and
 its pinned manifest with the public `launch-app codex active` action. The first
