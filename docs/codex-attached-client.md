@@ -1,11 +1,26 @@
-# Codex attached client experiment
+# Codex active attachment route
 
-`prepareCodexAttachedLaunch` in `src/native-codex-attach.ts` prepares an internal
-Codex Desktop client for the optional shared app-server socket feature. Nothing
-in the public `launch-app` action calls it. The installed Desktop and its
-personal profile are not changed by this path.
+`launch-app` with `app: "codex"` and `profile: "active"` calls
+`prepareCodexAttachedLaunch` in `src/native-codex-attach.ts`. It requires the
+optional shared app-server socket feature on the installed Desktop and a live
+owner authority. If either shared socket or the attach feature is unavailable,
+the action returns `UNSUPPORTED` before creating a private home or launching a
+window. It never falls back to an account or history snapshot.
 
-The caller must provide an authority socket below `/run/user/<uid>` with its
+The default owner socket is
+`/run/user/<uid>/codex-desktop/app-server-bridge/app-server.sock`. A broker
+started with `ORBIT_CODEX_AUTHORITY_SOCKET` can select a different owner socket
+under its user runtime. The action does not accept a socket path, executable or
+project path from an agent. Project directory access through this route has not
+been implemented.
+
+The public route currently accepts only `/usr/lib/chatgpt/ChatGPT` as its
+installed executable. A verified candidate staged under `/var/tmp` is not a
+public launch target. Using that candidate without replacing the installed app
+needs a separate explicit configuration and executable identity check. This
+route does not activate the candidate or restart the person's Desktop.
+
+The owner must provide an authority socket below `/run/user/<uid>` with its
 adjacent `.state` socket and a private Orbit display. Preparation checks that
 every socket parent is owned by the user and private, that both sockets have
 modes limited to the user, and that both accept a connection. It records each
@@ -36,7 +51,13 @@ fixture executable. The fixture connected to both mounted sockets from inside
 the private mount, saw the attach-only setting, and saw no copied Codex state.
 The same test rejected a changed inode on either socket before launch. A second test rejected
 permissive, linked, and out-of-runtime socket paths, and an unrelated executable.
-The focused run passed with 2 tests and 10 assertions on September 28, 2026.
+The original focused run passed with 2 tests and 10 assertions on September 28, 2026.
+After the public route changed, `ORBIT_TEST_NATIVE=1 bun run verify
+tests/native-codex-attach.test.ts tests/native-codex.test.ts
+tests/agent-interface.test.ts` passed 17 tests with 93 assertions. The added
+action test verified that an absent owner returns `UNSUPPORTED` without creating
+a private home or supervised child. `bun run typecheck` also passed. This test
+did not launch the installed Desktop or use the person's account.
 
 This establishes mount and temporary HOME behavior for disposable listeners.
 A later combined run used the same internal helper with a copied, patched

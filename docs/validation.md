@@ -2,6 +2,8 @@
 
 These are alpha measurements, not guarantees for arbitrary applications. Raw workstation logs, profiles, conversation identifiers and access links are intentionally excluded from the public repository.
 
+The Codex snapshot measurements below are historical. The public Codex `active` action now requires live owner sockets, rejects project grants and never falls back to a copied profile. The installed original Desktop was not switched to this owner mode.
+
 | Area | Observed outcome | Reproduce |
 |---|---|---|
 | Browser/viewer stability | 600 seconds, 2077 submissions, 3005 frames, 5.006 FPS; maximum sampled frame age 284 ms | `experiments/viewer-timing.ts 600` |

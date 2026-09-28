@@ -56,16 +56,16 @@ test("MCP image preserves tab metadata; metadata mode never captures", async () 
   } finally { await h.close(); }
 });
 
-test("MCP accepts the private Codex launch action and rejects a relative project path", async () => {
+test("MCP accepts the live Codex launch action and rejects a project path", async () => {
   const h = await harness();
   try {
     const client = await h.connect();
-    const action = { type: "launch-app", app: "codex", profile: "active", projectPath: "/tmp/selected-project" };
+    const action = { type: "launch-app", app: "codex", profile: "active" };
     const accepted = await tool(client, "orbit_act", { sessionId: "fixture", requestId: "codex-launch", action });
     expect(accepted.isError).not.toBe(true);
     expect(h.calls).toEqual(["session.act"]);
     const rejected = await tool(client, "orbit_act", { sessionId: "fixture", requestId: "bad-path",
-      action: { ...action, projectPath: "relative-project" } });
+      action: { ...action, projectPath: "/tmp/selected-project" } });
     expect(rejected.isError).toBe(true);
     expect(h.calls).toEqual(["session.act"]);
   } finally { await h.close(); }

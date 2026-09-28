@@ -9,6 +9,13 @@ import { seedNativePreferences } from "./native-preferences";
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
 const privateSocketName = "orbit-codex-authority.sock";
 
+export function activeCodexAuthoritySocketPath(): string {
+  return process.env.ORBIT_CODEX_AUTHORITY_SOCKET ??
+    join(`/run/user/${process.getuid?.()}`, "codex-desktop", "app-server-bridge", "app-server.sock");
+}
+
+export const activeCodexExecutable = installedExecutable;
+
 export type CodexAuthoritySocket = { path: string; device: string; inode: string };
 
 export type PreparedCodexAttachedLaunch = {
@@ -97,9 +104,16 @@ export async function prepareCodexAttachedLaunch(
       !/^[A-Za-z0-9_.-]+$/.test(display.waylandDisplay) || !display.libraryPath)
     throw new OrbitError("INVALID_REQUEST", "Codex attach needs Orbit's private display environment");
   await ownedPrivateDirectory(session);
+  let authoritySocket: CodexAuthoritySocket;
+  let authorityStateSocket: CodexAuthoritySocket;
+  try {
+    authoritySocket = await liveAuthoritySocket(authoritySocketPath);
+    authorityStateSocket = await liveAuthoritySocket(`${authoritySocketPath}.state`);
+  } catch (error) {
+    if (error instanceof OrbitError && error.code === "INVALID_REQUEST") throw error;
+    throw new OrbitError("UNSUPPORTED", "Codex active profile needs a running Desktop authority with both private shared sockets");
+  }
   await attachCapableExecutable(executable, session);
-  const authoritySocket = await liveAuthoritySocket(authoritySocketPath);
-  const authorityStateSocket = await liveAuthoritySocket(`${authoritySocketPath}.state`);
   const root = await mkdtemp(join(session, "codex-attach-"));
   try {
     await chmod(root, 0o700);

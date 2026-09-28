@@ -45,7 +45,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
     inputSchema: { mode: z.enum(["image", "metadata"]).default("image") },
   }, ({ mode }) => invoke(mode === "metadata" ? "session.presence" : "session.observe"));
   server.registerTool("orbit_act", {
-    description: "Perform one action in this session only. Reuse requestId when retrying an uncertain result. Codex launch-app currently uses a point in time snapshot, does not share the person's live Desktop authority, and discards private changes on stop.",
+    description: "Perform one action in this session only. Reuse requestId when retrying an uncertain result. Codex launch-app with profile active requires the running Desktop owner's shared authority sockets and never copies its profile as a fallback.",
     inputSchema: { requestId: id, action: orbitActionSchema },
   }, params => invoke("session.act", params));
   for (const operation of ["pause", "resume", "stop", "journal"] as const) {

@@ -1,14 +1,14 @@
 # Codex selected project files, research only
 
-This note describes a possible grant for one explicitly selected host project directory. No launcher accepts this grant today, and no private Codex project-file workflow has been measured.
+This research note predates the snapshot project grant described in `codex-local-state.md`. The current public Codex `active` route attaches to a live owner authority and rejects `projectPath`. No attached client project-file workflow has been measured.
 
 ## Current gap
 
-The [Codex launcher](../src/native-codex.ts) copies `auth.json` into a private home and passes no selected files. The [private mount](../src/native/mount_unix.py) replaces `/home` with that snapshot and masks the host `/tmp` and user runtime. A host project path under `/home` therefore does not resolve inside private Codex. The route also does not copy the local project database, project ordering or thread rollouts, as recorded in [the state audit](codex-local-state.md). A file mount alone would not restore the project list or conversation history.
+The current [Codex launcher](../src/native-codex-attach.ts) creates an empty private home and connects to the owner's live authority through verified sockets. The [private mount](../src/native/mount_unix.py) replaces `/home` with that empty home and masks the host `/tmp` and user runtime. A host project path under `/home` therefore does not resolve inside private Codex. The old snapshot helper in `native-codex.ts` is not used by the public route. A project bind for the attached client needs separate validation.
 
 ## Candidate grant
 
-Add an optional canonical absolute `projectPath` to Codex `launch-app` parsing in [fedora.ts](../src/fedora.ts). Pass it separately from `selectedFiles`; the existing file lease accepts only regular files. In the supervisor, reserve the selected directory for the application tree. In `mount_command`, reject the host home itself, protected profile directories, the Orbit session and runtime, and any path with symbolic source components. Open each source component with `O_DIRECTORY | O_NOFOLLOW`, retain the final directory descriptor, and bind it at the same absolute path with `--bind-fd` after the private home mount. Create only its missing parent directories inside the private home. Keep the original Codex profile paths on the private snapshot and the host display sockets masked.
+An attached client project grant would need a separate action contract and mount policy. The existing file lease accepts only regular files. In the supervisor, reserve the selected directory for the application tree. In `mount_command`, reject the host home itself, protected profile directories, the Orbit session and runtime, and any path with symbolic source components. Open each source component with `O_DIRECTORY | O_NOFOLLOW`, retain the final directory descriptor, and bind it at the same absolute path with `--bind-fd` after the private home mount. Create only its missing parent directories inside the private home. Keep the owner's Codex profile paths masked.
 
 The [current leases](../src/native/file_leases.py) lock exact regular-file paths. Directory grants need shared locks on ancestor directory keys and an exclusive lock on the selected directory key, held until all app descendants exit. Existing exact-file grants would need the same ancestor locks so a file inside a reserved project conflicts. These locks coordinate Orbit launches only.
 

@@ -47,12 +47,12 @@ test("Codex orphan sweep removes only an expired private snapshot", async () => 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("Codex launch action accepts the installed active profile without caller arguments", () => {
+test("Codex active launch accepts no snapshot or project arguments", () => {
   expect(parseNativeAction({ type: "launch-app", app: "codex", profile: "active" })).toEqual(
     { type: "launch-app", app: "codex", profile: "active" });
-  expect(parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" }))
-    .toEqual({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" });
+  expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" })).toThrow();
   expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "relative" })).toThrow();
+  expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "snapshot" })).toThrow();
   expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", other: true })).toThrow();
   expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", argv: ["/bin/sh"] })).toThrow();
 });

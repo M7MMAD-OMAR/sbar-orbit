@@ -4,10 +4,32 @@ import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareCodexAttachedLaunch } from "../src/native-codex-attach";
+import { FedoraBackend, parseNativeAction } from "../src/fedora";
 
 const runtime = `/run/user/${process.getuid?.()}`;
 const enabled = process.platform === "linux" && process.env.XDG_RUNTIME_DIR === runtime &&
   homedir().startsWith("/home/") && homedir().split("/").length === 3 && !!Bun.which("bwrap");
+
+test("Codex active action refuses a missing owner before copying or launching", async () => {
+  const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
+  const oldSocket = process.env.ORBIT_CODEX_AUTHORITY_SOCKET;
+  process.env.ORBIT_CODEX_AUTHORITY_SOCKET = join(runtime, `orbit-codex-absent-${crypto.randomUUID()}`, "app-server.sock");
+  try {
+    const backend = Object.assign(Object.create(FedoraBackend.prototype), {
+      parseAction: parseNativeAction, closed: false, children: [], directory: session,
+      env: { XDG_RUNTIME_DIR: session, LD_LIBRARY_PATH: "/usr/lib" }, waylandDisplay: "wayland-0",
+    }) as FedoraBackend;
+    const before = await readdir(session);
+    await expect(backend.act({ type: "launch-app", app: "codex", profile: "active" }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("running Desktop authority") });
+    expect(await readdir(session)).toEqual(before);
+    expect((backend as unknown as { children: unknown[] }).children).toEqual([]);
+  } finally {
+    if (oldSocket === undefined) delete process.env.ORBIT_CODEX_AUTHORITY_SOCKET;
+    else process.env.ORBIT_CODEX_AUTHORITY_SOCKET = oldSocket;
+    await rm(session, { recursive: true, force: true });
+  }
+});
 
 async function listen(path: string, value: string): Promise<Server> {
   const server = createServer(socket => socket.end(value));

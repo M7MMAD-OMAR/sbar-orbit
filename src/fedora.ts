@@ -10,7 +10,7 @@ import { swayRequest } from "./sway-ipc";
 import { applyAppearance, inheritedAppearance } from "./appearance";
 import { seedNativePreferences, type NativePreferenceSnapshot } from "./native-preferences";
 import { prepareVSCodeLaunch, validateVSCodeProfileRequest } from "./native-vscode";
-import { prepareCodexLaunch } from "./native-codex";
+import { activeCodexAuthoritySocketPath, activeCodexExecutable, prepareCodexAttachedLaunch } from "./native-codex-attach";
 import { prepareZenLaunch } from "./native-zen-launch";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
@@ -18,7 +18,7 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 
 export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
-  | { type: "launch-app"; app: "codex"; profile: "active"; projectPath?: string }
+  | { type: "launch-app"; app: "codex"; profile: "active" }
   | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web"; sharedFiles?: string[] }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
@@ -50,14 +50,8 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
   }
   if (a.type === "launch-app") {
     if (a.app === "codex" && a.profile === "active" &&
-        Object.keys(a).every(key => ["type", "app", "profile", "projectPath"].includes(key))) {
-      if (a.projectPath !== undefined &&
-          (typeof a.projectPath !== "string" || !a.projectPath.startsWith("/") ||
-           a.projectPath.length > 4096 || a.projectPath.includes("\0")))
-        throw new OrbitError("INVALID_REQUEST", "Codex project path needs an absolute directory");
-      return { type: "launch-app", app: "codex", profile: "active",
-        ...(a.projectPath === undefined ? {} : { projectPath: a.projectPath }) };
-    }
+        Object.keys(a).every(key => ["type", "app", "profile"].includes(key)))
+      return { type: "launch-app", app: "codex", profile: "active" };
     if (a.app === "zen" && a.profile === "active" &&
         (a.network === undefined || a.network === "offline" || a.network === "public-web") &&
         Object.keys(a).every(key => ["type", "app", "profile", "network", "sharedFiles"].includes(key))) {
@@ -444,11 +438,11 @@ export class FedoraBackend {
         : action.app === "vscode"
           ? await prepareVSCodeLaunch(this.directory, { extensions: action.extensions, openPath: action.openPath })
           : action.app === "codex"
-            ? await prepareCodexLaunch(this.directory, {
+            ? await prepareCodexAttachedLaunch(this.directory, {
                 runtimeDirectory: this.env.XDG_RUNTIME_DIR ?? "",
                 waylandDisplay: this.waylandDisplay,
                 libraryPath: this.env.LD_LIBRARY_PATH ?? "",
-              }, { projectPath: action.projectPath })
+              }, activeCodexAuthoritySocketPath(), activeCodexExecutable)
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
             this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
       let cleanupManaged = false;
@@ -473,6 +467,10 @@ export class FedoraBackend {
           JSON.stringify(desktopMount
             ? { runtime: this.hostRuntime, sockets: await this.socketPolicy(prepared.toolkit, keyring),
                 ...(privateHome === undefined ? {} : { privateHome }),
+                ...("authoritySocket" in prepared ? {
+                  authoritySocket: prepared.authoritySocket,
+                  authorityStateSocket: prepared.authorityStateSocket,
+                } : {}),
                 ...("sharedProject" in prepared && prepared.sharedProject
                   ? { sharedProject: prepared.sharedProject } : {}) }
             : await this.socketPolicy(prepared.toolkit, keyring))]
