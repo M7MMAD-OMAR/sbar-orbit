@@ -1,0 +1,146 @@
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index b1b9fae..e452cfc 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -2798,6 +2798,2 @@ impl ThreadRequestProcessor {
+ 
+-        if read_only && include_turns {
+-            return Err(invalid_request("readOnly thread/read requires includeTurns=false"));
+-        }
+-
+         let thread_uuid = ThreadId::from_string(&thread_id)
+@@ -2927,2 +2923,7 @@ impl ThreadRequestProcessor {
+             if matches!(stored_thread.history_mode, ThreadHistoryMode::Paginated) {
++                if read_only {
++                    return Err(ThreadReadViewError::InvalidRequest(
++                        "readOnly thread/read does not support paginated includeTurns".to_string(),
++                    ));
++                }
+                 let (mut thread, _) =
+@@ -3039,2 +3040,7 @@ impl ThreadRequestProcessor {
+             ) {
++                if read_only {
++                    return Err(ThreadReadViewError::InvalidRequest(
++                        "readOnly thread/read does not support paginated includeTurns".to_string(),
++                    ));
++                }
+                 self.thread_store
+@@ -3049,2 +3055,19 @@ impl ThreadRequestProcessor {
+             }
++            if read_only {
++                let stored_thread = self
++                    .read_stored_thread_for_read(thread_id, /*include_history*/ true, true)
++                    .await?
++                    .ok_or_else(|| {
++                        ThreadReadViewError::InvalidRequest(format!(
++                            "no rollout found for thread id {thread_id}"
++                        ))
++                    })?;
++                let history = stored_thread.history.ok_or_else(|| {
++                    ThreadReadViewError::Internal(format!(
++                        "thread store did not return history for thread {thread_id}"
++                    ))
++                })?;
++                thread.turns = build_legacy_api_turns_from_rollout_items(&history.items);
++                return Ok(());
++            }
+             let history = loaded_thread
+diff --git a/codex-rs/thread-store/src/local/read_thread.rs b/codex-rs/thread-store/src/local/read_thread.rs
+index 55afa2a..352ea8b 100644
+--- a/codex-rs/thread-store/src/local/read_thread.rs
++++ b/codex-rs/thread-store/src/local/read_thread.rs
+@@ -40,7 +40,2 @@ pub(super) async fn read_thread_read_only(
+ ) -> ThreadStoreResult<StoredThread> {
+-    if params.include_history {
+-        return Err(ThreadStoreError::InvalidRequest {
+-            message: "read-only thread/read requires includeTurns=false".to_string(),
+-        });
+-    }
+     read_thread_with_mode(store, params, true).await
+@@ -589,2 +584,3 @@ mod tests {
+     use codex_protocol::protocol::ThreadHistoryMode;
++    use codex_protocol::protocol::ThreadMemoryMode;
+     use codex_protocol::user_input::UserInput;
+@@ -597,2 +593,4 @@ mod tests {
+     use super::*;
++    use crate::ResumeThreadParams;
++    use crate::ThreadPersistenceMetadata;
+     use crate::ThreadStore;
+@@ -605,2 +603,64 @@ mod tests {
+ 
++    #[tokio::test]
++    async fn legacy_loaded_read_missing_sqlite_row_after_writer_closes() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(233);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        let rollout_path =
++            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++        store
++            .resume_thread(ResumeThreadParams {
++                thread_id,
++                rollout_path: Some(rollout_path.clone()),
++                history: None,
++                include_archived: true,
++                metadata: ThreadPersistenceMetadata {
++                    cwd: Some(home.path().to_path_buf()),
++                    model_provider: "test-provider".to_string(),
++                    memory_mode: ThreadMemoryMode::Enabled,
++                },
++            })
++            .await
++            .expect("resume legacy writer");
++        store.shutdown_thread(thread_id).await.expect("close writer");
++        runtime.delete_thread(thread_id).await.expect("remove metadata row");
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++        let rollout_before = std::fs::read(&rollout_path).expect("read rollout");
++
++        for _ in 0..2 {
++            store
++                .read_thread_read_only(ReadThreadParams {
++                    thread_id,
++                    include_archived: true,
++                    include_history: false,
++                })
++                .await
++                .expect("read metadata or name");
++        }
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: true,
++                include_history: true,
++            })
++            .await
++            .expect("read legacy history");
++
++        let history = thread.history.expect("legacy history");
++        assert_eq!(history.items.len(), 2);
++        assert!(history.items.iter().any(|item| {
++            matches!(item, RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "Hello from user")
++        }));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++        assert_eq!(std::fs::read(&rollout_path).expect("read rollout"), rollout_before);
++    }
++
+     #[tokio::test]
+@@ -626,3 +686,3 @@ mod tests {
+                 include_archived: false,
+-                include_history: false,
++                include_history: true,
+             })
+@@ -632,2 +692,7 @@ mod tests {
+         assert_eq!(thread.rollout_path, Some(rollout_path));
++        let history = thread.history.expect("legacy history");
++        assert_eq!(history.items.len(), 2);
++        assert!(history.items.iter().any(|item| {
++            matches!(item, RolloutItem::EventMsg(EventMsg::UserMessage(event)) if event.message == "Hello from user")
++        }));
+         assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
