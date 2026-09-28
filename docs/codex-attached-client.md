@@ -112,8 +112,9 @@ owner's project records untouched. Its full external test suite had 43 passes
 and 2 test harness incompatibilities, unrelated to that patch. A gated fake
 Desktop showed a shared project and conversation title, then displayed
 `Failed to resume chat, Codex private client is read only` when opening the
-conversation. Its footer showed `Settings`, not the fake owner's account
-label. No personal application, account or profile was used.
+conversation. Its footer showed `Settings`. The fake owner used an API key and
+had no ChatGPT display name, so this fixture cannot measure ChatGPT account
+label parity. No personal application, account or profile was used.
 
 An exact-tag CLI source experiment in
 `experiments/codex-thread-readonly-metadata.patch` adds an opt-in

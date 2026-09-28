@@ -10,8 +10,10 @@ have used a disposable profile and a fake model credential.
 The attached client now has a read-only gate, but the gated Desktop only
 showed a fixture project and conversation title. Opening the conversation
 asked for `thread/resume` and was denied. Its account footer showed `Settings`.
-The personal cutover is therefore still blocked on safe conversation viewing,
-account identity parity and a session-bound write route. The user requires the
+That owner used a fake API key without a ChatGPT display name, so this does
+not measure real account label parity. The personal cutover is still blocked
+on safe conversation viewing, account identity parity and a session-bound
+write route. The user requires the
 same practical capabilities in every app, so a title-only viewer is not a
 successful cutover.
 
