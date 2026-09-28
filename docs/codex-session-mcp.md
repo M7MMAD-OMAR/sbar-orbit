@@ -21,6 +21,19 @@ test passed with 2 tests and 9 assertions using:
 bun run scripts/limited.ts bun test tests/session-mcp.test.ts
 ```
 
+`experiments/codex-bound-mcp-routing-probe.py` then started the installed Codex
+app-server with an empty temporary home. Two ephemeral threads each configured
+the same named `orbit_private` MCP server with a different `ORBIT_SESSION_ID`.
+Direct MCP calls for the first, second and first thread reached a disposable
+broker with the expected first, second and first session IDs. This proves
+thread-specific adapter environment selection for this installed CLI and
+direct MCP call path. It did not send a model turn, open a desktop window, or
+use the person's account.
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-routing-probe.py
+```
+
 This is a tool interface boundary, not an operating system boundary. A process
 that can reach Orbit's general broker socket as the same user can still call
 its general RPC methods. The adapter is not currently attached to a shared
