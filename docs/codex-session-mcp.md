@@ -34,6 +34,22 @@ use the person's account.
 bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-routing-probe.py
 ```
 
+`experiments/codex-bound-mcp-model-probe.py` adds a local mock Responses API.
+The model fixture returned a namespaced `orbit_act` function call. Codex
+advertised the bound tool, delivered the call to the disposable broker for its
+fixed session ID, completed the MCP item, and sent that result to the model's
+second request. The temporary thread used `danger-full-access` with approvals
+disabled. A first attempt with `read-only` rejected the MCP action before it
+reached the broker because the tool has no read-only annotation. This is a
+Codex approval and sandbox behavior, not an Orbit routing failure. An actual
+shared authority must keep shell execution and all host UI tools inside the
+private environment before using that mode.
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-model-probe.py
+bun run scripts/limited.ts /usr/bin/python3 experiments/codex-bound-mcp-model-probe.py --read-only
+```
+
 This is a tool interface boundary, not an operating system boundary. A process
 that can reach Orbit's general broker socket as the same user can still call
 its general RPC methods. The adapter is not currently attached to a shared
