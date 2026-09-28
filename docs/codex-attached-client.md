@@ -151,6 +151,16 @@ This evidence is in
 `experiments/codex-paginated-bwrap-readonly-positive.md`. No Orbit helper,
 app-server request or Desktop viewer uses this boundary yet.
 
+An exact-tag, test-only framed helper prototype then requested two turn pages
+and two item pages through one disposable `bwrap` child per page. It returned
+both cursors and fixture user and assistant content while the main database,
+WAL, and SHM bytes and metadata stayed unchanged across the four calls. The
+exported patch applied and passed in a clean exact-tag worktree. This is one
+synthetic rollout segment, with no state database validation, concurrent writer
+test, app-server RPC, Orbit gate, or Desktop rendering. The active gate still
+denies paginated reads. See
+`experiments/codex-paginated-framed-helper-prototype.md`.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
@@ -176,6 +186,20 @@ its dark project and conversation title with this projection. In a separate
 fake ChatGPT fixture, this removed the sign-in requirements error but the
 Desktop still showed `Sign in to ChatGPT` after 40 seconds. The account footer
 and authenticated conversation work remain unmeasured.
+
+Desktop commit `1563cd1` adds an attach-only identity route in the copied
+bundle. It enters the app route only when the private preload hook is present
+and sanitized account information contains a bounded email; the private client
+still has no ChatGPT token. Owner mode and missing-email cases kept the normal
+login route in synthetic tests. The installed-ASAR staging path was corrected
+to include the account, project, preload, viewer, identity, and composer
+patches. A disposable public stage passed 57 targeted tests, with one
+documented CLI integration skip, and its fake ChatGPT UI showed the fixture
+email in the Codex section footer. That fixture lacked Codex entitlement, so
+the UI said it had no Codex access and did not show its projects or chats. This
+does not establish real account parity, existing conversation access, tool
+actions, or persistence. The original personal Desktop and account were not
+used or changed.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
