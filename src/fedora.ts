@@ -2,8 +2,8 @@ import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { requireResourceBudget } from "./resource-budget";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile, readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile, readdir, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { OrbitError, record } from "./errors";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { swayRequest } from "./sway-ipc";
@@ -155,11 +155,28 @@ export class FedoraBackend {
     // XDG_DATA_DIRS still resolve normally, and GSettings preferences are copied separately.
     const base = { XDG_CONFIG_HOME: join(directory, "config"), XDG_DATA_HOME: join(directory, "data"), XDG_CACHE_HOME: join(directory, "cache"), XDG_STATE_HOME: join(directory, "state") };
     for (const path of Object.values(base)) await mkdir(path, { recursive: true, mode: 0o700 });
+    // Audio servers are shared user services, not display or input sockets. Link only their socket
+    // files into this session's private runtime so applications can use the person's sound stack.
+    const hostRuntime = process.env.XDG_RUNTIME_DIR;
+    let pulseServer: string | undefined;
+    if (hostRuntime && resolve(hostRuntime) !== resolve(directory)) {
+      for (const name of ["pipewire-0", "pulse/native"]) {
+        const source = join(hostRuntime, name), target = join(directory, name);
+        try {
+          if (!(await lstat(source)).isSocket()) continue;
+          await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+          await symlink(source, target);
+          if (name === "pulse/native") pulseServer = `unix:${target}`;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    }
     // The person's theme, icons, cursor and fonts, so applications look the way they do on the
     // desktop. Documents, history and credentials are not part of it.
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
     preferenceSnapshot = await seedNativePreferences(base.XDG_CONFIG_HOME);
-    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
+    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, ...(pulseServer && !process.env.PULSE_SERVER ? { PULSE_SERVER: pulseServer } : {}), WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
