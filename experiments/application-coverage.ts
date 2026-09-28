@@ -74,6 +74,7 @@ try {
       const seen = await presence();
       entry.windowsOpen = seen.pageCount;
       entry.focusedTitle = seen.title;
+      entry.firstFrameWindow = seen.pageCount > 0;
       const frame = await call(broker.socket, "session.observe", session) as { image: string };
       const file = `${application.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.jpg`;
       await writeFile(join(directory, file), Buffer.from(frame.image, "base64"), { mode: 0o600 });
@@ -88,7 +89,7 @@ try {
       const remaining = (await presence()).pageCount;
       entry.closed = remaining === 0;
       if (remaining) entry.windowsLeftOpen = remaining;
-      entry.status = "mapped";
+      entry.status = seen.pageCount > 0 ? "mapped" : "window_gone";
     } catch (error) {
       entry.status = "failed";
       entry.code = (error as { code?: string }).code;
@@ -112,7 +113,8 @@ try {
   report.limitations = [
     "One private display at 1280 by 800 with software rendering; a GPU application here renders through llvmpipe.",
     "Each application is launched alone and closed before the next, so this says nothing about how many run together within the budget; multi-application.ts measures that.",
-    "Mapping a window and drawing a first frame is what is checked; no application was driven further than its first window.",
+    "A mapped frame can be an application error or crash dialog. Inspect the saved frame before claiming the application works.",
+    "No application was driven further than its first window.",
     "Applications run with private XDG base directories, which stops session restore and is not a security boundary.",
   ];
 } catch (error) {
