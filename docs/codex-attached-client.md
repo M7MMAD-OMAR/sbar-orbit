@@ -143,6 +143,14 @@ returned two fixture pages, but its SQLite `-shm` file changed during SELECT.
 The main database and WAL bytes stayed stable in that run. The proposed patch
 was not exported or enabled; paginated reads remain denied by the gate.
 
+A later disposable component fixture ran a separate SQLite reader inside a
+`bwrap` read-only bind while its writer stayed open outside. Two reader runs
+saw successive committed markers without changing the main database, WAL or
+SHM bytes, sizes or modification times during either quiescent reader window.
+This evidence is in
+`experiments/codex-paginated-bwrap-readonly-positive.md`. No Orbit helper,
+app-server request or Desktop viewer uses this boundary yet.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
@@ -160,6 +168,14 @@ ID returned ChatGPT email and plan to direct RPC, but the Desktop displayed
 `Unable to load sign-in requirements` after 40 seconds. The footer was not
 measured. Neither synthetic JWT reproduces a complete real account session,
 and no real account was used.
+
+The gate now has an experimental projection of `configRequirements/read`: it
+passes the owner request through and returns only validated login methods and
+the absence of application restrictions. A disposable API-key client retained
+its dark project and conversation title with this projection. In a separate
+fake ChatGPT fixture, this removed the sign-in requirements error but the
+Desktop still showed `Sign in to ChatGPT` after 40 seconds. The account footer
+and authenticated conversation work remain unmeasured.
 
 The candidate verifier passed 23 focused tests across four files with 110
 assertions, including complete-tree pinning, changed ASAR, added files, links,
