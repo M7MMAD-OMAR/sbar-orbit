@@ -60,3 +60,48 @@ The user's current unsent text could be lost when the running Desktop closes.
 This is the reason the actual cutover needs a chosen moment and explicit user
 approval after the disposable checks, wrapper and rollback are ready. No
 other application is part of this operation.
+
+## Prepared owner launcher
+
+`scripts/launch-codex-owner.ts` is a source-only wrapper. It has not been
+installed as a desktop entry or run against the person's profile. It reads
+`~/.config/sbar-orbit/codex-owner.json`, requiring an owned, canonical home and
+`.config` directory, a private `0700` Orbit config directory and an owned,
+single-link `0600` config file. The file format is:
+
+```json
+{
+  "format": "orbit-codex-owner-v1",
+  "candidateExecutable": "/USER_HOME/.local/share/sbar-orbit/codex-candidates/NAME/app/ChatGPT",
+  "manifestSha256": "64 lowercase hexadecimal characters"
+}
+```
+
+The absolute executable must use the durable Orbit candidate directory. The
+wrapper runs the full candidate verifier before launch. On success it selects
+the candidate's bundled `app/resources/codex`, fixes the owner socket at
+`/run/user/<uid>/codex-desktop/app-server-bridge/app-server.sock`, and uses the
+existing Wayland and input-method flags. It passes the desktop entry's Codex,
+HTTP, HTTPS and file URLs as separate arguments. HOME, CODEX_HOME and XDG
+variables keep their caller-provided values. The wrapper does not set an
+Electron user data directory.
+
+If the config or candidate is missing, stale or unsafe, the wrapper selects
+`/usr/lib/chatgpt/ChatGPT` with the same launch flags and URLs. It removes any
+inherited bridge, candidate CLI and candidate app-directory overrides from
+that fallback environment. `--dry-run` prints only `choice` and the names of
+environment keys set for the candidate. It does not print paths, URLs,
+credentials or environment values, and does not start Desktop. The wrapper
+does not make the original Desktop attachable until a reviewed cutover uses it
+as the normal owner launcher.
+
+For a later review, invoke `bun run scripts/launch-codex-owner.ts --dry-run`
+without changing any desktop entry. A `candidate` choice only means the files
+passed validation at that moment. It does not measure the real account, owner
+socket, project list, conversation list or appearance.
+
+The wrapper is preparation only. Five focused disposable tests passed with 31
+assertions, and typecheck passed. They covered a valid pinned candidate, a
+changed candidate CLI, unsafe config paths, a temporary candidate path, URL
+handling and a dry run that opened no Desktop. No test installed this wrapper,
+launched it with the person's account or proved restart continuity.
