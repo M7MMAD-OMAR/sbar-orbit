@@ -47,6 +47,8 @@ with socket.socket(socket.AF_UNIX) as client:
 pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     "answer": answer,
     "attachOnly": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY"),
+    "privateCodexHome": os.environ.get("CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME") == os.environ["CODEX_HOME"],
+    "gsettingsBackend": os.environ.get("GSETTINGS_BACKEND"),
     "sourceVisible": pathlib.Path(${JSON.stringify(authorityPath)}).exists(),
     "homeEntries": sorted(os.listdir(os.environ["HOME"])),
     "codexEntries": sorted(os.listdir(os.environ["CODEX_HOME"])),
@@ -60,6 +62,8 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     expect(await readdir(join(prepared.privateHome, ".codex"))).toEqual([]);
     expect(await readdir(join(prepared.privateHome, ".config", "Codex"))).toEqual([]);
     expect(prepared.argv.join(" ")).not.toContain(authorityPath);
+    expect(prepared.argv).toContain("GSETTINGS_BACKEND=dconf");
+    expect(prepared.argv).toContain(`CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(homedir(), ".codex")}`);
     const displayInfo = await lstat(displayPath, { bigint: true });
     const policy = { runtime, sockets: [{ path: displayPath, device: String(displayInfo.dev), inode: String(displayInfo.ino) }],
       privateHome: prepared.privateHome, authoritySocket: prepared.authoritySocket };
@@ -72,7 +76,8 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     }
     expect(JSON.parse(await readFile(report, "utf8")).error).toBeUndefined();
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
-      answer: "fixture-authority", attachOnly: "1", sourceVisible: false,
+      answer: "fixture-authority", attachOnly: "1", privateCodexHome: true,
+      gsettingsBackend: "dconf", sourceVisible: false,
       homeEntries: [".cache", ".codex", ".config", ".local"], codexEntries: [], privateSocket: true,
     });
     const refused = join(session, "refused.json");

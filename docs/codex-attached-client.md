@@ -17,6 +17,11 @@ the mounted authority socket, not the rest of the host runtime.
 
 The client gets a fresh HOME inside the Orbit session, an empty `CODEX_HOME`,
 empty Electron user data, and `CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1`.
+It receives a private snapshot of the host GSettings database and uses the
+`dconf` backend, matching the normal private Codex launcher. The installed
+Desktop defaults its appearance to the system setting, so this supplies the
+host's dark preference in the private display without changing host settings.
+Actual dark rendering in an attached Desktop has not been observed yet.
 No account token, conversation database, project state, or application profile
 is copied. Its temporary HOME is removed on release. The preparation helper
 accepts a fixture executable inside the session. For the installed Desktop
