@@ -73,6 +73,25 @@ function sanitizedAccount(result: unknown) {
   };
 }
 
+function sanitizedConfigRequirements(result: unknown) {
+  const value = record(result);
+  if (!value || Object.keys(value).length !== 1 || !("requirements" in value)) return null;
+  if (value.requirements === null)
+    return { requirements: { allowedLoginMethods: ["api", "chatgpt"], application: null } };
+  const requirements = record(value.requirements);
+  if (!requirements || requirements.application !== null ||
+      !Array.isArray(requirements.allowedLoginMethods) ||
+      requirements.allowedLoginMethods.length > 2) return null;
+  if (Object.entries(requirements).some(([key, item]) =>
+    key !== "allowedLoginMethods" && key !== "application" && item !== null)) return null;
+  const allowedLoginMethods: Array<"api" | "chatgpt"> = [];
+  for (const method of requirements.allowedLoginMethods) {
+    if ((method !== "api" && method !== "chatgpt") || allowedLoginMethods.includes(method)) return null;
+    allowedLoginMethods.push(method);
+  }
+  return { requirements: { allowedLoginMethods, application: null } };
+}
+
 function safeAppRequest(message: RpcMessage): RpcMessage | null {
   if (requestId(message.id) === null || typeof message.method !== "string" ||
       !READ_METHODS.has(message.method)) return null;
@@ -133,6 +152,11 @@ function appResponse(message: RpcMessage, method: string): RpcMessage {
     return { id: message.id, result: sanitizedAuthStatus(message.result) };
   if (method === "account/read")
     return { id: message.id, result: sanitizedAccount(message.result) };
+  if (method === "configRequirements/read") {
+    const requirements = sanitizedConfigRequirements(message.result);
+    return requirements ? { id: message.id, result: requirements }
+      : { id: message.id, error: { code: -32000, message: "Codex owner requirements unavailable" } };
+  }
   return { id: message.id, result: message.result };
 }
 
@@ -371,10 +395,6 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               options.auditThreadListShape(fields);
             }
             if (!safe) { client.send(JSON.stringify(denied(request.id))); return; }
-            if (safe.method === "configRequirements/read") {
-              client.send(JSON.stringify({ id: safe.id, result: { requirements: null } }));
-              return;
-            }
             if (client.data.pending.size >= 64) throw new Error("Too many Codex gate requests");
             if (client.data.pending.has(id)) throw new Error("Duplicate Codex RPC id");
             client.data.pending.set(id, { method: safe.method ?? "" });

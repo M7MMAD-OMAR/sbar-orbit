@@ -137,6 +137,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   let ownerInitializeParams: Record<string, unknown> | undefined;
   let ownerThreadListParams: Record<string, unknown> | undefined;
   let stateWrites = 0;
+  let requirementsResult: Record<string, unknown> = { requirements: null };
   const owner = Bun.serve({
     unix: ownerPath,
     fetch(request, server) { return server.upgrade(request) ? undefined : new Response("WebSocket required", { status: 400 }); },
@@ -153,6 +154,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
         if (message.method === "account/read")
           result = { account: { type: "chatgpt", email: fakeEmail, planType: "plus",
             authToken: fakeToken }, requiresOpenaiAuth: true };
+        if (message.method === "configRequirements/read") result = requirementsResult;
         if (message.method === "thread/list") result = { data: [{ id: "fixture-thread" }] };
         if (message.method === "thread/read") result = { thread: { id: "fixture-thread", turns: [] } };
         socket.send(JSON.stringify({ id: message.id, result }));
@@ -201,8 +203,42 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     expect(ownerInitializeParams?.config).toBeUndefined();
     privateClient.send({ method: "initialized" });
     privateClient.send({ id: "requirements", method: "configRequirements/read" });
-    expect((await privateClient.next()).result).toEqual({ requirements: null });
-    expect(reached).not.toContain("configRequirements/read");
+    expect((await privateClient.next()).result).toEqual({ requirements: {
+      allowedLoginMethods: ["api", "chatgpt"], application: null,
+    } });
+    expect(reached).toContain("configRequirements/read");
+    requirementsResult = { requirements: { allowedLoginMethods: ["chatgpt"], application: null } };
+    privateClient.send({ id: "managed-requirements", method: "configRequirements/read" });
+    expect((await privateClient.next()).result).toEqual({ requirements: {
+      allowedLoginMethods: ["chatgpt"], application: null,
+    } });
+    requirementsResult = { requirements: { allowedLoginMethods: ["chatgpt"], application: null,
+      modelProviders: { fixture: { env_key: "FIXTURE_ENV" } } } };
+    privateClient.send({ id: "provider-requirements", method: "configRequirements/read" });
+    expect((await privateClient.next()).error).toEqual({ code: -32000,
+      message: "Codex owner requirements unavailable" });
+    requirementsResult = { requirements: { allowedLoginMethods: [], application: null } };
+    privateClient.send({ id: "no-login-methods", method: "configRequirements/read" });
+    expect((await privateClient.next()).result).toEqual({ requirements: {
+      allowedLoginMethods: [], application: null,
+    } });
+    requirementsResult = { requirements: { modelProvider: "fixture", application: null } };
+    privateClient.send({ id: "missing-login-methods", method: "configRequirements/read" });
+    expect((await privateClient.next()).error).toEqual({ code: -32000,
+      message: "Codex owner requirements unavailable" });
+    requirementsResult = { requirements: { allowedLoginMethods: ["unknown"], application: null } };
+    privateClient.send({ id: "malformed-requirements", method: "configRequirements/read" });
+    expect((await privateClient.next()).error).toEqual({ code: -32000,
+      message: "Codex owner requirements unavailable" });
+    requirementsResult = { requirements: { allowedLoginMethods: ["chatgpt"],
+      application: { network: { enabled: true, domains: { "fixture.invalid": "allow" } } } } };
+    privateClient.send({ id: "network-requirements", method: "configRequirements/read" });
+    expect((await privateClient.next()).error).toEqual({ code: -32000,
+      message: "Codex owner requirements unavailable" });
+    const reachedBeforeConfigRead = reached.length;
+    privateClient.send({ id: "raw-config", method: "config/read", params: { includeLayers: true } });
+    expect((await privateClient.next()).error).toBeDefined();
+    expect(reached.length).toBe(reachedBeforeConfigRead);
     privateClient.send({ id: 2, method: "getAuthStatus", params: { includeToken: true, refreshToken: true } });
     const auth = await privateClient.next();
     expect(auth.result).toEqual({ authMethod: "chatgpt" });
