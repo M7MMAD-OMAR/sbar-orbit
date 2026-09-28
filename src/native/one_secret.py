@@ -62,7 +62,6 @@ def private_bus_config(directory: Path) -> Path:
     <allow send_destination="*" eavesdrop="true"/>
     <allow eavesdrop="true"/>
     <allow own="*"/>
-    <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="StartServiceByName"/>
     <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="UpdateActivationEnvironment"/>
     <deny send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" send_member="ReloadConfig"/>
   </policy>
@@ -266,7 +265,8 @@ def main():
     secret = read_one_secret(attributes)
 
     # The ordinary session config searches installed service files and can start their Exec commands
-    # on the host. This config names an empty private service directory and denies activation calls.
+    # on the host. This config names an empty private service directory. libsecret calls
+    # StartServiceByName even when this service is already present, so that method must remain usable.
     bus_directory = Path(tempfile.mkdtemp(prefix="orbit-secret-bus-"))
     bus_directory.chmod(0o700)
     daemon = None
