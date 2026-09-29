@@ -118,6 +118,21 @@ not printed because OCR falsely rejected the visible text. See
 `experiments/codex-fixture-notification-reopen-evidence.md`. Real account,
 tool, and cold-thread parity remain unmeasured.
 
+A later disposable run allowed one pinned `mcp__orbit_private/orbit_act` in an
+already loaded fake owner conversation. The private Desktop submitted a saved
+follow-up, the model called that one tool, Orbit's fake broker recorded one
+private pointer action and zero actions before the follow-up, and the reply
+appeared in the private window and owner rollout. The owner configuration
+stayed unchanged after its normal startup had settled. This is fixture-only;
+the public gate still denies the write and tool path. See
+`experiments/codex-fixture-private-orbit-tool-evidence.md`.
+
+A test-only owner snapshot prototype then pinned two cursor pages to a
+generation while a real `LocalThreadStore` writer appended a third turn. The
+focused test passed, but other owner write paths and crash recovery do not
+participate. See `experiments/codex-owner-snapshot-prototype.md`. Production
+coherent reads remain unimplemented.
+
 ## Reversible personal sequence after all disposable gates pass
 
 1. Prepare and review one immutable candidate, owner wrapper, Codex-only
