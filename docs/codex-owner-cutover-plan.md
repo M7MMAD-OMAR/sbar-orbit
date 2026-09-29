@@ -1,21 +1,23 @@
 # Codex Desktop owner cutover plan
 
-Status on 28 September 2026: preparation only. The person's running Codex
+Status on 29 September 2026: preparation only. The person's running Codex
 Desktop and profile have not been changed by this plan. The current Desktop
 uses a stdio app-server and cannot serve an Orbit attached client. The staged
 candidate uses the same Desktop version, adds an owner-only socket, and bundles
 a Codex CLI with a per-thread model tool ceiling. All completed combined runs
 have used a disposable profile and a fake model credential.
 
-The attached client now has a read-only gate, but the gated Desktop only
-showed a fixture project and conversation title. Opening the conversation
-asked for `thread/resume` and was denied. Its account footer showed `Settings`.
-That owner used a fake API key without a ChatGPT display name, so this does
-not measure real account label parity. The personal cutover is still blocked
-on safe conversation viewing, account identity parity and a session-bound
-write route. The user requires the
-same practical capabilities in every app, so a title-only viewer is not a
-successful cutover.
+The fixture-only paginated gate now displayed a saved conversation under its
+project in a copied private Desktop. After the disposable owner wrote a second
+turn, reopening the same thread showed both user messages and both replies.
+The fake owner remained connected and private reads did not change its watched
+source files. See `experiments/codex-paginated-live-private-ui.md`. This does
+not measure the person's account, larger histories, a coherent cross-store
+snapshot, or writing through the private UI. The public gate remains read-only
+and does not expose this fixture reader. The personal cutover is still blocked
+on those boundaries, account identity parity, and a session-bound write route.
+The user requires the same practical capabilities in every app, so this fake
+conversation viewer is not a successful cutover.
 
 ## Preconditions before touching the personal session
 
