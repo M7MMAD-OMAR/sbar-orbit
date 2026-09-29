@@ -60,6 +60,9 @@ if mode == 'post-mount':
     landlock.restrict_child(policy)
 
 results = {}
+with socket.socket(socket.AF_UNIX) as client:
+    client.connect(shared + '/allowed.sock')
+    results['allowedHostSocket'] = 'connected'
 for label, pathname in [('privateHome', private_home + '/self.sock'),
                         ('privateTmp', '/tmp/self.sock')]:
     listener = socket.socket(socket.AF_UNIX)
@@ -142,6 +145,7 @@ def run(mode):
                 late.close()
             assert process.returncode == 0, error[:512]
             result = json.loads(output)
+            assert result['allowedHostSocket'] == 'connected', result
             assert result['selectedFile'] == 'atomic-save', result
             assert Path(shared, 'selected.txt').read_text() == 'atomic-save'
             assert result['lateHostSocket'] == {'errno': 13}, result
