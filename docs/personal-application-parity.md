@@ -7,13 +7,13 @@ application or profile.
 ## Required behavior
 
 Orbit's agent must have its own display, windows, pointer, and keyboard while
-the person keeps using theirs. For each application the person authorizes, the
+the person keeps using theirs. Across the applications the person uses, the
 agent must see the same account, existing work, settings, and current data, and
-must be able to perform the same supported actions. An intentional edit from
-either side must become visible to the other without replacing either
-workspace. Closing and reopening the private application must retain that
-relationship. The person's current windows and input must not be driven by
-Orbit.
+must be able to perform the same supported actions, including editing existing
+conversations and documents. An intentional edit from either side must become
+visible to the other without replacing either workspace. Closing and reopening
+the private application must retain that relationship. The person's current
+windows and input must not be driven by Orbit.
 
 These are separate properties. A window opening, a familiar theme, a signed-in
 footer, and an initial copy of tabs or projects do not establish live parity.
@@ -30,7 +30,7 @@ the native display alone supplies only input and window separation.
 | Browser profile clone | An owned browser session can start from a copied profile (`src/clone.ts:92-147`). | The copy is a point-in-time branch. It does not by itself share live tabs, bookmarks, or local state changes with the person's running browser. |
 | Zen | The private launcher snapshots the detected profile and starts `--no-remote` on a private display (`src/native-zen-launch.ts:153-241`). | The snapshot is not a live shared profile. Starting Zen against a fresh or wrong profile fails the user's identity and state requirement even if a browser window opens. |
 | VS Code | The launcher copies bounded User settings and selected extensions into a private data directory (`src/native-vscode.ts:28-183`). | That does not establish the person's active sign-in, open editors, extension state, or a shared live application session. |
-| Codex Desktop | A copied Desktop and fake account displayed a saved two-turn conversation under its project from a connected fake owner (`experiments/codex-paginated-live-private-ui.md`). | The installed personal owner currently has no shared socket, the public gate does not expose the fixture reader, coherent multi-store reads are unimplemented, and the private UI did not submit a saved turn (`docs/codex-real-attach-review.md`; `experiments/codex-fixture-composer-readiness.md`). |
+| Codex Desktop | A copied Desktop and fake account displayed an existing saved conversation, submitted a text follow-up, showed the owner's reply, and showed both again after reopening the private window (`experiments/codex-fixture-notification-reopen-evidence.md`). | This was one already loaded fake thread with no model tools. The personal owner has no shared socket, the public gate does not expose the fixture reader or writer, coherent multi-store reads are unimplemented, and cold saved-thread writing and full permissions are not measured (`docs/codex-real-attach-review.md`). |
 | Files and devices | Native launch can pass selected files, and the private display has scoped device mounts (`src/fedora.ts:33-97`; `src/native-zen-launch.ts:153-241`). | This does not demonstrate full access to every file, application service, or device that the person can use. |
 
 The workstation has many installed application entries, including aliases and
