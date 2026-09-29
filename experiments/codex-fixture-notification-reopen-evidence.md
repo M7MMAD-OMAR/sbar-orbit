@@ -22,7 +22,7 @@ owner notification. The default public gate has this path disabled.
 `tests/codex-authority-gate.test.ts` failed on the old gate because the new
 notification test saw no `turn/started`. A second new test for saved turn
 polling also failed on the old gate because no completion arrived. With the
-changes, the focused file passed 5 tests and 182 assertions; `bun run typecheck`
+changes, the focused file passed 5 tests and 183 assertions; `bun run typecheck`
 passed. Tests cover the same-thread event, other-thread denial, credential
 fields, oversized events, owner disconnect, the exact saved turn, and absence
 of owner `thread/resume`.
