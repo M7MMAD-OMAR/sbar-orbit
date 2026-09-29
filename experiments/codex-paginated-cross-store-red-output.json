@@ -1,0 +1,27 @@
+{
+  "acceptedStalePage": true,
+  "fakeOwnerConnectedDuringMixedRead": true,
+  "firstHistorySecondStateAndRollout": true,
+  "firstPageTurns": 1,
+  "firstReadChangedFiles": [],
+  "helperSha256": "6ce7c9be7f828dcb6cc3dae3c72cdb0194bbfd04f039c38c79d208322ee09ffd",
+  "mixedPageHasSecondTurn": false,
+  "mixedPageTurns": 1,
+  "mixedReadChangedFiles": [],
+  "mixedReadError": null,
+  "ownerModelRequests": 2,
+  "ownerSha256": "c1214554e7ea7412cd9072e8f57f710539226b394260422c8170b5c1e46c4042",
+  "ownerVersion": "codex-app-server 0.155.0-alpha.9.2",
+  "scenario": "stable state and rollout from second owner turn with first turn history",
+  "secondPageTurns": 2,
+  "secondReadChangedFiles": [],
+  "sourceCommit": "4607249e430dac1c961df4dc615beae88e33cec8",
+  "selectedSha256": {
+    "firstHistoryWal": "93b1f1fbd8ebfe2e70e4274eafe111b10259b2c9a52ceb46ea752a504b6087f9",
+    "secondHistoryWal": "f72ae7ce905b14357d3860190067ba4d036d212ad88e632331d171c2122a24da",
+    "mixedHistoryWal": "93b1f1fbd8ebfe2e70e4274eafe111b10259b2c9a52ceb46ea752a504b6087f9",
+    "secondStateWal": "89fbe22a28c1aa0bc1c087159388c740acc41622f6e591e066735d9b98e29f7e",
+    "mixedStateWal": "89fbe22a28c1aa0bc1c087159388c740acc41622f6e591e066735d9b98e29f7e",
+    "mixedRollout": "2dded700656a48b1206c6b0c17bc84f679d42b7028247ab3a4317c0adb5fb006"
+  }
+}
