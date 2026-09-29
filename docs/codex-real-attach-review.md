@@ -133,6 +133,18 @@ focused test passed, but other owner write paths and crash recovery do not
 participate. See `experiments/codex-owner-snapshot-prototype.md`. Production
 coherent reads remain unimplemented.
 
+A disposable cold-thread fixture restarted its fake owner, kept private cold
+reads free of tracked state changes, and denied a direct private cold turn.
+Only the owner resumed the saved thread, restoring its saved model, provider,
+cwd, approval, sandbox and reasoning settings. A copied private Desktop then
+submitted one follow-up with zero tools and zero private `thread/resume`
+requests; the fake owner saved its answer. The screenshot showed the user
+message and `Thinking`, so final reply rendering in this cold case is not
+measured. Owner activation was manual, with no atomic generation or lease
+between the read and write. See
+`experiments/codex-cold-owner-activation.md`. This is not a safe public or
+personal cold-thread route.
+
 ## Reversible personal sequence after all disposable gates pass
 
 1. Prepare and review one immutable candidate, owner wrapper, Codex-only
