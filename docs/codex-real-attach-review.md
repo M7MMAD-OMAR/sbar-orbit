@@ -35,6 +35,14 @@ read. See `experiments/codex-paginated-cross-store-red.md` and
 `experiments/codex-paginated-projection-lag-green.md`. The partial guard is not
 a coherent snapshot and is not enabled in the public route.
 
+A separate fake coordinator pinned two pages to one captured generation while
+the fake owner wrote a third turn. The unchanged helper leaked the third turn
+in the red run; the captured fixture kept it out until a fresh generation was
+opened. This coordinator is outside the owner and cannot constrain another
+writer or recover an interrupted multi-store commit. It remains a prototype,
+not a production snapshot. See
+`experiments/codex-paginated-generation-prototype.md`.
+
 A later disposable live-owner run displayed two completed owner turns together
 in the same saved conversation under its project in the private Desktop. The
 private home had no `auth.json`, the owner remained connected, and seven
