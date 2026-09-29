@@ -8,6 +8,18 @@ production attachment. The exact Codex base is
 its detailed `codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md` evidence.
 No installed application or personal profile was used.
 
+The isolated branch later advanced to
+`d1ab79c97e658e6bd372f3e939b8421e7c21bc87`. A previously excluded
+state-only title update now takes the test snapshot barrier. Before that
+change, the extended test failed with exit `101` because the title writer
+completed while the barrier was held. After it, the focused test exited `0`:
+the old generation retained its title and a new generation showed the new
+title. This covers one metadata writer path; other metadata shapes and owner
+writers still bypass the prototype.
+The [source patch](codex-owner-snapshot-prototype.patch) against the exact tag
+has SHA-256 `944490e54e7b07d8b261175165e55ba2a205b46dd9c30390aca85709f7a131b5`.
+Forward and reverse application were checked in isolated worktrees.
+
 The earlier unchanged paginated reader leaked a third owner turn onto page two
 after page one had returned a two-turn cursor. See
 `experiments/codex-paginated-generation-prototype.md` for that red fixture.

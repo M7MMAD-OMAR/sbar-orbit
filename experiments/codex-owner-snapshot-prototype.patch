@@ -1,0 +1,598 @@
+diff --git a/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
+new file mode 100644
+index 0000000..7068398
+--- /dev/null
++++ b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
+@@ -0,0 +1,72 @@
++# Owner snapshot prototype evidence
++
++Status: test-only experiment in an isolated worktree based on
++`4607249e430dac1c961df4dc615beae88e33cec8`. It is compiled only for
++`codex-thread-store` tests. It exposes no app-server API and has not been used
++with an installed Codex application or a personal profile.
++
++The unchanged read path red fixture in the Orbit repository, commit
++`bad85521f9dc6adf04a580e0dc8239b82f6c6f3b`, observed a third owner turn
++appearing on page two after page one had already returned a cursor. This
++prototype's new test cannot be run on the unchanged source because its
++snapshot API did not exist there. The red observation is evidence of the
++cursor problem, not proof of a complete owner protocol.
++
++`local/live_writer.rs` takes a test-only owner barrier across durable JSONL
++write, history projection, and rollout path sync. The barrier combines a
++shared in-process mutex with a Codex-home file lock. Snapshot open takes the
++same barrier, starts one read transaction on each SQLite database, executes
++the metadata and checkpoint `SELECT` statements before reading the rollout,
++validates a complete standalone JSONL prefix against the history checkpoint,
++and materializes metadata, turns, and item JSON into one generation. Later
++cursor pages read only that generation. The generation retains the selected
++rollout prefix bytes.
++
++The focused test used a temporary Codex home, reconciled its synthetic thread
++metadata into state SQLite, and appended turns through the real
++`LocalThreadStore` write path. It verified that a third append waits while the
++barrier is held, a two-turn generation returns only turn two on its second
++page after that append, a fresh generation returns all three turns, a cursor
++from the old generation is rejected on the new one, and the new JSONL prefix
++extends the captured prefix.
++
++Measured command, inside Orbit's shared resource slice:
++
++```sh
++CARGO_TARGET_DIR=/var/tmp/orbit-codex-owner-snapshot-target CARGO_BUILD_JOBS=2 \
++bun run scripts/limited.ts /usr/bin/timeout 120s /usr/bin/cargo test \
++  --manifest-path /var/tmp/orbit-codex-owner-snapshot-proto/codex-rs/Cargo.toml \
++  -p codex-thread-store owner_snapshot_prototype_keeps_cursor_pages_on_one_generation \
++  -- --nocapture
++```
++
++Final result: 1 passed, 0 failed, 256 filtered out. The first run compiled
++but failed because the synthetic fixture had no state row. The fixture was
++corrected using the repository's existing rollout reconciliation path, then
++the focused test passed twice. All Cargo and test child processes exited.
++
++This does not establish production coherence. The barrier is compiled only in
++tests. Most metadata changes, archive, revert, fork, deletion, compression,
++and unpatched writers do not participate. There is no crash journal, recovery
++protocol, token expiry, resource quota, owner restart behavior, or independent
++cross-process test. The unsupported rollout shapes are rejected by the
++snapshot opener but their branches have not been individually tested. An
++unpatched writer can bypass the lock. The personal attachment path must stay
++disabled.
++
++## State-only title writer extension
++
++One previously excluded writer path now participates in the test-only barrier:
++`update_thread_metadata` when its patch has a title and does not require a
++rollout compatibility write. This path changes state SQLite. A combined patch
++that may call the live writer does not take this added lock because doing so
++would need a different lock order.
++
++The focused test was extended before changing the writer. With the owner
++barrier held, the unchanged title path completed within 50 ms, and the test
++failed at the intended assertion. The red command above exited 101, 0 passed,
++1 failed. After the writer patch, the same command exited 0, 1 passed,
++0 failed. The new test also verifies that the old captured generation keeps
++its title and a fresh generation reads the updated title. No personal profile
++was used. This adds one measured metadata writer path, not general metadata
++coverage.
+diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
+index 6a2d95f..bf810ba 100644
+--- a/codex-rs/thread-store/src/local/live_writer.rs
++++ b/codex-rs/thread-store/src/local/live_writer.rs
+@@ -323,6 +323,8 @@ async fn write_and_project(
+     // shutdown/discard/delete removes it. Keep the lookup defensive so late writes fail after
+     // teardown.
+     let _live_writer_guard = store.live_writer_locks.lock(thread_id).await;
++    #[cfg(test)]
++    let _owner_snapshot_guard = store.owner_snapshot_barrier.lock().await?;
+     let (recorder, rollout_id, history_mode) = live_writer_parts(store, thread_id).await?;
+     let sync_rollout_path = matches!(&write_op, RolloutWriteOp::Persist | RolloutWriteOp::Flush);
+     let write_op = match write_op {
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 0e170c2..911ccc3 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -6,6 +6,8 @@ mod list_threads;
+ mod live_writer;
+ mod model_context;
+ mod move_thread_to_section;
++#[cfg(test)]
++mod owner_snapshot_prototype;
+ mod paginated_fork;
+ mod pending_thread_metadata;
+ mod projects;
+@@ -142,6 +144,8 @@ pub struct LocalThreadStore {
+     writer_lock_coordinator: Arc<WriterLockCoordinator>,
+     state_db: Option<StateDbHandle>,
+     thread_history_db: Arc<OnceCell<sqlx::SqlitePool>>,
++    #[cfg(test)]
++    owner_snapshot_barrier: owner_snapshot_prototype::OwnerSnapshotBarrier,
+ }
+ 
+ type WriterLockGuard = Arc<codex_rollout::WriterLockGuard>;
+@@ -248,6 +252,9 @@ impl LocalThreadStore {
+     /// Create a local store using an already initialized state DB handle.
+     pub fn new(config: LocalThreadStoreConfig, state_db: Option<StateDbHandle>) -> Self {
+         let writer_lock_coordinator = Arc::new(WriterLockCoordinator::new(&config.codex_home));
++        #[cfg(test)]
++        let owner_snapshot_barrier =
++            owner_snapshot_prototype::OwnerSnapshotBarrier::new(&config.codex_home);
+         Self {
+             config,
+             live_recorders: Arc::new(Mutex::new(HashMap::new())),
+@@ -257,6 +264,8 @@ impl LocalThreadStore {
+             writer_lock_coordinator,
+             state_db,
+             thread_history_db: Arc::new(OnceCell::new()),
++            #[cfg(test)]
++            owner_snapshot_barrier,
+         }
+     }
+ 
+diff --git a/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs b/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs
+new file mode 100644
+index 0000000..4ae97a4
+--- /dev/null
++++ b/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs
+@@ -0,0 +1,285 @@
++//! Test-only owner snapshot for one standalone paginated thread.
++//! This is not an app-server API or a production admission path.
++
++use std::collections::HashMap;
++use std::fs::File;
++use std::fs::OpenOptions;
++use std::path::Path;
++use std::path::PathBuf;
++use std::sync::Arc;
++
++use codex_protocol::ThreadId;
++use serde_json::Value;
++use sqlx::Connection;
++use sqlx::Row;
++use sqlx::SqliteConnection;
++use sqlx::sqlite::SqliteConnectOptions;
++use tokio::sync::Mutex;
++use tokio::sync::OwnedMutexGuard;
++
++use super::LocalThreadStore;
++use crate::ThreadStoreError;
++use crate::ThreadStoreResult;
++
++#[derive(Clone)]
++pub(super) struct OwnerSnapshotBarrier {
++    local: Arc<Mutex<()>>,
++    path: PathBuf,
++}
++
++pub(super) struct OwnerSnapshotGuard {
++    _local: OwnedMutexGuard<()>,
++    _file: File,
++}
++
++impl OwnerSnapshotBarrier {
++    pub(super) fn new(codex_home: &Path) -> Self {
++        Self {
++            local: Arc::new(Mutex::new(())),
++            path: codex_home.join("owner-snapshot-prototype.lock"),
++        }
++    }
++
++    pub(super) async fn lock(&self) -> ThreadStoreResult<OwnerSnapshotGuard> {
++        let local = self.local.clone().lock_owned().await;
++        let path = self.path.clone();
++        let file = tokio::task::spawn_blocking(move || {
++            let file = OpenOptions::new()
++                .read(true)
++                .write(true)
++                .create(true)
++                .truncate(false)
++                .open(path)?;
++            file.lock()?;
++            Ok::<File, std::io::Error>(file)
++        })
++        .await
++        .map_err(|error| internal(format!("snapshot lock task failed: {error}")))?
++        .map_err(|error| internal(format!("snapshot lock failed: {error}")))?;
++        Ok(OwnerSnapshotGuard {
++            _local: local,
++            _file: file,
++        })
++    }
++}
++
++fn internal(message: String) -> ThreadStoreError {
++    ThreadStoreError::Internal { message }
++}
++
++#[derive(Clone, Debug, PartialEq)]
++pub(super) struct SnapshotTurn {
++    pub(super) id: String,
++    pub(super) items: Vec<Value>,
++}
++
++pub(super) struct OwnerSnapshot {
++    generation: ThreadId,
++    pub(super) thread_id: ThreadId,
++    pub(super) title: String,
++    pub(super) rollout_prefix: Vec<u8>,
++    turns: Vec<SnapshotTurn>,
++}
++
++pub(super) struct SnapshotPage {
++    pub(super) turns: Vec<SnapshotTurn>,
++    pub(super) next_cursor: Option<String>,
++}
++
++impl OwnerSnapshot {
++    pub(super) fn page(
++        &self,
++        cursor: Option<&str>,
++        limit: usize,
++    ) -> ThreadStoreResult<SnapshotPage> {
++        if !(1..=50).contains(&limit) {
++            return Err(internal("snapshot page limit is unsupported".to_string()));
++        }
++        let offset = match cursor {
++            None => 0,
++            Some(cursor) => {
++                let (generation, offset) = cursor
++                    .split_once(':')
++                    .ok_or_else(|| internal("snapshot cursor is invalid".to_string()))?;
++                if generation != self.generation.to_string() {
++                    return Err(internal(
++                        "snapshot cursor belongs to another generation".to_string(),
++                    ));
++                }
++                offset
++                    .parse::<usize>()
++                    .map_err(|_| internal("snapshot cursor position is invalid".to_string()))?
++            }
++        };
++        if offset > self.turns.len() {
++            return Err(internal("snapshot cursor exceeds generation".to_string()));
++        }
++        let end = offset.saturating_add(limit).min(self.turns.len());
++        Ok(SnapshotPage {
++            turns: self.turns[offset..end].to_vec(),
++            next_cursor: (end < self.turns.len()).then(|| format!("{}:{end}", self.generation)),
++        })
++    }
++}
++
++impl LocalThreadStore {
++    pub(super) async fn open_owner_snapshot_prototype(
++        &self,
++        thread_id: ThreadId,
++    ) -> ThreadStoreResult<OwnerSnapshot> {
++        if self.state_db.is_none() {
++            return Err(internal("snapshot needs an initialized state database".to_string()));
++        }
++        let _barrier = self.owner_snapshot_barrier.lock().await?;
++        let state_path = self.config.sqlite.state_db_path();
++        let history_path = self.config.sqlite.thread_history_db_path();
++        let mut state = SqliteConnection::connect_with(
++            &SqliteConnectOptions::new()
++                .filename(state_path)
++                .read_only(true)
++                .create_if_missing(false),
++        )
++        .await
++        .map_err(|error| internal(format!("open state read view failed: {error}")))?;
++        let mut history = SqliteConnection::connect_with(
++            &SqliteConnectOptions::new()
++                .filename(history_path)
++                .read_only(true)
++                .create_if_missing(false),
++        )
++        .await
++        .map_err(|error| internal(format!("open history read view failed: {error}")))?;
++        sqlx::query("BEGIN")
++            .execute(&mut state)
++            .await
++            .map_err(|error| internal(format!("begin state read view failed: {error}")))?;
++        sqlx::query("BEGIN")
++            .execute(&mut history)
++            .await
++            .map_err(|error| internal(format!("begin history read view failed: {error}")))?;
++        let row = sqlx::query(
++            "SELECT rollout_path, history_mode, archived, title FROM threads WHERE id = ?",
++        )
++        .bind(thread_id.to_string())
++        .fetch_optional(&mut state)
++        .await
++        .map_err(|error| internal(format!("pin state metadata failed: {error}")))?
++        .ok_or_else(|| internal("snapshot thread is missing".to_string()))?;
++        let mode: String = row.get("history_mode");
++        let archived: i64 = row.get("archived");
++        if mode != "paginated" || archived != 0 {
++            return Err(internal("snapshot supports only active paginated threads".to_string()));
++        }
++        let rollout_path: String = row.get("rollout_path");
++        let title: String = row.get("title");
++        let checkpoint = sqlx::query(
++            "SELECT next_rollout_byte_offset, next_rollout_ordinal \
++             FROM thread_history_projection_state WHERE thread_id = ?",
++        )
++        .bind(thread_id.to_string())
++        .fetch_optional(&mut history)
++        .await
++        .map_err(|error| internal(format!("pin history checkpoint failed: {error}")))?
++        .ok_or_else(|| internal("snapshot history checkpoint is missing".to_string()))?;
++        let projected_bytes: i64 = checkpoint.get("next_rollout_byte_offset");
++        let projected_ordinal: i64 = checkpoint.get("next_rollout_ordinal");
++
++        let rollout = Path::new(&rollout_path);
++        let sessions = self.config.codex_home.join("sessions");
++        let valid_name = rollout
++            .file_name()
++            .and_then(|name| name.to_str())
++            .is_some_and(|name| name.ends_with(&format!("-{thread_id}.jsonl")));
++        if !rollout.starts_with(&sessions)
++            || !valid_name
++            || rollout.extension().is_none_or(|ext| ext != "jsonl")
++        {
++            return Err(internal("snapshot rollout shape is unsupported".to_string()));
++        }
++        let canonical_sessions = sessions
++            .canonicalize()
++            .map_err(|error| internal(format!("canonical sessions failed: {error}")))?;
++        let canonical_rollout = rollout
++            .canonicalize()
++            .map_err(|error| internal(format!("canonical rollout failed: {error}")))?;
++        if !canonical_rollout.starts_with(canonical_sessions) {
++            return Err(internal("snapshot rollout escaped sessions".to_string()));
++        }
++        let rollout_bytes = std::fs::read(rollout)
++            .map_err(|error| internal(format!("read snapshot rollout failed: {error}")))?;
++        if rollout_bytes.is_empty()
++            || rollout_bytes.len() > 64 * 1024 * 1024
++            || !rollout_bytes.ends_with(b"\n")
++        {
++            return Err(internal("snapshot rollout has no bounded complete prefix".to_string()));
++        }
++        let mut ordinal = 0_i64;
++        for line in rollout_bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
++            let value: Value = serde_json::from_slice(line)
++                .map_err(|error| internal(format!("invalid rollout line: {error}")))?;
++            if value.get("ordinal").and_then(Value::as_i64) != Some(ordinal) {
++                return Err(internal("snapshot rollout ordinal is unsupported".to_string()));
++            }
++            if ordinal == 0
++                && (value.get("type").and_then(Value::as_str) != Some("session_meta")
++                    || value.pointer("/payload/id").and_then(Value::as_str)
++                        != Some(thread_id.to_string().as_str())
++                    || value.pointer("/payload/history_mode").and_then(Value::as_str)
++                        != Some("paginated")
++                    || value.pointer("/payload/history_base").is_some_and(|base| !base.is_null()))
++            {
++                return Err(internal("snapshot rollout lineage is unsupported".to_string()));
++            }
++            ordinal += 1;
++        }
++        if projected_bytes != rollout_bytes.len() as i64 || projected_ordinal != ordinal {
++            return Err(internal("snapshot history projection lags rollout".to_string()));
++        }
++        let rows = sqlx::query(
++            "SELECT turn_id FROM thread_turns WHERE thread_id = ? ORDER BY rollout_ordinal",
++        )
++        .bind(thread_id.to_string())
++        .fetch_all(&mut history)
++        .await
++        .map_err(|error| internal(format!("snapshot turn read failed: {error}")))?;
++        let mut turns = rows
++            .into_iter()
++            .map(|row| SnapshotTurn {
++                id: row.get("turn_id"),
++                items: Vec::new(),
++            })
++            .collect::<Vec<_>>();
++        let positions = turns
++            .iter()
++            .enumerate()
++            .map(|(index, turn)| (turn.id.clone(), index))
++            .collect::<HashMap<_, _>>();
++        let items = sqlx::query(
++            "SELECT turn_id, item_json FROM thread_items \
++             WHERE thread_id = ? ORDER BY rollout_ordinal",
++        )
++        .bind(thread_id.to_string())
++        .fetch_all(&mut history)
++        .await
++        .map_err(|error| internal(format!("snapshot item read failed: {error}")))?;
++        for item in items {
++            let turn_id: String = item.get("turn_id");
++            let index = positions
++                .get(&turn_id)
++                .copied()
++                .ok_or_else(|| internal("snapshot item has no turn".to_string()))?;
++            let item_json: String = item.get("item_json");
++            turns[index].items.push(
++                serde_json::from_str(&item_json)
++                    .map_err(|error| internal(format!("snapshot item JSON failed: {error}")))?,
++            );
++        }
++        Ok(OwnerSnapshot {
++            generation: ThreadId::new(),
++            thread_id,
++            title,
++            rollout_prefix: rollout_bytes,
++            turns,
++        })
++    }
++}
+diff --git a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
+index 3f6fcbf..a277e4d 100644
+--- a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
+@@ -57,8 +57,10 @@ use crate::SortDirection;
+ use crate::StoredTurnItemsView;
+ use crate::StoredTurnStatus;
+ use crate::ThreadPersistenceMetadata;
++use crate::ThreadMetadataPatch;
+ use crate::ThreadSortKey;
+ use crate::ThreadStore;
++use crate::UpdateThreadMetadataParams;
+ 
+ #[tokio::test]
+ async fn paginated_history_without_state_db_does_not_initialize_sqlite() {
+@@ -433,6 +435,140 @@ WHERE thread_id = ?
+     assert_eq!(projection_state, (rollout_len, 5));
+ }
+ 
++#[tokio::test]
++async fn owner_snapshot_prototype_keeps_cursor_pages_on_one_generation() {
++    let home = TempDir::new().expect("temp dir");
++    let store = projection_store(home.path()).await;
++    let thread_id = ThreadId::new();
++    create_paginated_thread(&store, thread_id).await;
++    store
++        .persist_thread(thread_id, PersistContext::Standard)
++        .await
++        .expect("persist session metadata");
++    let rollout_path = store
++        .live_rollout_path(thread_id)
++        .await
++        .expect("fixture rollout path");
++    let state = store.state_db().await.expect("fixture state database");
++    codex_rollout::state_db::reconcile_rollout(
++        Some(state.as_ref()),
++        rollout_path.as_path(),
++        "test-provider",
++        /*builder*/ None,
++        &[],
++        /*archived_only*/ None,
++        /*new_thread_memory_mode*/ None,
++    )
++    .await;
++    assert!(
++        state
++            .get_thread(thread_id)
++            .await
++            .expect("read fixture metadata")
++            .is_some(),
++        "fixture state row must exist before opening a snapshot"
++    );
++
++    let items = |turn_id: &str, user_id: &str| {
++        vec![
++            turn_started(turn_id),
++            completed_item(
++                thread_id,
++                turn_id,
++                TurnItem::UserMessage(UserMessageItem {
++                    id: user_id.to_string(),
++                    client_id: None,
++                    content: Vec::new(),
++                }),
++            ),
++            turn_completed(turn_id),
++        ]
++    };
++    for (turn_id, user_id) in [("turn-1", "user-1"), ("turn-2", "user-2")] {
++        store
++            .append_items(AppendThreadItemsParams {
++                thread_id,
++                items: items(turn_id, user_id),
++            })
++            .await
++            .expect("append first generation");
++    }
++
++    let snapshot = store
++        .open_owner_snapshot_prototype(thread_id)
++        .await
++        .expect("open owner snapshot");
++    let first = snapshot.page(None, 1).expect("first cursor page");
++    assert_eq!(first.turns[0].id, "turn-1");
++    assert_eq!(first.turns[0].items.len(), 1);
++    let cursor = first.next_cursor.expect("first cursor");
++
++    let held = store
++        .owner_snapshot_barrier
++        .lock()
++        .await
++        .expect("hold owner barrier");
++    let pending = store.append_items(AppendThreadItemsParams {
++        thread_id,
++        items: items("turn-3", "user-3"),
++    });
++    tokio::pin!(pending);
++    assert!(tokio::time::timeout(Duration::from_millis(50), &mut pending)
++        .await
++        .is_err());
++    drop(held);
++    pending.await.expect("owner append after release");
++
++    let second = snapshot.page(Some(&cursor), 2).expect("second cursor page");
++    assert_eq!(
++        second.turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
++        vec!["turn-2"]
++    );
++    assert_eq!(second.turns[0].items.len(), 1);
++    assert!(second.next_cursor.is_none());
++    let fresh = store
++        .open_owner_snapshot_prototype(thread_id)
++        .await
++        .expect("open new owner generation");
++    assert!(fresh.page(Some(&cursor), 2).is_err());
++    let newest = fresh.page(None, 3).expect("new generation page");
++    assert_eq!(
++        newest.turns.iter().map(|turn| turn.id.as_str()).collect::<Vec<_>>(),
++        vec!["turn-1", "turn-2", "turn-3"]
++    );
++    assert_eq!(newest.turns[2].items.len(), 1);
++    assert_eq!(snapshot.thread_id, thread_id);
++    assert!(snapshot.rollout_prefix.len() < fresh.rollout_prefix.len());
++    assert!(fresh.rollout_prefix.starts_with(&snapshot.rollout_prefix));
++    assert_eq!(snapshot.title, fresh.title);
++
++    let held = store
++        .owner_snapshot_barrier
++        .lock()
++        .await
++        .expect("hold barrier across metadata update");
++    let pending = store.update_thread_metadata(UpdateThreadMetadataParams {
++        thread_id,
++        patch: ThreadMetadataPatch {
++            title: Some("Renamed owner generation".to_string()),
++            ..Default::default()
++        },
++        include_archived: false,
++    });
++    tokio::pin!(pending);
++    assert!(tokio::time::timeout(Duration::from_millis(50), &mut pending)
++        .await
++        .is_err());
++    drop(held);
++    pending.await.expect("metadata write after release");
++    let renamed = store
++        .open_owner_snapshot_prototype(thread_id)
++        .await
++        .expect("open generation after title update");
++    assert_eq!(renamed.title, "Renamed owner generation");
++    assert_eq!(fresh.title, snapshot.title);
++}
++
+ #[tokio::test]
+ async fn paginated_realtime_items_materialize_separately_in_rollout_order() {
+     let home = TempDir::new().expect("temp dir");
+diff --git a/codex-rs/thread-store/src/local/update_thread_metadata.rs b/codex-rs/thread-store/src/local/update_thread_metadata.rs
+index 6caf5b2..8023f71 100644
+--- a/codex-rs/thread-store/src/local/update_thread_metadata.rs
++++ b/codex-rs/thread-store/src/local/update_thread_metadata.rs
+@@ -115,6 +115,14 @@ pub(super) async fn update_thread_metadata(
+     };
+     let require_sqlite_write =
+         pending_patch.is_some() || sqlite_write_failure_should_block(&patch) || paginated;
++    #[cfg(test)]
++    // Only state-only title patches participate. Rollout compatibility patches can call the
++    // live writer below and would need a different lock order.
++    let _owner_snapshot_guard = if patch.title.is_some() && !needs_rollout_compat {
++        Some(store.owner_snapshot_barrier.lock().await?)
++    } else {
++        None
++    };
+     let mut updated = apply_metadata_update(
+         store,
+         thread_id,
