@@ -1,0 +1,18 @@
+{
+  "fixture": "copied disposable paginated Codex account",
+  "helperSha256": "6ce7c9be7f828dcb6cc3dae3c72cdb0194bbfd04f039c38c79d208322ee09ffd",
+  "unitTests": { "passed": 4, "failed": 0 },
+  "typecheck": "passed",
+  "integratedProbe": {
+    "stableFullPage": true,
+    "stableWatchedFileCount": 7,
+    "staleRejected": true,
+    "ownerWritesDuringPage": 6,
+    "writerChangedFiles": [
+      "thread_history_1.sqlite-shm",
+      "thread_history_1.sqlite-wal"
+    ],
+    "readerChangedFilesAfterWriterStopped": [],
+    "crossStoreAtomic": false
+  }
+}
