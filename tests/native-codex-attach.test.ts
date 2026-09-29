@@ -44,6 +44,44 @@ async function close(server?: Server) {
   if (server) await new Promise<void>(resolveClose => server.close(() => resolveClose()));
 }
 
+test("Codex paginated viewer injection requires a private fixture executable", async () => {
+  const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
+  const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
+  const authorityPath = join(socketDirectory, "authority.sock");
+  const executable = join(session, "fixture-client");
+  const display = { runtimeDirectory: session, waylandDisplay: "wayland-0", libraryPath: "/usr/lib" };
+  const reader = async () => ({ data: [], nextCursor: null, backwardsCursor: null });
+  let authority: Server | undefined;
+  let authorityState: Server | undefined;
+  let prepared: Awaited<ReturnType<typeof prepareCodexAttachedLaunch>> | undefined;
+  try {
+    await writeFile(executable, "fixture", { mode: 0o700 });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: false, fixturePaginatedPageReader: reader }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { fixturePaginatedPageReader: reader }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, "/usr/bin/true",
+      { allowFixture: true, fixturePaginatedPageReader: reader }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    authority = await listen(authorityPath, "fixture-authority");
+    authorityState = await listen(`${authorityPath}.state`, "");
+    await chmod(authorityPath, 0o600);
+    await chmod(`${authorityPath}.state`, 0o600);
+    prepared = await prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixturePaginatedPageReader: reader });
+    expect(prepared.argv).toContain("CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1");
+    expect(prepared.argv.join(" ")).not.toContain(authorityPath);
+  } finally {
+    await prepared?.release();
+    await close(authorityState);
+    await close(authority);
+    await rm(session, { recursive: true, force: true });
+    await rm(socketDirectory, { recursive: true, force: true });
+  }
+});
+
 (enabled ? test : test.skip)("Codex attach mounts only session gate sockets into a fresh private home", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
   const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
@@ -93,6 +131,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
     expect(await readdir(join(prepared.privateHome, ".config", "Codex"))).toEqual([]);
     expect(prepared.argv.join(" ")).not.toContain(authorityPath);
     expect(prepared.argv).toContain("GSETTINGS_BACKEND=dconf");
+    expect(prepared.argv).not.toContain("CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1");
     expect(prepared.argv).toContain(`CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(homedir(), ".codex")}`);
     const displayInfo = await lstat(displayPath, { bigint: true });
     const policy = { runtime, sockets: [{ path: displayPath, device: String(displayInfo.dev), inode: String(displayInfo.ino) }],

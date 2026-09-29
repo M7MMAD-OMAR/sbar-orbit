@@ -7,7 +7,7 @@ import { OrbitError } from "./errors";
 import type { CodexDisplayEnv } from "./native-codex";
 import { validateStagedCodexCandidate } from "./native-codex-candidate";
 import { seedNativePreferences } from "./native-preferences";
-import { startCodexReadOnlyGate } from "./codex-authority-gate";
+import { startCodexReadOnlyGate, type PaginatedPageRequest } from "./codex-authority-gate";
 
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
 
@@ -116,13 +116,18 @@ export async function prepareCodexAttachedLaunch(
   display: CodexDisplayEnv,
   authoritySocketPath: string,
   executable: string,
-  options: { allowFixture?: boolean; candidateManifestSha256?: string } = { allowFixture: true },
+  options: { allowFixture?: boolean; candidateManifestSha256?: string;
+    fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown> } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
       !/^[A-Za-z0-9_.-]+$/.test(display.waylandDisplay) || !display.libraryPath)
     throw new OrbitError("INVALID_REQUEST", "Codex attach needs Orbit's private display environment");
   await ownedPrivateDirectory(session);
+  const fixturePageReader = options.fixturePaginatedPageReader;
+  if (fixturePageReader && (options.allowFixture !== true || !executable.startsWith(session + sep) ||
+      options.candidateManifestSha256 !== undefined))
+    throw new OrbitError("UNSUPPORTED", "Codex fixture page reader needs a private fixture executable");
   let verifiedSockets: [CodexAuthoritySocket, CodexAuthoritySocket];
   try {
     const owner = await liveAuthoritySocket(authoritySocketPath);
@@ -143,11 +148,15 @@ export async function prepareCodexAttachedLaunch(
       await mkdir(path, { recursive: true, mode: 0o700 });
     await seedNativePreferences(join(privateHome, ".config"));
     const fixtureAudit = process.env.ORBIT_CODEX_GATE_METHOD_AUDIT === "1" &&
-      /^\/var\/tmp\/codex-private-smoke-[A-Za-z0-9-]+\/app\/ChatGPT$/u.test(executable);
-    const auditPath = join(dirname(dirname(executable)), "gate-audit.jsonl");
+      (fixturePageReader !== undefined ||
+        /^\/var\/tmp\/codex-private-smoke-[A-Za-z0-9-]+\/app\/ChatGPT$/u.test(executable));
+    const auditPath = fixturePageReader ? join(session, "codex-gate-audit.jsonl")
+      : join(dirname(dirname(executable)), "gate-audit.jsonl");
     let auditCount = 0;
     gate = await startCodexReadOnlyGate(session, authoritySocketPath, `${authoritySocketPath}.state`, {
       ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
+      ...(fixturePageReader ? { allowLegacyThreadRead: true, allowPaginatedThreadPages: true,
+        readPaginatedThreadPage: fixturePageReader } : {}),
       ...(fixtureAudit ? { auditMethod: (method: string, outcome: "allow" | "deny") => {
         if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method, outcome }) + "\n",
           { encoding: "utf8", mode: 0o600, flag: "a" });
@@ -169,6 +178,7 @@ export async function prepareCodexAttachedLaunch(
       `XDG_CACHE_HOME=${join(insideHome, ".cache")}`,
       `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${gate.socketPath}`,
       "CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1",
+      ...(fixturePageReader ? ["CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1"] : []),
       `CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(insideHome, ".codex")}`,
       `CODEX_LINUX_APP_DIR=${dirname(executable)}`,
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
