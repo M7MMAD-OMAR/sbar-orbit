@@ -75,6 +75,12 @@ turns, and complete existing-conversation behavior is not measured. See
 `experiments/codex-combined-owner-ceiling.md`, and
 `docs/codex-writable-thread-plan.md`.
 
+A copied private Desktop fixture advanced past composer configuration loading
+but then attempted `thread/resume`. The gate denied it, no UI `turn/start`
+occurred, and the typed follow-up was absent from the fake owner's rollout.
+See `experiments/codex-fixture-composer-readiness.md`. The direct gate-client
+saved-thread write experiment does not prove that the Desktop UI can submit.
+
 ## Reversible personal sequence after all disposable gates pass
 
 1. Prepare and review one immutable candidate, owner wrapper, Codex-only
