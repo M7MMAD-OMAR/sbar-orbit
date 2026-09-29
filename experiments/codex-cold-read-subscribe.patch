@@ -1,0 +1,56 @@
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 17b6d2d..c1875a5 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -1492 +1492,3 @@ impl MessageProcessor {
+-                self.thread_processor.thread_read(&request_id, params).await
++                self.thread_processor
++                    .thread_read(&request_id, params, app_server_client_name.as_deref())
++                    .await
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index b1b9fae..43b2feb 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -859,0 +860 @@ impl ThreadRequestProcessor {
++        app_server_client_name: Option<&str>,
+@@ -861,0 +863,2 @@ impl ThreadRequestProcessor {
++        let read_only = params.read_only;
++        let requested_thread_id = params.thread_id.clone();
+@@ -862,0 +866,17 @@ impl ThreadRequestProcessor {
++        if read_only
++            && !include_turns
++            && std::env::var_os("CODEX_APP_SERVER_ORBIT_COLD_ATTACH_EXPERIMENT").is_some()
++            && app_server_client_name == Some("orbit_private_attached")
++        {
++            let thread_id = ThreadId::from_string(&requested_thread_id)
++                .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
++            // The persisted view has been read successfully. Register the connection for
++            // future notifications without creating a CodexThread or rollout writer.
++            if !self
++                .thread_state_manager
++                .try_add_connection_to_thread(thread_id, request_id.connection_id)
++                .await
++            {
++                return Err(invalid_request("connection closed before cold attach"));
++            }
++        }
+@@ -1022,0 +1043,19 @@ impl ThreadRequestProcessor {
++            if std::env::var_os("CODEX_APP_SERVER_ORBIT_COLD_ATTACH_EXPERIMENT").is_some() {
++                let was_subscribed = self
++                    .thread_state_manager
++                    .unsubscribe_connection_from_thread(thread_id, connection_id)
++                    .await;
++                if was_subscribed {
++                    if self
++                        .thread_state_manager
++                        .subscribed_connection_ids(thread_id)
++                        .await
++                        .is_empty()
++                    {
++                        self.thread_state_manager.remove_thread_state(thread_id).await;
++                    }
++                    return Ok(ThreadUnsubscribeResponse {
++                        status: ThreadUnsubscribeStatus::Unsubscribed,
++                    });
++                }
++            }

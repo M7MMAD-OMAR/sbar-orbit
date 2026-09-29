@@ -1,0 +1,128 @@
+diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
+index b56a56f..3598dd0 100644
+--- a/codex-rs/exec/src/lib.rs
++++ b/codex-rs/exec/src/lib.rs
+@@ -1664,6 +1664,7 @@ async fn maybe_backfill_turn_completed_items(
+             params: ThreadReadParams {
+                 thread_id: payload.thread_id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         },
+         "thread/read",
+diff --git a/codex-rs/exec/src/worktree.rs b/codex-rs/exec/src/worktree.rs
+index d73e3ad..c3c4f8d 100644
+--- a/codex-rs/exec/src/worktree.rs
++++ b/codex-rs/exec/src/worktree.rs
+@@ -65,6 +65,7 @@ pub(super) async fn fork_source(
+                 params: ThreadReadParams {
+                     thread_id: thread_id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             },
+             "thread/read",
+diff --git a/codex-rs/tui/src/app/agents_overview_threads.rs b/codex-rs/tui/src/app/agents_overview_threads.rs
+index 04f1a0a..a080b90 100644
+--- a/codex-rs/tui/src/app/agents_overview_threads.rs
++++ b/codex-rs/tui/src/app/agents_overview_threads.rs
+@@ -337,6 +337,7 @@ impl App {
+                                 params: ThreadReadParams {
+                                     thread_id: thread_id.to_string(),
+                                     include_turns: false,
++                                    read_only: false,
+                                 },
+                             })
+                             .await
+diff --git a/codex-rs/tui/src/app/app_server_events.rs b/codex-rs/tui/src/app/app_server_events.rs
+index 357fca8..fd28d86 100644
+--- a/codex-rs/tui/src/app/app_server_events.rs
++++ b/codex-rs/tui/src/app/app_server_events.rs
+@@ -606,6 +606,7 @@ impl App {
+                     params: ThreadReadParams {
+                         thread_id: thread_id.to_string(),
+                         include_turns: false,
++                        read_only: false,
+                     },
+                 })
+                 .await;
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index 581d758..eea0c5b 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -1150,6 +1150,7 @@ impl AppServerSession {
+                 params: ThreadReadParams {
+                     thread_id: thread_id.to_string(),
+                     include_turns,
++                    read_only: false,
+                 },
+             })
+             .await;
+@@ -1167,6 +1168,7 @@ impl AppServerSession {
+                         params: ThreadReadParams {
+                             thread_id: thread_id.to_string(),
+                             include_turns: false,
++                            read_only: false,
+                         },
+                     })
+                     .await
+diff --git a/codex-rs/tui/src/dynamic_tools.rs b/codex-rs/tui/src/dynamic_tools.rs
+index e432195..36d4cab 100644
+--- a/codex-rs/tui/src/dynamic_tools.rs
++++ b/codex-rs/tui/src/dynamic_tools.rs
+@@ -521,6 +521,7 @@ async fn execute_inner(
+                             params: ThreadReadParams {
+                                 thread_id: arguments.thread_id.clone(),
+                                 include_turns: true,
++                                read_only: false,
+                             },
+                         })
+                         .await?;
+@@ -704,6 +705,7 @@ async fn execute_inner(
+                                 params: ThreadReadParams {
+                                     thread_id: thread_id.clone(),
+                                     include_turns: true,
++                                    read_only: false,
+                                 },
+                             })
+                             .await?;
+@@ -917,6 +919,7 @@ async fn execute_inner(
+                                                 params: ThreadReadParams {
+                                                     thread_id: thread.id.clone(),
+                                                     include_turns: true,
++                                                    read_only: false,
+                                                 },
+                                             }
+                                         }),
+@@ -1268,6 +1271,7 @@ async fn read_thread(handle: &AppServerRequestHandle, thread_id: &str) -> Result
+         params: ThreadReadParams {
+             thread_id: thread_id.to_string(),
+             include_turns: false,
++            read_only: false,
+         },
+     })
+     .await?;
+diff --git a/codex-rs/tui/src/onboarding/directory_trust.rs b/codex-rs/tui/src/onboarding/directory_trust.rs
+index 2f90e32..4779a77 100644
+--- a/codex-rs/tui/src/onboarding/directory_trust.rs
++++ b/codex-rs/tui/src/onboarding/directory_trust.rs
+@@ -145,6 +145,7 @@ pub(crate) async fn check_directory_trust(
+                 params: ThreadReadParams {
+                     thread_id: thread.id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             });
+             let latest: ThreadReadResponse = if let Some(draft) = startup_draft.as_deref_mut() {
+diff --git a/codex-rs/tui/src/worktree_browser.rs b/codex-rs/tui/src/worktree_browser.rs
+index aa3664d..41b18fa 100644
+--- a/codex-rs/tui/src/worktree_browser.rs
++++ b/codex-rs/tui/src/worktree_browser.rs
+@@ -66,6 +66,7 @@ pub(crate) fn fetch(
+                         params: ThreadReadParams {
+                             thread_id: id.to_string(),
+                             include_turns: false,
++                            read_only: false,
+                         },
+                     })
+                     .await;
