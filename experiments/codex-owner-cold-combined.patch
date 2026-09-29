@@ -1,0 +1,1903 @@
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+index 478903f..08649fa 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/tests.rs
+@@ -4899,6 +4899,7 @@ fn turn_start_params_preserve_explicit_null_service_tier() {
+     );
+ 
+     let without_override = TurnStartParams {
++        allowed_tools: None,
+         disabled_plugin_ids: None,
+         thread_id: "thread_123".to_string(),
+         client_user_message_id: None,
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+index 09732cf..94c8910 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+@@ -1676,6 +1676,10 @@ pub struct ThreadReadParams {
+     /// `thread/items/list`.
+     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+     pub include_turns: bool,
++    /// Read metadata without repairing the owner's persistent indexes.
++    /// Full turn hydration remains unavailable in this mode.
++    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
++    pub read_only: bool,
+ }
+ 
+ #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+diff --git a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+index f938d17..666027a 100644
+--- a/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
++++ b/codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+@@ -159,6 +159,15 @@ pub struct TurnToolOutput {
+     pub output: FunctionCallOutputBody,
+ }
+ 
++#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
++#[serde(rename_all = "camelCase")]
++#[ts(export_to = "v2/")]
++pub struct AllowedToolName {
++    pub name: String,
++    #[ts(optional = nullable)]
++    pub namespace: Option<String>,
++}
++
+ #[derive(
+     Serialize, Deserialize, Debug, Default, Clone, PartialEq, JsonSchema, TS, ExperimentalApi,
+ )]
+@@ -166,6 +175,10 @@ pub struct TurnToolOutput {
+ #[ts(export_to = "v2/")]
+ pub struct TurnStartParams {
+     pub thread_id: String,
++    /// Restrict model tools for this new turn only. Empty permits no tools.
++    #[experimental("turn/start.allowedTools")]
++    #[ts(optional = nullable)]
++    pub allowed_tools: Option<Vec<AllowedToolName>>,
+     /// Replace this thread's disabled plugin IDs.
+     /// Omitted/null preserves the list; [] clears it.
+     #[ts(optional = nullable)]
+diff --git a/codex-rs/app-server/src/bespoke_event_handling.rs b/codex-rs/app-server/src/bespoke_event_handling.rs
+index e986d2e..6ae2805 100644
+--- a/codex-rs/app-server/src/bespoke_event_handling.rs
++++ b/codex-rs/app-server/src/bespoke_event_handling.rs
+@@ -1106,9 +1106,22 @@ pub(crate) async fn apply_bespoke_event_handling(
+             }
+             if let Some(params) = dynamic_tool_call_params {
+                 let call_id = params.call_id.clone();
+-                let (_pending_request_id, rx) = outgoing
+-                    .send_request(ServerRequestPayload::DynamicToolCall(params))
+-                    .await;
++                let request = ServerRequestPayload::DynamicToolCall(params);
++                let (_pending_request_id, rx) =
++                    if std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                        == Ok("1")
++                    {
++                        let owner = thread_state
++                            .lock()
++                            .await
++                            .dynamic_tool_turn_owner
++                            .as_ref()
++                            .filter(|(turn_id, _)| turn_id == &event_turn_id)
++                            .map(|(_, connection_id)| *connection_id);
++                        outgoing.send_owned_dynamic_tool_request(request, owner).await
++                    } else {
++                        outgoing.send_request(request).await
++                    };
+                 tokio::spawn(async move {
+                     crate::dynamic_tools::on_call_response(call_id, rx, conversation).await;
+                 });
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+index 17b6d2d..c1875a5 100644
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -1489,7 +1489,9 @@ impl MessageProcessor {
+                 self.thread_processor.thread_loaded_list(params).await
+             }
+             ClientRequest::ThreadRead { params, .. } => {
+-                self.thread_processor.thread_read(&request_id, params).await
++                self.thread_processor
++                    .thread_read(&request_id, params, app_server_client_name.as_deref())
++                    .await
+             }
+             ClientRequest::ThreadTurnsList { params, .. } => {
+                 self.thread_processor.thread_turns_list(params).await
+diff --git a/codex-rs/app-server/src/message_processor_tracing_tests.rs b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+index 6715805..7d33b6c 100644
+--- a/codex-rs/app-server/src/message_processor_tracing_tests.rs
++++ b/codex-rs/app-server/src/message_processor_tracing_tests.rs
+@@ -662,6 +662,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
+             ClientRequest::TurnStart {
+                 request_id: RequestId::Integer(3),
+                 params: TurnStartParams {
++                    allowed_tools: None,
+                     disabled_plugin_ids: None,
+                     environments: None,
+                     thread_id,
+diff --git a/codex-rs/app-server/src/outgoing_message.rs b/codex-rs/app-server/src/outgoing_message.rs
+index e6a109c..4737a68 100644
+--- a/codex-rs/app-server/src/outgoing_message.rs
++++ b/codex-rs/app-server/src/outgoing_message.rs
+@@ -148,6 +148,7 @@ pub(crate) struct ThreadScopedOutgoingMessageSender {
+ 
+ struct PendingCallbackEntry {
+     verification_owner: Option<ConnectionId>,
++    exclusive_owner: Option<ConnectionId>,
+     verification_auth_revision: Option<u64>,
+     verification_identity: Option<user_verification_auth::Identity>,
+     callback: oneshot::Sender<ClientRequestResult>,
+@@ -182,6 +183,26 @@ impl ThreadScopedOutgoingMessageSender {
+             .await
+     }
+ 
++    pub(crate) async fn send_owned_dynamic_tool_request(
++        &self,
++        payload: ServerRequestPayload,
++        owner: Option<ConnectionId>,
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        let Some(owner) = owner.filter(|owner| self.connection_ids.contains(owner)) else {
++            let (tx, rx) = oneshot::channel();
++            drop(tx);
++            return (self.outgoing.next_request_id(), rx);
++        };
++        self.outgoing
++            .send_request_to_connections_inner(
++                Some(std::slice::from_ref(&owner)),
++                payload,
++                Some(self.thread_id),
++                Some(owner),
++            )
++            .await
++    }
++
+     pub(crate) fn track_effective_permissions_approval_response(
+         &self,
+         request_id: RequestId,
+@@ -277,6 +298,22 @@ impl OutgoingMessageSender {
+             .await;
+         let mut request_contexts = self.request_contexts.lock().await;
+         request_contexts.retain(|request_id, _| request_id.connection_id != connection_id);
++        drop(request_contexts);
++        let abandoned = {
++            let mut callbacks = self.request_id_to_callback.lock().await;
++            let ids = callbacks
++                .iter()
++                .filter_map(|(id, entry)| {
++                    (entry.exclusive_owner == Some(connection_id)).then_some(id.clone())
++                })
++                .collect::<Vec<_>>();
++            ids.into_iter()
++                .filter_map(|id| callbacks.remove(&id))
++                .collect::<Vec<_>>()
++        };
++        for entry in abandoned {
++            let _ = entry.callback.send(Err(internal_error("tool owner disconnected")));
++        }
+     }
+ 
+     pub(crate) async fn request_trace_context(
+@@ -332,6 +369,17 @@ impl OutgoingMessageSender {
+         connection_ids: Option<&[ConnectionId]>,
+         request: ServerRequestPayload,
+         thread_id: Option<ThreadId>,
++    ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
++        self.send_request_to_connections_inner(connection_ids, request, thread_id, None)
++            .await
++    }
++
++    async fn send_request_to_connections_inner(
++        &self,
++        connection_ids: Option<&[ConnectionId]>,
++        request: ServerRequestPayload,
++        thread_id: Option<ThreadId>,
++        exclusive_owner: Option<ConnectionId>,
+     ) -> (RequestId, oneshot::Receiver<ClientRequestResult>) {
+         let id = self.next_request_id();
+         let outgoing_message_id = id.clone();
+@@ -378,6 +426,7 @@ impl OutgoingMessageSender {
+                 id,
+                 PendingCallbackEntry {
+                     verification_owner,
++                    exclusive_owner,
+                     verification_auth_revision,
+                     verification_identity: verification_identity.clone(),
+                     callback: tx_approve,
+@@ -576,6 +625,9 @@ impl OutgoingMessageSender {
+                 return None;
+             }
+         }
++        if entry.exclusive_owner.is_some_and(|owner| owner != connection_id) {
++            return None;
++        }
+         callbacks.remove_entry(id)
+     }
+ 
+@@ -587,7 +639,9 @@ impl OutgoingMessageSender {
+         let mut requests = request_id_to_callback
+             .values()
+             .filter_map(|entry| {
+-                (entry.thread_id == Some(thread_id) && entry.verification_owner.is_none())
++                (entry.thread_id == Some(thread_id)
++                    && entry.verification_owner.is_none()
++                    && entry.exclusive_owner.is_none())
+                     .then_some(entry.request.clone())
+             })
+             .collect::<Vec<_>>();
+@@ -1557,6 +1611,57 @@ mod tests {
+         );
+     }
+ 
++    #[tokio::test]
++    async fn owned_dynamic_tool_request_rejects_other_client_and_replay() {
++        let (tx, mut rx) = mpsc::channel::<OutgoingEnvelope>(8);
++        let outgoing = Arc::new(OutgoingMessageSender::new(
++            tx,
++            codex_analytics::AnalyticsEventsClient::disabled(),
++        ));
++        let thread_id = ThreadId::new();
++        let owner = ConnectionId(1);
++        let other = ConnectionId(2);
++        let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
++            outgoing.clone(),
++            vec![owner, other],
++            thread_id,
++        );
++        let payload = ServerRequestPayload::DynamicToolCall(DynamicToolCallParams {
++            thread_id: thread_id.to_string(),
++            turn_id: "turn-1".to_string(),
++            call_id: "call-1".to_string(),
++            namespace: None,
++            tool: "tool".to_string(),
++            arguments: json!({}),
++        });
++        let (id, waiter) = thread_outgoing
++            .send_owned_dynamic_tool_request(payload, Some(owner))
++            .await;
++        assert!(matches!(
++            rx.try_recv(),
++            Ok(OutgoingEnvelope::ToConnection { connection_id, .. }) if connection_id == owner
++        ));
++        assert!(rx.try_recv().is_err());
++        assert!(outgoing.pending_requests_for_thread(thread_id).await.is_empty());
++
++        outgoing
++            .notify_client_response(other, id.clone(), json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.contains_key(&id));
++        outgoing
++            .notify_client_response(owner, id.clone(), json!({"contentItems": []}))
++            .await;
++        let result = timeout(Duration::from_secs(1), waiter)
++            .await
++            .expect("owner response should resolve")
++            .expect("owner callback should be present");
++        assert_eq!(result, Ok(json!({"contentItems": []})));
++        outgoing
++            .notify_client_response(other, id, json!({"contentItems": []}))
++            .await;
++        assert!(outgoing.request_id_to_callback.lock().await.is_empty());
++    }
++
+     #[tokio::test]
+     async fn cancel_requests_for_thread_cancels_all_thread_requests() {
+         let (tx, _rx) = mpsc::channel::<OutgoingEnvelope>(8);
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor.rs b/codex-rs/app-server/src/request_processors/thread_processor.rs
+index 04c2229..43b2feb 100644
+--- a/codex-rs/app-server/src/request_processors/thread_processor.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor.rs
+@@ -857,9 +857,29 @@ impl ThreadRequestProcessor {
+         &self,
+         request_id: &ConnectionRequestId,
+         params: ThreadReadParams,
++        app_server_client_name: Option<&str>,
+     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+         let include_turns = params.include_turns;
++        let read_only = params.read_only;
++        let requested_thread_id = params.thread_id.clone();
+         let response = self.thread_read_response_inner(params).await?;
++        if read_only
++            && !include_turns
++            && std::env::var_os("CODEX_APP_SERVER_ORBIT_COLD_ATTACH_EXPERIMENT").is_some()
++            && app_server_client_name == Some("orbit_private_attached")
++        {
++            let thread_id = ThreadId::from_string(&requested_thread_id)
++                .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
++            // The persisted view has been read successfully. Register the connection for
++            // future notifications without creating a CodexThread or rollout writer.
++            if !self
++                .thread_state_manager
++                .try_add_connection_to_thread(thread_id, request_id.connection_id)
++                .await
++            {
++                return Err(invalid_request("connection closed before cold attach"));
++            }
++        }
+         if include_turns
+             && matches!(
+                 response.thread.history_mode,
+@@ -1020,6 +1040,25 @@ impl ThreadRequestProcessor {
+             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+ 
+         if self.thread_manager.get_thread(thread_id).await.is_err() {
++            if std::env::var_os("CODEX_APP_SERVER_ORBIT_COLD_ATTACH_EXPERIMENT").is_some() {
++                let was_subscribed = self
++                    .thread_state_manager
++                    .unsubscribe_connection_from_thread(thread_id, connection_id)
++                    .await;
++                if was_subscribed {
++                    if self
++                        .thread_state_manager
++                        .subscribed_connection_ids(thread_id)
++                        .await
++                        .is_empty()
++                    {
++                        self.thread_state_manager.remove_thread_state(thread_id).await;
++                    }
++                    return Ok(ThreadUnsubscribeResponse {
++                        status: ThreadUnsubscribeStatus::Unsubscribed,
++                    });
++                }
++            }
+             self.finalize_thread_teardown(thread_id).await;
+             return Ok(ThreadUnsubscribeResponse {
+                 status: ThreadUnsubscribeStatus::NotLoaded,
+@@ -2793,13 +2832,18 @@ impl ThreadRequestProcessor {
+         let ThreadReadParams {
+             thread_id,
+             include_turns,
++            read_only,
+         } = params;
+ 
++        if read_only && include_turns {
++            return Err(invalid_request("readOnly thread/read requires includeTurns=false"));
++        }
++
+         let thread_uuid = ThreadId::from_string(&thread_id)
+             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+ 
+         let thread = self
+-            .read_thread_view(thread_uuid, include_turns)
++            .read_thread_view(thread_uuid, include_turns, read_only)
+             .await
+             .map_err(thread_read_view_error)?;
+         Ok(ThreadReadResponse { thread })
+@@ -2810,6 +2854,7 @@ impl ThreadRequestProcessor {
+         &self,
+         thread_id: ThreadId,
+         include_turns: bool,
++        read_only: bool,
+     ) -> Result<Thread, ThreadReadViewError> {
+         // Read staging first: persistence can consume it while the stored thread is read.
+         let pending_daybreak_enabled = self
+@@ -2828,17 +2873,18 @@ impl ThreadRequestProcessor {
+                 // Loaded thread with turns: use persisted metadata when it exists,
+                 // but reconstruct turns from the live ThreadStore history.
+                 let persisted_thread = self
+-                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ false)
++                    .load_persisted_thread_for_read(thread_id, /*include_turns*/ false, read_only)
+                     .await?;
+                 self.load_live_thread_view(
+                     thread_id,
+                     include_turns,
+                     loaded_thread,
+                     persisted_thread,
++                    read_only,
+                 )
+                 .await?
+             } else if let Some(thread) = self
+-                .load_persisted_thread_for_read(thread_id, include_turns)
++                .load_persisted_thread_for_read(thread_id, include_turns, read_only)
+                 .await?
+             {
+                 // Unloaded thread with turns: load metadata and history together
+@@ -2850,12 +2896,18 @@ impl ThreadRequestProcessor {
+                 )));
+             }
+         } else if let Some(thread) = self
+-            .load_persisted_thread_for_read(thread_id, include_turns)
++            .load_persisted_thread_for_read(thread_id, include_turns, read_only)
+             .await?
+         {
+             if let Some(loaded_thread) = loaded_thread.as_ref() {
+-                self.load_live_thread_view(thread_id, include_turns, loaded_thread, Some(thread))
+-                    .await?
++                self.load_live_thread_view(
++                    thread_id,
++                    include_turns,
++                    loaded_thread,
++                    Some(thread),
++                    read_only,
++                )
++                .await?
+             } else {
+                 thread
+             }
+@@ -2867,6 +2919,7 @@ impl ThreadRequestProcessor {
+                 include_turns,
+                 loaded_thread,
+                 /*persisted_thread*/ None,
++                read_only,
+             )
+             .await?
+         } else {
+@@ -2900,11 +2953,12 @@ impl ThreadRequestProcessor {
+         &self,
+         thread_id: ThreadId,
+         include_turns: bool,
++        read_only: bool,
+     ) -> Result<Option<Thread>, ThreadReadViewError> {
+         let fallback_provider = self.config.model_provider_id.as_str();
+         if include_turns {
+             let Some(stored_thread) = self
+-                .read_stored_thread_for_read(thread_id, /*include_history*/ false)
++                .read_stored_thread_for_read(thread_id, /*include_history*/ false, read_only)
+                 .await?
+             else {
+                 return Ok(None);
+@@ -2920,7 +2974,7 @@ impl ThreadRequestProcessor {
+             }
+         }
+         let Some(stored_thread) = self
+-            .read_stored_thread_for_read(thread_id, /*include_history*/ include_turns)
++            .read_stored_thread_for_read(thread_id, /*include_history*/ include_turns, read_only)
+             .await?
+         else {
+             return Ok(None);
+@@ -2937,16 +2991,19 @@ impl ThreadRequestProcessor {
+         &self,
+         thread_id: ThreadId,
+         include_history: bool,
++        read_only: bool,
+     ) -> Result<Option<StoredThread>, ThreadReadViewError> {
+-        match self
+-            .thread_store
+-            .read_thread(StoreReadThreadParams {
+-                thread_id,
+-                include_archived: true,
+-                include_history,
+-            })
+-            .await
+-        {
++        let params = StoreReadThreadParams {
++            thread_id,
++            include_archived: true,
++            include_history,
++        };
++        let result = if read_only {
++            self.thread_store.read_thread_read_only(params).await
++        } else {
++            self.thread_store.read_thread(params).await
++        };
++        match result {
+             Ok(stored_thread) => Ok(Some(stored_thread)),
+             Err(ThreadStoreError::InvalidRequest { message })
+                 if message == format!("no rollout found for thread id {thread_id}") =>
+@@ -2975,6 +3032,7 @@ impl ThreadRequestProcessor {
+         include_turns: bool,
+         loaded_thread: &CodexThread,
+         persisted_thread: Option<Thread>,
++        read_only: bool,
+     ) -> Result<Thread, ThreadReadViewError> {
+         let config_snapshot = loaded_thread.config_snapshot().await;
+         if include_turns && config_snapshot.ephemeral {
+@@ -2996,7 +3054,9 @@ impl ThreadRequestProcessor {
+             fallback_thread
+         };
+         apply_live_thread_settings(&mut thread, &config_snapshot);
+-        self.apply_thread_read_store_fields(thread_id, &mut thread, include_turns, loaded_thread)
++        self.apply_thread_read_store_fields(
++            thread_id, &mut thread, include_turns, loaded_thread, read_only,
++        )
+             .await?;
+         Ok(thread)
+     }
+@@ -3007,8 +3067,9 @@ impl ThreadRequestProcessor {
+         thread: &mut Thread,
+         include_turns: bool,
+         loaded_thread: &CodexThread,
++        read_only: bool,
+     ) -> Result<(), ThreadReadViewError> {
+-        self.attach_thread_name(thread_id, thread).await;
++        self.attach_thread_name_with_mode(thread_id, thread, read_only).await;
+ 
+         if include_turns {
+             if matches!(
+@@ -4771,14 +4832,26 @@ impl ThreadRequestProcessor {
+     }
+ 
+     async fn attach_thread_name(&self, thread_id: ThreadId, thread: &mut Thread) {
+-        if let Ok(stored_thread) = self
+-            .thread_store
+-            .read_thread(StoreReadThreadParams {
+-                thread_id,
+-                include_archived: true,
+-                include_history: false,
+-            })
+-            .await
++        self.attach_thread_name_with_mode(thread_id, thread, false).await;
++    }
++
++    async fn attach_thread_name_with_mode(
++        &self,
++        thread_id: ThreadId,
++        thread: &mut Thread,
++        read_only: bool,
++    ) {
++        let params = StoreReadThreadParams {
++            thread_id,
++            include_archived: true,
++            include_history: false,
++        };
++        let result = if read_only {
++            self.thread_store.read_thread_read_only(params).await
++        } else {
++            self.thread_store.read_thread(params).await
++        };
++        if let Ok(stored_thread) = result
+             && let Some(title) = stored_thread.name.as_deref().map(str::trim)
+             && !title.is_empty()
+         {
+diff --git a/codex-rs/app-server/src/request_processors/turn_processor.rs b/codex-rs/app-server/src/request_processors/turn_processor.rs
+index 1de7f03..072367c 100644
+--- a/codex-rs/app-server/src/request_processors/turn_processor.rs
++++ b/codex-rs/app-server/src/request_processors/turn_processor.rs
+@@ -14,6 +14,7 @@ use codex_protocol::protocol::AdditionalContextEntry as CoreAdditionalContextEnt
+ use codex_protocol::protocol::AdditionalContextKind as CoreAdditionalContextKind;
+ use codex_protocol::protocol::TurnSettingsUpdate;
+ use codex_protocol::protocol::TurnSettingsUpdateOutcome;
++use codex_core::StartIfIdleSubmission;
+ use codex_skills::system_cache_root_dir;
+ 
+ use crate::image_url::REMOTE_IMAGE_URL_ERROR;
+@@ -528,6 +529,24 @@ impl TurnRequestProcessor {
+         app_server_client_name: Option<String>,
+         app_server_client_version: Option<String>,
+     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
++        if let Some(allowed_tools) = params.allowed_tools.as_ref() {
++            if allowed_tools.len() > 512 {
++                return Err(invalid_request("allowedTools may contain at most 512 names"));
++            }
++            for tool in allowed_tools {
++                if tool.name.is_empty()
++                    || tool.name.len() > 256
++                    || tool
++                        .namespace
++                        .as_ref()
++                        .is_some_and(|namespace| namespace.is_empty() || namespace.len() > 256)
++                {
++                    return Err(invalid_request(
++                        "allowedTools names and namespaces must be 1 to 256 bytes",
++                    ));
++                }
++            }
++        }
+         let (thread_id, thread) =
+             self.load_thread(&params.thread_id)
+                 .await
+@@ -596,6 +615,11 @@ impl TurnRequestProcessor {
+ 
+         let additional_context = map_additional_context(params.additional_context);
+         let turn_has_input = !params.input.is_empty();
++        let turn_owner_experiment =
++            std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1");
++        if turn_owner_experiment && !turn_has_input && params.tool_output.is_none() {
++            return Err(invalid_request("turn/start requires input or toolOutput"));
++        }
+         let input = if let Some(tool_output) = params.tool_output {
+             let item = ResponseItem::FunctionCallOutput {
+                 id: None,
+@@ -650,27 +674,81 @@ impl TurnRequestProcessor {
+             )
+             .await?;
+ 
+-        let submission = thread
+-            .start_or_steer_turn(
+-                TurnInputRequest::new(input)
+-                    .with_thread_settings(thread_settings)
+-                    .on_start(TurnStartOptions {
+-                        turn_trigger: params.turn_trigger,
+-                        final_output_json_schema: params.output_schema,
+-                        service_tier: params.service_tier_for_turn,
+-                        cyber_access_program: params.cyber_access_program.map(Into::into),
+-                        ..Default::default()
+-                    })
+-                    .with_additional_context(additional_context)
+-                    .with_responses_metadata(params.responsesapi_client_metadata)
+-                    .with_trace(self.request_trace_context(&request_id).await),
+-            )
+-            .await
+-            .map_err(|err| {
+-                let error = internal_error(format!("failed to submit turn input: {err}"));
+-                self.track_error_response(&request_id, &error, /*error_type*/ None);
+-                error
+-            })?;
++        let has_turn_tool_ceiling = params.allowed_tools.is_some();
++        let turn_request = TurnInputRequest::new(input)
++            .with_thread_settings(thread_settings)
++            .on_start(TurnStartOptions {
++                allowed_tools: params.allowed_tools.map(|tools| {
++                    tools
++                        .into_iter()
++                        .map(|tool| codex_protocol::ToolName::new(tool.namespace, tool.name))
++                        .collect()
++                }),
++                turn_trigger: params.turn_trigger,
++                final_output_json_schema: params.output_schema,
++                service_tier: params.service_tier_for_turn,
++                cyber_access_program: params.cyber_access_program.map(Into::into),
++                ..Default::default()
++            })
++            .with_additional_context(additional_context)
++            .with_responses_metadata(params.responsesapi_client_metadata)
++            .with_trace(self.request_trace_context(&request_id).await);
++        let submission = async {
++            let from_idle = |result: StartIfIdleSubmission| match result {
++                StartIfIdleSubmission::Started { turn_id } => TurnInputSubmission::Started { turn_id },
++                StartIfIdleSubmission::NotSubmitted { reason } => {
++                    TurnInputSubmission::NotSubmitted { reason }
++                }
++            };
++            let submission = if turn_owner_experiment {
++                if has_turn_tool_ceiling {
++                    from_idle(thread.start_turn_if_idle(turn_request).await?)
++                } else {
++                    let owner = self
++                        .thread_state_manager
++                        .thread_state(thread_id)
++                        .await
++                        .lock()
++                        .await
++                        .turn_input_owner
++                        .clone();
++                    let expected_turn_id = owner
++                        .filter(|(_, connection_id)| *connection_id == request_id.connection_id)
++                        .filter(|_| matches!(&turn_request.input, TurnInput::UserInput { .. }))
++                        .map(|(turn_id, _)| turn_id);
++                    if let Some(expected_turn_id) = expected_turn_id {
++                        match thread
++                            .steer_turn(turn_request.clone(), expected_turn_id)
++                            .await?
++                        {
++                            SteerSubmission::Steered { turn_id } => {
++                                TurnInputSubmission::Steered { turn_id }
++                            }
++                            SteerSubmission::NotSubmitted {
++                                reason: NotSubmittedReason::NoActiveTurn
++                                    | NotSubmittedReason::ExpectedTurnMismatch { .. },
++                            } => from_idle(thread.start_turn_if_idle(turn_request).await?),
++                            SteerSubmission::NotSubmitted { reason } => {
++                                TurnInputSubmission::NotSubmitted { reason }
++                            }
++                        }
++                    } else {
++                        from_idle(thread.start_turn_if_idle(turn_request).await?)
++                    }
++                }
++            } else if has_turn_tool_ceiling {
++                from_idle(thread.start_turn_if_idle(turn_request).await?)
++            } else {
++                thread.start_or_steer_turn(turn_request).await?
++            };
++            Ok::<TurnInputSubmission, CodexErr>(submission)
++        }
++        .await
++        .map_err(|err| {
++            let error = internal_error(format!("failed to submit turn input: {err}"));
++            self.track_error_response(&request_id, &error, /*error_type*/ None);
++            error
++        })?;
+         let (turn_id, started) = match submission {
+             TurnInputSubmission::Started { turn_id } => (turn_id, true),
+             TurnInputSubmission::Steered { turn_id } => (turn_id, false),
+@@ -685,6 +763,24 @@ impl TurnRequestProcessor {
+             }
+         };
+ 
++        if started
++            && std::env::var("CODEX_APP_SERVER_DYNAMIC_TOOL_OWNER_EXPERIMENT").as_deref()
++                == Ok("1")
++        {
++            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
++            thread_state.lock().await.dynamic_tool_turn_owner =
++                Some((turn_id.clone(), request_id.connection_id));
++        }
++
++        if turn_owner_experiment && started {
++            self.thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner = Some((turn_id.clone(), request_id.connection_id));
++        }
++
+         if turn_has_input && started {
+             let config_snapshot = thread.config_snapshot().await;
+             if config_snapshot.is_primary_environment_configured() {
+@@ -1033,7 +1129,7 @@ impl TurnRequestProcessor {
+         request_id: &ConnectionRequestId,
+         params: TurnSteerParams,
+     ) -> Result<TurnSteerResponse, JSONRPCErrorError> {
+-        let (_, thread) = self
++        let (thread_id, thread) = self
+             .load_thread(&params.thread_id)
+             .await
+             .inspect_err(|error| {
+@@ -1049,6 +1145,21 @@ impl TurnRequestProcessor {
+         if params.expected_turn_id.is_empty() {
+             return Err(invalid_request("expectedTurnId must not be empty"));
+         }
++        if std::env::var("CODEX_APP_SERVER_TURN_OWNER_EXPERIMENT").as_deref() == Ok("1") {
++            let owner = self
++                .thread_state_manager
++                .thread_state(thread_id)
++                .await
++                .lock()
++                .await
++                .turn_input_owner
++                .clone();
++            if owner.as_ref()
++                != Some(&(params.expected_turn_id.clone(), request_id.connection_id))
++            {
++                return Err(invalid_request("turn belongs to another connection"));
++            }
++        }
+         self.outgoing
+             .record_request_turn_id(request_id, &params.expected_turn_id)
+             .await;
+diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
+index 14012f3..66a295e 100644
+--- a/codex-rs/app-server/src/thread_state.rs
++++ b/codex-rs/app-server/src/thread_state.rs
+@@ -100,6 +100,8 @@ pub(crate) struct ThreadState {
+     pub(crate) pending_interrupts: PendingInterruptQueue,
+     pub(crate) turn_summary: TurnSummary,
+     pub(crate) last_terminal_turn_id: Option<String>,
++    pub(crate) turn_input_owner: Option<(String, ConnectionId)>,
++    pub(crate) dynamic_tool_turn_owner: Option<(String, ConnectionId)>,
+     /// Lets an internal runtime replacement wait until the old listener has processed Core's
+     /// `ShutdownComplete` event before that listener is superseded.
+     shutdown_drain_waiter: Option<oneshot::Sender<()>>,
+@@ -191,7 +193,22 @@ impl ThreadState {
+         }
+         self.current_turn_history.handle_event(event);
+         if matches!(event, EventMsg::TurnAborted(_) | EventMsg::TurnComplete(_)) {
++            if self
++                .turn_input_owner
++                .as_ref()
++                .is_some_and(|(turn_id, _)| turn_id == event_turn_id)
++            {
++                self.turn_input_owner = None;
++            }
+             self.last_terminal_turn_id = Some(event_turn_id.to_string());
++            if self
++                .dynamic_tool_turn_owner
++                .as_ref()
++                .map(|(turn_id, _)| turn_id.as_str())
++                == Some(event_turn_id)
++            {
++                self.dynamic_tool_turn_owner = None;
++            }
+             if !self.current_turn_history.has_active_turn() {
+                 self.current_turn_history.reset();
+             }
+diff --git a/codex-rs/app-server/tests/suite/v2/analytics.rs b/codex-rs/app-server/tests/suite/v2/analytics.rs
+index 50fdb0c..2f123ba 100644
+--- a/codex-rs/app-server/tests/suite/v2/analytics.rs
++++ b/codex-rs/app-server/tests/suite/v2/analytics.rs
+@@ -362,6 +362,7 @@ async fn multi_agent_v2_tools_emit_collaborator_analytics() -> Result<()> {
+             params: ThreadReadParams {
+                 thread_id: thread.id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs b/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
+index fea72f3..0fcaab9 100644
+--- a/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
++++ b/codex-rs/app-server/tests/suite/v2/cyber_access_program.rs
+@@ -63,6 +63,7 @@ async fn thread_start_stages_daybreak_until_persistence() -> Result<()> {
+                 params: ThreadReadParams {
+                     thread_id: started.thread.id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             })
+             .await?;
+@@ -90,6 +91,7 @@ async fn thread_start_stages_daybreak_until_persistence() -> Result<()> {
+                 params: ThreadReadParams {
+                     thread_id: thread_id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             })
+             .await?;
+@@ -265,6 +267,7 @@ async fn daybreak_thread_metadata_persists_independently_across_restart_and_fork
+                 params: ThreadReadParams {
+                     thread_id: thread_id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             })
+             .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/external_agent_config.rs b/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
+index 4b1306b..5c9b255 100644
+--- a/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
++++ b/codex-rs/app-server/tests/suite/v2/external_agent_config.rs
+@@ -634,6 +634,7 @@ source = {:?}
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let response: ThreadReadResponse =
+@@ -2006,6 +2007,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let response: ThreadReadResponse =
+@@ -2081,6 +2083,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let response: ThreadReadResponse =
+diff --git a/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs b/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
+index 48fc7b5..455df47 100644
+--- a/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
++++ b/codex-rs/app-server/tests/suite/v2/guardian_sync_session_tests.rs
+@@ -312,6 +312,7 @@ async fn managed_reviewers_reuse_fork_and_resume_after_parent_shutdown(
+             params: ThreadReadParams {
+                 thread_id: reviewer_id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs b/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
+index e92bb49..e06e0df 100644
+--- a/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
++++ b/codex-rs/app-server/tests/suite/v2/imagegen_extension.rs
+@@ -291,6 +291,7 @@ async fn transparent_image_preserves_output_metadata_and_persisted_history() ->
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+@@ -562,6 +563,7 @@ async fn image_generation_usage_limit_preserves_correlated_failure_metadata() ->
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+diff --git a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs b/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
+index 60d4a65..fec6505 100644
+--- a/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
++++ b/codex-rs/app-server/tests/suite/v2/mcp_resource.rs
+@@ -942,6 +942,7 @@ async fn metadata_and_mcp_requests_complete_while_unrelated_resume_loads_config(
+             params: ThreadReadParams {
+                 thread_id: thread.id,
+                 include_turns: false,
++                read_only: false,
+             },
+         }),
+     )
+@@ -1225,6 +1226,7 @@ async fn resume_revalidates_persisted_thread_after_config_load(
+                     params: ThreadReadParams {
+                         thread_id,
+                         include_turns: false,
++                        read_only: false,
+                     },
+                 }),
+             )
+diff --git a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
+index a0c313b..fbf3fd0 100644
+--- a/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
++++ b/codex-rs/app-server/tests/suite/v2/mcp_tool.rs
+@@ -1172,6 +1172,7 @@ async fn mcp_tool_call_hint_survives_mid_call_thread_read_and_resume() -> Result
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -1247,6 +1248,7 @@ async fn mcp_tool_call_hint_survives_mid_call_thread_read_and_resume() -> Result
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+diff --git a/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs b/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
+index d4e0c71..e4ef6cb 100644
+--- a/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
++++ b/codex-rs/app-server/tests/suite/v2/multi_agent_v2_developer_instructions.rs
+@@ -836,6 +836,7 @@ features.shell_tool = false
+             params: ThreadReadParams {
+                 thread_id: child_thread_id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/projects.rs b/codex-rs/app-server/tests/suite/v2/projects.rs
+index cb22954..113356d 100644
+--- a/codex-rs/app-server/tests/suite/v2/projects.rs
++++ b/codex-rs/app-server/tests/suite/v2/projects.rs
+@@ -312,6 +312,7 @@ async fn projects_persist_and_assign_threads() -> Result<()> {
+             params: ThreadReadParams {
+                 thread_id: started.thread.id.clone(),
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -688,6 +689,7 @@ async fn deleted_project_is_dropped_before_first_durable_thread_persistence() ->
+             params: ThreadReadParams {
+                 thread_id: started.thread.id.clone(),
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -955,6 +957,7 @@ async fn projects_validate_filters_cursors_and_sqlite_less_assignment() -> Resul
+             params: ThreadReadParams {
+                 thread_id: started.thread.id.clone(),
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+index da20bdb..468d7e2 100644
+--- a/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
++++ b/codex-rs/app-server/tests/suite/v2/rollout_migration.rs
+@@ -89,6 +89,7 @@ async fn runtime_enabled_legacy_migration_preserves_cold_resume_model_context()
+                 .send_thread_read_request(ThreadReadParams {
+                     thread_id: thread.id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 })
+                 .await?;
+             let ThreadReadResponse { thread: read } = secondary.read_response(read_id).await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_environments.rs b/codex-rs/app-server/tests/suite/v2/thread_environments.rs
+index c9bc999..b40812f 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_environments.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_environments.rs
+@@ -142,6 +142,7 @@ async fn assert_read_and_list_environments(
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.to_owned(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read: ThreadReadResponse =
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_fork.rs b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+index 3690b3e..2704dde 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_fork.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_fork.rs
+@@ -1277,6 +1277,7 @@ async fn thread_fork_can_cut_before_unfinished_stored_turn() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_list.rs b/codex-rs/app-server/tests/suite/v2/thread_list.rs
+index 036dd05..e898d25 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_list.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_list.rs
+@@ -774,6 +774,7 @@ async fn thread_search_returns_content_matches() -> Result<()> {
+             .send_thread_read_request(ThreadReadParams {
+                 thread_id: thread_id.clone(),
+                 include_turns: false,
++                read_only: false,
+             })
+             .await?;
+         let ThreadReadResponse { thread } =
+@@ -2724,6 +2725,7 @@ async fn thread_originator_is_preserved_in_list_read_and_resume(originator: &str
+                 params: ThreadReadParams {
+                     thread_id: thread_id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             })
+             .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+index 799b58d..f61070b 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_metadata_update.rs
+@@ -637,6 +637,7 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread()
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read_resp: JSONRPCResponse = timeout(
+@@ -731,6 +732,7 @@ async fn thread_metadata_update_sanitizes_git_origin_before_persisting() -> Resu
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read_resp: JSONRPCResponse = timeout(
+@@ -1150,6 +1152,7 @@ async fn thread_metadata_update_can_clear_stored_git_fields() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id,
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read_resp: JSONRPCResponse = timeout(
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_queue.rs b/codex-rs/app-server/tests/suite/v2/thread_queue.rs
+index caaf4f7..c96faee 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_queue.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_queue.rs
+@@ -484,6 +484,7 @@ async fn cold_thread_resume_dispatches_a_persisted_queued_submission() -> Result
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read: ThreadReadResponse = timeout(READ_TIMEOUT, resumed.read_response(read_id)).await??;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_read.rs b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+index 860f150..0994611 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_read.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_read.rs
+@@ -134,6 +134,7 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let response: Value = timeout(DEFAULT_READ_TIMEOUT, mcp.read_response(read_id)).await??;
+@@ -204,6 +205,7 @@ async fn thread_read_can_include_turns() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+@@ -275,6 +277,7 @@ async fn thread_read_preserves_file_id_from_completed_turn() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -296,6 +299,7 @@ async fn thread_read_preserves_file_id_from_completed_turn() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -334,6 +338,7 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread } =
+@@ -349,6 +354,7 @@ async fn paginated_stored_thread_routes_projected_turns() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let notice: DeprecationNoticeNotification = timeout(
+@@ -976,6 +982,7 @@ async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_pa
+             params: ThreadReadParams {
+                 thread_id: thread.id,
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?
+@@ -1127,6 +1134,7 @@ async fn thread_read_can_return_archived_threads_by_id() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread } =
+@@ -1313,6 +1321,7 @@ async fn thread_read_returns_forked_from_id_for_forked_threads() -> Result<()> {
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: forked.id,
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+@@ -1352,6 +1361,7 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread: read, .. } =
+@@ -1412,6 +1422,7 @@ async fn paginated_thread_name_set_is_reflected_in_read_list_and_metadata_resume
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: conversation_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let read_resp: JSONRPCResponse = timeout(
+@@ -1557,6 +1568,7 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let read_err: JSONRPCError = timeout(
+@@ -1792,6 +1804,7 @@ async fn paginated_history_lists_and_legacy_reads_use_projected_turns_and_items(
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.to_string(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -2057,6 +2070,7 @@ async fn paginated_history_lists_and_legacy_reads_use_projected_turns_and_items(
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.to_string(),
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -2155,6 +2169,7 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id,
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_resume.rs b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+index 8638286..59ca167 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_resume.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_resume.rs
+@@ -1390,6 +1390,7 @@ async fn thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewe
+             .send_thread_read_request(ThreadReadParams {
+                 thread_id: thread.id.clone(),
+                 include_turns: false,
++                read_only: false,
+             })
+             .await?;
+         let ThreadReadResponse { thread: read } =
+@@ -4640,6 +4641,7 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: resumed_again.id,
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -4671,6 +4673,7 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -4746,6 +4749,7 @@ async fn thread_resume_checkpoints_settings_without_advancing_recency() -> Resul
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread_id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+@@ -6081,6 +6085,7 @@ async fn start_materialized_thread_and_restart(
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_sections.rs b/codex-rs/app-server/tests/suite/v2/thread_sections.rs
+index e374d6e..6f4d0ed 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_sections.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_sections.rs
+@@ -265,6 +265,7 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+             params: ThreadReadParams {
+                 thread_id: first_thread.clone(),
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -284,6 +285,7 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+             params: ThreadReadParams {
+                 thread_id: first_thread,
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -318,6 +320,7 @@ async fn deleting_custom_sections_unassigns_active_and_archived_members() -> Res
+             params: ThreadReadParams {
+                 thread_id: archived_thread,
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs b/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
+index 52725e5..03e55c0 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_settings_update.rs
+@@ -309,6 +309,7 @@ async fn thread_settings_update_emits_notification_and_updates_future_turns() ->
+             .send_thread_read_request(ThreadReadParams {
+                 thread_id: thread.id.clone(),
+                 include_turns,
++                read_only: false,
+             })
+             .await?;
+         let read: ThreadReadResponse =
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+index a9c2dd1..b259b19 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_shell_command.rs
+@@ -132,6 +132,7 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
+             params: ThreadReadParams {
+                 thread_id: thread.id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -353,6 +354,7 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+             params: ThreadReadParams {
+                 thread_id: thread.id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -385,6 +387,7 @@ async fn check_thread_shell_command_in_active_turn(timeout_ms: Option<i64>) -> R
+             params: ThreadReadParams {
+                 thread_id: thread.id,
+                 include_turns: true,
++                read_only: false,
+             },
+         })
+         .await?;
+@@ -522,6 +525,7 @@ async fn thread_shell_command_rejects_invalid_timeouts_before_execution() -> Res
+             params: ThreadReadParams {
+                 thread_id: thread.id,
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs b/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
+index 3af590c..f7cf6ca 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_unarchive.rs
+@@ -120,6 +120,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
+         .send_thread_read_request(ThreadReadParams {
+             thread_id: thread.id.clone(),
+             include_turns: false,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse {
+diff --git a/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs b/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
+index cddbccb..9e198d9 100644
+--- a/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
++++ b/codex-rs/app-server/tests/suite/v2/thread_unsubscribe.rs
+@@ -419,6 +419,7 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
+             params: ThreadReadParams {
+                 thread_id: thread_id.clone(),
+                 include_turns: false,
++                read_only: false,
+             },
+         })
+         .await?;
+diff --git a/codex-rs/app-server/tests/suite/v2/turn_start.rs b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+index 5fb3091..aa16923 100644
+--- a/codex-rs/app-server/tests/suite/v2/turn_start.rs
++++ b/codex-rs/app-server/tests/suite/v2/turn_start.rs
+@@ -3450,6 +3450,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
+         .request(|request_id| ClientRequest::TurnStart {
+             request_id,
+             params: TurnStartParams {
++                allowed_tools: None,
+                 disabled_plugin_ids: None,
+                 environments: None,
+                 thread_id: thread.id.clone(),
+@@ -3499,6 +3500,7 @@ async fn turn_start_explicit_local_environment_updates_legacy_cwd_between_turns(
+         .request(|request_id| ClientRequest::TurnStart {
+             request_id,
+             params: TurnStartParams {
++                allowed_tools: None,
+                 disabled_plugin_ids: None,
+                 environments: Some(vec![TurnEnvironmentParams {
+                     environment_id: LOCAL_ENVIRONMENT_ID.to_string(),
+diff --git a/codex-rs/app-server/tests/suite/v2/web_search.rs b/codex-rs/app-server/tests/suite/v2/web_search.rs
+index e282c4d..a1b09dd 100644
+--- a/codex-rs/app-server/tests/suite/v2/web_search.rs
++++ b/codex-rs/app-server/tests/suite/v2/web_search.rs
+@@ -340,6 +340,7 @@ async fn assert_standalone_web_search_round_trips_output(
+         .send_thread_read_request(ThreadReadParams {
+             thread_id,
+             include_turns: true,
++            read_only: false,
+         })
+         .await?;
+     let ThreadReadResponse { thread, .. } =
+diff --git a/codex-rs/core/src/session/turn_context.rs b/codex-rs/core/src/session/turn_context.rs
+index e5a21b6..4d8e5e5 100644
+--- a/codex-rs/core/src/session/turn_context.rs
++++ b/codex-rs/core/src/session/turn_context.rs
+@@ -273,6 +273,7 @@ impl std::fmt::Debug for TurnEnvironment {
+ /// Request options for one turn, separate from persistent thread settings.
+ #[derive(Default)]
+ pub(crate) struct NewTurnContextOptions {
++    pub(crate) allowed_tools: Option<Vec<codex_protocol::ToolName>>,
+     pub(crate) final_output_json_schema: Option<Value>,
+     pub(crate) cyber_access_program: Option<CyberAccessProgram>,
+ }
+@@ -1103,6 +1104,11 @@ impl Session {
+         );
+         turn_context.code_mode_available = self.services.code_mode_service.is_available();
+         turn_context.extension_data.insert(trusted_plugin_roots);
++        if let Some(allowed_tools) = options.allowed_tools {
++            turn_context
++                .extension_data
++                .insert(codex_extension_api::AllowedTools(allowed_tools));
++        }
+         turn_context.realtime_active = self.conversation.running_state().await.is_some();
+ 
+         turn_context.final_output_json_schema = options.final_output_json_schema;
+diff --git a/codex-rs/core/src/session/turn_input.rs b/codex-rs/core/src/session/turn_input.rs
+index d08dcd6..62e194d 100644
+--- a/codex-rs/core/src/session/turn_input.rs
++++ b/codex-rs/core/src/session/turn_input.rs
+@@ -126,6 +126,7 @@ impl PreparedTurnInputSettings {
+         kind: TurnStartKind,
+     ) -> CodexResult<Option<Arc<TurnContext>>> {
+         let TurnStartOptions {
++            allowed_tools,
+             turn_trigger,
+             final_output_json_schema,
+             service_tier,
+@@ -143,6 +144,7 @@ impl PreparedTurnInputSettings {
+         updates.service_tier_for_turn = service_tier;
+ 
+         let options = NewTurnContextOptions {
++            allowed_tools,
+             final_output_json_schema,
+             cyber_access_program,
+         };
+diff --git a/codex-rs/core/src/tasks/mod.rs b/codex-rs/core/src/tasks/mod.rs
+index 4c5cd6d..b8f937f 100644
+--- a/codex-rs/core/src/tasks/mod.rs
++++ b/codex-rs/core/src/tasks/mod.rs
+@@ -467,6 +467,7 @@ impl Session {
+             .new_turn_with_default_settings(
+                 sub_id,
+                 NewTurnContextOptions {
++                    allowed_tools: start_options.allowed_tools,
+                     final_output_json_schema: start_options.final_output_json_schema,
+                     cyber_access_program: start_options.cyber_access_program,
+                 },
+diff --git a/codex-rs/core/src/tools/spec_plan.rs b/codex-rs/core/src/tools/spec_plan.rs
+index ac1ca68..bdc2e52 100644
+--- a/codex-rs/core/src/tools/spec_plan.rs
++++ b/codex-rs/core/src/tools/spec_plan.rs
+@@ -150,7 +150,24 @@ pub(crate) fn build_tool_router(
+         default_agent_type_description: &default_agent_type_description,
+         wait_agent_timeouts: wait_agent_timeout_options(turn_context),
+     };
+-    let mut registry = ToolRegistry::with_allowed_tools(session.allowed_tools.clone());
++    let turn_allowed = turn_context
++        .extension_data
++        .get::<codex_extension_api::AllowedTools>();
++    let allowed_tools = match (session.allowed_tools.as_ref(), turn_allowed) {
++        (Some(thread_allowed), Some(turn_allowed)) => Some(Arc::new(
++            codex_extension_api::AllowedTools(
++                turn_allowed
++                    .0
++                    .iter()
++                    .filter(|tool| thread_allowed.contains(tool))
++                    .cloned()
++                    .collect(),
++            ),
++        )),
++        (Some(thread_allowed), None) => Some(Arc::clone(thread_allowed)),
++        (None, turn_allowed) => turn_allowed,
++    };
++    let mut registry = ToolRegistry::with_allowed_tools(allowed_tools);
+     add_core_tool_sources(&context, &mut registry);
+ 
+     let registered_mcp_tools = session.services.mcp_handler_cache.append_mcp_tools(
+diff --git a/codex-rs/exec/src/lib.rs b/codex-rs/exec/src/lib.rs
+index b56a56f..68773a3 100644
+--- a/codex-rs/exec/src/lib.rs
++++ b/codex-rs/exec/src/lib.rs
+@@ -1139,6 +1139,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
+                 ClientRequest::TurnStart {
+                     request_id: request_ids.next(),
+                     params: TurnStartParams {
++                        allowed_tools: None,
+                         disabled_plugin_ids: None,
+                         thread_id: primary_thread_id_for_span.clone(),
+                         turn_trigger: None,
+@@ -1664,6 +1665,7 @@ async fn maybe_backfill_turn_completed_items(
+             params: ThreadReadParams {
+                 thread_id: payload.thread_id.clone(),
+                 include_turns: true,
++                read_only: false,
+             },
+         },
+         "thread/read",
+diff --git a/codex-rs/exec/src/worktree.rs b/codex-rs/exec/src/worktree.rs
+index d73e3ad..c3c4f8d 100644
+--- a/codex-rs/exec/src/worktree.rs
++++ b/codex-rs/exec/src/worktree.rs
+@@ -65,6 +65,7 @@ pub(super) async fn fork_source(
+                 params: ThreadReadParams {
+                     thread_id: thread_id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             },
+             "thread/read",
+diff --git a/codex-rs/protocol/src/turn_input.rs b/codex-rs/protocol/src/turn_input.rs
+index 61b1ffe..12c7dbc 100644
+--- a/codex-rs/protocol/src/turn_input.rs
++++ b/codex-rs/protocol/src/turn_input.rs
+@@ -1,6 +1,7 @@
+ //! Turn-input request and result types shared by Core's submission APIs.
+ 
+ use crate::models::ResponseItem;
++use crate::ToolName;
+ use crate::protocol::AdditionalContextEntry;
+ use crate::protocol::InterAgentCommunication;
+ use crate::protocol::NonSteerableTurnKind;
+@@ -158,6 +159,8 @@ pub enum CyberAccessProgram {
+ /// child input, Core also compares root lineage to detect ambiguity.
+ #[derive(Clone, Debug, Default)]
+ pub struct TurnStartOptions {
++    /// A model tool ceiling for this turn only. A thread ceiling still applies.
++    pub allowed_tools: Option<Vec<ToolName>>,
+     /// Source classification for the caller that starts a new turn.
+     /// Ignored when the submitted input steers an active turn.
+     pub turn_trigger: Option<String>,
+diff --git a/codex-rs/thread-store/src/local/mod.rs b/codex-rs/thread-store/src/local/mod.rs
+index 0e170c2..9a11887 100644
+--- a/codex-rs/thread-store/src/local/mod.rs
++++ b/codex-rs/thread-store/src/local/mod.rs
+@@ -555,6 +555,10 @@ impl ThreadStore for LocalThreadStore {
+         Box::pin(async move { read_thread::read_thread(self, params).await })
+     }
+ 
++    fn read_thread_read_only(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
++        Box::pin(async move { read_thread::read_thread_read_only(self, params).await })
++    }
++
+     fn read_thread_by_rollout_path(
+         &self,
+         params: ReadThreadByRolloutPathParams,
+diff --git a/codex-rs/thread-store/src/local/read_thread.rs b/codex-rs/thread-store/src/local/read_thread.rs
+index a14dcd8..55afa2a 100644
+--- a/codex-rs/thread-store/src/local/read_thread.rs
++++ b/codex-rs/thread-store/src/local/read_thread.rs
+@@ -30,6 +30,26 @@ use crate::error::reject_paginated_history_mode;
+ pub(super) async fn read_thread(
+     store: &LocalThreadStore,
+     params: ReadThreadParams,
++) -> ThreadStoreResult<StoredThread> {
++    read_thread_with_mode(store, params, false).await
++}
++
++pub(super) async fn read_thread_read_only(
++    store: &LocalThreadStore,
++    params: ReadThreadParams,
++) -> ThreadStoreResult<StoredThread> {
++    if params.include_history {
++        return Err(ThreadStoreError::InvalidRequest {
++            message: "read-only thread/read requires includeTurns=false".to_string(),
++        });
++    }
++    read_thread_with_mode(store, params, true).await
++}
++
++async fn read_thread_with_mode(
++    store: &LocalThreadStore,
++    params: ReadThreadParams,
++    read_only: bool,
+ ) -> ThreadStoreResult<StoredThread> {
+     let thread_id = params.thread_id;
+     let sqlite_metadata = read_sqlite_metadata(store, thread_id).await;
+@@ -46,7 +66,7 @@ pub(super) async fn read_thread(
+                     store.config.codex_home.as_path(),
+                     metadata.rollout_path.as_path(),
+                 )))
+-        && (!params.include_history
++        && (!(params.include_history || read_only)
+             || sqlite_rollout_path_can_load_history_for_thread(&metadata.rollout_path, thread_id)
+                 .await)
+     {
+@@ -88,8 +108,13 @@ pub(super) async fn read_thread(
+         return Ok(thread);
+     }
+ 
+-    let resolved = if params.include_archived {
++    let resolved = if params.include_archived && read_only {
++        thread_rollout_resolver::resolve_current_including_archived_read_only(store, thread_id)
++            .await?
++    } else if params.include_archived {
+         thread_rollout_resolver::resolve_current_including_archived(store, thread_id).await?
++    } else if read_only {
++        thread_rollout_resolver::resolve_current_read_only(store, thread_id).await?
+     } else {
+         thread_rollout_resolver::resolve_current(store, thread_id).await?
+     };
+@@ -578,6 +603,137 @@ mod tests {
+     use crate::local::test_support::write_session_file_with_fork;
+     use crate::local::test_support::write_session_file_with_history_mode;
+ 
++    #[tokio::test]
++    async fn readonly_read_does_not_repair_missing_sqlite_row() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(229);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        let rollout_path =
++            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert_eq!(thread.rollout_path, Some(rollout_path));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++    }
++
++    #[tokio::test]
++    async fn readonly_read_without_state_runtime_does_not_create_sqlite() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let state_db_path = config.sqlite.state_db_path();
++        let uuid = Uuid::from_u128(232);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        assert!(!state_db_path.exists());
++        let store = LocalThreadStore::new(config, /*state_db*/ None);
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert_eq!(thread.thread_id, thread_id);
++        assert!(!state_db_path.exists());
++    }
++
++    #[tokio::test]
++    async fn normal_read_repairs_missing_sqlite_row() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(230);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_none());
++
++        store
++            .read_thread(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read rollout metadata");
++
++        assert!(runtime.get_thread(thread_id).await.expect("read row").is_some());
++    }
++
++    #[tokio::test]
++    async fn readonly_read_uses_rollout_when_sqlite_path_is_stale() {
++        let home = TempDir::new().expect("temp dir");
++        let config = test_config(home.path());
++        let uuid = Uuid::from_u128(231);
++        let thread_id = ThreadId::from_string(&uuid.to_string()).expect("valid thread id");
++        let rollout_path =
++            write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
++        let stale_path = home.path().join("missing-rollout.jsonl");
++        let runtime = codex_state::StateRuntime::init(
++            config.sqlite.clone(),
++            config.default_model_provider_id.clone(),
++        )
++        .await
++        .expect("state db should initialize");
++        let mut builder = ThreadMetadataBuilder::new(
++            thread_id,
++            stale_path.clone(),
++            Utc::now(),
++            SessionSource::Cli,
++        );
++        builder.model_provider = Some(config.default_model_provider_id.clone());
++        runtime
++            .upsert_thread(&builder.build(config.default_model_provider_id.as_str()))
++            .await
++            .expect("seed stale row");
++        let store = LocalThreadStore::new(config, Some(runtime.clone()));
++
++        let thread = store
++            .read_thread_read_only(ReadThreadParams {
++                thread_id,
++                include_archived: false,
++                include_history: false,
++            })
++            .await
++            .expect("read fallback rollout");
++
++        assert_eq!(thread.rollout_path, Some(rollout_path));
++        assert_eq!(
++            runtime
++                .get_thread(thread_id)
++                .await
++                .expect("read row")
++                .expect("stale row")
++                .rollout_path,
++            stale_path,
++        );
++    }
++
+     #[tokio::test]
+     async fn read_thread_returns_active_rollout_summary() {
+         let home = TempDir::new().expect("temp dir");
+diff --git a/codex-rs/thread-store/src/local/thread_rollout_resolver.rs b/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
+index 5fad0ed..4a070a0 100644
+--- a/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
++++ b/codex-rs/thread-store/src/local/thread_rollout_resolver.rs
+@@ -39,14 +39,28 @@ pub(super) async fn resolve_current(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+-    resolve(store, thread_id, LookupScope::ExcludeArchived).await
++    resolve(store, thread_id, LookupScope::ExcludeArchived, false).await
+ }
+ 
+ pub(super) async fn resolve_current_including_archived(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+-    resolve(store, thread_id, LookupScope::IncludeArchived).await
++    resolve(store, thread_id, LookupScope::IncludeArchived, false).await
++}
++
++pub(super) async fn resolve_current_read_only(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
++    resolve(store, thread_id, LookupScope::ExcludeArchived, true).await
++}
++
++pub(super) async fn resolve_current_including_archived_read_only(
++    store: &LocalThreadStore,
++    thread_id: ThreadId,
++) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
++    resolve(store, thread_id, LookupScope::IncludeArchived, true).await
+ }
+ 
+ #[derive(Clone, Copy)]
+@@ -74,6 +88,7 @@ async fn resolve(
+     store: &LocalThreadStore,
+     thread_id: ThreadId,
+     scope: LookupScope,
++    read_only: bool,
+ ) -> ThreadStoreResult<Option<ResolvedThreadRollout>> {
+     if let Ok(path) = live_writer::rollout_path(store, thread_id).await
+         && codex_rollout::existing_rollout_path(path.as_path())
+@@ -116,10 +131,11 @@ async fn resolve(
+             }
+         }
+     }
++    let fallback_state_db_ctx = if read_only { None } else { state_db_ctx.as_deref() };
+     if let Some(path) = find_thread_path_by_id_str(
+         store.config.codex_home.as_path(),
+         &thread_id.to_string(),
+-        state_db_ctx.as_deref(),
++        fallback_state_db_ctx,
+     )
+     .await
+     .map_err(|err| ThreadStoreError::InvalidRequest {
+@@ -134,7 +150,7 @@ async fn resolve(
+     let path = find_archived_thread_path_by_id_str(
+         store.config.codex_home.as_path(),
+         &thread_id.to_string(),
+-        state_db_ctx.as_deref(),
++        fallback_state_db_ctx,
+     )
+     .await
+     .map_err(|err| ThreadStoreError::InvalidRequest {
+diff --git a/codex-rs/thread-store/src/store.rs b/codex-rs/thread-store/src/store.rs
+index 58c54db..59e19bb 100644
+--- a/codex-rs/thread-store/src/store.rs
++++ b/codex-rs/thread-store/src/store.rs
+@@ -216,6 +216,16 @@ pub trait ThreadStore: Any + Send + Sync {
+     /// Reads a thread summary and optionally its persisted history.
+     fn read_thread(&self, params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread>;
+ 
++    /// Reads thread metadata without repairing persistent indexes.
++    /// Stores that cannot guarantee this must reject the request.
++    fn read_thread_read_only(&self, _params: ReadThreadParams) -> ThreadStoreFuture<'_, StoredThread> {
++        Box::pin(async {
++            Err(ThreadStoreError::Unsupported {
++                operation: "read_thread_read_only",
++            })
++        })
++    }
++
+     /// Reads a rollout-backed thread by path when the store supports path-addressed lookups.
+     ///
+     /// Deprecated: new callers should use [`ThreadStore::read_thread`] instead.
+diff --git a/codex-rs/tui/src/app/agents_overview_threads.rs b/codex-rs/tui/src/app/agents_overview_threads.rs
+index 04f1a0a..a080b90 100644
+--- a/codex-rs/tui/src/app/agents_overview_threads.rs
++++ b/codex-rs/tui/src/app/agents_overview_threads.rs
+@@ -337,6 +337,7 @@ impl App {
+                                 params: ThreadReadParams {
+                                     thread_id: thread_id.to_string(),
+                                     include_turns: false,
++                                    read_only: false,
+                                 },
+                             })
+                             .await
+diff --git a/codex-rs/tui/src/app/app_server_events.rs b/codex-rs/tui/src/app/app_server_events.rs
+index 357fca8..fd28d86 100644
+--- a/codex-rs/tui/src/app/app_server_events.rs
++++ b/codex-rs/tui/src/app/app_server_events.rs
+@@ -606,6 +606,7 @@ impl App {
+                     params: ThreadReadParams {
+                         thread_id: thread_id.to_string(),
+                         include_turns: false,
++                        read_only: false,
+                     },
+                 })
+                 .await;
+diff --git a/codex-rs/tui/src/app_server_session.rs b/codex-rs/tui/src/app_server_session.rs
+index 581d758..56ea1da 100644
+--- a/codex-rs/tui/src/app_server_session.rs
++++ b/codex-rs/tui/src/app_server_session.rs
+@@ -1150,6 +1150,7 @@ impl AppServerSession {
+                 params: ThreadReadParams {
+                     thread_id: thread_id.to_string(),
+                     include_turns,
++                    read_only: false,
+                 },
+             })
+             .await;
+@@ -1167,6 +1168,7 @@ impl AppServerSession {
+                         params: ThreadReadParams {
+                             thread_id: thread_id.to_string(),
+                             include_turns: false,
++                            read_only: false,
+                         },
+                     })
+                     .await
+@@ -1337,6 +1339,7 @@ impl AppServerSession {
+             .request_typed(ClientRequest::TurnStart {
+                 request_id,
+                 params: TurnStartParams {
++                    allowed_tools: None,
+                     disabled_plugin_ids: None,
+                     thread_id: thread_id.to_string(),
+                     turn_trigger: None,
+diff --git a/codex-rs/tui/src/dynamic_tools.rs b/codex-rs/tui/src/dynamic_tools.rs
+index e432195..36d4cab 100644
+--- a/codex-rs/tui/src/dynamic_tools.rs
++++ b/codex-rs/tui/src/dynamic_tools.rs
+@@ -521,6 +521,7 @@ async fn execute_inner(
+                             params: ThreadReadParams {
+                                 thread_id: arguments.thread_id.clone(),
+                                 include_turns: true,
++                                read_only: false,
+                             },
+                         })
+                         .await?;
+@@ -704,6 +705,7 @@ async fn execute_inner(
+                                 params: ThreadReadParams {
+                                     thread_id: thread_id.clone(),
+                                     include_turns: true,
++                                    read_only: false,
+                                 },
+                             })
+                             .await?;
+@@ -917,6 +919,7 @@ async fn execute_inner(
+                                                 params: ThreadReadParams {
+                                                     thread_id: thread.id.clone(),
+                                                     include_turns: true,
++                                                    read_only: false,
+                                                 },
+                                             }
+                                         }),
+@@ -1268,6 +1271,7 @@ async fn read_thread(handle: &AppServerRequestHandle, thread_id: &str) -> Result
+         params: ThreadReadParams {
+             thread_id: thread_id.to_string(),
+             include_turns: false,
++            read_only: false,
+         },
+     })
+     .await?;
+diff --git a/codex-rs/tui/src/onboarding/directory_trust.rs b/codex-rs/tui/src/onboarding/directory_trust.rs
+index 2f90e32..4779a77 100644
+--- a/codex-rs/tui/src/onboarding/directory_trust.rs
++++ b/codex-rs/tui/src/onboarding/directory_trust.rs
+@@ -145,6 +145,7 @@ pub(crate) async fn check_directory_trust(
+                 params: ThreadReadParams {
+                     thread_id: thread.id.clone(),
+                     include_turns: false,
++                    read_only: false,
+                 },
+             });
+             let latest: ThreadReadResponse = if let Some(draft) = startup_draft.as_deref_mut() {
+diff --git a/codex-rs/tui/src/worktree_browser.rs b/codex-rs/tui/src/worktree_browser.rs
+index aa3664d..41b18fa 100644
+--- a/codex-rs/tui/src/worktree_browser.rs
++++ b/codex-rs/tui/src/worktree_browser.rs
+@@ -66,6 +66,7 @@ pub(crate) fn fetch(
+                         params: ThreadReadParams {
+                             thread_id: id.to_string(),
+                             include_turns: false,
++                            read_only: false,
+                         },
+                     })
+                     .await;

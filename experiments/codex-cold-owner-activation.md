@@ -18,6 +18,15 @@ The resulting source diff SHA-256 is
 The bounded incremental link exited zero in 51.48 seconds. Its copied fixture
 binary at `/var/tmp/orbit-codex-owner-cold-activation-bin/codex` has SHA-256
 `295c8d58012922d1cd6a1ebb870b2544cd33c51cf0d56e2c430998ae1d637f47`.
+The combined source was subsequently committed on the isolated branch
+`agents/codex-owner-cold-combined` at
+`d5653e0da34e7e3fbbe69a4a70b5ee07f79d20ea`. The reproducible
+[combined patch](codex-owner-cold-combined.patch) against the exact tag has
+SHA-256 `8dddd58b53798e2d6948d994d1fe571e71be4fb243b627d5dd3a52724f09bd88`.
+It excludes unrelated Cargo lockfile drift. Reverse application was checked
+against that committed source, and forward application was checked in a clean
+worktree at the exact tag. The patch is an experimental build input, not
+an installed candidate or a public feature.
 
 The standalone [backend fixture](codex-cold-owner-activation.py) creates a
 temporary `CODEX_HOME`, local mock Responses API, and one saved conversation.
