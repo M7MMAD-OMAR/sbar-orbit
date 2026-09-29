@@ -443,6 +443,14 @@ The client name used to select this route is spoofable, so this candidate is
 neither an authorization boundary nor complete notification isolation. See
 `experiments/codex-cold-read-subscribe.md`.
 
+A follow-up opt-in status filter measured that specific notification leak.
+Without it, a private client subscribed to thread A received two status
+updates for unrelated thread B. With it, the private client received no B
+status, still received A completion, and the owner retained both B updates.
+The filter uses the same spoofable client name and changes only
+`thread/status/changed`; other notification methods and authenticated routing
+remain unmeasured. See `experiments/codex-notification-scope-optin.md`.
+
 The turn-owner, dynamic callback owner, and saved-thread per-turn tool ceiling
 patches were then combined in one clean exact-tag app-server source tree. One
 disposable binary passed three green fixtures with both owner flags enabled:
