@@ -50,6 +50,11 @@ requested future conversation edits necessarily change the shared data. A
 strict requirement that the personal profile never change cannot coexist with
 writing existing conversations.
 
+On 29 September 2026, the wrapper's resource-bounded `--dry-run` returned
+`{"choice":"original","setEnvKeys":[]}`. It did not launch Codex or change a
+desktop entry. This confirms that the prepared candidate is not selected by
+the current wrapper configuration; it says nothing about account parity.
+
 ## Gates before any personal cutover
 
 | Gate | Observable pass | Stop condition |
