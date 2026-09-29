@@ -1,0 +1,63 @@
+# Personal application parity contract
+
+Status on 29 September 2026: acceptance contract and source audit, not a claim
+that Orbit meets it. This document does not launch or change any personal
+application or profile.
+
+## Required behavior
+
+Orbit's agent must have its own display, windows, pointer, and keyboard while
+the person keeps using theirs. For each application the person authorizes, the
+agent must see the same account, existing work, settings, and current data, and
+must be able to perform the same supported actions. An intentional edit from
+either side must become visible to the other without replacing either
+workspace. Closing and reopening the private application must retain that
+relationship. The person's current windows and input must not be driven by
+Orbit.
+
+These are separate properties. A window opening, a familiar theme, a signed-in
+footer, and an initial copy of tabs or projects do not establish live parity.
+A copied local profile can bootstrap a private window, but bidirectional
+updates require a shared application authority or the application's own
+collaboration protocol. Each application needs its own measured integration;
+the native display alone supplies only input and window separation.
+
+## Current routes and their limits
+
+| Route | Current evidence | Parity limit |
+| --- | --- | --- |
+| Generic Fedora application | Private Wayland display and input; the backend creates private XDG config, data, cache, and state directories (`src/fedora.ts:136-240`). | A generic launch starts with separate application state. A mapped window does not show the person's sessions or drafts. `launch` selects at most 32 files (`src/fedora.ts:33-97`). |
+| Browser profile clone | An owned browser session can start from a copied profile (`src/clone.ts:92-147`). | The copy is a point-in-time branch. It does not by itself share live tabs, bookmarks, or local state changes with the person's running browser. |
+| Zen | The private launcher snapshots the detected profile and starts `--no-remote` on a private display (`src/native-zen-launch.ts:153-241`). | The snapshot is not a live shared profile. Starting Zen against a fresh or wrong profile fails the user's identity and state requirement even if a browser window opens. |
+| VS Code | The launcher copies bounded User settings and selected extensions into a private data directory (`src/native-vscode.ts:28-183`). | That does not establish the person's active sign-in, open editors, extension state, or a shared live application session. |
+| Codex Desktop | A copied Desktop and fake account displayed a saved two-turn conversation under its project from a connected fake owner (`experiments/codex-paginated-live-private-ui.md`). | The installed personal owner currently has no shared socket, the public gate does not expose the fixture reader, coherent multi-store reads are unimplemented, and the private UI did not submit a saved turn (`docs/codex-real-attach-review.md`; `experiments/codex-fixture-composer-readiness.md`). |
+| Files and devices | Native launch can pass selected files, and the private display has scoped device mounts (`src/fedora.ts:33-97`; `src/native-zen-launch.ts:153-241`). | This does not demonstrate full access to every file, application service, or device that the person can use. |
+
+The workstation has many installed application entries, including aliases and
+system utilities. This table groups implementation paths, not the person's
+actual usage. An unlisted application is not implicitly supported at parity.
+
+## Per-application acceptance gate
+
+1. In a disposable account or profile, record account identity, existing
+   projects or documents, relevant settings, and session state before launch.
+   Verify the private window shows the same records with stable identifiers.
+2. Keep the person-side owner running. Make a change on each side in turn and
+   verify the other sees it. Exercise reopening and, where supported, recovery
+   after a stopped owner. Measure complete content and actions, not only a
+   sidebar title or first frame.
+3. Prove the agent uses only its own display and input. Attribute file and
+   database changes to intentional owner or agent actions. Reject mixed or
+   stale reads, duplicate writes, fresh-profile fallbacks, and silent sign-out.
+4. Test the application's tools, files, peripherals, approvals, and failure
+   paths at the tier the evidence supports. A missing measurement is `not
+   measured`. A failed capability remains a failure until a corrective test
+   passes against the same behavior.
+5. Only after disposable gates pass, prepare a reversible, application-only
+   personal cutover. Any interruption of a running personal application is a
+   separate final approval step with its current work and rollback reviewed.
+
+This contract is the user's success criterion. The present state is partial:
+Orbit can isolate windows and has app-specific experiments, but it cannot yet
+claim full parity for Codex, Zen, VS Code, generic applications, files, and
+devices.
