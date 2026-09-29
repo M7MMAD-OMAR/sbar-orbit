@@ -46,8 +46,8 @@ sys.path.insert(0, '/mnt')
 import landlock_unix as landlock
 
 mode = sys.argv[1]
-shared = '/mnt/shared'
-private_home = '/home/fixture'
+shared = '/home/example/project'
+private_home = '/home/example'
 if mode == 'post-mount':
     allowed = shared + '/allowed.sock'
     info = os.lstat(allowed)
@@ -100,7 +100,7 @@ print(json.dumps(results), flush=True)
 '''
 
 
-def run(mode):
+def run(mode, layout):
     with tempfile.TemporaryDirectory(prefix='orbit-private-socket-probe-') as base:
         shared = os.path.join(base, 'shared')
         private_home = os.path.join(base, 'private-home')
@@ -113,12 +113,15 @@ def run(mode):
         shared_fd = os.open(shared, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         home_fd = os.open(private_home, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         helper = Path(__file__).resolve().parents[1] / 'src/native/landlock_unix.py'
+        shared_mount = (['--dir', '/home/example/project', '--bind-fd', str(shared_fd),
+                         '/home/example/project'] if layout == 'nested' else
+                        ['--dir', '/mnt/shared', '--bind-fd', str(shared_fd), '/mnt/shared',
+                         '--symlink', '/mnt/shared', '/home/example/project'])
         command = ['/usr/bin/bwrap', '--unshare-net', '--unshare-pid', '--unshare-ipc',
                    '--die-with-parent', '--bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
                    '--tmpfs', '/mnt', '--ro-bind', str(helper), '/mnt/landlock_unix.py',
-                   '--tmpfs', '/tmp', '--tmpfs', '/home', '--dir', '/home/fixture',
-                   '--bind-fd', str(home_fd), '/home/fixture', '--dir', '/mnt/shared',
-                   '--bind-fd', str(shared_fd), '/mnt/shared', '--chdir', '/',
+                   '--tmpfs', '/tmp', '--tmpfs', '/home', '--dir', '/home/example',
+                   '--bind-fd', str(home_fd), '/home/example', *shared_mount, '--chdir', '/',
                    '/usr/bin/python3', '-c', CHILD, mode]
         if mode == 'pre-mount':
             command = ['/usr/bin/python3', '-c', PRE_MOUNT, str(helper.parent),
@@ -133,7 +136,7 @@ def run(mode):
             if ready != 'READY':
                 output, error = process.communicate(timeout=5)
                 if mode == 'pre-mount' and 'bwrap: Failed to make / slave: Operation not permitted' in error:
-                    return {'mode': mode, 'privateMountStarted': False,
+                    return {'mode': mode, 'layout': layout, 'privateMountStarted': False,
                             'failure': 'bwrap mount rejected after parent Landlock restriction'}
                 raise RuntimeError(f'child did not become ready: {ready!r}; {error[:512]}')
             late = socket.socket(socket.AF_UNIX)
@@ -148,8 +151,9 @@ def run(mode):
             assert result['allowedHostSocket'] == 'connected', result
             assert result['selectedFile'] == 'atomic-save', result
             assert Path(shared, 'selected.txt').read_text() == 'atomic-save'
-            assert result['lateHostSocket'] == {'errno': 13}, result
-            return {'mode': mode, **result}
+            expected_socket = 'connected' if layout == 'nested' else {'errno': 13}
+            assert result['lateHostSocket'] == expected_socket, result
+            return {'mode': mode, 'layout': layout, **result}
         finally:
             allowed.close()
             if process.poll() is None:
@@ -158,4 +162,5 @@ def run(mode):
 
 
 if __name__ == '__main__':
-    print(json.dumps([run('pre-mount'), run('post-mount')], sort_keys=True))
+    print(json.dumps([run('pre-mount', 'nested'), run('post-mount', 'nested'),
+                      run('post-mount', 'symlink')], sort_keys=True))
