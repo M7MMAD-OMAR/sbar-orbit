@@ -23,7 +23,9 @@ did not use the personal account. The test helper is not packaged for the
 public route. Its per-page file fingerprint rejects observed concurrent
 writes but cannot prove a coherent snapshot across state, history, and rollout
 files. See `experiments/codex-paginated-private-ui-probe.md` and
-`experiments/codex-paginated-wal-stale-guard.md`.
+`experiments/codex-paginated-wal-stale-guard.md`. The proposed owner-coordinated
+repair and its unrun red and green gates are in
+`docs/codex-coherent-snapshot-design.md`.
 
 A later disposable live-owner run displayed two completed owner turns together
 in the same saved conversation under its project in the private Desktop. The
