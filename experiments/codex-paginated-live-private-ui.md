@@ -79,3 +79,25 @@ second UI read; it did not retain an outer fingerprint immediately after the
 first UI read. The first UI's page helper still performed its internal checks.
 No real account, larger history, owner restart, full transcript navigation,
 private write into a saved conversation, or other application was measured.
+
+## Corrected project fixture attempt
+
+A later bounded attempt aligned the fake local project's root path with the
+owner thread cwd `/fixture/project`. The retained screenshot at
+`/var/tmp/codex-live-ui-evidence-izjjw_kg/private-ui-first-sidebar.jpg`
+visibly shows `Private fixture conversation` nested under `Shared Fixture
+Project`; Recents shows `No chats`. Raw owner metadata saved beside the
+screenshot reports `projectId: null`, `cwd: /fixture/project`, and
+`historyMode: paginated`. This indicates the UI can associate this fake
+thread by matching the project root and cwd, without a thread projectId. The
+gate metadata request completed, but that attempt did not retain its projected
+value.
+
+The corrected attempt stopped before clicking the title. Tesseract returned a
+blank text box for the low-contrast nested title, and the fixture script
+required an OCR hit. No page read, conversation body, or scroll was measured
+in that attempt. A subsequent harness edit records projected metadata before
+launch and adds a coordinate fallback limited to the fixed disposable 1280 by
+800 display. That edit has passed syntax and type checks but has not run in a
+bounded UI test. The first successful run above remains the only measured
+live page display.

@@ -81,7 +81,7 @@ async def main():
         project_id = str(uuid.uuid4())
         now = int(time.time() * 1000)
         state_data = {"local-projects": {project_id: {"id": project_id,
-            "name": "Shared Fixture Project", "rootPaths": [str(root / "project")],
+            "name": "Shared Fixture Project", "rootPaths": ["/fixture/project"],
             "createdAt": now, "updatedAt": now}}, "project-order": [project_id]}
         requests = []
 
@@ -200,12 +200,23 @@ async def main():
                     "approvalPolicy": "never", "sandbox": "read-only"})
                 thread_id = started["thread"]["id"]
                 await rpc.turn(thread_id, "Private fixture conversation")
+                raw_metadata = await rpc.call("thread/read", {"threadId": thread_id,
+                    "includeTurns": False})
+                raw_thread = raw_metadata.get("thread") or {}
+                raw_project_id = raw_thread.get("projectId")
+                (output / "raw-owner-metadata.json").write_text(json.dumps({
+                    "projectId": raw_project_id, "cwd": raw_thread.get("cwd"),
+                    "name": raw_thread.get("name"), "historyMode": raw_thread.get("historyMode"),
+                    "pathPresent": raw_thread.get("path") is not None}))
                 first_source = fingerprint(root)
                 first_count = len(requests)
                 first_ui = await run_ui(owner_socket, root, helper_binary, copied_app,
-                                        pref / "user", output, "first")
+                                        pref / "user", output, "first", thread_id)
                 if "Orbit completed fixture answer" not in first_ui["screenshotText"]:
                     raise RuntimeError("First private UI did not show the initial owner answer")
+                after_first_read = fingerprint(root)
+                if first_source != after_first_read:
+                    raise RuntimeError("First private UI read changed live owner source")
                 await rpc.turn(thread_id, "Owner fixture second live turn")
                 second_source = fingerprint(root)
                 changed = [key for key in first_source if first_source[key] != second_source.get(key)]
@@ -220,7 +231,7 @@ async def main():
                 if stale.returncode == 0 or "STALE: previous page version changed" not in stale.stderr:
                     raise RuntimeError("Previous page version was not rejected as stale")
                 second_ui = await run_ui(owner_socket, root, helper_binary, copied_app,
-                                         pref / "user", output, "second")
+                                         pref / "user", output, "second", thread_id)
                 if "Owner fixture second live turn" not in second_ui["screenshotText"] or \
                    "Owner second answer became visible" not in second_ui["screenshotText"]:
                     raise RuntimeError("Reopened private UI did not show the completed live turn")
@@ -232,10 +243,23 @@ async def main():
                 await rpc.close()
                 print(json.dumps({"ownerConnectedThroughBothUIs": True, "firstScreenshot":
                     first_ui["screenshot"], "secondScreenshot": second_ui["screenshot"],
+                    "secondScrolledUpScreenshot": second_ui["scrolledUp"],
+                    "secondScrolledDownScreenshot": second_ui["scrolledDown"],
+                    "firstTurnVisibleAfterScroll": "Orbit completed fixture answer" in
+                        (second_ui["scrolledUpText"] or ""),
+                    "secondTurnVisibleAfterScroll": "Owner second answer became visible" in
+                        (second_ui["scrolledDownText"] or ""),
+                    "firstDesktopPid": first_ui["desktopPid"],
+                    "secondDesktopPid": second_ui["desktopPid"],
+                    "secondDesktopPidStartTick": second_ui["desktopPidStartTick"],
+                    "rawProjectId": raw_project_id,
+                    "projectedProjectId": second_ui["projectedMetadata"]["projectId"],
+                    "projectedCwd": second_ui["projectedMetadata"]["cwd"],
                     "firstPrivateAuthFile": first_ui["privateAuthFile"],
                     "secondPrivateAuthFile": second_ui["privateAuthFile"],
                     "firstOwnerModelRequests": first_count, "secondOwnerModelRequests": len(requests),
-                    "ownerChangedFilesBetweenTurns": changed, "readChangedFiles": [],
+                    "ownerChangedFilesBetweenTurns": changed,
+                    "firstReadChangedFiles": [], "secondReadChangedFiles": [],
                     "oldPageRejectedStale": True, "ownerSourceAfterSecondTurn": second_source,
                     "ownerSourceAfterPrivateRead": after_reads, "evidenceDirectory": str(output)},
                     sort_keys=True), flush=True)
@@ -259,9 +283,10 @@ async def main():
                 pass
 
 
-async def run_ui(socket, root, binary, app, preferences, output, label):
+async def run_ui(socket, root, binary, app, preferences, output, label, thread_id):
     command = ["bun", str(Path(__file__).with_name("codex-paginated-live-private-ui.ts")),
-               str(socket), str(root), str(binary), str(app), str(preferences), str(output), label]
+               str(socket), str(root), str(binary), str(app), str(preferences), str(output), label,
+               thread_id]
     completed = await asyncio.to_thread(subprocess.run, command, capture_output=True, text=True,
                                         timeout=85, cwd=str(Path(__file__).parent.parent))
     if completed.returncode:
