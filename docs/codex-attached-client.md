@@ -220,6 +220,16 @@ not the Desktop's full `itemsView` response. Concurrent writes, exact Desktop
 page shape, app-server and gate routing, and personal data remain unmeasured.
 See `experiments/codex-paginated-state-history-bwrap-helper.md`.
 
+The Orbit gate now has a dormant page route that requires both an explicit
+option and an injected helper callback. It accepts only bounded, validated
+`thread/turns/list` and `thread/items/list` requests with `readOnly: true` and
+never forwards them to the owner. It rejects known credential fields and
+responses above 4 MiB, returning a generic error after a five-second callback
+wait. Focused synthetic gate tests passed two tests with 93 assertions and
+typecheck passed. The active launcher supplies neither option nor helper, so
+pages remain denied. The timeout does not terminate a stuck helper process;
+there is no production helper or Desktop rendering through this route yet.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
