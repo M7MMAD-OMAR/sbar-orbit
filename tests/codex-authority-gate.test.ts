@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
-import { startCodexReadOnlyGate, type PaginatedPageRequest } from "../src/codex-authority-gate";
+import { startCodexReadOnlyGate, type GateNotificationShape,
+  type PaginatedPageRequest } from "../src/codex-authority-gate";
 
 type Rpc = { id?: string | number; method?: string; params?: Record<string, unknown>;
   result?: Record<string, unknown>; error?: Record<string, unknown> };
@@ -683,6 +684,74 @@ test("Codex gate rejects owner socket replacement after preparation", async () =
   }
 }, 15000);
 
+test("Codex fake saved turn polling projects completion without owner resume", async () => {
+  const root = await mkdtemp("/tmp/orbit-native-codex-poll-test-");
+  const ownerPath = join(root, "owner.sock");
+  const statePath = `${ownerPath}.state`;
+  const threadId = "550e8400-e29b-41d4-a716-446655440000";
+  const turnId = "550e8400-e29b-41d4-a716-446655440001";
+  const ownerRequests: string[] = [];
+  let reads = 0;
+  const owner = Bun.serve({
+    unix: ownerPath,
+    fetch(request, server) { return server.upgrade(request) ? undefined : new Response("Unavailable", { status: 400 }); },
+    websocket: { message(socket, input) {
+      const request = JSON.parse(String(input)) as Rpc;
+      ownerRequests.push(request.method ?? "invalid");
+      socket.send(JSON.stringify({ id: request.id, result: { turn: {
+        id: turnId, status: "inProgress", items: [], error: null,
+      } } }));
+    } },
+  });
+  const state = createServer();
+  await new Promise<void>(resolveListen => state.listen(statePath, resolveListen));
+  await chmod(ownerPath, 0o600);
+  await chmod(statePath, 0o600);
+  let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let client: Probe | undefined;
+  try {
+    gate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
+      ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
+      fixtureTurnThreadId: threadId, fixturePollSavedTurn: true,
+      allowPaginatedThreadPages: true,
+      readPaginatedThreadPage: async request => {
+        expect(request.method).toBe("thread/turns/list");
+        expect(request.params).toEqual({ threadId, readOnly: true, limit: 50,
+          sortDirection: "asc", itemsView: "full" });
+        reads++;
+        return { data: [{ id: turnId, status: reads === 1 ? "inProgress" : "completed",
+          items: reads === 1 ? [] : [{ type: "agentMessage", id: "answer1", text: "Saved fake reply" }],
+          error: null }], nextCursor: null };
+      },
+    });
+    client = new Probe(gate.socketPath);
+    await client.opened;
+    client.send({ id: "start", method: "turn/start", params: {
+      threadId, input: [{ type: "text", text: "Fake follow-up" }],
+    } });
+    expect((await client.next()).result?.turn).toEqual({ id: turnId,
+      status: "inProgress", items: [], error: null });
+    expect(await client.next()).toEqual({ method: "turn/started", params: {
+      threadId, turn: { id: turnId, status: "inProgress", items: [], error: null },
+    } });
+    expect(await client.next()).toEqual({ method: "item/completed", params: {
+      threadId, turnId, item: { type: "agentMessage", id: "answer1", text: "Saved fake reply" },
+    } });
+    expect(await client.next()).toEqual({ method: "turn/completed", params: {
+      threadId, turn: { id: turnId, status: "completed", error: null,
+        items: [{ type: "agentMessage", id: "answer1", text: "Saved fake reply" }] },
+    } });
+    expect(ownerRequests).toEqual(["turn/start"]);
+    expect(reads).toBe(2);
+  } finally {
+    client?.close();
+    await gate?.close();
+    owner.stop(true);
+    await new Promise<void>(resolveClose => state.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15000);
+
 test("Codex fixture gate permits one bounded existing-thread text turn with empty allowedTools", async () => {
   const root = await mkdtemp("/tmp/orbit-native-codex-write-test-");
   const ownerPath = join(root, "owner.sock");
@@ -754,6 +823,112 @@ test("Codex fixture gate permits one bounded existing-thread text turn with empt
     for (const probe of probes) probe.close();
     await fixture?.close();
     await baseline?.close();
+    owner.stop(true);
+    await new Promise<void>(resolveClose => state.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15000);
+
+test("Codex fixture gate projects only bounded notifications for its accepted turn", async () => {
+  const root = await mkdtemp("/tmp/orbit-native-codex-notify-test-");
+  const ownerPath = join(root, "owner.sock");
+  const statePath = `${ownerPath}.state`;
+  const threadId = "550e8400-e29b-41d4-a716-446655440000";
+  const otherThreadId = "550e8400-e29b-41d4-a716-446655440002";
+  const turnId = "550e8400-e29b-41d4-a716-446655440001";
+  const notificationShapes: GateNotificationShape[] = [];
+  let ownerClient: { send(text: string): unknown; close(): void } | undefined;
+  const owner = Bun.serve({
+    unix: ownerPath,
+    fetch(request, server) { return server.upgrade(request) ? undefined : new Response("Unavailable", { status: 400 }); },
+    websocket: {
+      open(socket) { ownerClient = socket; },
+      message(socket, input) {
+        const request = JSON.parse(String(input)) as Rpc;
+        if (request.method !== "turn/start") return;
+        socket.send(JSON.stringify({ method: "turn/started", params: { threadId,
+          turn: { id: turnId, status: "inProgress", items: [], error: null,
+            credential: "discard this extra field" } } }));
+        socket.send(JSON.stringify({ method: "turn/started", params: { threadId,
+          turn: { id: turnId, status: "inProgress", items: [], error: null,
+            privateData: "omitted" } } }));
+        socket.send(JSON.stringify({ id: request.id, result: { turn: {
+          id: turnId, status: "inProgress", items: [], error: null,
+        } } }));
+      },
+    },
+  });
+  const state = createServer();
+  await new Promise<void>(resolveListen => state.listen(statePath, resolveListen));
+  await chmod(ownerPath, 0o600);
+  await chmod(statePath, 0o600);
+  let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  const client: Probe[] = [];
+  try {
+    gate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
+      ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
+      fixtureTurnThreadId: threadId,
+      auditFixtureNotificationShape: shape => notificationShapes.push(shape),
+    });
+    const probe = new Probe(gate.socketPath);
+    client.push(probe);
+    await probe.opened;
+    probe.send({ id: "start", method: "turn/start", params: {
+      threadId, input: [{ type: "text", text: "Fixture follow-up" }],
+    } });
+    expect((await probe.next()).result?.turn).toEqual({
+      id: turnId, status: "inProgress", items: [], error: null,
+    });
+    expect(await probe.next()).toEqual({ method: "turn/started", params: {
+      threadId, turn: { id: turnId, status: "inProgress", items: [], error: null },
+    } });
+    const send = (method: string, params: Record<string, unknown>) =>
+      ownerClient?.send(JSON.stringify({ method, params }));
+    send("turn/completed", { threadId: otherThreadId,
+      turn: { id: turnId, status: "completed", items: [], error: null } });
+    send("item/agentMessage/delta", { threadId, turnId, itemId: "msg1",
+      delta: "stolen", apiKey: "malicious" });
+    send("item/agentMessage/delta", { threadId, turnId, itemId: "msg1",
+      delta: "x".repeat(70000) });
+    send("thread/status/changed", { threadId, status: { type: "idle" } });
+    send("item/started", { threadId, turnId,
+      item: { type: "agentMessage", id: "msg1", text: "", token: "secret" } });
+    send("item/started", { threadId, turnId, startedAtMs: 123,
+      item: { type: "agentMessage", id: "msg1", text: "", internal: "omitted" } });
+    expect(await probe.next()).toEqual({ method: "item/started", params: {
+      threadId, turnId, startedAtMs: 123,
+      item: { type: "agentMessage", id: "msg1", text: "" },
+    } });
+    send("item/agentMessage/delta", { threadId, turnId, itemId: "msg1", delta: "Fixture reply" });
+    expect(await probe.next()).toEqual({ method: "item/agentMessage/delta", params: {
+      threadId, turnId, itemId: "msg1", delta: "Fixture reply",
+    } });
+    send("item/completed", { threadId, turnId, completedAtMs: 456,
+      item: { type: "agentMessage", id: "msg1", text: "Fixture reply", privateData: "omitted" } });
+    expect(await probe.next()).toEqual({ method: "item/completed", params: {
+      threadId, turnId, completedAtMs: 456,
+      item: { type: "agentMessage", id: "msg1", text: "Fixture reply" },
+    } });
+    send("turn/completed", { threadId, turn: { id: turnId, status: "completed", error: null,
+      items: [{ type: "agentMessage", id: "msg1", text: "Fixture reply", privateData: "omitted" }] } });
+    expect(await probe.next()).toEqual({ method: "turn/completed", params: {
+      threadId, turn: { id: turnId, status: "completed", error: null,
+        items: [{ type: "agentMessage", id: "msg1", text: "Fixture reply" }] },
+    } });
+    expect(notificationShapes).toContainEqual({ method: "turn/started",
+      keys: ["threadId", "turn"], outcome: "allow" });
+    expect(notificationShapes).toContainEqual({ method: "turn/completed",
+      keys: ["threadId", "turn"], outcome: "deny" });
+    expect(notificationShapes).toContainEqual({ method: "item/agentMessage/delta",
+      keys: ["threadId", "turnId", "itemId", "delta", "apiKey"], outcome: "deny" });
+    expect(notificationShapes).toContainEqual({ method: "thread/status/changed",
+      keys: ["threadId", "status"], outcome: "deny" });
+    expect(notificationShapes.some(shape => JSON.stringify(shape).includes("malicious"))).toBe(false);
+    ownerClient?.close();
+    await probe.closed("owner-disconnected");
+  } finally {
+    for (const probe of client) probe.close();
+    await gate?.close();
     owner.stop(true);
     await new Promise<void>(resolveClose => state.close(() => resolveClose()));
     await rm(root, { recursive: true, force: true });

@@ -159,11 +159,18 @@ export async function prepareCodexAttachedLaunch(
     const auditPath = fixturePageReader ? join(session, "codex-gate-audit.jsonl")
       : join(dirname(dirname(executable)), "gate-audit.jsonl");
     let auditCount = 0;
+    let notificationAuditCount = 0;
     gate = await startCodexReadOnlyGate(session, authoritySocketPath, `${authoritySocketPath}.state`, {
       ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
       ...(fixturePageReader ? { allowThreadMetadataRead: true, allowPaginatedThreadPages: true,
         readPaginatedThreadPage: fixturePageReader } : {}),
-      ...(fixtureTurnThreadId ? { fixtureTurnThreadId } : {}),
+      ...(fixtureTurnThreadId ? { fixtureTurnThreadId, fixturePollSavedTurn: true } : {}),
+      ...(fixtureAudit && fixtureTurnThreadId ? { auditFixtureNotificationShape: (
+        shape: { method: string; keys: string[]; outcome: "allow" | "deny" }) => {
+        if (notificationAuditCount++ < 200) appendFileSync(auditPath,
+          JSON.stringify({ notification: shape }) + "\n",
+          { encoding: "utf8", mode: 0o600, flag: "a" });
+      } } : {}),
       ...(fixtureAudit ? { auditMethod: (method: string, outcome: "allow" | "deny") => {
         if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method, outcome }) + "\n",
           { encoding: "utf8", mode: 0o600, flag: "a" });

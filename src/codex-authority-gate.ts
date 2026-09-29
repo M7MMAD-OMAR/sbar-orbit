@@ -24,9 +24,11 @@ const THREAD_LIST_FIELDS = new Set(["limit", "cursor", "sortKey", "sortDirection
   "useStateDbOnly"]);
 
 type RpcMessage = { id?: string | number; method?: string; params?: unknown; result?: unknown; error?: unknown };
-type PendingRequest = { method: string; key?: string; metadataThreadId?: string };
+type PendingRequest = { method: string; key?: string; metadataThreadId?: string;
+  fixtureThreadId?: string };
 export type GateSocketIdentity = { device: string; inode: string };
 export type GateFieldShape = { key: string; kind: string; length?: number };
+export type GateNotificationShape = { method: string; keys: string[]; outcome: "allow" | "deny" };
 export type PaginatedPageRequest = {
   method: "thread/turns/list" | "thread/items/list";
   params: {
@@ -74,6 +76,9 @@ function requestId(value: unknown): string | null {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const MAX_FIXTURE_TURN_TEXT_BYTES = 8192;
+const MAX_FIXTURE_NOTIFICATION_BYTES = 64 * 1024;
+const MAX_FIXTURE_NOTIFICATION_BUFFER = 32;
+const MAX_FIXTURE_NOTIFICATION_COUNT = 256;
 const PAGE_TURN_KEYS = new Set(["threadId", "readOnly", "cursor", "limit", "sortDirection", "itemsView"]);
 const PAGE_ITEM_KEYS = new Set(["threadId", "readOnly", "turnId", "cursor", "limit", "sortDirection"]);
 
@@ -178,6 +183,55 @@ function safeFixtureTurnStartResponse(message: RpcMessage): RpcMessage {
     return { id: message.id, error: { code: -32000, message: "Codex fixture turn unavailable" } };
   return { id: message.id, result: { turn: { id: turn.id, status: turn.status,
     items: [], error: null } } };
+}
+
+function fixtureAgentMessage(value: unknown): Record<string, unknown> | null {
+  const item = record(value);
+  if (!item || item.type !== "agentMessage" || typeof item.id !== "string" ||
+      item.id.length < 1 || item.id.length > 128 || typeof item.text !== "string" ||
+      Buffer.byteLength(item.text) > 32768) return null;
+  return { type: "agentMessage", id: item.id, text: item.text };
+}
+
+function fixtureTurn(value: unknown, expectedTurnId: string): Record<string, unknown> | null {
+  const turn = record(value);
+  if (!turn || turn.id !== expectedTurnId ||
+      !["inProgress", "completed", "interrupted", "failed"].includes(String(turn.status)) ||
+      !Array.isArray(turn.items) || turn.items.length > 16) return null;
+  const items: Record<string, unknown>[] = [];
+  for (const item of turn.items) {
+    const projected = fixtureAgentMessage(item);
+    if (projected) items.push(projected);
+  }
+  return { id: expectedTurnId, status: turn.status, items, error: null };
+}
+
+function fixtureNotification(message: RpcMessage, threadId: string, turnId: string): string | null {
+  if (message.id !== undefined || typeof message.method !== "string" ||
+      containsCredentialField(message.params)) return null;
+  const params = record(message.params);
+  if (!params || params.threadId !== threadId) return null;
+  let projected: Record<string, unknown> | null = null;
+  if (message.method === "turn/started" || message.method === "turn/completed") {
+    const turn = fixtureTurn(params.turn, turnId);
+    if (turn) projected = { threadId, turn };
+  } else if (message.method === "item/started" || message.method === "item/completed") {
+    if (params.turnId !== turnId) return null;
+    const item = fixtureAgentMessage(params.item);
+    if (item) projected = { threadId, turnId, item,
+      ...(message.method === "item/started" && Number.isSafeInteger(params.startedAtMs)
+        ? { startedAtMs: params.startedAtMs } : {}),
+      ...(message.method === "item/completed" && Number.isSafeInteger(params.completedAtMs)
+        ? { completedAtMs: params.completedAtMs } : {}) };
+  } else if (message.method === "item/agentMessage/delta") {
+    if (params.turnId !== turnId || typeof params.itemId !== "string" ||
+        params.itemId.length < 1 || params.itemId.length > 128 ||
+        typeof params.delta !== "string" || Buffer.byteLength(params.delta) > 8192) return null;
+    projected = { threadId, turnId, itemId: params.itemId, delta: params.delta };
+  }
+  if (!projected) return null;
+  const output = JSON.stringify({ method: message.method, params: projected });
+  return Buffer.byteLength(output) <= MAX_FIXTURE_NOTIFICATION_BYTES ? output : null;
 }
 
 function safePaginatedPageResponse(id: string | number, result: unknown,
@@ -559,8 +613,10 @@ class OwnerWebSocket {
   close() { this.socket.destroy(); }
 }
 
+type FixtureTurnScope = { threadId: string; pendingId: string | null; turnId: string | null;
+  buffered: RpcMessage[]; count: number };
 type ClientData = { owner?: OwnerWebSocket; queue: string[]; pending: Map<string, PendingRequest>;
-  pages: Set<string> };
+  pages: Set<string>; fixtureTurn?: FixtureTurnScope };
 
 export async function startCodexReadOnlyGate(session: string, ownerSocketPath: string, ownerStatePath: string,
                                              options: { ownerIdentity: GateSocketIdentity;
@@ -573,7 +629,9 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                                allowFixtureThreadSections?: boolean;
                                                fixtureThreadSectionReader?: (request: ThreadSectionListRequest) => Promise<unknown>;
                                                fixtureTurnThreadId?: string;
+                                               fixturePollSavedTurn?: boolean;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
+                                               auditFixtureNotificationShape?: (shape: GateNotificationShape) => void;
                                                auditThreadListShape?: (fields: GateFieldShape[]) => void }) {
   const maxMessageBytes = options.maxMessageBytes === undefined ? MAX_MESSAGE
     : Number.isSafeInteger(options.maxMessageBytes) && options.maxMessageBytes >= 1024 &&
@@ -581,6 +639,10 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
   if (maxMessageBytes === 0) throw new Error("Invalid Codex gate message limit");
   if (options.fixtureTurnThreadId !== undefined && !UUID.test(options.fixtureTurnThreadId))
     throw new Error("Invalid Codex fixture thread ID");
+  if (options.fixturePollSavedTurn &&
+      (!options.fixtureTurnThreadId || !options.readPaginatedThreadPage ||
+       options.allowPaginatedThreadPages !== true))
+    throw new Error("Codex fixture polling needs one thread and an isolated page reader");
   const suffix = randomBytes(5).toString("hex");
   const socketPath = join(session, `codex-gate-${suffix}.sock`);
   const stateSocketPath = `${socketPath}.state`;
@@ -590,6 +652,46 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
   let activeSectionReaders = 0;
   let server: ReturnType<typeof Bun.serve<ClientData>> | undefined;
   let stateServer: ReturnType<typeof createServer> | undefined;
+  const pollSavedFixtureTurn = async (client: ServerWebSocket<ClientData>, scope: FixtureTurnScope) => {
+    const reader = options.readPaginatedThreadPage;
+    if (!reader || !scope.turnId) return;
+    const deadline = Date.now() + 12000;
+    for (let attempt = 0; attempt < 40 && Date.now() < deadline &&
+         client.data.fixtureTurn === scope; attempt++) {
+      try {
+        const raw = await reader({ method: "thread/turns/list", params: {
+          threadId: scope.threadId, readOnly: true, limit: 50,
+          sortDirection: "asc", itemsView: "full",
+        } });
+        const serialized = safePaginatedPageResponse("fixture-poll", raw, 50, maxMessageBytes);
+        const result = serialized ? record(record(JSON.parse(serialized))?.result) : null;
+        const saved = result?.data && Array.isArray(result.data)
+          ? result.data.find(item => record(item)?.id === scope.turnId) : undefined;
+        const turn = fixtureTurn(saved, scope.turnId);
+        if (turn && turn.status !== "inProgress" && client.data.fixtureTurn === scope) {
+          const item = (turn.items as Record<string, unknown>[]).find(candidate =>
+            candidate.type === "agentMessage");
+          if (item) {
+            const event = JSON.stringify({ method: "item/completed", params: {
+              threadId: scope.threadId, turnId: scope.turnId, item,
+            } });
+            if (Buffer.byteLength(event) <= MAX_FIXTURE_NOTIFICATION_BYTES) client.send(event);
+          }
+          const completion = JSON.stringify({ method: "turn/completed", params: {
+            threadId: scope.threadId, turn,
+          } });
+          if (Buffer.byteLength(completion) > MAX_FIXTURE_NOTIFICATION_BYTES)
+            throw new Error("Fixture completion notification is too large");
+          client.send(completion);
+          options.auditFixtureNotificationShape?.({ method: "fixture/savedTurn/completed",
+            keys: ["threadId", "turn"], outcome: "allow" });
+          client.data.fixtureTurn = undefined;
+          return;
+        }
+      } catch { /* A transient fake page read can retry within the bounded window. */ }
+      await new Promise<void>(resolveDelay => setTimeout(resolveDelay, 250));
+    }
+  };
   try {
     assertSocketIdentity(ownerSocketPath, options.ownerIdentity);
     assertSocketIdentity(ownerStatePath, options.stateIdentity);
@@ -610,6 +712,38 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             try {
               const message = parseMessage(text);
               const id = requestId(message.id);
+              if (id === null && message.id === undefined && message.method !== undefined) {
+                const audit = (outcome: "allow" | "deny") => {
+                  if (!options.fixtureTurnThreadId) return;
+                  const method = typeof message.method === "string" &&
+                    /^[A-Za-z0-9/_-]{1,80}$/u.test(message.method) ? message.method : "invalid";
+                  const keys = Object.keys(record(message.params) ?? {}).slice(0, 16).map(key =>
+                    /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid");
+                  options.auditFixtureNotificationShape?.({ method, keys, outcome });
+                };
+                const scope = data.fixtureTurn;
+                if (!scope || message.method === undefined) { audit("deny"); return; }
+                if (Buffer.byteLength(text) > MAX_FIXTURE_NOTIFICATION_BYTES) { audit("deny"); return; }
+                const params = record(message.params);
+                if (params?.threadId !== scope.threadId || containsCredentialField(message.params)) {
+                  audit("deny"); return;
+                }
+                if (scope.turnId === null) {
+                  if (scope.pendingId === null || scope.buffered.length >= MAX_FIXTURE_NOTIFICATION_BUFFER) {
+                    audit("deny");
+                    return;
+                  }
+                  scope.buffered.push(message);
+                  return;
+                }
+                const notification = fixtureNotification(message, scope.threadId, scope.turnId);
+                if (!notification) { audit("deny"); return; }
+                if (++scope.count > MAX_FIXTURE_NOTIFICATION_COUNT) throw new Error("Fixture notification limit reached");
+                client.send(notification);
+                audit("allow");
+                if (message.method === "turn/completed") data.fixtureTurn = undefined;
+                return;
+              }
               if (id === null || message.method !== undefined) return;
               const pending = data.pending.get(id);
               if (!pending) return;
@@ -617,7 +751,52 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               if (pending.method !== "account/read" && pending.method !== "getAuthStatus" &&
                   containsCredentialField(message.result))
                 throw new Error("Codex owner returned credential fields");
-              client.send(JSON.stringify(appResponse(message, pending.method, pending.metadataThreadId)));
+              const response = appResponse(message, pending.method, pending.metadataThreadId);
+              client.send(JSON.stringify(response));
+              if (pending.fixtureThreadId) {
+                const scope = data.fixtureTurn;
+                const result = record(response.result);
+                const turn = record(result?.turn);
+                if (!scope || scope.pendingId !== id || scope.threadId !== pending.fixtureThreadId ||
+                    typeof turn?.id !== "string" || !UUID.test(turn.id)) {
+                  data.fixtureTurn = undefined;
+                  return;
+                }
+                scope.pendingId = null;
+                scope.turnId = turn.id;
+                for (const buffered of scope.buffered) {
+                  const notification = fixtureNotification(buffered, scope.threadId, scope.turnId);
+                  if (!notification) {
+                    if (options.auditFixtureNotificationShape) {
+                      const method = typeof buffered.method === "string" &&
+                        /^[A-Za-z0-9/_-]{1,80}$/u.test(buffered.method) ? buffered.method : "invalid";
+                      const keys = Object.keys(record(buffered.params) ?? {}).slice(0, 16).map(key =>
+                        /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid");
+                      options.auditFixtureNotificationShape({ method, keys, outcome: "deny" });
+                    }
+                    continue;
+                  }
+                  if (++scope.count > MAX_FIXTURE_NOTIFICATION_COUNT)
+                    throw new Error("Fixture notification limit reached");
+                  client.send(notification);
+                  if (options.auditFixtureNotificationShape) {
+                    const method = typeof buffered.method === "string" &&
+                      /^[A-Za-z0-9/_-]{1,80}$/u.test(buffered.method) ? buffered.method : "invalid";
+                    const keys = Object.keys(record(buffered.params) ?? {}).slice(0, 16).map(key =>
+                      /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid");
+                    options.auditFixtureNotificationShape({ method, keys, outcome: "allow" });
+                  }
+                  if (buffered.method === "turn/completed") data.fixtureTurn = undefined;
+                }
+                scope.buffered = [];
+                if (options.fixturePollSavedTurn && data.fixtureTurn === scope) {
+                  if (scope.count === 0) client.send(JSON.stringify({ method: "turn/started", params: {
+                    threadId: scope.threadId, turn: { id: scope.turnId, status: "inProgress",
+                      items: [], error: null },
+                  } }));
+                  void pollSavedFixtureTurn(client, scope);
+                }
+              }
             } catch { client.terminate(); }
           }, () => client.terminate()); }
           catch { client.terminate(); return; }
@@ -666,6 +845,9 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               options.auditThreadListShape(fields);
             }
             if (!safe && !page && !section && !fixtureTurn) {
+              client.send(JSON.stringify(denied(request.id))); return;
+            }
+            if (fixtureTurn && client.data.fixtureTurn) {
               client.send(JSON.stringify(denied(request.id))); return;
             }
             if (client.data.pending.size + client.data.pages.size >= 64)
@@ -747,7 +929,12 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             const forwarded = safe ?? fixtureTurn;
             if (!forwarded) throw new Error("Codex request is unavailable");
             const forwardedParams = record(forwarded.params);
+            if (fixtureTurn && typeof forwardedParams?.threadId === "string")
+              client.data.fixtureTurn = { threadId: forwardedParams.threadId,
+                pendingId: id, turnId: null, buffered: [], count: 0 };
             client.data.pending.set(id, { method: forwarded.method ?? "",
+              fixtureThreadId: fixtureTurn && typeof forwardedParams?.threadId === "string"
+                ? forwardedParams.threadId : undefined,
               metadataThreadId: forwarded.method === "thread/read" &&
                 forwardedParams?.includeTurns === false && typeof forwardedParams.threadId === "string"
                 ? forwardedParams.threadId : undefined });
@@ -763,6 +950,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
         },
         close(client) {
           clients.delete(client);
+          client.data.fixtureTurn = undefined;
           client.data.owner?.close();
         },
       },
