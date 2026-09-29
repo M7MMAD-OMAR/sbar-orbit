@@ -128,9 +128,11 @@ try {
     const opened = await backend.observe();
     openedImagePath = join(root, `orbit-client-opened-${runLabel}.${opened.mimeType === "image/png" ? "png" : "jpg"}`);
     await writeFile(openedImagePath, Buffer.from(opened.image, "base64"));
-    await backend.act({ type: "pointer", x: 630, y: 710 });
-    await backend.act({ type: "text", text: "Orbit private saved-thread follow-up" });
-    await backend.act({ type: "key", key: "Enter" });
+    if (runLabel === "first") {
+      await backend.act({ type: "pointer", x: 630, y: 710 });
+      await backend.act({ type: "text", text: "Orbit private saved-thread follow-up" });
+      await backend.act({ type: "key", key: "Enter" });
+    }
     let afterWritePath = "";
     let answerVisible = false;
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -146,7 +148,7 @@ try {
       }
     }
     process.stdout.write(JSON.stringify({ afterWritePath, answerVisible }) + "\n");
-    if (!answerVisible) throw new Error("Private follow-up answer did not render within 18 seconds");
+    if (!answerVisible) throw new Error("Saved private answer did not render within 18 seconds");
   } else {
     await writeFile(imagePath, Buffer.from(frame.image, "base64"));
   }
@@ -157,7 +159,7 @@ try {
     privateAuthFile: auth, presence: frame.presence });
 } finally {
   if (gateAuditSource && await Bun.file(gateAuditSource).exists())
-    await copyFile(gateAuditSource, join(root, "gate-audit-first.jsonl"));
+    await copyFile(gateAuditSource, join(root, `gate-audit-${runLabel}.jsonl`));
   if (child?.stdin && typeof child.stdin !== "number") child.stdin.end();
   if (child) {
     await Promise.race([child.exited, Bun.sleep(3000)]);

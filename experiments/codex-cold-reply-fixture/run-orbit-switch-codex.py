@@ -334,7 +334,7 @@ async def main():
     target.commit()
    target.execute('PRAGMA journal_mode=DELETE')
    target.close()
-  for run_label in ['first']:
+  for run_label in ['first', 'reopened']:
    if run_label=='reopened' and RESTART_OWNER:
     old_owner_pid=first.pid;old_socket=owner_socket;old_state=owner_state
     private_owner_quit(first.pid)
@@ -383,7 +383,7 @@ async def main():
    if FOOTER_ONLY:
     if 'orbit-owner' not in image_text.lower():raise RuntimeError('fake ChatGPT owner email missing from private footer screenshot')
    elif 'Orbit completed fixture answer' not in image_text or 'Private fixture conversation' not in image_text:raise RuntimeError('completed turn missing from private Desktop screenshot')
-   audit_path=ROOT/'gate-audit-first.jsonl'
+   audit_path=ROOT/f'gate-audit-{run_label}.jsonl'
    audit=[json.loads(line) for line in audit_path.read_text().splitlines() if line]
    allowed_turns=sum(entry.get('method')=='turn/start' and entry.get('outcome')=='allow' for entry in audit)
    resume_requests=sum(entry.get('method')=='thread/resume' for entry in audit)
@@ -393,8 +393,9 @@ async def main():
    saved_private_turn=len(rollouts)==1 and b'Orbit private saved-thread follow-up' in rollouts[0].read_bytes()
    print(json.dumps({'uiAllowedTurns':allowed_turns,'uiResumeRequests':resume_requests,
     'modelToolCounts':tool_counts,'savedPrivateTurn':saved_private_turn}),flush=True)
-   if allowed_turns!=1 or resume_requests!=0 or len(tool_counts)!=2 or tool_counts[0]<1 or tool_counts[1]!=0 or not saved_private_turn:
-    raise RuntimeError('cold owner activation did not admit exactly one safe private UI turn')
+   expected_turns=1 if run_label=='first' else 0
+   if allowed_turns!=expected_turns or resume_requests!=0 or len(tool_counts)!=2 or tool_counts[0]<1 or tool_counts[1]!=0 or not saved_private_turn:
+    raise RuntimeError('cold owner activation or private reopen did not preserve the saved turn')
    for path,original in [(APP_SOCKET,owner_socket),(STATE_SOCKET,owner_state)]:
     current=path.stat()
     if (current.st_dev,current.st_ino)!=(original.st_dev,original.st_ino):raise RuntimeError('owner socket changed')

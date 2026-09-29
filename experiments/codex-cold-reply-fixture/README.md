@@ -23,15 +23,19 @@ bun run scripts/limited.ts timeout 180s /usr/bin/python3 \
   /var/tmp/codex-private-smoke-c "$PWD"
 ```
 
-The final bounded run exited zero. The copied UI showed the old answer, the
-private user message, and the new answer `Orbit owner preflight answer` in the
-same saved conversation. The private gate allowed exactly one `turn/start`,
-received no private `thread/resume`, and projected one saved-turn completion.
+The final two-window bounded run exited zero. The first copied UI showed the
+old answer, the private user message, and the new answer
+`Orbit owner preflight answer` in the same saved conversation. After closing
+that private window, a second private window with a different PID showed the
+same saved content. The first gate allowed exactly one `turn/start`, received
+no private `thread/resume`, and projected one saved-turn completion. The
+reopened window sent zero `turn/start` and zero `thread/resume` requests.
 The owner rollout held the follow-up and answer. The mock model saw tool counts
 `[12, 0]` for the owner turn and private turn. The private home had no
 `auth.json`, the owner socket identity was unchanged during UI use, and the
 runner stopped the fixture processes. The visual artifact is
-`/var/tmp/codex-private-smoke-c/orbit-client-after-write-first.jpg`.
+`/var/tmp/codex-private-smoke-c/orbit-client-after-write-first.jpg` and
+`/var/tmp/codex-private-smoke-c/orbit-client-after-write-reopened.jpg`.
 
 The first assertion was too weak: it matched the old answer while the new
 turn still showed `Thinking`. A later run with a live page refresh failed
@@ -42,6 +46,6 @@ distinctive answer suffix and the screenshot was inspected directly.
 
 This closes one fake cold-thread reply-rendering measurement. It does not
 establish personal account attachment, an owner-coordinated snapshot, a
-general cold activation protocol, full tools, multiple clients, restart
-continuity after the private turn, or public Orbit access. The public gate
+general cold activation protocol, full tools, simultaneous private clients,
+owner restart after the private turn, or public Orbit access. The public gate
 still denies this write route.

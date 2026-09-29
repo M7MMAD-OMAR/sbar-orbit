@@ -140,7 +140,9 @@ cwd, approval, sandbox and reasoning settings. A copied private Desktop then
 submitted one follow-up with zero tools and zero private `thread/resume`
 requests; the fake owner saved its answer. The initial screenshot showed the
 user message and `Thinking`. A later test-only live page refresh displayed
-the saved assistant reply in the same private window. This narrower rendering
+the saved assistant reply in the same private window and after closing and
+reopening a second private window without sending another turn. This narrower
+rendering
 result and its failed intermediate runs are recorded in
 `experiments/codex-cold-reply-fixture/README.md`. Owner activation was manual,
 with no atomic generation or lease between the read and write. See also
