@@ -65,6 +65,13 @@ test("Codex paginated viewer injection requires a private fixture executable", a
     await expect(prepareCodexAttachedLaunch(session, display, authorityPath, "/usr/bin/true",
       { allowFixture: true, fixturePaginatedPageReader: reader }))
       .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    const fixtureTurnThreadId = "550e8400-e29b-41d4-a716-446655440000";
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: false, fixturePaginatedPageReader: reader, fixtureTurnThreadId }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixtureTurnThreadId }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("page reader") });
     authority = await listen(authorityPath, "fixture-authority");
     authorityState = await listen(`${authorityPath}.state`, "");
     await chmod(authorityPath, 0o600);
@@ -72,7 +79,12 @@ test("Codex paginated viewer injection requires a private fixture executable", a
     prepared = await prepareCodexAttachedLaunch(session, display, authorityPath, executable,
       { allowFixture: true, fixturePaginatedPageReader: reader });
     expect(prepared.argv).toContain("CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1");
+    expect(prepared.argv).not.toContain("CODEX_LINUX_ATTACH_FIXTURE_WRITE_READY=1");
     expect(prepared.argv.join(" ")).not.toContain(authorityPath);
+    await prepared.release();
+    prepared = await prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId });
+    expect(prepared.argv).toContain("CODEX_LINUX_ATTACH_FIXTURE_WRITE_READY=1");
   } finally {
     await prepared?.release();
     await close(authorityState);

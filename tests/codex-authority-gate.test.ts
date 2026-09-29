@@ -578,3 +578,80 @@ test("Codex gate rejects owner socket replacement after preparation", async () =
     await rm(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test("Codex fixture gate permits one bounded existing-thread text turn with empty allowedTools", async () => {
+  const root = await mkdtemp("/tmp/orbit-native-codex-write-test-");
+  const ownerPath = join(root, "owner.sock");
+  const statePath = `${ownerPath}.state`;
+  const threadId = "550e8400-e29b-41d4-a716-446655440000";
+  const turnId = "550e8400-e29b-41d4-a716-446655440001";
+  const ownerRequests: Rpc[] = [];
+  const owner = Bun.serve({
+    unix: ownerPath,
+    fetch(request, server) { return server.upgrade(request) ? undefined : new Response("Unavailable", { status: 400 }); },
+    websocket: { message(socket, input) {
+      const request = JSON.parse(String(input)) as Rpc;
+      ownerRequests.push(request);
+      socket.send(JSON.stringify({ id: request.id, result: { turn: {
+        id: turnId, status: "inProgress", items: [], error: null, privateData: "must be omitted",
+      }, privateData: "must be omitted" } }));
+    } },
+  });
+  const state = createServer();
+  await new Promise<void>(resolveListen => state.listen(statePath, resolveListen));
+  await chmod(ownerPath, 0o600);
+  await chmod(statePath, 0o600);
+  let baseline: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let fixture: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  const probes: Probe[] = [];
+  try {
+    const sockets = { ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath) };
+    baseline = await startCodexReadOnlyGate(root, ownerPath, statePath, sockets);
+    const blocked = new Probe(baseline.socketPath);
+    probes.push(blocked);
+    await blocked.opened;
+    const input = { threadId, input: [{ type: "text", text: "Fixture follow-up" }] };
+    blocked.send({ id: "baseline", method: "turn/start", params: input });
+    expect((await blocked.next()).error?.code).toBe(-32601);
+    expect(ownerRequests).toHaveLength(0);
+
+    fixture = await startCodexReadOnlyGate(root, ownerPath, statePath,
+      { ...sockets, fixtureTurnThreadId: threadId });
+    const client = new Probe(fixture.socketPath);
+    probes.push(client);
+    await client.opened;
+    const invalid: Array<Record<string, unknown>> = [
+      { ...input, allowedTools: [] },
+      { ...input, approvalPolicy: "never" },
+      { ...input, threadId: "550e8400-e29b-41d4-a716-446655440002" },
+      { ...input, input: [{ type: "text", text: "" }] },
+      { ...input, input: [{ type: "text", text: "x".repeat(8193) }] },
+      { ...input, input: [{ type: "text", text: "hello", extra: true }] },
+      { ...input, input: [{ type: "image", text: "hello" }] },
+      { ...input, input: [{ type: "text", text: "hello" }, { type: "text", text: "world" }] },
+    ];
+    for (const [index, params] of invalid.entries()) {
+      client.send({ id: `invalid-${index}`, method: "turn/start", params });
+      expect((await client.next()).error?.code).toBe(-32601);
+    }
+    for (const method of ["thread/resume", "turn/steer", "thread/start", "command/exec"]) {
+      client.send({ id: method, method, params: input });
+      expect((await client.next()).error?.code).toBe(-32601);
+    }
+    expect(ownerRequests).toHaveLength(0);
+    client.send({ id: "valid", method: "turn/start", params: input });
+    expect(await client.next()).toEqual({ id: "valid", result: { turn: {
+      id: turnId, status: "inProgress", items: [], error: null,
+    } } });
+    expect(ownerRequests).toEqual([{ id: "valid", method: "turn/start", params: {
+      threadId, input: [{ type: "text", text: "Fixture follow-up" }], allowedTools: [],
+    } }]);
+  } finally {
+    for (const probe of probes) probe.close();
+    await fixture?.close();
+    await baseline?.close();
+    owner.stop(true);
+    await new Promise<void>(resolveClose => state.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+  }
+}, 15000);

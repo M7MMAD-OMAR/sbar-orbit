@@ -66,6 +66,7 @@ function requestId(value: unknown): string | null {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const MAX_FIXTURE_TURN_TEXT_BYTES = 8192;
 const PAGE_TURN_KEYS = new Set(["threadId", "readOnly", "cursor", "limit", "sortDirection", "itemsView"]);
 const PAGE_ITEM_KEYS = new Set(["threadId", "readOnly", "turnId", "cursor", "limit", "sortDirection"]);
 
@@ -94,6 +95,36 @@ function safePaginatedPageRequest(message: RpcMessage): PaginatedPageRequest | n
   if ("itemsView" in input) params.itemsView = input.itemsView as "summary" | "full";
   if ("turnId" in input) params.turnId = input.turnId as string | null;
   return Object.freeze({ method, params: Object.freeze(params) });
+}
+
+function safeFixtureTurnStartRequest(message: RpcMessage, threadId: string | undefined): RpcMessage | null {
+  if (!threadId || !UUID.test(threadId) || message.method !== "turn/start" ||
+      requestId(message.id) === null ||
+      Object.keys(message).some(key => key !== "id" && key !== "method" && key !== "params")) return null;
+  const params = record(message.params);
+  if (!params || Object.keys(params).length !== 2 ||
+      !Object.hasOwn(params, "threadId") || !Object.hasOwn(params, "input") ||
+      params.threadId !== threadId || !Array.isArray(params.input) || params.input.length !== 1) return null;
+  const item = record(params.input[0]);
+  if (!item || Object.keys(item).length !== 2 || item.type !== "text" ||
+      typeof item.text !== "string" || item.text.length === 0 ||
+      Buffer.byteLength(item.text) > MAX_FIXTURE_TURN_TEXT_BYTES || item.text.includes("\0")) return null;
+  return { id: message.id, method: "turn/start", params: {
+    threadId, input: [{ type: "text", text: item.text }], allowedTools: [],
+  } };
+}
+
+function safeFixtureTurnStartResponse(message: RpcMessage): RpcMessage {
+  if (message.error !== undefined)
+    return { id: message.id, error: { code: -32000, message: "Codex fixture turn failed" } };
+  const result = record(message.result);
+  const turn = record(result?.turn);
+  if (typeof turn?.id !== "string" || !UUID.test(turn.id) ||
+      (turn.status !== "inProgress" && turn.status !== "completed" &&
+       turn.status !== "interrupted" && turn.status !== "failed"))
+    return { id: message.id, error: { code: -32000, message: "Codex fixture turn unavailable" } };
+  return { id: message.id, result: { turn: { id: turn.id, status: turn.status,
+    items: [], error: null } } };
 }
 
 function safePaginatedPageResponse(id: string | number, result: unknown,
@@ -228,6 +259,7 @@ function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false,
 }
 
 function appResponse(message: RpcMessage, method: string): RpcMessage {
+  if (method === "turn/start") return safeFixtureTurnStartResponse(message);
   if (message.error !== undefined)
     return { id: message.id, error: { code: -32000, message: "Codex owner request failed" } };
   if (method === "getAuthStatus")
@@ -400,12 +432,15 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                                allowThreadMetadataRead?: boolean;
                                                allowPaginatedThreadPages?: boolean;
                                                readPaginatedThreadPage?: (request: PaginatedPageRequest) => Promise<unknown>;
+                                               fixtureTurnThreadId?: string;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
                                                auditThreadListShape?: (fields: GateFieldShape[]) => void }) {
   const maxMessageBytes = options.maxMessageBytes === undefined ? MAX_MESSAGE
     : Number.isSafeInteger(options.maxMessageBytes) && options.maxMessageBytes >= 1024 &&
       options.maxMessageBytes <= MAX_MESSAGE ? options.maxMessageBytes : 0;
   if (maxMessageBytes === 0) throw new Error("Invalid Codex gate message limit");
+  if (options.fixtureTurnThreadId !== undefined && !UUID.test(options.fixtureTurnThreadId))
+    throw new Error("Invalid Codex fixture thread ID");
   const suffix = randomBytes(5).toString("hex");
   const socketPath = join(session, `codex-gate-${suffix}.sock`);
   const stateSocketPath = `${socketPath}.state`;
@@ -474,9 +509,11 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               ? safePaginatedPageRequest(request) : null;
             const safe = page ? null : safeAppRequest(request, options.allowLegacyThreadRead === true,
               options.allowThreadMetadataRead === true);
+            const fixtureTurn = !page && !safe
+              ? safeFixtureTurnStartRequest(request, options.fixtureTurnThreadId) : null;
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
-            options.auditMethod?.(methodName, safe || page ? "allow" : "deny");
+            options.auditMethod?.(methodName, safe || page || fixtureTurn ? "allow" : "deny");
             if (methodName === "thread/list" && options.auditThreadListShape) {
               const fields = Object.entries(record(request.params) ?? {}).slice(0, 32).map(([key, value]) => ({
                 key: /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid",
@@ -485,7 +522,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               }));
               options.auditThreadListShape(fields);
             }
-            if (!safe && !page) { client.send(JSON.stringify(denied(request.id))); return; }
+            if (!safe && !page && !fixtureTurn) { client.send(JSON.stringify(denied(request.id))); return; }
             if (client.data.pending.size + client.data.pages.size >= 64)
               throw new Error("Too many Codex gate requests");
             if (client.data.pending.has(id) || client.data.pages.has(id))
@@ -526,9 +563,10 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               })();
               return;
             }
-            if (!safe) throw new Error("Codex request is unavailable");
-            client.data.pending.set(id, { method: safe.method ?? "" });
-            const serialized = JSON.stringify(safe);
+            const forwarded = safe ?? fixtureTurn;
+            if (!forwarded) throw new Error("Codex request is unavailable");
+            client.data.pending.set(id, { method: forwarded.method ?? "" });
+            const serialized = JSON.stringify(forwarded);
             if (client.data.owner && client.data.queue.length === 0) {
               try { client.data.owner.send(serialized); }
               catch { client.data.queue.push(serialized); }

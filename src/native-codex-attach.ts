@@ -117,7 +117,8 @@ export async function prepareCodexAttachedLaunch(
   authoritySocketPath: string,
   executable: string,
   options: { allowFixture?: boolean; candidateManifestSha256?: string;
-    fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown> } = { allowFixture: true },
+    fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown>;
+    fixtureTurnThreadId?: string } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
@@ -125,9 +126,14 @@ export async function prepareCodexAttachedLaunch(
     throw new OrbitError("INVALID_REQUEST", "Codex attach needs Orbit's private display environment");
   await ownedPrivateDirectory(session);
   const fixturePageReader = options.fixturePaginatedPageReader;
-  if (fixturePageReader && (options.allowFixture !== true || !executable.startsWith(session + sep) ||
+  const fixtureTurnThreadId = options.fixtureTurnThreadId;
+  if ((fixturePageReader || fixtureTurnThreadId !== undefined) &&
+      (options.allowFixture !== true || !executable.startsWith(session + sep) ||
       options.candidateManifestSha256 !== undefined))
-    throw new OrbitError("UNSUPPORTED", "Codex fixture page reader needs a private fixture executable");
+    throw new OrbitError("UNSUPPORTED", "Codex fixture access needs a private fixture executable");
+  if (fixtureTurnThreadId !== undefined && (!fixturePageReader ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(fixtureTurnThreadId)))
+    throw new OrbitError("INVALID_REQUEST", "Codex fixture turn needs one thread and a page reader");
   let verifiedSockets: [CodexAuthoritySocket, CodexAuthoritySocket];
   try {
     const owner = await liveAuthoritySocket(authoritySocketPath);
@@ -157,6 +163,7 @@ export async function prepareCodexAttachedLaunch(
       ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
       ...(fixturePageReader ? { allowThreadMetadataRead: true, allowPaginatedThreadPages: true,
         readPaginatedThreadPage: fixturePageReader } : {}),
+      ...(fixtureTurnThreadId ? { fixtureTurnThreadId } : {}),
       ...(fixtureAudit ? { auditMethod: (method: string, outcome: "allow" | "deny") => {
         if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method, outcome }) + "\n",
           { encoding: "utf8", mode: 0o600, flag: "a" });
@@ -179,6 +186,7 @@ export async function prepareCodexAttachedLaunch(
       `CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET=${gate.socketPath}`,
       "CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1",
       ...(fixturePageReader ? ["CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1"] : []),
+      ...(fixtureTurnThreadId ? ["CODEX_LINUX_ATTACH_FIXTURE_WRITE_READY=1"] : []),
       `CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME=${join(insideHome, ".codex")}`,
       `CODEX_LINUX_APP_DIR=${dirname(executable)}`,
       executable, "--enable-features=UseOzonePlatform", "--ozone-platform=wayland",
