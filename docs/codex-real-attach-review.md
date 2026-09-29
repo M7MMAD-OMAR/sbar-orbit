@@ -101,10 +101,22 @@ A later fixture-only copied Desktop patch avoided raw resume for one already
 loaded fake thread. Its UI submitted one text follow-up through the narrow
 gate, and the fake owner's rollout recorded the user item and assistant
 completion. The UI screenshot showed the submitted user bubble and `Thinking`,
-not the assistant reply. Reopen, live completion notifications, cold threads,
-tools, permissions, and real account continuity remain unmeasured. See
+not the assistant reply. At that stage, reopen and assistant rendering were
+unmeasured; cold threads, tools, permissions, and real account continuity
+also remained unmeasured. See
 `experiments/codex-fixture-followup-ui-evidence.md`. This result does not
 enable the public gate or remove the owner generation requirement.
+
+A subsequent disposable two-window run displayed the saved follow-up and
+assistant reply in the first private window and again after reopening through
+a live fake owner page callback. The owner did not subscribe the private
+connection to turn events, so the visible completion was synthesized by a
+bounded read of the confirmed saved turn. The first run used a thread-only
+status event that the final gate now denies; focused tests passed after that
+narrowing, but the UI was not rerun. The post-reopen source fingerprint was
+not printed because OCR falsely rejected the visible text. See
+`experiments/codex-fixture-notification-reopen-evidence.md`. Real account,
+tool, and cold-thread parity remain unmeasured.
 
 ## Reversible personal sequence after all disposable gates pass
 
