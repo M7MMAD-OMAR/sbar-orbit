@@ -27,6 +27,14 @@ files. See `experiments/codex-paginated-private-ui-probe.md` and
 repair and its unrun red and green gates are in
 `docs/codex-coherent-snapshot-design.md`.
 
+A deterministic fake mixed-store fixture then exposed a silent stale page:
+state and rollout held two turns while history held one, and the current
+helper accepted one turn with no file drift. A fixture-only checkpoint guard
+rejected that exact lagging projection while preserving the normal two-turn
+read. See `experiments/codex-paginated-cross-store-red.md` and
+`experiments/codex-paginated-projection-lag-green.md`. The partial guard is not
+a coherent snapshot and is not enabled in the public route.
+
 A later disposable live-owner run displayed two completed owner turns together
 in the same saved conversation under its project in the private Desktop. The
 private home had no `auth.json`, the owner remained connected, and seven
