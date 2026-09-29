@@ -63,14 +63,15 @@ mode, size, mtime, and ctime were measured after the second private UI read.
 
 ## Limits
 
-The second screenshot shows only the new turn. The first turn might be above
-the viewport, but scrolling was not measured after the private processes
-stopped. The screenshot does not prove both turns can be browsed together.
-The fake project displayed `No chats`, while the saved thread appeared in
-Recents. The harness started the thread with `/fixture/project` as its cwd,
+In the first run, the second screenshot showed only the new turn. Scrolling
+was not measured after the private processes stopped. The corrected run below
+subsequently displayed both short turns in one viewport.
+In the first run, the fake project displayed `No chats`, while the saved thread
+appeared in Recents. The harness started the thread with `/fixture/project` as its cwd,
 but the fake state socket declared the project root as the different host
 temporary path. It passed no projectId to `thread/start` and did not record
-the raw or projected `thread.projectId`. Project membership is unmeasured.
+the raw or projected `thread.projectId`. That run did not measure project
+association; the corrected run below did.
 
 The page helper checks a version before and after each page, but this does not
 prove one coherent snapshot across all stores under every owner write
@@ -98,6 +99,27 @@ blank text box for the low-contrast nested title, and the fixture script
 required an OCR hit. No page read, conversation body, or scroll was measured
 in that attempt. A subsequent harness edit records projected metadata before
 launch and adds a coordinate fallback limited to the fixed disposable 1280 by
-800 display. That edit has passed syntax and type checks but has not run in a
-bounded UI test. The first successful run above remains the only measured
-live page display.
+800 display. It passed syntax and type checks, then the bounded run below.
+
+## Bounded corrected project and transcript run
+
+The previously untested harness edit then passed a bounded run with exit code
+0. Evidence is in `/var/tmp/codex-live-ui-evidence-iesox3m0`. The second
+private Desktop PID was `2676869`. Its `private-ui-second-opened.jpg` and
+`private-ui-second-scrolled-up.jpg` show the saved thread nested under `Shared
+Fixture Project`, both owner user messages, and both assistant replies in the
+same conversation. `private-ui-second-scrolled-down.jpg` was captured after a
+scroll action in that same process. The short transcript fits in the viewport,
+so the run proves both turns display together but does not exercise navigation
+through a long transcript.
+
+Raw owner `thread/read` and the gate's projected metadata both report
+`projectId: null` and `cwd: /fixture/project`. Project nesting in the UI is
+therefore observed by matching its local root path to the thread cwd, not by a
+thread project ID. The first and second private homes had no `auth.json`.
+The fake owner stayed connected, its model request count increased from one to
+two after its own second turn, and the old page fingerprint was rejected as
+stale. The seven owner source files had identical fingerprints before and
+after the second private UI read. This remains a disposable fake account test;
+real account parity, long histories, coherent cross-store snapshots, and a
+private UI write into an existing conversation are not measured.
