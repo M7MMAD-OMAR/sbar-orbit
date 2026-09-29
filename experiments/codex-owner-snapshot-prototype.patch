@@ -1,9 +1,9 @@
 diff --git a/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
 new file mode 100644
-index 0000000..7068398
+index 0000000..c35d64e
 --- /dev/null
 +++ b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,88 @@
 +# Owner snapshot prototype evidence
 +
 +Status: test-only experiment in an isolated worktree based on
@@ -76,6 +76,22 @@ index 0000000..7068398
 +its title and a fresh generation reads the updated title. No personal profile
 +was used. This adds one measured metadata writer path, not general metadata
 +coverage.
++
++## Thread section move extension
++
++`move_thread_to_section` is a separate state SQLite writer path. The snapshot
++now captures the section ID, position, and entered time from its pinned state
++read view. The test was extended before modifying this writer. While the
++owner barrier was held, the unchanged section move completed within 50 ms.
++The red run exited 101 at that exact wait assertion, 0 passed, 1 failed.
++
++The test-only section move now takes the same owner barrier before its state
++mutation. The identical focused command then exited 0, 1 passed, 0 failed.
++The old generation remained outside a section. A fresh generation contained
++the built-in pinned section ID, a position, and an entered time. This proves
++coordination for this one section move in the synthetic fixture. It does not
++cover section creation, deletion, reordering across threads, or an unpatched
++process. The app-server and personal attachment paths remain unchanged.
 diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
 index 6a2d95f..bf810ba 100644
 --- a/codex-rs/thread-store/src/local/live_writer.rs
@@ -130,12 +146,25 @@ index 0e170c2..911ccc3 100644
          }
      }
  
+diff --git a/codex-rs/thread-store/src/local/move_thread_to_section.rs b/codex-rs/thread-store/src/local/move_thread_to_section.rs
+index ef6d641..eef0f85 100644
+--- a/codex-rs/thread-store/src/local/move_thread_to_section.rs
++++ b/codex-rs/thread-store/src/local/move_thread_to_section.rs
+@@ -28,6 +28,8 @@ pub(super) async fn move_thread_to_section(
+         });
+     };
+ 
++    #[cfg(test)]
++    let _owner_snapshot_guard = store.owner_snapshot_barrier.lock().await?;
+     let updated = state_db
+         .move_thread_to_section(
+             params.thread_id,
 diff --git a/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs b/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs
 new file mode 100644
-index 0000000..4ae97a4
+index 0000000..72ee89d
 --- /dev/null
 +++ b/codex-rs/thread-store/src/local/owner_snapshot_prototype.rs
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,295 @@
 +//! Test-only owner snapshot for one standalone paginated thread.
 +//! This is not an app-server API or a production admission path.
 +
@@ -215,6 +244,9 @@ index 0000000..4ae97a4
 +    generation: ThreadId,
 +    pub(super) thread_id: ThreadId,
 +    pub(super) title: String,
++    pub(super) section: Option<String>,
++    pub(super) section_position: Option<i64>,
++    pub(super) section_entered_at_ms: Option<i64>,
 +    pub(super) rollout_prefix: Vec<u8>,
 +    turns: Vec<SnapshotTurn>,
 +}
@@ -296,7 +328,8 @@ index 0000000..4ae97a4
 +            .await
 +            .map_err(|error| internal(format!("begin history read view failed: {error}")))?;
 +        let row = sqlx::query(
-+            "SELECT rollout_path, history_mode, archived, title FROM threads WHERE id = ?",
++            "SELECT rollout_path, history_mode, archived, title, thread_section_id, \
++             section_position, section_entered_at_ms FROM threads WHERE id = ?",
 +        )
 +        .bind(thread_id.to_string())
 +        .fetch_optional(&mut state)
@@ -310,6 +343,9 @@ index 0000000..4ae97a4
 +        }
 +        let rollout_path: String = row.get("rollout_path");
 +        let title: String = row.get("title");
++        let section: Option<String> = row.get("thread_section_id");
++        let section_position: Option<i64> = row.get("section_position");
++        let section_entered_at_ms: Option<i64> = row.get("section_entered_at_ms");
 +        let checkpoint = sqlx::query(
 +            "SELECT next_rollout_byte_offset, next_rollout_ordinal \
 +             FROM thread_history_projection_state WHERE thread_id = ?",
@@ -416,16 +452,27 @@ index 0000000..4ae97a4
 +            generation: ThreadId::new(),
 +            thread_id,
 +            title,
++            section,
++            section_position,
++            section_entered_at_ms,
 +            rollout_prefix: rollout_bytes,
 +            turns,
 +        })
 +    }
 +}
 diff --git a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
-index 3f6fcbf..a277e4d 100644
+index 3f6fcbf..da02b04 100644
 --- a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
 +++ b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
-@@ -57,8 +57,10 @@ use crate::SortDirection;
+@@ -49,6 +49,7 @@ use crate::DeleteThreadParams;
+ use crate::ForkBoundary;
+ use crate::ListThreadsParams;
+ use crate::ListTurnsParams;
++use crate::MoveThreadToSectionParams;
+ use crate::PersistContext;
+ use crate::PrepareForkParams;
+ use crate::PreparedFork;
+@@ -57,8 +58,10 @@ use crate::SortDirection;
  use crate::StoredTurnItemsView;
  use crate::StoredTurnStatus;
  use crate::ThreadPersistenceMetadata;
@@ -436,7 +483,7 @@ index 3f6fcbf..a277e4d 100644
  
  #[tokio::test]
  async fn paginated_history_without_state_db_does_not_initialize_sqlite() {
-@@ -433,6 +435,140 @@ WHERE thread_id = ?
+@@ -433,6 +436,165 @@ WHERE thread_id = ?
      assert_eq!(projection_state, (rollout_len, 5));
  }
  
@@ -572,6 +619,31 @@ index 3f6fcbf..a277e4d 100644
 +        .expect("open generation after title update");
 +    assert_eq!(renamed.title, "Renamed owner generation");
 +    assert_eq!(fresh.title, snapshot.title);
++
++    let held = store
++        .owner_snapshot_barrier
++        .lock()
++        .await
++        .expect("hold barrier across section move");
++    let pending = store.move_thread_to_section(MoveThreadToSectionParams {
++        thread_id,
++        section: Some(codex_state::PINNED_THREAD_SECTION_ID.to_string()),
++        before_thread_id: None,
++    });
++    tokio::pin!(pending);
++    assert!(tokio::time::timeout(Duration::from_millis(50), &mut pending)
++        .await
++        .is_err());
++    drop(held);
++    pending.await.expect("section move after release");
++    let pinned = store
++        .open_owner_snapshot_prototype(thread_id)
++        .await
++        .expect("open generation after section move");
++    assert_eq!(renamed.section, None);
++    assert_eq!(pinned.section.as_deref(), Some(codex_state::PINNED_THREAD_SECTION_ID));
++    assert!(pinned.section_position.is_some());
++    assert!(pinned.section_entered_at_ms.is_some());
 +}
 +
  #[tokio::test]

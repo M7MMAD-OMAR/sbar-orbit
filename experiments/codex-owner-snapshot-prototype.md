@@ -16,9 +16,21 @@ completed while the barrier was held. After it, the focused test exited `0`:
 the old generation retained its title and a new generation showed the new
 title. This covers one metadata writer path; other metadata shapes and owner
 writers still bypass the prototype.
-The [source patch](codex-owner-snapshot-prototype.patch) against the exact tag
-has SHA-256 `944490e54e7b07d8b261175165e55ba2a205b46dd9c30390aca85709f7a131b5`.
-Forward and reverse application were checked in isolated worktrees.
+The isolated branch advanced again to
+`eb6b94b764bd4a7d8ebcf471bc8be09e2e53eeef`. Its separate
+`move_thread_to_section` state writer now takes the test barrier, and the
+snapshot captures section ID, position, and entered time from the pinned state
+view. Before the writer change, the focused test failed with exit `101` because
+the move completed while the barrier was held. After the change, it exited `0`
+with one passing test: the old generation remained outside a section, and a
+fresh generation showed the pinned section. Other section writers and
+unpatched processes remain outside this guarantee.
+
+The updated [source patch](codex-owner-snapshot-prototype.patch) against the
+exact tag has SHA-256
+`c996944857f68d16a5c76b0cf488f58791fb86b1dee98cfabf0821e82798fa55`.
+Forward application was checked against an archived clean exact tag tree, and
+reverse application was checked against the isolated committed source.
 
 The earlier unchanged paginated reader leaked a third owner turn onto page two
 after page one had returned a two-turn cursor. See
@@ -47,7 +59,8 @@ bun run scripts/limited.ts /usr/bin/timeout 120s /usr/bin/cargo test \
 The first run reached the test and failed because its synthetic thread had no
 state row. The fixture was corrected with the existing rollout reconciliation
 path before the passing runs. This prototype has no production app-server
-API. Metadata changes, archive, revert, fork, deletion, compression and other
-writers bypass its barrier. Crash recovery, restart, cross-process proof and
+API. Metadata changes beyond the tested title and section move, archive,
+revert, fork, deletion, compression and other writers bypass its barrier.
+Crash recovery, restart, cross-process proof and
 resource limits are not measured. It cannot justify enabling the public or
 personal Codex route.
