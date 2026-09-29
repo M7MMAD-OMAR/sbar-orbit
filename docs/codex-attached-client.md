@@ -230,6 +230,17 @@ typecheck passed. The active launcher supplies neither option nor helper, so
 pages remain denied. The timeout does not terminate a stuck helper process;
 there is no production helper or Desktop rendering through this route yet.
 
+An incremental test-only helper patch then returned Codex's full turn and item
+page protocol shapes. Six synthetic red and green runs checked two turn pages,
+three item pages, complete items in the first turn, and selected alternate and
+forked lineages. Writable mounts changed state and history SHM, while every
+read-only mount left watched files unchanged. In one separate writer schedule,
+a history writer made 20 updates during the first helper call; later helper
+reads after the writer stopped changed no watched files. Changes to history
+WAL and SHM during overlap cannot be attributed between writer and reader.
+The helper remains test-only, with no gate callback or Desktop UI connected.
+See `experiments/codex-paginated-full-view-writer-helper.md`.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
