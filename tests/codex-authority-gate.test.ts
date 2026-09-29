@@ -204,6 +204,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   let legacyGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   let metadataGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   let pageGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let sectionGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   const pageReleases: Array<() => void> = [];
   const hungReleases: Array<() => void> = [];
   const probes: Probe[] = [];
@@ -311,6 +312,10 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
       expect((await privateClient.next()).error?.code).toBe(-32601);
       expect(reached).not.toContain(method);
     }
+    privateClient.send({ id: "sections-default-deny", method: "threadSection/list",
+      params: { cursor: null, limit: 5 } });
+    expect((await privateClient.next()).error?.code).toBe(-32601);
+    expect(reached).not.toContain("threadSection/list");
     for (const method of ["command/exec", "thread/shellCommand", "thread/start", "project/import",
       "plugin/install", "unknown/action"])
       privateClient.send({ id: method, method, params: {} });
@@ -540,6 +545,66 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     expect((await pageClient.next()).id).toBe("after-hung-settled");
     expect(pageCalls.length).toBe(pageCallsBeforeHung + 5);
     expect(reached.length).toBe(reachedBeforePages);
+
+    const sectionCalls: unknown[] = [];
+    const sectionId = "018f8229-0ea3-7f40-b79b-77e54f4ad88d";
+    let sectionResult: unknown = { data: [{ id: sectionId, name: "Fixture section",
+      appearance: { icon: "folder", color: "blue" }, internal: "hidden" }],
+      nextCursor: "next-section", debug: "hidden" };
+    sectionGate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
+      ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
+      allowFixtureThreadSections: true,
+      fixtureThreadSectionReader: async request => {
+        sectionCalls.push(request);
+        return sectionResult;
+      },
+    });
+    const sectionClient = new Probe(sectionGate.socketPath);
+    probes.push(sectionClient);
+    await sectionClient.opened;
+    const reachedBeforeSections = reached.length;
+    sectionClient.send({ id: "section-page", method: "threadSection/list",
+      params: { cursor: null, limit: 5 } });
+    expect(await sectionClient.next()).toEqual({ id: "section-page", result: {
+      data: [{ id: sectionId, name: "Fixture section",
+        appearance: { icon: "folder", color: "blue" } }], nextCursor: "next-section",
+    } });
+    expect(sectionCalls).toEqual([{ method: "threadSection/list",
+      params: { cursor: null, limit: 5 } }]);
+    expect(reached.length).toBe(reachedBeforeSections);
+    const invalidSectionParams = [
+      { cursor: null, limit: 0 },
+      { cursor: null, limit: 101 },
+      { cursor: "\n", limit: 5 },
+      { cursor: null, limit: 5, mutation: true },
+      { cursor: null, limit: 5, readOnly: true },
+    ];
+    for (const [index, params] of invalidSectionParams.entries()) {
+      sectionClient.send({ id: `invalid-section-${index}`, method: "threadSection/list", params });
+      expect((await sectionClient.next()).error?.code).toBe(-32601);
+    }
+    sectionClient.sendText(JSON.stringify({ id: "section-extra-envelope",
+      method: "threadSection/list", params: { limit: 5 }, result: {} }));
+    expect((await sectionClient.next()).error?.code).toBe(-32601);
+    expect(sectionCalls.length).toBe(1);
+    expect(reached.length).toBe(reachedBeforeSections);
+    sectionResult = { data: [{ id: sectionId, name: "Fixture section",
+      appearance: null, authToken: fakeToken }], nextCursor: null };
+    sectionClient.send({ id: "secret-section", method: "threadSection/list", params: { limit: 5 } });
+    const secretSection = await sectionClient.next();
+    expect(secretSection.error).toEqual({ code: -32000, message: "Codex sections unavailable" });
+    expect(JSON.stringify(secretSection).includes(fakeToken)).toBe(false);
+    sectionResult = { data: [{ id: sectionId, name: "Fixture section", appearance: null,
+      internal: "x".repeat(128 * 1024) }], nextCursor: null };
+    sectionClient.send({ id: "large-section", method: "threadSection/list", params: { limit: 5 } });
+    expect((await sectionClient.next()).error).toEqual({ code: -32000,
+      message: "Codex sections unavailable" });
+    sectionResult = { data: [{ id: sectionId, name: "Fixture section", appearance: null },
+      { id: sectionId, name: "Second fixture section", appearance: null }], nextCursor: null };
+    sectionClient.send({ id: "over-limit-section", method: "threadSection/list", params: { limit: 1 } });
+    expect((await sectionClient.next()).error).toEqual({ code: -32000,
+      message: "Codex sections unavailable" });
+    expect(reached.length).toBe(reachedBeforeSections);
   } finally {
     for (const release of pageReleases.splice(0)) release();
     for (const release of hungReleases.splice(0)) release();
@@ -547,6 +612,7 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     await legacyGate?.close();
     await metadataGate?.close();
     await pageGate?.close();
+    await sectionGate?.close();
     await gate?.close();
     owner.stop(true);
     await new Promise<void>(resolveClose => state.close(() => resolveClose()));

@@ -8,7 +8,9 @@ import { join } from "node:path";
 const MAX_MESSAGE = 8 * 1024 * 1024;
 const MAX_PAGE_RESPONSE = 4 * 1024 * 1024;
 const MAX_THREAD_METADATA_RESPONSE = 64 * 1024;
+const MAX_THREAD_SECTION_RESPONSE = 64 * 1024;
 const MAX_ACTIVE_PAGE_READERS = 4;
+const MAX_ACTIVE_SECTION_READERS = 4;
 const MAX_HEADER = 8192;
 const SIDEBAR_KEYS = new Set([
   "local-projects", "project-order", "project-appearances", "pinned-thread-ids",
@@ -36,6 +38,10 @@ export type PaginatedPageRequest = {
     itemsView?: "summary" | "full";
     turnId?: string | null;
   };
+};
+export type ThreadSectionListRequest = {
+  method: "threadSection/list";
+  params: { cursor: string | null; limit: number };
 };
 
 function assertSocketIdentity(path: string, identity: GateSocketIdentity) {
@@ -96,6 +102,52 @@ function safePaginatedPageRequest(message: RpcMessage): PaginatedPageRequest | n
   if ("itemsView" in input) params.itemsView = input.itemsView as "summary" | "full";
   if ("turnId" in input) params.turnId = input.turnId as string | null;
   return Object.freeze({ method, params: Object.freeze(params) });
+}
+
+function safeThreadSectionListRequest(message: RpcMessage): ThreadSectionListRequest | null {
+  if (message.method !== "threadSection/list" || requestId(message.id) === null ||
+      Object.keys(message).some(key => key !== "id" && key !== "method" && key !== "params")) return null;
+  const input = message.params === undefined ? {} : record(message.params);
+  if (!input || Object.keys(input).some(key => key !== "cursor" && key !== "limit")) return null;
+  const cursor = input.cursor === undefined || input.cursor === null ? null : input.cursor;
+  if (cursor !== null && (typeof cursor !== "string" || cursor.length < 1 || cursor.length > 4096 ||
+      !/^[\x20-\x7e]+$/u.test(cursor))) return null;
+  const limit = input.limit === undefined || input.limit === null ? 50 : input.limit;
+  if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 100) return null;
+  return Object.freeze({ method: "threadSection/list", params: Object.freeze({
+    cursor, limit: limit as number,
+  }) });
+}
+
+function safeThreadSectionListResponse(id: string | number, result: unknown,
+                                       limit: number, maxMessageBytes: number): string | null {
+  const serializedResult = JSON.stringify(result);
+  if (typeof serializedResult !== "string" ||
+      Buffer.byteLength(serializedResult) > Math.min(maxMessageBytes, MAX_THREAD_SECTION_RESPONSE)) return null;
+  const value = record(JSON.parse(serializedResult));
+  if (!value || !Array.isArray(value.data) || value.data.length > limit ||
+      containsCredentialField(value)) return null;
+  const nextCursor = value.nextCursor === undefined ? null : value.nextCursor;
+  if (nextCursor !== null && (typeof nextCursor !== "string" || nextCursor.length < 1 ||
+      nextCursor.length > 4096 || !/^[\x20-\x7e]+$/u.test(nextCursor))) return null;
+  const data: Array<{ id: string; name: string;
+    appearance: { icon: string | null; color: string | null } | null }> = [];
+  for (const item of value.data) {
+    const section = record(item);
+    if (!section || typeof section.id !== "string" || !UUID.test(section.id) ||
+        !boundedMetadataText(section.name, 512) || section.name.trim().length === 0) return null;
+    const appearance = section.appearance === undefined || section.appearance === null
+      ? null : record(section.appearance);
+    if (section.appearance !== undefined && section.appearance !== null && !appearance) return null;
+    const icon = appearance?.icon === undefined ? null : appearance.icon;
+    const color = appearance?.color === undefined ? null : appearance.color;
+    if (!nullableMetadataText(icon, 64) || !nullableMetadataText(color, 64)) return null;
+    data.push({ id: section.id, name: section.name,
+      appearance: appearance ? { icon: icon as string | null, color: color as string | null } : null });
+  }
+  const response = JSON.stringify({ id, result: { data, nextCursor } });
+  return Buffer.byteLength(response) <= Math.min(maxMessageBytes, MAX_THREAD_SECTION_RESPONSE)
+    ? response : null;
 }
 
 function safeFixtureTurnStartRequest(message: RpcMessage, threadId: string | undefined): RpcMessage | null {
@@ -518,6 +570,8 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                                allowThreadMetadataRead?: boolean;
                                                allowPaginatedThreadPages?: boolean;
                                                readPaginatedThreadPage?: (request: PaginatedPageRequest) => Promise<unknown>;
+                                               allowFixtureThreadSections?: boolean;
+                                               fixtureThreadSectionReader?: (request: ThreadSectionListRequest) => Promise<unknown>;
                                                fixtureTurnThreadId?: string;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
                                                auditThreadListShape?: (fields: GateFieldShape[]) => void }) {
@@ -533,6 +587,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
   const clients = new Set<ServerWebSocket<ClientData>>();
   const stateClients = new Set<Socket>();
   let activePageReaders = 0;
+  let activeSectionReaders = 0;
   let server: ReturnType<typeof Bun.serve<ClientData>> | undefined;
   let stateServer: ReturnType<typeof createServer> | undefined;
   try {
@@ -593,13 +648,15 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             if (id === null) throw new Error("Codex RPC needs an id");
             const page = options.allowPaginatedThreadPages === true && options.readPaginatedThreadPage
               ? safePaginatedPageRequest(request) : null;
-            const safe = page ? null : safeAppRequest(request, options.allowLegacyThreadRead === true,
+            const section = options.allowFixtureThreadSections === true && options.fixtureThreadSectionReader
+              ? safeThreadSectionListRequest(request) : null;
+            const safe = page || section ? null : safeAppRequest(request, options.allowLegacyThreadRead === true,
               options.allowThreadMetadataRead === true);
-            const fixtureTurn = !page && !safe
+            const fixtureTurn = !page && !section && !safe
               ? safeFixtureTurnStartRequest(request, options.fixtureTurnThreadId) : null;
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
-            options.auditMethod?.(methodName, safe || page || fixtureTurn ? "allow" : "deny");
+            options.auditMethod?.(methodName, safe || page || section || fixtureTurn ? "allow" : "deny");
             if (methodName === "thread/list" && options.auditThreadListShape) {
               const fields = Object.entries(record(request.params) ?? {}).slice(0, 32).map(([key, value]) => ({
                 key: /^[A-Za-z0-9_]{1,64}$/u.test(key) ? key : "invalid",
@@ -608,7 +665,9 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               }));
               options.auditThreadListShape(fields);
             }
-            if (!safe && !page && !fixtureTurn) { client.send(JSON.stringify(denied(request.id))); return; }
+            if (!safe && !page && !section && !fixtureTurn) {
+              client.send(JSON.stringify(denied(request.id))); return;
+            }
             if (client.data.pending.size + client.data.pages.size >= 64)
               throw new Error("Too many Codex gate requests");
             if (client.data.pending.has(id) || client.data.pages.has(id))
@@ -641,6 +700,42 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                 } catch {
                   try { client.send(JSON.stringify({ id: request.id,
                     error: { code: -32000, message: "Codex page unavailable" } })); }
+                  catch { client.terminate(); }
+                } finally {
+                  if (timer) clearTimeout(timer);
+                  client.data.pages.delete(id);
+                }
+              })();
+              return;
+            }
+            if (section) {
+              const reader = options.fixtureThreadSectionReader;
+              if (!reader) throw new Error("Codex fixture section reader is unavailable");
+              if (activeSectionReaders >= MAX_ACTIVE_SECTION_READERS) {
+                client.send(JSON.stringify({ id: request.id,
+                  error: { code: -32000, message: "Codex sections unavailable" } }));
+                return;
+              }
+              client.data.pages.add(id);
+              activeSectionReaders++;
+              const work = Promise.resolve().then(() => reader(section));
+              void work.then(() => { activeSectionReaders--; }, () => { activeSectionReaders--; });
+              void (async () => {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                try {
+                  const result = await Promise.race([
+                    work,
+                    new Promise<never>((_, reject) => {
+                      timer = setTimeout(() => reject(new Error("Codex fixture sections timed out")), 5000);
+                    }),
+                  ]);
+                  const response = safeThreadSectionListResponse(request.id as string | number, result,
+                    section.params.limit, maxMessageBytes);
+                  client.send(response ?? JSON.stringify({ id: request.id,
+                    error: { code: -32000, message: "Codex sections unavailable" } }));
+                } catch {
+                  try { client.send(JSON.stringify({ id: request.id,
+                    error: { code: -32000, message: "Codex sections unavailable" } })); }
                   catch { client.terminate(); }
                 } finally {
                   if (timer) clearTimeout(timer);
