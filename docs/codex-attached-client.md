@@ -420,6 +420,18 @@ information. A private writer for old conversations therefore needs an
 explicitly measured resume boundary, not a silent read assumption. See
 `experiments/codex-existing-thread-resume-boundary.md`.
 
+An opt-in exact-tag cold subscription candidate lets a private client attach
+to notifications through metadata `thread/read` without opening a live thread.
+The unfixed synthetic fixture failed to unsubscribe or receive completion;
+the patched fixture received completion for its chosen thread after an
+explicit owner resume. Its cold attach, unsubscribe, and reattach left the
+tracked state, history, rollout, and writer lock files unchanged. Codex log
+WAL and SHM did change, and an unrelated `thread/status/changed` reached the
+private client. Direct cold `turn/start` still fails until explicit resume.
+The client name used to select this route is spoofable, so this candidate is
+neither an authorization boundary nor complete notification isolation. See
+`experiments/codex-cold-read-subscribe.md`.
+
 The turn-owner, dynamic callback owner, and saved-thread per-turn tool ceiling
 patches were then combined in one clean exact-tag app-server source tree. One
 disposable binary passed three green fixtures with both owner flags enabled:
