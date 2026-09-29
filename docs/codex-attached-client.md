@@ -241,6 +241,18 @@ WAL and SHM during overlap cannot be attributed between writer and reader.
 The helper remains test-only, with no gate callback or Desktop UI connected.
 See `experiments/codex-paginated-full-view-writer-helper.md`.
 
+A disposable bridge then connected the dormant Orbit gate callback to that
+test-only full-view helper. On a copied fake account, the gate returned
+paginated metadata, one full turn containing fake user and assistant text, and
+two items. The fake owner saw only the metadata `thread/read`; no page request
+reached it, and a write request was denied. Copied database and rollout hashes
+and modification times stayed unchanged. Separate failure tests denied
+malformed and oversized frames and killed a slow child after 3.5 seconds;
+the child's mount had no auth file or owner runtime socket. The copy was
+checkpointed into SQLite DELETE mode, the backend was a Rust test binary, and
+no Desktop window rendered it. The active launcher remains default-deny. See
+`experiments/codex-paginated-gate-bridge.md`.
+
 Desktop patch `523302a` adds an attach-only account projection from sanitized
 `getAuthStatus` and `account/read`, leaving the owner's token path unchanged.
 A synthetic test passed and matched the copied ASAR. It returned fixture email
