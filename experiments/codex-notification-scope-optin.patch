@@ -1,0 +1,116 @@
+diff --git a/codex-rs/app-server/src/thread_state.rs b/codex-rs/app-server/src/thread_state.rs
+--- a/codex-rs/app-server/src/thread_state.rs
++++ b/codex-rs/app-server/src/thread_state.rs
+@@ -332,0 +333 @@
++    pub(crate) orbit_status_scoped: bool,
+@@ -406,0 +408,21 @@
++    pub(crate) async fn status_notification_connection_ids(
++        &self,
++        thread_id: &str,
++    ) -> Vec<ConnectionId> {
++        let state = self.state.lock().await;
++        let subscribed = ThreadId::from_string(thread_id)
++            .ok()
++            .and_then(|thread_id| state.threads.get(&thread_id));
++        state
++            .live_connections
++            .iter()
++            .filter_map(|(connection_id, capabilities)| {
++                (!capabilities.orbit_status_scoped
++                    || subscribed.is_some_and(|thread| {
++                        thread.connection_ids.contains(connection_id)
++                    }))
++                .then_some(*connection_id)
++            })
++            .collect()
++    }
++
+diff --git a/codex-rs/app-server/src/thread_status.rs b/codex-rs/app-server/src/thread_status.rs
+--- a/codex-rs/app-server/src/thread_status.rs
++++ b/codex-rs/app-server/src/thread_status.rs
+@@ -5,0 +6 @@
++use crate::thread_state::ThreadStateManager;
+@@ -21,0 +23 @@
++    status_scope: Option<ThreadStateManager>,
+@@ -77,0 +80 @@
++            status_scope: None,
+@@ -86,0 +90 @@
++            status_scope: None,
+@@ -88,0 +93,9 @@
++    }
++
++    pub(crate) fn new_with_status_scope(
++        outgoing: Arc<OutgoingMessageSender>,
++        thread_state_manager: ThreadStateManager,
++    ) -> Self {
++        let mut manager = Self::new_with_outgoing(outgoing);
++        manager.status_scope = Some(thread_state_manager);
++        manager
+@@ -249,3 +262,17 @@
+-            outgoing
+-                .send_server_notification(ServerNotification::ThreadStatusChanged(notification))
+-                .await;
++            if let Some(status_scope) = &self.status_scope {
++                let recipients = status_scope
++                    .status_notification_connection_ids(&notification.thread_id)
++                    .await;
++                if !recipients.is_empty() {
++                    outgoing
++                        .send_server_notification_to_connections(
++                            &recipients,
++                            ServerNotification::ThreadStatusChanged(notification),
++                        )
++                        .await;
++                }
++            } else {
++                outgoing
++                    .send_server_notification(ServerNotification::ThreadStatusChanged(notification))
++                    .await;
++            }
+diff --git a/codex-rs/app-server/src/message_processor.rs b/codex-rs/app-server/src/message_processor.rs
+--- a/codex-rs/app-server/src/message_processor.rs
++++ b/codex-rs/app-server/src/message_processor.rs
+@@ -389 +389,10 @@
+-            crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone());
++            if std::env::var("CODEX_APP_SERVER_ORBIT_STATUS_SCOPE_EXPERIMENT").as_deref()
++                == Ok("1")
++            {
++                crate::thread_status::ThreadWatchManager::new_with_status_scope(
++                    outgoing.clone(),
++                    thread_state_manager.clone(),
++                )
++            } else {
++                crate::thread_status::ThreadWatchManager::new_with_outgoing(outgoing.clone())
++            };
+@@ -806,0 +816 @@
++        app_server_client_name: Option<&str>,
+@@ -814,0 +825,6 @@
++                    orbit_status_scoped: std::env::var(
++                        "CODEX_APP_SERVER_ORBIT_STATUS_SCOPE_EXPERIMENT",
++                    )
++                    .as_deref()
++                        == Ok("1")
++                        && app_server_client_name == Some("orbit_private_attached"),
+@@ -939 +955,5 @@
+-                self.connection_initialized(connection_id, session.request_attestation())
++                self.connection_initialized(
++                    connection_id,
++                    session.request_attestation(),
++                    session.app_server_client_name(),
++                )
+diff --git a/codex-rs/app-server/src/lib.rs b/codex-rs/app-server/src/lib.rs
+--- a/codex-rs/app-server/src/lib.rs
++++ b/codex-rs/app-server/src/lib.rs
+@@ -1223,0 +1224,3 @@
++                                                    connection_state
++                                                        .session
++                                                        .app_server_client_name(),
+diff --git a/codex-rs/app-server/src/request_processors/thread_processor_tests.rs b/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
+--- a/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
++++ b/codex-rs/app-server/src/request_processors/thread_processor_tests.rs
+@@ -1385,0 +1386 @@
++                    orbit_status_scoped: false,
+@@ -1393,0 +1395 @@
++                    orbit_status_scoped: false,
+@@ -1401,0 +1404 @@
++                    orbit_status_scoped: false,
