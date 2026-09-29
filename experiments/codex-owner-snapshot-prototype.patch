@@ -1,9 +1,9 @@
 diff --git a/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
 new file mode 100644
-index 0000000..c35d64e
+index 0000000..8b2cddb
 --- /dev/null
 +++ b/codex-rs/thread-store/OWNER_SNAPSHOT_PROTOTYPE.md
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,104 @@
 +# Owner snapshot prototype evidence
 +
 +Status: test-only experiment in an isolated worktree based on
@@ -92,6 +92,35 @@ index 0000000..c35d64e
 +coordination for this one section move in the synthetic fixture. It does not
 +cover section creation, deletion, reordering across threads, or an unpatched
 +process. The app-server and personal attachment paths remain unchanged.
++
++## Archive extension
++
++`archive_threads` moves the rollout to the archived collection and then updates
++state SQLite. The focused test now shuts down its live writer, holds the owner
++barrier, and starts a real archive. Before adding the barrier to the archive
++path, the archive completed during the held generation. The test failed at
++the intended 50 ms wait assertion, exit 101, 0 passed, 1 failed. After adding
++the test-only barrier after the archive writer locks and before the rollout
++scan, the same command exited 0, 1 passed, 0 failed. The captured generation
++remained pageable after archive and a new active snapshot was rejected.
++
++This proves coordination for one synthetic active paginated thread in one
++patched test process. Unarchive, archive descendants, cross-process unpatched
++writers, crash between file move and state update, and production behavior are
++not measured. No installed application or personal profile was used.
+diff --git a/codex-rs/thread-store/src/local/archive_thread.rs b/codex-rs/thread-store/src/local/archive_thread.rs
+index 397ab0f..32b98f8 100644
+--- a/codex-rs/thread-store/src/local/archive_thread.rs
++++ b/codex-rs/thread-store/src/local/archive_thread.rs
+@@ -39,6 +39,8 @@ pub(super) async fn archive_threads(
+         }
+     }
+     let _writer_guards = store.acquire_writer_locks(&lock_thread_ids).await?;
++    #[cfg(test)]
++    let _owner_snapshot_guard = store.owner_snapshot_barrier.lock().await?;
+     // Only inspect active files whose names belong to the threads being archived.
+     let reference_index = RolloutReferenceIndex::scan_unarchived_threads(
+         store.config.codex_home.as_path(),
 diff --git a/codex-rs/thread-store/src/local/live_writer.rs b/codex-rs/thread-store/src/local/live_writer.rs
 index 6a2d95f..bf810ba 100644
 --- a/codex-rs/thread-store/src/local/live_writer.rs
@@ -461,10 +490,16 @@ index 0000000..72ee89d
 +    }
 +}
 diff --git a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
-index 3f6fcbf..da02b04 100644
+index 3f6fcbf..ddc72ff 100644
 --- a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
 +++ b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
-@@ -49,6 +49,7 @@ use crate::DeleteThreadParams;
+@@ -44,11 +44,13 @@ use super::super::LocalThreadStore;
+ use super::super::LocalThreadStoreConfig;
+ use super::super::test_support::test_config;
+ use crate::AppendThreadItemsParams;
++use crate::ArchiveThreadParams;
+ use crate::CreateThreadParams;
+ use crate::DeleteThreadParams;
  use crate::ForkBoundary;
  use crate::ListThreadsParams;
  use crate::ListTurnsParams;
@@ -472,7 +507,7 @@ index 3f6fcbf..da02b04 100644
  use crate::PersistContext;
  use crate::PrepareForkParams;
  use crate::PreparedFork;
-@@ -57,8 +58,10 @@ use crate::SortDirection;
+@@ -57,8 +59,10 @@ use crate::SortDirection;
  use crate::StoredTurnItemsView;
  use crate::StoredTurnStatus;
  use crate::ThreadPersistenceMetadata;
@@ -483,7 +518,7 @@ index 3f6fcbf..da02b04 100644
  
  #[tokio::test]
  async fn paginated_history_without_state_db_does_not_initialize_sqlite() {
-@@ -433,6 +436,165 @@ WHERE thread_id = ?
+@@ -433,6 +437,184 @@ WHERE thread_id = ?
      assert_eq!(projection_state, (rollout_len, 5));
  }
  
@@ -644,6 +679,25 @@ index 3f6fcbf..da02b04 100644
 +    assert_eq!(pinned.section.as_deref(), Some(codex_state::PINNED_THREAD_SECTION_ID));
 +    assert!(pinned.section_position.is_some());
 +    assert!(pinned.section_entered_at_ms.is_some());
++
++    store
++        .shutdown_thread(thread_id)
++        .await
++        .expect("release live writer before archive");
++    let held = store
++        .owner_snapshot_barrier
++        .lock()
++        .await
++        .expect("hold barrier across archive");
++    let pending = store.archive_thread(ArchiveThreadParams { thread_id });
++    tokio::pin!(pending);
++    assert!(tokio::time::timeout(Duration::from_millis(50), &mut pending)
++        .await
++        .is_err());
++    drop(held);
++    pending.await.expect("archive after release");
++    assert_eq!(pinned.page(None, 3).expect("old archived generation page").turns.len(), 3);
++    assert!(store.open_owner_snapshot_prototype(thread_id).await.is_err());
 +}
 +
  #[tokio::test]

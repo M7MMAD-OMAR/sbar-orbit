@@ -25,10 +25,19 @@ the move completed while the barrier was held. After the change, it exited `0`
 with one passing test: the old generation remained outside a section, and a
 fresh generation showed the pinned section. Other section writers and
 unpatched processes remain outside this guarantee.
+The branch then advanced to
+`7f7833f90b821c25ec76827b047bf51232c0d82a`. Archiving an existing
+thread now takes the test barrier after its writer locks and before moving the
+rollout. The focused test first failed with exit `101` at its 50 ms wait
+assertion because the archive completed while the barrier was held. With the
+archive barrier, the same test passed with exit `0`, one test passed. The old
+captured generation remained pageable and a new active snapshot was rejected.
+The seven archive and unarchive tests also passed. This covers one synthetic
+archive path, not unarchive or all archive descendants.
 
-The updated [source patch](codex-owner-snapshot-prototype.patch) against the
-exact tag has SHA-256
-`c996944857f68d16a5c76b0cf488f58791fb86b1dee98cfabf0821e82798fa55`.
+The latest [source patch](codex-owner-snapshot-prototype.patch) against the
+exact tag at `7f7833f90b821c25ec76827b047bf51232c0d82a` has SHA-256
+`6bfe9982908336d49badf7e746688e9a9e77700e341720a3b59a5ec69fc36e44`.
 Forward application was checked against an archived clean exact tag tree, and
 reverse application was checked against the isolated committed source.
 
@@ -41,7 +50,8 @@ Snapshot open takes the same barrier, pins the state and history SQLite reads,
 retains one complete verified rollout prefix and materializes bounded turn and
 item rows. Cursor pages use the captured generation.
 
-The final focused test passed twice. It verified that the third append waits
+The focused test passed after each earlier extension and after the archive
+extension. It verified that the third append waits
 while snapshot open holds the barrier, the old generation's second page still
 shows only turn two, a new generation includes turn three, a cursor cannot be
 used with the wrong generation, and the new rollout prefix extends the old
@@ -59,8 +69,9 @@ bun run scripts/limited.ts /usr/bin/timeout 120s /usr/bin/cargo test \
 The first run reached the test and failed because its synthetic thread had no
 state row. The fixture was corrected with the existing rollout reconciliation
 path before the passing runs. This prototype has no production app-server
-API. Metadata changes beyond the tested title and section move, archive,
+API. Metadata changes beyond the tested title and section move, unarchive,
 revert, fork, deletion, compression and other writers bypass its barrier.
-Crash recovery, restart, cross-process proof and
-resource limits are not measured. It cannot justify enabling the public or
-personal Codex route.
+Archive participates only for the tested path. Cross-process unpatched writers
+still bypass it. Crash recovery, restart, cross-process proof and resource
+limits are not measured. It cannot justify enabling the public or personal
+Codex route.
