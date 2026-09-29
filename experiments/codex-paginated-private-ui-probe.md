@@ -54,10 +54,45 @@ Desktop startup, but this observation alone does not prove the cause
 of the routing timeout. No corrected private UI screenshot or gate
 audit was produced.
 
-The precise blocker for this UI fixture is workspace routing from the
+The precise blocker at this point was workspace routing from the
 synthetic account, before the copied Desktop can navigate to the
 saved thread. The separate gate bridge probe in
 `codex-paginated-gate-bridge.md` did return fake full turn content
 through the real gate callback. Visible conversation body rendering
-in the copied Desktop remains not measured. No personal profile or
+in the copied Desktop was not measured in that run. No personal profile or
 installed application was used.
+
+## Corrected synthetic UI run
+
+The blocked run above used a stale copied ASAR. Its main bundle carried the
+private account marker but returned `accountId: null`. The current source
+patch projects `workspaceRouting.chatgptAccountId`. The stale ASAR also
+lacked the paginated viewer markers. The disposable fixture initially
+lacked `chatgpt_base_url` and local responses for
+`/backend-api/wham/accounts/check` and
+`/backend-api/wham/config/bundle`. These were fixture errors, not
+observations about a personal account.
+
+After fixing only files under `/var/tmp/codex-private-smoke-u` and repacking
+its ASAR from the installed ASAR as a read-only source, a direct fake owner
+`account/read` returned a ChatGPT Plus account, `fixture_selected` workspace
+id, and no RPC error. The copied ASAR was checked for the workspace id
+projection, `CodexLinuxAttachOnlyPaginatedViewer`, and
+`CodexLinuxAttachOnlyPaginatedTurnsRpc` before launch.
+
+The bounded private UI run exited zero in about 52 seconds. The screenshot
+`/var/tmp/codex-private-smoke-u/orbit-client-opened-first.jpg` shows a dark
+Codex window with `Shared Fixture Project`, the saved `Private fixture
+conversation`, the user's `Private fixture conversation` message, and the
+assistant's `Orbit completed fixture answer` text. OCR also found both
+message texts. The private client had no `auth.json`. The 132 gate audit
+entries include two allowed `thread/read` requests, one allowed
+`thread/turns/list`, and one denied `config/batchWrite`. No owner write
+method was allowed through the gate. All private processes stopped.
+
+This is a **Limited, synthetic read display** result. It proves that the
+copied Desktop can render full saved text through the fixture-only gate
+callback. It does not measure the person's account or authorize a production
+viewer. Writing to an existing conversation, other Codex actions, and the
+other installed applications remain unmeasured. The installed ASAR SHA256
+remained `8889a6e9aeba678a5d77876bcc9cfce3168ab47cc7bb4ba5856f80a3a32157a8`.
