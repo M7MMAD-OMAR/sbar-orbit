@@ -155,7 +155,7 @@ export async function prepareCodexAttachedLaunch(
     let auditCount = 0;
     gate = await startCodexReadOnlyGate(session, authoritySocketPath, `${authoritySocketPath}.state`, {
       ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
-      ...(fixturePageReader ? { allowLegacyThreadRead: true, allowPaginatedThreadPages: true,
+      ...(fixturePageReader ? { allowThreadMetadataRead: true, allowPaginatedThreadPages: true,
         readPaginatedThreadPage: fixturePageReader } : {}),
       ...(fixtureAudit ? { auditMethod: (method: string, outcome: "allow" | "deny") => {
         if (auditCount++ < 200) appendFileSync(auditPath, JSON.stringify({ method, outcome }) + "\n",

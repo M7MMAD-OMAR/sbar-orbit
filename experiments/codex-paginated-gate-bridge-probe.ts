@@ -169,7 +169,7 @@ async function main() {
   try {
     gate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
       ownerIdentity: await socketIdentity(ownerPath), stateIdentity: await socketIdentity(statePath),
-      allowLegacyThreadRead: true, allowPaginatedThreadPages: true,
+      allowThreadMetadataRead: true, allowPaginatedThreadPages: true,
       readPaginatedThreadPage: await createDisposablePaginatedReader(binary, fixture),
     });
     probe = new Probe(gate.socketPath);

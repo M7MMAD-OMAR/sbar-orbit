@@ -414,6 +414,15 @@ read-only helper and gate route are verified. See the Desktop feature report
 `linux-features/shared-app-server-socket/evidence/paginated-viewer.md` in
 `codex-desktop-linux` commit `9da0bd7`.
 
+A later copied Desktop fixture did render a fake saved paginated conversation,
+including both user and assistant text, through an injected page callback.
+The active launcher still denies this route. The fixture callback now uses a
+metadata-only owner read, and the gate has a four-callback global ceiling.
+The exact evidence and remaining production blockers are in
+`experiments/codex-paginated-private-ui-probe.md` and
+`experiments/codex-paginated-read-promotion-gap.md`. No personal account or
+installed Desktop profile was used.
+
 An additional exact-tag two-client red fixture held a model response while a
 second client sent `turn/start` to the first client's active turn. The server
 accepted the second request and returned the same turn ID. The fixture did

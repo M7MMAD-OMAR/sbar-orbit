@@ -182,7 +182,10 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
   await chmod(statePath, 0o600);
   let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   let legacyGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let metadataGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   let pageGate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  const pageReleases: Array<() => void> = [];
+  const hungReleases: Array<() => void> = [];
   const probes: Probe[] = [];
   try {
     const direct = new Probe(ownerPath);
@@ -349,18 +352,48 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     legacyClient.send({ id: "legacy-turn", method: "turn/start", params: { threadId, input: [] } });
     expect((await legacyClient.next()).error?.code).toBe(-32601);
 
+    metadataGate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
+      ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
+      allowThreadMetadataRead: true,
+    });
+    const metadataClient = new Probe(metadataGate.socketPath);
+    probes.push(metadataClient);
+    await metadataClient.opened;
+    const ownerReadsBeforeMetadata = reached.filter(method => method === "thread/read").length;
+    metadataClient.send({ id: "metadata-full", method: "thread/read",
+      params: { threadId, includeTurns: true, readOnly: true } });
+    expect((await metadataClient.next()).error?.code).toBe(-32601);
+    expect(reached.filter(method => method === "thread/read").length).toBe(ownerReadsBeforeMetadata);
+    metadataClient.send({ id: "metadata-only", method: "thread/read",
+      params: { threadId, includeTurns: false, readOnly: true } });
+    expect((await metadataClient.next()).result?.thread).toEqual({ id: "fixture-thread", turns: [] });
+    expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: false, readOnly: true });
+
     const pageCalls: PaginatedPageRequest[] = [];
     let pageResult: Record<string, unknown> = { data: [{ id: "fixture-turn" }], nextCursor: "cursor-2",
       backwardsCursor: null };
     let pageFailure = false;
     let pageHang = false;
+    let pageHold = false;
+    let heldStarts = 0;
+    let notifyFourthPage: (() => void) | undefined;
+    const fourthPageStarted = new Promise<void>(resolveStart => { notifyFourthPage = resolveStart; });
     pageGate = await startCodexReadOnlyGate(root, ownerPath, statePath, {
       ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath),
       allowPaginatedThreadPages: true,
       readPaginatedThreadPage: async request => {
         pageCalls.push(request);
         if (pageFailure) throw new Error(`fixture page failed: ${fakeToken}`);
-        if (pageHang) return await new Promise<never>(() => {});
+        if (pageHang) return await new Promise<Record<string, unknown>>(resolvePage => {
+          hungReleases.push(() => resolvePage({ data: [], nextCursor: null, backwardsCursor: null }));
+        });
+        if (pageHold) {
+          heldStarts++;
+          if (heldStarts === 4) notifyFourthPage?.();
+          return await new Promise<Record<string, unknown>>(resolvePage => {
+            pageReleases.push(() => resolvePage({ data: [], nextCursor: null, backwardsCursor: null }));
+          });
+        }
         return pageResult;
       },
     });
@@ -418,6 +451,31 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     pageClient.send({ id: "over-limit-page", method: "thread/items/list",
       params: { threadId, limit: 1, readOnly: true } });
     expect((await pageClient.next()).error?.code).toBe(-32000);
+    const secondPageClient = new Probe(pageGate.socketPath);
+    probes.push(secondPageClient);
+    await secondPageClient.opened;
+    pageHold = true;
+    const pageCallsBeforeCapacity = pageCalls.length;
+    for (const id of ["held-1", "held-2"])
+      pageClient.send({ id, method: "thread/turns/list", params: turnsParams });
+    for (const id of ["held-3", "held-4"])
+      secondPageClient.send({ id, method: "thread/turns/list", params: turnsParams });
+    await fourthPageStarted;
+    expect(pageCalls.length).toBe(pageCallsBeforeCapacity + 4);
+    secondPageClient.send({ id: "capacity-denied", method: "thread/turns/list", params: turnsParams });
+    expect((await secondPageClient.next()).error?.code).toBe(-32000);
+    expect(pageCalls.length).toBe(pageCallsBeforeCapacity + 4);
+    pageReleases.shift()?.();
+    expect((await pageClient.next()).id).toBe("held-1");
+    pageHold = false;
+    pageResult = { data: [{ id: "after-capacity" }], nextCursor: null, backwardsCursor: null };
+    pageClient.send({ id: "capacity-recovered", method: "thread/turns/list", params: turnsParams });
+    expect((await pageClient.next()).id).toBe("capacity-recovered");
+    expect(pageCalls.length).toBe(pageCallsBeforeCapacity + 5);
+    for (const release of pageReleases.splice(0)) release();
+    expect((await pageClient.next()).id).toBe("held-2");
+    expect((await secondPageClient.next()).id).toBe("held-3");
+    expect((await secondPageClient.next()).id).toBe("held-4");
     pageFailure = true;
     pageClient.send({ id: "failed-page", method: "thread/turns/list", params: turnsParams });
     const failedPage = await pageClient.next();
@@ -425,13 +483,31 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     expect(JSON.stringify(failedPage).includes(fakeToken)).toBe(false);
     pageFailure = false;
     pageHang = true;
-    pageClient.send({ id: "timed-out-page", method: "thread/turns/list", params: turnsParams });
-    expect((await pageClient.next(7000)).error).toEqual({ code: -32000,
-      message: "Codex page unavailable" });
+    const pageCallsBeforeHung = pageCalls.length;
+    for (const id of ["timed-out-1", "timed-out-2"])
+      pageClient.send({ id, method: "thread/turns/list", params: turnsParams });
+    for (const id of ["timed-out-3", "timed-out-4"])
+      secondPageClient.send({ id, method: "thread/turns/list", params: turnsParams });
+    for (const client of [pageClient, pageClient, secondPageClient, secondPageClient])
+      expect((await client.next(7000)).error).toEqual({ code: -32000,
+        message: "Codex page unavailable" });
+    expect(pageCalls.length).toBe(pageCallsBeforeHung + 4);
+    secondPageClient.send({ id: "after-timeouts", method: "thread/turns/list", params: turnsParams });
+    expect((await secondPageClient.next()).error?.code).toBe(-32000);
+    expect(pageCalls.length).toBe(pageCallsBeforeHung + 4);
+    hungReleases.shift()?.();
+    await Promise.resolve();
+    pageHang = false;
+    pageClient.send({ id: "after-hung-settled", method: "thread/turns/list", params: turnsParams });
+    expect((await pageClient.next()).id).toBe("after-hung-settled");
+    expect(pageCalls.length).toBe(pageCallsBeforeHung + 5);
     expect(reached.length).toBe(reachedBeforePages);
   } finally {
+    for (const release of pageReleases.splice(0)) release();
+    for (const release of hungReleases.splice(0)) release();
     for (const probe of probes) probe.close();
     await legacyGate?.close();
+    await metadataGate?.close();
     await pageGate?.close();
     await gate?.close();
     owner.stop(true);

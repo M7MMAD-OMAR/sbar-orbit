@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 const MAX_MESSAGE = 8 * 1024 * 1024;
 const MAX_PAGE_RESPONSE = 4 * 1024 * 1024;
+const MAX_ACTIVE_PAGE_READERS = 4;
 const MAX_HEADER = 8192;
 const SIDEBAR_KEYS = new Set([
   "local-projects", "project-order", "project-appearances", "pinned-thread-ids",
@@ -162,16 +163,18 @@ function sanitizedConfigRequirements(result: unknown) {
   return { requirements: { allowedLoginMethods, application: null } };
 }
 
-function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false): RpcMessage | null {
+function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false,
+                        allowThreadMetadataRead = false): RpcMessage | null {
   if (requestId(message.id) === null || typeof message.method !== "string" ||
       (!READ_METHODS.has(message.method) &&
-       !(allowLegacyThreadRead && message.method === "thread/read"))) return null;
+       !((allowLegacyThreadRead || allowThreadMetadataRead) && message.method === "thread/read"))) return null;
   const params = record(message.params);
   if (message.method === "thread/read") {
     if (!params || Object.keys(params).length !== 3 ||
         typeof params.threadId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(params.threadId) ||
-        typeof params.includeTurns !== "boolean" || params.readOnly !== true) return null;
+        typeof params.includeTurns !== "boolean" || params.readOnly !== true ||
+        (!allowLegacyThreadRead && params.includeTurns !== false)) return null;
     return { id: message.id, method: message.method,
       params: { threadId: params.threadId, includeTurns: params.includeTurns, readOnly: true } };
   }
@@ -394,6 +397,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                                stateIdentity: GateSocketIdentity;
                                                maxMessageBytes?: number;
                                                allowLegacyThreadRead?: boolean;
+                                               allowThreadMetadataRead?: boolean;
                                                allowPaginatedThreadPages?: boolean;
                                                readPaginatedThreadPage?: (request: PaginatedPageRequest) => Promise<unknown>;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
@@ -407,6 +411,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
   const stateSocketPath = `${socketPath}.state`;
   const clients = new Set<ServerWebSocket<ClientData>>();
   const stateClients = new Set<Socket>();
+  let activePageReaders = 0;
   let server: ReturnType<typeof Bun.serve<ClientData>> | undefined;
   let stateServer: ReturnType<typeof createServer> | undefined;
   try {
@@ -467,7 +472,8 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             if (id === null) throw new Error("Codex RPC needs an id");
             const page = options.allowPaginatedThreadPages === true && options.readPaginatedThreadPage
               ? safePaginatedPageRequest(request) : null;
-            const safe = page ? null : safeAppRequest(request, options.allowLegacyThreadRead === true);
+            const safe = page ? null : safeAppRequest(request, options.allowLegacyThreadRead === true,
+              options.allowThreadMetadataRead === true);
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
             options.auditMethod?.(methodName, safe || page ? "allow" : "deny");
@@ -487,12 +493,20 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             if (page) {
               const reader = options.readPaginatedThreadPage;
               if (!reader) throw new Error("Codex page reader is unavailable");
+              if (activePageReaders >= MAX_ACTIVE_PAGE_READERS) {
+                client.send(JSON.stringify({ id: request.id,
+                  error: { code: -32000, message: "Codex page unavailable" } }));
+                return;
+              }
               client.data.pages.add(id);
+              activePageReaders++;
+              const work = Promise.resolve().then(() => reader(page));
+              void work.then(() => { activePageReaders--; }, () => { activePageReaders--; });
               void (async () => {
                 let timer: ReturnType<typeof setTimeout> | undefined;
                 try {
                   const result = await Promise.race([
-                    reader(page),
+                    work,
                     new Promise<never>((_, reject) => {
                       timer = setTimeout(() => reject(new Error("Codex page reader timed out")), 5000);
                     }),
