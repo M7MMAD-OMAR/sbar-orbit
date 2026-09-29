@@ -34,6 +34,21 @@ The gate option is `allowLegacyThreadRead: true` plus
 disposable process callback. The copied Desktop viewer at external repository
 commit `9da0bd7` is still dormant. This probe did not launch it.
 
+## Private Desktop blocker
+
+The current `prepareCodexAttachedLaunch` call in `src/native-codex-attach.ts`
+creates the gate without `allowLegacyThreadRead`,
+`allowPaginatedThreadPages`, or `readPaginatedThreadPage`. Its Desktop argv
+does not set `CODEX_LINUX_ATTACH_PAGINATED_VIEWER_READY=1`. The copied Desktop
+patch at commit `9da0bd7` therefore refuses the viewer before hydration.
+Even if that UI flag were set alone, the current launch gate would deny
+`thread/read` metadata and `thread/turns/list` pages. This is why the real
+gate bridge result above does not establish a private Desktop body render.
+The required next integration is a reviewed, explicit fixture-only launch
+route that supplies the process callback and UI flag together. The public
+launcher must continue to deny the route until the read-only owner and
+packaged helper are measured together.
+
 ## Measured result
 
 The bounded gate probe completed with exit 0. It sent the private viewer's
