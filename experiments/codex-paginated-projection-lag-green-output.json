@@ -1,0 +1,27 @@
+{
+  "acceptedStalePage": false,
+  "fakeOwnerConnectedDuringMixedRead": true,
+  "firstHistorySecondStateAndRollout": true,
+  "firstPageTurns": 1,
+  "firstReadChangedFiles": [],
+  "helperSha256": "6ce7c9be7f828dcb6cc3dae3c72cdb0194bbfd04f039c38c79d208322ee09ffd",
+  "mixedPageHasSecondTurn": false,
+  "mixedPageTurns": null,
+  "mixedReadChangedFiles": [],
+  "mixedReadError": "ProjectionUnavailableError: UNAVAILABLE: ProjectionUnavailableError: UNAVAILABLE: history projection lags selected rollout",
+  "ownerModelRequests": 2,
+  "ownerSha256": "c1214554e7ea7412cd9072e8f57f710539226b394260422c8170b5c1e46c4042",
+  "ownerVersion": "codex-app-server 0.155.0-alpha.9.2",
+  "scenario": "stable state and rollout from second owner turn with first turn history",
+  "secondPageTurns": 2,
+  "secondReadChangedFiles": [],
+  "sourceCommit": "4607249e430dac1c961df4dc615beae88e33cec8",
+  "selectedSha256": {
+    "firstHistoryWal": "15c63485d3aa621d7dd517920fce60fd420d5db606ccbff54352b4362546f292",
+    "secondHistoryWal": "66136ddf51ae8fe5a1fc451533bad682d60a789bd86b5b9c5419b2bbf96ee8d0",
+    "mixedHistoryWal": "15c63485d3aa621d7dd517920fce60fd420d5db606ccbff54352b4362546f292",
+    "secondStateWal": "24ca7ba2b82056591ae20b186c28a61118af91a458e2fc8e29b761573bdad911",
+    "mixedStateWal": "24ca7ba2b82056591ae20b186c28a61118af91a458e2fc8e29b761573bdad911",
+    "mixedRollout": "2cf708fe9f3b0ed8faca342187bbe9f46892db8c3a2e40a6889439977f2d9484"
+  }
+}
