@@ -138,10 +138,12 @@ reads free of tracked state changes, and denied a direct private cold turn.
 Only the owner resumed the saved thread, restoring its saved model, provider,
 cwd, approval, sandbox and reasoning settings. A copied private Desktop then
 submitted one follow-up with zero tools and zero private `thread/resume`
-requests; the fake owner saved its answer. The screenshot showed the user
-message and `Thinking`, so final reply rendering in this cold case is not
-measured. Owner activation was manual, with no atomic generation or lease
-between the read and write. See
+requests; the fake owner saved its answer. The initial screenshot showed the
+user message and `Thinking`. A later test-only live page refresh displayed
+the saved assistant reply in the same private window. This narrower rendering
+result and its failed intermediate runs are recorded in
+`experiments/codex-cold-reply-fixture/README.md`. Owner activation was manual,
+with no atomic generation or lease between the read and write. See also
 `experiments/codex-cold-owner-activation.md`. This is not a safe public or
 personal cold-thread route.
 
