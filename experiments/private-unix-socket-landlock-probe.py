@@ -48,12 +48,13 @@ import landlock_unix as landlock
 mode = sys.argv[1]
 shared = '/home/example/project'
 private_home = '/home/example'
-if mode == 'post-mount':
+if mode in ('post-mount', 'post-no-home'):
     allowed = shared + '/allowed.sock'
     info = os.lstat(allowed)
     policy = landlock.make_ruleset([{'path': allowed,
                                      'device': str(info.st_dev), 'inode': str(info.st_ino)}])
-    for directory in (private_home, '/tmp'):
+    directories = ('/tmp',) if mode == 'post-no-home' else (private_home, '/tmp')
+    for directory in directories:
         fd = os.open(directory, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
         landlock.add_path_rule(policy, fd, landlock.ACCESS_FS_RESOLVE_UNIX)
         os.close(fd)
@@ -151,8 +152,10 @@ def run(mode, layout):
             assert result['allowedHostSocket'] == 'connected', result
             assert result['selectedFile'] == 'atomic-save', result
             assert Path(shared, 'selected.txt').read_text() == 'atomic-save'
-            expected_socket = 'connected' if layout == 'nested' else {'errno': 13}
+            expected_socket = ('connected' if layout == 'nested' and mode == 'post-mount'
+                               else {'errno': 13})
             assert result['lateHostSocket'] == expected_socket, result
+            assert result['privateHome'] == 'connected', result
             return {'mode': mode, 'layout': layout, **result}
         finally:
             allowed.close()
@@ -163,4 +166,5 @@ def run(mode, layout):
 
 if __name__ == '__main__':
     print(json.dumps([run('pre-mount', 'nested'), run('post-mount', 'nested'),
-                      run('post-mount', 'symlink')], sort_keys=True))
+                      run('post-mount', 'symlink'), run('post-no-home', 'nested')],
+                     sort_keys=True))

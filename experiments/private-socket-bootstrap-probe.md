@@ -19,6 +19,8 @@ The bootstrap checks the expected private HOME, the shared project alias, and it
 
 The earlier [directory grant probe](private-unix-socket-landlock-probe.py) also shows why the layout check matters. With a shared project bind mounted beneath private HOME, granting `ACCESS_FS_RESOLVE_UNIX` on HOME lets the child connect to a new host socket in that project. Moving the bind mount outside HOME and using a symlink blocks it. Installing Landlock before `bwrap` makes mount setup fail on this machine, so the policy needs to be installed after mount setup and before app execution.
 
+A later [copied Desktop probe](codex-no-home-socket-probe.md) found a narrower option for the measured cases. Without a HOME directory grant, the copied Codex Desktop connected to its own HOME socket, and a synthetic app in the nested project layout was denied access to a late host socket. This preserves the project's canonical path. It still needs production integration and broader application tests.
+
 ## Integration boundary
 
 The native supervisor can create sealed policy and bootstrap file descriptors after verifying selected socket identities and mount sources. It can give those descriptors to `bwrap` with `--ro-bind-data`, set the sole payload command to the trusted bootstrap, and pass the desired application command as arguments. The bootstrap must verify the actual mount layout, apply the pathname and abstract socket policy, then `execv` the app. Any failure must end the launch before app execution. No user-controlled shell or interpreter code may run between the mount setup and the policy.
