@@ -87,7 +87,16 @@ A copied private Desktop fixture advanced past composer configuration loading
 but then attempted `thread/resume`. The gate denied it, no UI `turn/start`
 occurred, and the typed follow-up was absent from the fake owner's rollout.
 See `experiments/codex-fixture-composer-readiness.md`. The direct gate-client
-saved-thread write experiment does not prove that the Desktop UI can submit.
+saved-thread write experiment alone did not prove that the Desktop UI could submit.
+
+A later fixture-only copied Desktop patch avoided raw resume for one already
+loaded fake thread. Its UI submitted one text follow-up through the narrow
+gate, and the fake owner's rollout recorded the user item and assistant
+completion. The UI screenshot showed the submitted user bubble and `Thinking`,
+not the assistant reply. Reopen, live completion notifications, cold threads,
+tools, permissions, and real account continuity remain unmeasured. See
+`experiments/codex-fixture-followup-ui-evidence.md`. This result does not
+enable the public gate or remove the owner generation requirement.
 
 ## Reversible personal sequence after all disposable gates pass
 
