@@ -1,0 +1,18 @@
+# Saved Codex turn without private `thread/resume`
+
+This is a source review and design note. It did not change the Desktop or run another UI probe.
+
+## What the existing paths show
+
+- The copied Desktop's attach viewer hook replaces `resumeConversation(e,t)` in the webview bundle. It reads `thread/read` with `includeTurns:false`, validates the history mode, then calls `threadStore.hydrateThreads(...)`. The paginated hydration path requests `thread/turns/list` with `limit:5`, `sortDirection:"asc"`, `itemsView:"full"`, and `readOnly:true`. A disposable private window displayed saved user and assistant turns through these paths without an owner `thread/resume`.
+- The gate's projected metadata response is `{thread:{id,sessionId,forkedFromId,parentThreadId,preview,ephemeral,section,sectionEnteredAt,projectId,historyMode,modelProvider,createdAt,updatedAt,recencyAt,status,path:null,cwd,source,threadSource,gitInfo,name,turns:[]}}`. The status is bounded to `notLoaded`, `idle`, `systemError`, or `active` with at most two allowed active flags. Saved turns arrive separately as `{data:[turn objects],nextCursor?,backwardsCursor?}`. The gate limits size and cursor shape and rejects credential fields. These are view data, not an execution admission result.
+- The second composer UI probe bypassed synthetic fixture configuration, then called `thread/resume` through the Desktop main process's `thread_hydration` path before any `turn/start`. In the current bundled version, the main manager's private `#e` calls `gbe(...)`, and `gbe(...)` calls `hbe(...)` to send `thread/resume`. The webview viewer hook does not establish the main manager's execution state.
+- The main turn start path `CSe(...)` calls `wSe(...)`. Before it sends `turn/start`, `wSe` requires a stream role of `owner`, `isConversationStreaming(threadId)`, a conversation state, and usable settings and permissions. A safe fixture attach must satisfy or narrowly replace these prerequisites from validated metadata, plus maintain turn notifications and cleanup. Merely returning `{status:"ready"}` from the viewer hook does not do this.
+
+## Feasible fixture route
+
+For a thread already loaded by the fake owner, a separate private Desktop execution attach could hydrate metadata and paginated pages through the existing read gate, validate the exact thread ID and owner socket identity, then set up the main manager's local stream and conversation state without issuing `thread/resume`. The fixture gate already accepts one text `turn/start` for that one ID and forwards it with `allowedTools:[]`. A direct disposable gate client used that route to append a saved turn, so the owner app-server can accept a new turn on a loaded saved thread without a private resume. This is a feasible design inference, not a measured UI submission.
+
+The attach must fail closed if the owner has unloaded or changed the thread between the read and send. Existing reads do not supply an atomic generation across owner SQLite and rollout files. It also needs to prove that main-process status, permission defaults, model selection, stream ownership, notification delivery, and turn completion match the Desktop's expectations. The exact main manager hook and the needed local state transitions require a disposable red and green UI test before implementation can be claimed.
+
+Cold saved threads still need an owner-controlled load mechanism. Direct `turn/start` without a prior load was rejected in a disposable app-server test, while `thread/resume` wrote owner history and SQLite state. This note does not authorize raw private resume. The UI route, full Codex tool access, personal account continuity, and every other application remain not measured or incomplete.
