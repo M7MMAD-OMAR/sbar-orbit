@@ -155,7 +155,8 @@ function safeThreadSectionListResponse(id: string | number, result: unknown,
     ? response : null;
 }
 
-function safeFixtureTurnStartRequest(message: RpcMessage, threadId: string | undefined): RpcMessage | null {
+function safeFixtureTurnStartRequest(message: RpcMessage, threadId: string | undefined,
+                                     allowOrbitTool: boolean): RpcMessage | null {
   if (!threadId || !UUID.test(threadId) || message.method !== "turn/start" ||
       requestId(message.id) === null ||
       Object.keys(message).some(key => key !== "id" && key !== "method" && key !== "params")) return null;
@@ -168,7 +169,8 @@ function safeFixtureTurnStartRequest(message: RpcMessage, threadId: string | und
       typeof item.text !== "string" || item.text.length === 0 ||
       Buffer.byteLength(item.text) > MAX_FIXTURE_TURN_TEXT_BYTES || item.text.includes("\0")) return null;
   return { id: message.id, method: "turn/start", params: {
-    threadId, input: [{ type: "text", text: item.text }], allowedTools: [],
+    threadId, input: [{ type: "text", text: item.text }],
+    allowedTools: allowOrbitTool ? [{ namespace: "mcp__orbit_private", name: "orbit_act" }] : [],
   } };
 }
 
@@ -629,6 +631,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
                                                allowFixtureThreadSections?: boolean;
                                                fixtureThreadSectionReader?: (request: ThreadSectionListRequest) => Promise<unknown>;
                                                fixtureTurnThreadId?: string;
+                                               fixtureAllowOrbitTool?: boolean;
                                                fixturePollSavedTurn?: boolean;
                                                auditMethod?: (method: string, outcome: "allow" | "deny") => void;
                                                auditFixtureNotificationShape?: (shape: GateNotificationShape) => void;
@@ -639,6 +642,9 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
   if (maxMessageBytes === 0) throw new Error("Invalid Codex gate message limit");
   if (options.fixtureTurnThreadId !== undefined && !UUID.test(options.fixtureTurnThreadId))
     throw new Error("Invalid Codex fixture thread ID");
+  if (options.fixtureAllowOrbitTool && (!options.fixtureTurnThreadId ||
+      !options.readPaginatedThreadPage || options.allowPaginatedThreadPages !== true))
+    throw new Error("Codex fixture Orbit tool needs one pinned thread and an isolated page reader");
   if (options.fixturePollSavedTurn &&
       (!options.fixtureTurnThreadId || !options.readPaginatedThreadPage ||
        options.allowPaginatedThreadPages !== true))
@@ -832,7 +838,8 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             const safe = page || section ? null : safeAppRequest(request, options.allowLegacyThreadRead === true,
               options.allowThreadMetadataRead === true);
             const fixtureTurn = !page && !section && !safe
-              ? safeFixtureTurnStartRequest(request, options.fixtureTurnThreadId) : null;
+              ? safeFixtureTurnStartRequest(request, options.fixtureTurnThreadId,
+                options.fixtureAllowOrbitTool === true) : null;
             const methodName = typeof request.method === "string" &&
               /^[A-Za-z0-9/_-]{1,80}$/u.test(request.method) ? request.method : "invalid";
             options.auditMethod?.(methodName, safe || page || section || fixtureTurn ? "allow" : "deny");

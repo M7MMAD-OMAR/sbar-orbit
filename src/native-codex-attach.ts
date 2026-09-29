@@ -118,7 +118,8 @@ export async function prepareCodexAttachedLaunch(
   executable: string,
   options: { allowFixture?: boolean; candidateManifestSha256?: string;
     fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown>;
-    fixtureTurnThreadId?: string } = { allowFixture: true },
+    fixtureTurnThreadId?: string;
+    fixtureAllowOrbitTool?: boolean } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
@@ -127,10 +128,12 @@ export async function prepareCodexAttachedLaunch(
   await ownedPrivateDirectory(session);
   const fixturePageReader = options.fixturePaginatedPageReader;
   const fixtureTurnThreadId = options.fixtureTurnThreadId;
-  if ((fixturePageReader || fixtureTurnThreadId !== undefined) &&
+  if ((fixturePageReader || fixtureTurnThreadId !== undefined || options.fixtureAllowOrbitTool) &&
       (options.allowFixture !== true || !executable.startsWith(session + sep) ||
       options.candidateManifestSha256 !== undefined))
     throw new OrbitError("UNSUPPORTED", "Codex fixture access needs a private fixture executable");
+  if (options.fixtureAllowOrbitTool && fixtureTurnThreadId === undefined)
+    throw new OrbitError("INVALID_REQUEST", "Codex fixture Orbit tool needs one pinned turn thread");
   if (fixtureTurnThreadId !== undefined && (!fixturePageReader ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(fixtureTurnThreadId)))
     throw new OrbitError("INVALID_REQUEST", "Codex fixture turn needs one thread and a page reader");
@@ -164,7 +167,8 @@ export async function prepareCodexAttachedLaunch(
       ownerIdentity: verifiedSockets[0], stateIdentity: verifiedSockets[1],
       ...(fixturePageReader ? { allowThreadMetadataRead: true, allowPaginatedThreadPages: true,
         readPaginatedThreadPage: fixturePageReader } : {}),
-      ...(fixtureTurnThreadId ? { fixtureTurnThreadId, fixturePollSavedTurn: true } : {}),
+      ...(fixtureTurnThreadId ? { fixtureTurnThreadId, fixturePollSavedTurn: true,
+        fixtureAllowOrbitTool: options.fixtureAllowOrbitTool === true } : {}),
       ...(fixtureAudit && fixtureTurnThreadId ? { auditFixtureNotificationShape: (
         shape: { method: string; keys: string[]; outcome: "allow" | "deny" }) => {
         if (notificationAuditCount++ < 200) appendFileSync(auditPath,

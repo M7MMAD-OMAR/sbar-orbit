@@ -776,6 +776,7 @@ test("Codex fixture gate permits one bounded existing-thread text turn with empt
   await chmod(statePath, 0o600);
   let baseline: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   let fixture: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let fixtureTool: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   const probes: Probe[] = [];
   try {
     const sockets = { ownerIdentity: await identity(ownerPath), stateIdentity: await identity(statePath) };
@@ -819,8 +820,37 @@ test("Codex fixture gate permits one bounded existing-thread text turn with empt
     expect(ownerRequests).toEqual([{ id: "valid", method: "turn/start", params: {
       threadId, input: [{ type: "text", text: "Fixture follow-up" }], allowedTools: [],
     } }]);
+    await expect(startCodexReadOnlyGate(root, ownerPath, statePath,
+      { ...sockets, fixtureAllowOrbitTool: true })).rejects.toThrow("one pinned thread");
+    fixtureTool = await startCodexReadOnlyGate(root, ownerPath, statePath,
+      { ...sockets, fixtureTurnThreadId: threadId, fixtureAllowOrbitTool: true,
+        allowPaginatedThreadPages: true,
+        readPaginatedThreadPage: async () => ({ data: [], nextCursor: null }) });
+    const toolClient = new Probe(fixtureTool.socketPath);
+    probes.push(toolClient);
+    await toolClient.opened;
+    for (const [index, params] of [
+      { ...input, allowedTools: [{ namespace: "mcp__orbit_private", name: "orbit_act" }] },
+      { ...input, approvalPolicy: "never" },
+      { ...input, sandboxPolicy: { type: "dangerFullAccess" } },
+      { ...input, permissions: { network: true } },
+      { ...input, threadId: "550e8400-e29b-41d4-a716-446655440002" },
+      { ...input, input: [{ type: "text", text: "Call tool", extra: "unsafe" }] },
+    ].entries()) {
+      toolClient.send({ id: `tool-invalid-${index}`, method: "turn/start", params });
+      expect((await toolClient.next()).error?.code).toBe(-32601);
+    }
+    expect(ownerRequests).toHaveLength(1);
+    toolClient.send({ id: "tool-valid", method: "turn/start", params: input });
+    expect((await toolClient.next()).result?.turn).toEqual({ id: turnId,
+      status: "inProgress", items: [], error: null });
+    expect(ownerRequests[1]).toEqual({ id: "tool-valid", method: "turn/start", params: {
+      threadId, input: [{ type: "text", text: "Fixture follow-up" }],
+      allowedTools: [{ namespace: "mcp__orbit_private", name: "orbit_act" }],
+    } });
   } finally {
     for (const probe of probes) probe.close();
+    await fixtureTool?.close();
     await fixture?.close();
     await baseline?.close();
     owner.stop(true);

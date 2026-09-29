@@ -72,6 +72,13 @@ test("Codex paginated viewer injection requires a private fixture executable", a
     await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
       { allowFixture: true, fixtureTurnThreadId }))
       .rejects.toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("page reader") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixtureAllowOrbitTool: true }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("pinned turn thread") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: false, fixturePaginatedPageReader: reader,
+        fixtureTurnThreadId, fixtureAllowOrbitTool: true }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
     authority = await listen(authorityPath, "fixture-authority");
     authorityState = await listen(`${authorityPath}.state`, "");
     await chmod(authorityPath, 0o600);
