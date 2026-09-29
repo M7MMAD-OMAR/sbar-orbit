@@ -25,6 +25,16 @@ writes but cannot prove a coherent snapshot across state, history, and rollout
 files. See `experiments/codex-paginated-private-ui-probe.md` and
 `experiments/codex-paginated-wal-stale-guard.md`.
 
+A later disposable live-owner run displayed two completed owner turns together
+in the same saved conversation under its project in the private Desktop. The
+private home had no `auth.json`, the owner remained connected, and seven
+watched source files did not change during the second private read. See
+`experiments/codex-paginated-live-private-ui.md`. This measured the fake
+account's short transcript, not the person's account or a long history. The
+UI gate log still denied methods including `config/read`, `model/list`,
+`plugin/list`, `threadSection/list`, `thread/attachment/list`, and
+`config/batchWrite`. Full Codex capability parity is therefore not measured.
+
 The existing owner wrapper is source only. It selects a manifest-pinned,
 same-version candidate when its private config passes validation, otherwise
 it launches the original installed executable. It is not installed as the
