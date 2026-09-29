@@ -1,0 +1,373 @@
+diff --git a/codex-rs/thread-store/src/local/thread_history/read_tests.rs b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+index 1a5c623..2103b42 100644
+--- a/codex-rs/thread-store/src/local/thread_history/read_tests.rs
++++ b/codex-rs/thread-store/src/local/thread_history/read_tests.rs
+@@ -2,11 +2,24 @@ use std::fs;
+ use std::io::BufRead;
+ use std::io::Read;
+ use std::io::Write;
++use std::sync::Arc;
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::AtomicUsize;
++use std::sync::atomic::Ordering;
+ use std::time::Duration;
++use std::time::Instant;
+ 
+ use chrono::Utc;
+ use codex_app_server_protocol::CodexErrorInfo;
++use codex_app_server_protocol::ThreadItem;
++use codex_app_server_protocol::ThreadItemEntry;
++use codex_app_server_protocol::ThreadItemsListResponse;
+ use codex_app_server_protocol::ThreadTimelineEntry;
++use codex_app_server_protocol::ThreadTurnsListResponse;
++use codex_app_server_protocol::Turn;
++use codex_app_server_protocol::TurnError;
++use codex_app_server_protocol::TurnItemsView;
++use codex_app_server_protocol::TurnStatus;
+ use codex_protocol::ThreadId;
+ use codex_protocol::protocol::EventMsg;
+ use codex_protocol::protocol::HistoryPosition;
+@@ -127,15 +140,18 @@ async fn bwrap_paginated_page_helper_child() {
+     input.read_exact(&mut request_bytes).expect("read request body");
+     let request: serde_json::Value =
+         serde_json::from_slice(&request_bytes).expect("parse page request");
++    let method = request["method"].as_str().expect("method must be a string");
++    assert!(matches!(method, "thread/turns/list" | "thread/items/list"));
++    let params = &request["params"];
++    assert_eq!(params["readOnly"], true);
+     let thread_id = ThreadId::from_string(
+-        request["threadId"].as_str().expect("thread ID must be a string"),
++        params["threadId"].as_str().expect("thread ID must be a string"),
+     )
+     .expect("valid thread ID");
+-    let kind = request["kind"].as_str().expect("page kind must be a string");
+-    assert!(matches!(kind, "turns" | "items"));
+-    let limit = request["limit"].as_u64().expect("page limit must be an integer");
++    let limit = params["limit"].as_u64().expect("page limit must be an integer");
+     assert!((1..=100).contains(&limit));
+-    let cursor = match request.get("cursor") {
++    assert_eq!(params["sortDirection"], "asc");
++    let cursor = match params.get("cursor") {
+         None | Some(serde_json::Value::Null) => None,
+         Some(value) => {
+             let cursor = value.as_str().expect("cursor must be a string");
+@@ -184,7 +200,11 @@ async fn bwrap_paginated_page_helper_child() {
+         .resolve_rollout_lineage_from_selected_rollout(thread_id, selected_path)
+         .await
+         .expect("resolve exact-tag selected rollout lineage");
+-    let result = if kind == "turns" {
++    if std::env::var_os("ORBIT_BWRAP_PAGE_HELPER_DELAY").is_some() {
++        std::thread::sleep(Duration::from_millis(100));
++    }
++    let result = if method == "thread/turns/list" {
++        assert_eq!(params["itemsView"], "full");
+         let page = page_turn_rows(
+             &reader,
+             thread_id,
+@@ -192,38 +212,74 @@ async fn bwrap_paginated_page_helper_child() {
+             cursor.as_deref(),
+             limit as usize,
+             SortDirection::Asc,
+-            StoredTurnItemsView::Summary,
++            StoredTurnItemsView::NotLoaded,
+         )
+         .await
+         .expect("read turn page");
+-        let data = page
+-            .rows
+-            .into_iter()
+-            .map(|row| {
+-                let items = row
+-                    .summary_items
+-                    .iter()
+-                    .map(|item| {
+-                        serde_json::json!({
+-                            "itemId": item.item_id,
+-                            "content": serde_json::from_slice::<serde_json::Value>(&item.item_json)
+-                                .expect("decode stored item content"),
+-                        })
+-                    })
+-                    .collect::<Vec<_>>();
+-                serde_json::json!({"turnId": row.turn_id, "items": items})
+-            })
+-            .collect::<Vec<_>>();
+-        serde_json::json!({
+-            "data": data,
+-            "nextCursor": page.next_cursor,
+-            "backwardsCursor": page.backwards_cursor,
++        let mut data = Vec::with_capacity(page.rows.len());
++        for row in page.rows {
++            let mut items = Vec::new();
++            let mut item_cursor = None;
++            loop {
++                let item_page = page_item_rows(
++                    &reader,
++                    &lineage,
++                    &item_params(
++                        thread_id,
++                        Some(&row.turn_id),
++                        item_cursor.clone(),
++                        1,
++                        SortDirection::Asc,
++                    ),
++                )
++                .await
++                .expect("read full turn items page");
++                for item in item_page.rows {
++                    items.push(
++                        serde_json::from_slice::<ThreadItem>(&item.item.item_json)
++                            .expect("deserialize full turn item"),
++                    );
++                }
++                let Some(next_cursor) = item_page.next_cursor else {
++                    break;
++                };
++                assert_ne!(item_cursor.as_deref(), Some(next_cursor.as_str()));
++                item_cursor = Some(next_cursor);
++            }
++            let status = match row.status {
++                StoredTurnStatus::Completed => TurnStatus::Completed,
++                StoredTurnStatus::Interrupted => TurnStatus::Interrupted,
++                StoredTurnStatus::Failed => TurnStatus::Failed,
++                StoredTurnStatus::InProgress => TurnStatus::InProgress,
++            };
++            data.push(Turn {
++                id: row.turn_id,
++                items,
++                items_view: TurnItemsView::Full,
++                status,
++                error: row.error.map(|error| TurnError {
++                    misalignment: None,
++                    message: error.message,
++                    codex_error_info: error.codex_error_info,
++                    additional_details: error.additional_details,
++                }),
++                started_at: row.started_at,
++                completed_at: row.completed_at,
++                duration_ms: row.duration_ms,
++            });
++        }
++        serde_json::to_value(ThreadTurnsListResponse {
++            data,
++            next_cursor: page.next_cursor,
++            backwards_cursor: page.backwards_cursor,
+         })
++        .expect("serialize full turn page")
+     } else {
++        let turn_id = params["turnId"].as_str();
+         let page = page_item_rows(
+             &reader,
+             &lineage,
+-            &item_params(thread_id, None, cursor, limit as usize, SortDirection::Asc),
++            &item_params(thread_id, turn_id, cursor, limit as usize, SortDirection::Asc),
+         )
+         .await
+         .expect("read item page");
+@@ -231,19 +287,19 @@ async fn bwrap_paginated_page_helper_child() {
+             .rows
+             .into_iter()
+             .map(|row| {
+-                serde_json::json!({
+-                    "turnId": row.item.turn_id,
+-                    "itemId": row.item.item_id,
+-                    "content": serde_json::from_slice::<serde_json::Value>(&row.item.item_json)
+-                        .expect("decode stored item content"),
+-                })
++                ThreadItemEntry {
++                    turn_id: row.item.turn_id,
++                    item: serde_json::from_slice::<ThreadItem>(&row.item.item_json)
++                        .expect("deserialize listed item"),
++                }
+             })
+             .collect::<Vec<_>>();
+-        serde_json::json!({
+-            "data": data,
+-            "nextCursor": page.next_cursor,
+-            "backwardsCursor": page.backwards_cursor,
++        serde_json::to_value(ThreadItemsListResponse {
++            data,
++            next_cursor: page.next_cursor,
++            backwards_cursor: page.backwards_cursor,
+         })
++        .expect("serialize item page")
+     };
+     reader.close().await;
+     let response = serde_json::to_string(&result).expect("serialize page response");
+@@ -263,8 +319,8 @@ fn run_bwrap_page_helper(
+     } else {
+         "--ro-bind"
+     };
+-    let mut child = std::process::Command::new("/usr/bin/bwrap")
+-        .args([
++    let mut command = std::process::Command::new("/usr/bin/bwrap");
++    command.args([
+             "--die-with-parent",
+             "--unshare-all",
+             "--new-session",
+@@ -301,6 +357,12 @@ fn run_bwrap_page_helper(
+             "--setenv",
+             "ORBIT_BWRAP_PAGE_HELPER",
+             "1",
++        ]);
++    if std::env::var_os("ORBIT_PAGE_HELPER_CONCURRENT_WRITER").is_some() {
++        command.args(["--setenv", "ORBIT_BWRAP_PAGE_HELPER_DELAY", "1"]);
++    }
++    let mut child = command
++        .args([
+             "--",
+             "/reader",
+             "bwrap_paginated_page_helper_child",
+@@ -347,8 +409,8 @@ async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
+     let fork_root = if forked {
+         let root_id = ThreadId::default();
+         let root_path = rollout_path(home.path(), root_id);
+-        write_rollout_with_end(&root_path, root_id, None, 13);
+-        let base = history_position(&root_path, root_id, 12);
++        write_rollout_with_end(&root_path, root_id, None, 14);
++        let base = history_position(&root_path, root_id, 13);
+         write_rollout_with_end(&rollout, thread_id, Some(base), 10);
+         Some((root_id, root_path))
+     } else {
+@@ -362,6 +424,7 @@ async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
+     let _held_writer_connection = writer.acquire().await.expect("hold writer connection");
+     insert_turn(writer, first_rollout_id, "turn-1", 10, "completed", None, Some("user-1"), None).await;
+     insert_item(writer, first_rollout_id, "turn-1", "user-1", 11).await;
++    insert_item(writer, first_rollout_id, "turn-1", "middle-1", 12).await;
+     insert_turn(writer, selected_rollout_id, "turn-2", 20, "completed", None, None, Some("agent-2")).await;
+     insert_item(writer, selected_rollout_id, "turn-2", "agent-2", 21).await;
+     let mounted_rollout = std::path::Path::new("/fixture")
+@@ -375,8 +438,8 @@ async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
+     );
+     let state_path = store.config.sqlite.state_db_path();
+     let history_path = store.config.sqlite.thread_history_db_path();
+-    let state_before = history_file_snapshots(state_path.as_path());
+-    let before = history_file_snapshots(history_path.as_path());
++    let mut state_before = history_file_snapshots(state_path.as_path());
++    let mut before = history_file_snapshots(history_path.as_path());
+     let mut watched_rollouts = vec![original_rollout.clone()];
+     if selected_rollout_id != thread_id {
+         watched_rollouts.push(rollout.clone());
+@@ -399,27 +462,105 @@ async fn bwrap_paginated_page_helper_returns_cursor_and_content() {
+     assert!(state_before.iter().all(|(_, file)| file.is_some()));
+     assert!(before.iter().all(|(_, file)| file.is_some()));
+ 
+-    let request = |kind: &str, cursor: Option<&str>| serde_json::json!({
+-        "kind": kind,
+-        "threadId": thread_id.to_string(),
+-        "cursor": cursor,
+-        "limit": 1,
++    let request = |method: &str, cursor: Option<&str>, turn_id: Option<&str>| serde_json::json!({
++        "method": method,
++        "params": {
++            "threadId": thread_id.to_string(),
++            "readOnly": true,
++            "cursor": cursor,
++            "limit": 1,
++            "sortDirection": "asc",
++            "itemsView": "full",
++            "turnId": turn_id,
++        },
+     });
+-    let first_turn = run_bwrap_page_helper(home.path(), &request("turns", None));
+-    assert_eq!(first_turn["data"][0]["turnId"], "turn-1");
+-    assert_eq!(first_turn["data"][0]["items"][0]["content"]["content"][0]["text"], "user-1");
++    let first_turn_request = request("thread/turns/list", None, None);
++    let first_turn = if std::env::var_os("ORBIT_PAGE_HELPER_CONCURRENT_WRITER").is_some() {
++        assert!(std::env::var_os("ORBIT_PAGE_HELPER_RED_WRITABLE").is_none());
++        let writer_pool = writer.clone();
++        let writer_thread_id = first_rollout_id.to_string();
++        let stop = Arc::new(AtomicBool::new(false));
++        let updates = Arc::new(AtomicUsize::new(0));
++        let stop_writer = Arc::clone(&stop);
++        let writer_updates = Arc::clone(&updates);
++        let writer_task = std::thread::spawn(move || {
++            let runtime = tokio::runtime::Builder::new_current_thread()
++                .enable_all()
++                .build()
++                .expect("writer probe runtime");
++            while !stop_writer.load(Ordering::SeqCst) {
++                runtime
++                    .block_on(
++                        sqlx::query(
++                            "UPDATE thread_turns SET duration_ms = COALESCE(duration_ms, 0) + 1 WHERE thread_id = ? AND turn_id = 'turn-1'",
++                        )
++                        .bind(&writer_thread_id)
++                        .execute(&writer_pool),
++                    )
++                    .expect("concurrent writer update");
++                writer_updates.fetch_add(1, Ordering::SeqCst);
++                std::thread::sleep(Duration::from_millis(5));
++            }
++        });
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while updates.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
++            std::thread::sleep(Duration::from_millis(1));
++        }
++        let updates_before_read = updates.load(Ordering::SeqCst);
++        assert!(updates_before_read > 0, "writer did not start");
++        let response = run_bwrap_page_helper(home.path(), &first_turn_request);
++        let updates_during_read = updates.load(Ordering::SeqCst) - updates_before_read;
++        stop.store(true, Ordering::SeqCst);
++        writer_task.join().expect("join concurrent writer");
++        assert!(updates_during_read > 0, "writer did not progress while reader ran");
++        eprintln!(
++            "concurrent writer updates before_read={updates_before_read} during_read={updates_during_read} total={}",
++            updates.load(Ordering::SeqCst)
++        );
++        let state_after_overlap = history_file_snapshots(state_path.as_path());
++        let history_after_overlap = history_file_snapshots(history_path.as_path());
++        assert!(
++            !report_history_file_changes(
++                "state during writer overlap",
++                &state_before,
++                &state_after_overlap,
++            ),
++            "history-only writer or reader changed state files"
++        );
++        report_history_file_changes("history during writer overlap", &before, &history_after_overlap);
++        state_before = state_after_overlap;
++        before = history_after_overlap;
++        response
++    } else {
++        run_bwrap_page_helper(home.path(), &first_turn_request)
++    };
++    assert_eq!(first_turn["data"][0]["id"], "turn-1");
++    assert_eq!(first_turn["data"][0]["itemsView"], "full");
++    assert_eq!(first_turn["data"][0]["status"], "completed");
++    assert_eq!(first_turn["data"][0]["items"].as_array().map(Vec::len), Some(2));
++    assert_eq!(first_turn["data"][0]["items"][0]["content"][0]["text"], "user-1");
++    assert_eq!(first_turn["data"][0]["items"][1]["content"][0]["text"], "middle-1");
+     let turn_cursor = first_turn["nextCursor"].as_str().expect("next turn cursor");
+-    let second_turn = run_bwrap_page_helper(home.path(), &request("turns", Some(turn_cursor)));
+-    assert_eq!(second_turn["data"][0]["turnId"], "turn-2");
+-    assert_eq!(second_turn["data"][0]["items"][0]["content"]["text"], "agent-2 item");
+-
+-    let first_item = run_bwrap_page_helper(home.path(), &request("items", None));
+-    assert_eq!(first_item["data"][0]["itemId"], "user-1");
+-    assert_eq!(first_item["data"][0]["content"]["content"][0]["text"], "user-1");
++    let second_turn = run_bwrap_page_helper(home.path(), &request("thread/turns/list", Some(turn_cursor), None));
++    assert_eq!(second_turn["data"][0]["id"], "turn-2");
++    assert_eq!(second_turn["data"][0]["itemsView"], "full");
++    assert_eq!(second_turn["data"][0]["items"][0]["text"], "agent-2 item");
++
++    let first_item = run_bwrap_page_helper(home.path(), &request("thread/items/list", None, None));
++    assert_eq!(first_item["data"][0]["turnId"], "turn-1");
++    assert_eq!(first_item["data"][0]["item"]["id"], "user-1");
++    assert_eq!(first_item["data"][0]["item"]["content"][0]["text"], "user-1");
+     let item_cursor = first_item["nextCursor"].as_str().expect("next item cursor");
+-    let second_item = run_bwrap_page_helper(home.path(), &request("items", Some(item_cursor)));
+-    assert_eq!(second_item["data"][0]["itemId"], "agent-2");
+-    assert_eq!(second_item["data"][0]["content"]["text"], "agent-2 item");
++    let second_item = run_bwrap_page_helper(home.path(), &request("thread/items/list", Some(item_cursor), None));
++    assert_eq!(second_item["data"][0]["item"]["id"], "middle-1");
++    let second_item_cursor = second_item["nextCursor"].as_str().expect("second item cursor");
++    let third_item = run_bwrap_page_helper(home.path(), &request("thread/items/list", Some(second_item_cursor), None));
++    assert_eq!(third_item["data"][0]["turnId"], "turn-2");
++    assert_eq!(third_item["data"][0]["item"]["id"], "agent-2");
++    assert_eq!(third_item["data"][0]["item"]["text"], "agent-2 item");
++    let filtered = run_bwrap_page_helper(home.path(), &request("thread/items/list", None, Some("turn-2")));
++    assert_eq!(filtered["data"][0]["item"]["id"], "agent-2");
++    assert_eq!(filtered["nextCursor"], serde_json::Value::Null);
+ 
+     let state_after = history_file_snapshots(state_path.as_path());
+     let after = history_file_snapshots(history_path.as_path());

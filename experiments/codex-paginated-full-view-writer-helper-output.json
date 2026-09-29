@@ -1,0 +1,305 @@
+{
+  "default-red": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "db2379a54ba03c002fa2d88357f8939844b76b55862ce2780118f585e51494e8",
+          "afterSha256": "db2379a54ba03c002fa2d88357f8939844b76b55862ce2780118f585e51494e8",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "51a88d2631190b3c5aade9bb3ab2ff0e5c5e10d1ac5dadb721dd24936fa2ee1a",
+          "afterSha256": "f9c37e3631c885e0292bf95d57908b2e543973e08e7aedf1b6f8d058e0746c0f",
+          "changedByteOffsets": 15
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "5b479be53d63c3114029c650109a342961ae465443cd0640d5f397a8d866a3aa",
+          "afterSha256": "5b479be53d63c3114029c650109a342961ae465443cd0640d5f397a8d866a3aa",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "77fd02de04ef7f893a50b43fdc99338312e75a6f3031b332309f656ba9a5217b",
+          "afterSha256": "c612a9ad39ddbbb889d71dfaca98cdffa53de467e79b4064d98b4ddb867609f2",
+          "changedByteOffsets": 12
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "default-green": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "46b9e033ab752b42ee0909d395f643cd975118b23ad0e96154135c96a9e475f4",
+          "afterSha256": "46b9e033ab752b42ee0909d395f643cd975118b23ad0e96154135c96a9e475f4",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "c8aaea43f39540256a476604b0059a2ce7e901be9e74d96b0644f310188a38f6",
+          "afterSha256": "c8aaea43f39540256a476604b0059a2ce7e901be9e74d96b0644f310188a38f6",
+          "changedByteOffsets": 0
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "b697941b633ff9d48cfde460067f5688ef2cb40c7a104e3ef897c5e8c8ebd4c1",
+          "afterSha256": "b697941b633ff9d48cfde460067f5688ef2cb40c7a104e3ef897c5e8c8ebd4c1",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "44a2cf8366227c2dc81c1607fab5503a81aa630f687b206523d36616f4139c13",
+          "afterSha256": "44a2cf8366227c2dc81c1607fab5503a81aa630f687b206523d36616f4139c13",
+          "changedByteOffsets": 0
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "alternate-red": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "56e05b249d3b7b11f3a5f6beb61d45184023ec9c92486e101a291bdc03ed0c7b",
+          "afterSha256": "56e05b249d3b7b11f3a5f6beb61d45184023ec9c92486e101a291bdc03ed0c7b",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "5ba812941d5467779d45ea4b468a59c4b962df7ca726df40ca8216b2ab290d86",
+          "afterSha256": "e83adb11c8afeed4f91bb5cfb5a5def5f9665d8d8c6ea0c6b8c62b5a105d7106",
+          "changedByteOffsets": 13
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "55cfe2e5b827e3ed0196744004fe5c71bc40f81cacc75f6be2974960a0fd4ff4",
+          "afterSha256": "55cfe2e5b827e3ed0196744004fe5c71bc40f81cacc75f6be2974960a0fd4ff4",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "bc31a9a8c46bfddb80fe3d95e0465943bd405817de68c6ab4710cb73e1518add",
+          "afterSha256": "0eaba91f84249af1af0014e7f737432e7a3486e39aca4162d22ff791949f169b",
+          "changedByteOffsets": 12
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "alternate-green": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "26a328e52d91171adbe9878ae7a96e3f07d1caf5901dedc2135e4a24ab65f2f3",
+          "afterSha256": "26a328e52d91171adbe9878ae7a96e3f07d1caf5901dedc2135e4a24ab65f2f3",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "0c15860c3e7730dff57c81594480fb112f5986a63510546e940ad61417f8dee4",
+          "afterSha256": "0c15860c3e7730dff57c81594480fb112f5986a63510546e940ad61417f8dee4",
+          "changedByteOffsets": 0
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "3124d632ba8e00920a8f97eec384160e58842c98279443b3545958b41958dee0",
+          "afterSha256": "3124d632ba8e00920a8f97eec384160e58842c98279443b3545958b41958dee0",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "044eef5af8c38241c7da2fb9195a7d7a81b2c45990e059aef24a57772ba5e58c",
+          "afterSha256": "044eef5af8c38241c7da2fb9195a7d7a81b2c45990e059aef24a57772ba5e58c",
+          "changedByteOffsets": 0
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "fork-red": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "e8db8f73069bc9e028638a96e14a7f5a12df7ce75af7f922d753c66871aa8eeb",
+          "afterSha256": "e8db8f73069bc9e028638a96e14a7f5a12df7ce75af7f922d753c66871aa8eeb",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "d9fc540e5051c684dafd6b64d1b92c02fc58b4cd647353e07709e23c10156b3d",
+          "afterSha256": "2dad0cc0950d7eec2e2853d0b57444163ce0c8417212f2116bae9ca4cf7d60d8",
+          "changedByteOffsets": 15
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "f41c7c52ae654d5b43230593b36924466ecf55c380d0a351e7a6022d8d22562f",
+          "afterSha256": "f41c7c52ae654d5b43230593b36924466ecf55c380d0a351e7a6022d8d22562f",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "bc5d0528b721c06b24bcf3ea3271cd8bfffa3cf119152e8317c8c5b38b57ff81",
+          "afterSha256": "4d94ee12f89200f999236731b8f3f9ab7d89208815a379c5979ae16f1deadb3f",
+          "changedByteOffsets": 12
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "fork-green": {
+    "testPassed": true,
+    "filePhases": {
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "4c8a1b0019481fe487ba4e1e25e9de64641c25f5da92fa04a1ae485fabc19cff",
+          "afterSha256": "4c8a1b0019481fe487ba4e1e25e9de64641c25f5da92fa04a1ae485fabc19cff",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "fbc9c5a02b35036d77fea5e6b7edd85068773cbec4b29cadd122e6e909f75510",
+          "afterSha256": "fbc9c5a02b35036d77fea5e6b7edd85068773cbec4b29cadd122e6e909f75510",
+          "changedByteOffsets": 0
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "5e2a7e1853622435366e50428339b8deb3bea866a61591f00c57e78f18609087",
+          "afterSha256": "5e2a7e1853622435366e50428339b8deb3bea866a61591f00c57e78f18609087",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "da0c58775a67c673c08ed061ba808d4134b7f26d7462860d11f2293a1e053f0b",
+          "afterSha256": "da0c58775a67c673c08ed061ba808d4134b7f26d7462860d11f2293a1e053f0b",
+          "changedByteOffsets": 0
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true
+  },
+  "writer-green": {
+    "testPassed": true,
+    "filePhases": {
+      "during writer overlap": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "f27054e7145961bca9f88b53bae61abe2ba7715774b1aa1ccb7fe0a84e57ebc1",
+          "afterSha256": "f27054e7145961bca9f88b53bae61abe2ba7715774b1aa1ccb7fe0a84e57ebc1",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "6c41920236d17c0ff15697b63e16087a8c51d8a1c9a65b9da2a07bba5b4cb1ea",
+          "afterSha256": "6c41920236d17c0ff15697b63e16087a8c51d8a1c9a65b9da2a07bba5b4cb1ea",
+          "changedByteOffsets": 0
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "cf83118e39918c6751d7e8b7788ff18d3fb541959669a5d6227bc1e1d03058d0",
+          "afterSha256": "39aaa1f7b432dcc16f01343f50507599d49c54dbc6cd60ca92118c66004226e8",
+          "changedByteOffsets": 90640
+        },
+        "history-shm": {
+          "beforeSha256": "eed5aec00eee6b499bdc1d722cb481fca0c1f4200ca7af765a1bd6c68829a780",
+          "afterSha256": "dcfbec050ef087358c75f7c547a651129f78d46821d06665b2692d347334c39b",
+          "changedByteOffsets": 81
+        }
+      },
+      "after page helper": {
+        "state-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "state-wal": {
+          "beforeSha256": "f27054e7145961bca9f88b53bae61abe2ba7715774b1aa1ccb7fe0a84e57ebc1",
+          "afterSha256": "f27054e7145961bca9f88b53bae61abe2ba7715774b1aa1ccb7fe0a84e57ebc1",
+          "changedByteOffsets": 0
+        },
+        "state-shm": {
+          "beforeSha256": "6c41920236d17c0ff15697b63e16087a8c51d8a1c9a65b9da2a07bba5b4cb1ea",
+          "afterSha256": "6c41920236d17c0ff15697b63e16087a8c51d8a1c9a65b9da2a07bba5b4cb1ea",
+          "changedByteOffsets": 0
+        },
+        "history-main": {
+          "beforeSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "afterSha256": "4eeb710c739848e62f0d53d04057e17375b4af741c9b441f2a546f6ed860c79f",
+          "changedByteOffsets": 0
+        },
+        "history-wal": {
+          "beforeSha256": "39aaa1f7b432dcc16f01343f50507599d49c54dbc6cd60ca92118c66004226e8",
+          "afterSha256": "39aaa1f7b432dcc16f01343f50507599d49c54dbc6cd60ca92118c66004226e8",
+          "changedByteOffsets": 0
+        },
+        "history-shm": {
+          "beforeSha256": "dcfbec050ef087358c75f7c547a651129f78d46821d06665b2692d347334c39b",
+          "afterSha256": "dcfbec050ef087358c75f7c547a651129f78d46821d06665b2692d347334c39b",
+          "changedByteOffsets": 0
+        }
+      }
+    },
+    "watchedRolloutsBytesAndMtimeUnchanged": true,
+    "concurrentWriterUpdates": {
+      "beforeReaderInvocation": 1,
+      "duringReaderInvocation": 20,
+      "total": 21
+    }
+  }
+}
