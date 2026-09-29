@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "4607249e430dac1c961df4dc615beae88e33cec8",
+  "ownerSha256": "c1214554e7ea7412cd9072e8f57f710539226b394260422c8170b5c1e46c4042",
+  "helperSha256": "6ce7c9be7f828dcb6cc3dae3c72cdb0194bbfd04f039c38c79d208322ee09ffd",
+  "red": {
+    "exitCode": 0,
+    "firstPageTurns": 1,
+    "secondPageTurns": 2,
+    "newTurnLeakedIntoSecondPage": true,
+    "ownerModelRequests": 3
+  },
+  "green": {
+    "exitCode": 0,
+    "firstPageTurns": 1,
+    "secondPageTurns": 1,
+    "newTurnLeakedIntoSecondPage": false,
+    "newGenerationTurns": 3,
+    "crossGenerationCursorRejected": true,
+    "capturedRolloutPrefixBytes": 38192,
+    "capturedSnapshotFileCount": 7,
+    "capturedReadChangedFiles": [],
+    "ownerChangedFilesAfterThirdTurn": [
+      "sessions/2026/09/29/rollout-2026-09-29T02-57-28-01a0eb18-8918-7c31-a076-76e619a8f655.jsonl",
+      "state_5.sqlite-shm",
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite-shm",
+      "thread_history_1.sqlite-wal"
+    ],
+    "ownerModelRequests": 3
+  },
+  "crossProcessAtomic": false,
+  "ownerSideWriterBarrier": false,
+  "personalProfileUsed": false
+}
