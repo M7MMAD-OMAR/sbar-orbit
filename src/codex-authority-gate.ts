@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 const MAX_MESSAGE = 8 * 1024 * 1024;
 const MAX_PAGE_RESPONSE = 4 * 1024 * 1024;
+const MAX_THREAD_METADATA_RESPONSE = 64 * 1024;
 const MAX_ACTIVE_PAGE_READERS = 4;
 const MAX_HEADER = 8192;
 const SIDEBAR_KEYS = new Set([
@@ -21,7 +22,7 @@ const THREAD_LIST_FIELDS = new Set(["limit", "cursor", "sortKey", "sortDirection
   "useStateDbOnly"]);
 
 type RpcMessage = { id?: string | number; method?: string; params?: unknown; result?: unknown; error?: unknown };
-type PendingRequest = { method: string; key?: string };
+type PendingRequest = { method: string; key?: string; metadataThreadId?: string };
 export type GateSocketIdentity = { device: string; inode: string };
 export type GateFieldShape = { key: string; kind: string; length?: number };
 export type PaginatedPageRequest = {
@@ -194,6 +195,86 @@ function sanitizedConfigRequirements(result: unknown) {
   return { requirements: { allowedLoginMethods, application: null } };
 }
 
+function boundedMetadataText(value: unknown, maxBytes: number): value is string {
+  return typeof value === "string" && Buffer.byteLength(value) <= maxBytes && !value.includes("\0");
+}
+
+function nullableMetadataText(value: unknown, maxBytes: number): boolean {
+  return value === null || boundedMetadataText(value, maxBytes);
+}
+
+function metadataTimestamp(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function sanitizedThreadMetadata(result: unknown, requestedThreadId: string): Record<string, unknown> | null {
+  const response = record(result);
+  const thread = record(response?.thread);
+  if (!response || !thread || !UUID.test(requestedThreadId) ||
+      thread.id !== requestedThreadId || !Array.isArray(thread.turns) || thread.turns.length !== 0 ||
+      typeof thread.sessionId !== "string" || !UUID.test(thread.sessionId) ||
+      !nullableMetadataText(thread.forkedFromId, 128) ||
+      (thread.forkedFromId !== null && !UUID.test(thread.forkedFromId as string)) ||
+      !nullableMetadataText(thread.parentThreadId, 128) ||
+      (thread.parentThreadId !== null && !UUID.test(thread.parentThreadId as string)) ||
+      !boundedMetadataText(thread.preview, 8192) || typeof thread.ephemeral !== "boolean" ||
+      !nullableMetadataText(thread.projectId, 128) ||
+      (thread.historyMode !== "legacy" && thread.historyMode !== "paginated") ||
+      !boundedMetadataText(thread.modelProvider, 128) ||
+      !metadataTimestamp(thread.createdAt) || !metadataTimestamp(thread.updatedAt) ||
+      (thread.recencyAt !== null && !metadataTimestamp(thread.recencyAt)) ||
+      !boundedMetadataText(thread.cwd, 4096) || !thread.cwd.startsWith("/") ||
+      !nullableMetadataText(thread.name, 1024) ||
+      !nullableMetadataText(thread.threadSource, 128)) return null;
+  const status = record(thread.status);
+  if (!status || (status.type !== "notLoaded" && status.type !== "idle" &&
+      status.type !== "systemError" && status.type !== "active")) return null;
+  let safeStatus: Record<string, unknown> = { type: status.type };
+  if (status.type === "active") {
+    if (!Array.isArray(status.activeFlags) || status.activeFlags.length > 2 ||
+        !status.activeFlags.every(flag => flag === "waitingOnApproval" || flag === "waitingOnUserInput"))
+      return null;
+    safeStatus = { type: "active", activeFlags: [...new Set(status.activeFlags)] };
+  }
+  let safeSection: Record<string, unknown> | null = null;
+  if (thread.section !== null) {
+    const section = record(thread.section);
+    if (!section || typeof section.id !== "string" || !UUID.test(section.id) ||
+        !boundedMetadataText(section.name, 512)) return null;
+    let appearance: Record<string, unknown> | null = null;
+    if (section.appearance !== null) {
+      const details = record(section.appearance);
+      if (!details || !nullableMetadataText(details.icon, 128) ||
+          !nullableMetadataText(details.color, 128)) return null;
+      appearance = { icon: details.icon, color: details.color };
+    }
+    safeSection = { id: section.id, name: section.name, appearance };
+  }
+  if (thread.sectionEnteredAt !== null && !metadataTimestamp(thread.sectionEnteredAt)) return null;
+  let safeGitInfo: Record<string, unknown> | null = null;
+  if (thread.gitInfo !== null) {
+    const git = record(thread.gitInfo);
+    if (!git || !nullableMetadataText(git.sha, 128) || !nullableMetadataText(git.branch, 512))
+      return null;
+    safeGitInfo = { sha: git.sha, branch: git.branch, originUrl: null };
+  }
+  const source = thread.source;
+  if (typeof source !== "string" && record(source) === null) return null;
+  const safeSource = source === "cli" || source === "vscode" || source === "exec" ||
+    source === "appServer" || source === "unknown" ? source : "unknown";
+  const projected = { thread: {
+    id: thread.id, sessionId: thread.sessionId, forkedFromId: thread.forkedFromId,
+    parentThreadId: thread.parentThreadId, preview: thread.preview, ephemeral: thread.ephemeral,
+    section: safeSection, sectionEnteredAt: thread.sectionEnteredAt, projectId: thread.projectId,
+    historyMode: thread.historyMode, modelProvider: thread.modelProvider,
+    createdAt: thread.createdAt, updatedAt: thread.updatedAt, recencyAt: thread.recencyAt,
+    status: safeStatus, path: null, cwd: thread.cwd, source: safeSource,
+    threadSource: thread.threadSource, gitInfo: safeGitInfo, name: thread.name, turns: [],
+  } };
+  if (Buffer.byteLength(JSON.stringify(projected)) > MAX_THREAD_METADATA_RESPONSE) return null;
+  return projected;
+}
+
 function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false,
                         allowThreadMetadataRead = false): RpcMessage | null {
   if (requestId(message.id) === null || typeof message.method !== "string" ||
@@ -258,7 +339,7 @@ function safeAppRequest(message: RpcMessage, allowLegacyThreadRead = false,
   return { id: message.id, method: message.method, params: params ?? {} };
 }
 
-function appResponse(message: RpcMessage, method: string): RpcMessage {
+function appResponse(message: RpcMessage, method: string, metadataThreadId?: string): RpcMessage {
   if (method === "turn/start") return safeFixtureTurnStartResponse(message);
   if (message.error !== undefined)
     return { id: message.id, error: { code: -32000, message: "Codex owner request failed" } };
@@ -270,6 +351,11 @@ function appResponse(message: RpcMessage, method: string): RpcMessage {
     const requirements = sanitizedConfigRequirements(message.result);
     return requirements ? { id: message.id, result: requirements }
       : { id: message.id, error: { code: -32000, message: "Codex owner requirements unavailable" } };
+  }
+  if (method === "thread/read" && metadataThreadId) {
+    const metadata = sanitizedThreadMetadata(message.result, metadataThreadId);
+    return metadata ? { id: message.id, result: metadata }
+      : { id: message.id, error: { code: -32000, message: "Codex thread metadata unavailable" } };
   }
   return { id: message.id, result: message.result };
 }
@@ -476,7 +562,7 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
               if (pending.method !== "account/read" && pending.method !== "getAuthStatus" &&
                   containsCredentialField(message.result))
                 throw new Error("Codex owner returned credential fields");
-              client.send(JSON.stringify(appResponse(message, pending.method)));
+              client.send(JSON.stringify(appResponse(message, pending.method, pending.metadataThreadId)));
             } catch { client.terminate(); }
           }, () => client.terminate()); }
           catch { client.terminate(); return; }
@@ -565,7 +651,11 @@ export async function startCodexReadOnlyGate(session: string, ownerSocketPath: s
             }
             const forwarded = safe ?? fixtureTurn;
             if (!forwarded) throw new Error("Codex request is unavailable");
-            client.data.pending.set(id, { method: forwarded.method ?? "" });
+            const forwardedParams = record(forwarded.params);
+            client.data.pending.set(id, { method: forwarded.method ?? "",
+              metadataThreadId: forwarded.method === "thread/read" &&
+                forwardedParams?.includeTurns === false && typeof forwardedParams.threadId === "string"
+                ? forwardedParams.threadId : undefined });
             const serialized = JSON.stringify(forwarded);
             if (client.data.owner && client.data.queue.length === 0) {
               try { client.data.owner.send(serialized); }

@@ -160,7 +160,27 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
             authToken: fakeToken }, requiresOpenaiAuth: true, workspaceRouting: accountRouting };
         if (message.method === "configRequirements/read") result = requirementsResult;
         if (message.method === "thread/list") result = { data: [{ id: "fixture-thread" }] };
-        if (message.method === "thread/read") result = { thread: { id: "fixture-thread", turns: [] } };
+        if (message.method === "thread/read") result = message.params?.includeTurns === false
+          ? { thread: {
+            id: message.params.threadId, sessionId: message.params.threadId, forkedFromId: null,
+            parentThreadId: null, preview: "Private fixture conversation", ephemeral: false,
+            section: { id: "550e8400-e29b-41d4-a716-446655440001", name: "Fixture section",
+              appearance: { icon: "folder", color: "blue", internalMarker: "section-metadata-leak" } },
+            sectionEnteredAt: 150, projectId: "fixture_project_1", historyMode: "paginated",
+            modelProvider: "openai", model: "gpt-5.1", reasoningEffort: null,
+            createdAt: 100, updatedAt: 200, recencyAt: 200, status: { type: "notLoaded" },
+            path: "/tmp/private-rollout", cwd: "/tmp/fixture/project", cliVersion: "0.155.0",
+            originator: null, source: "appServer", canAcceptDirectInput: null,
+            threadSource: "user", agentNickname: null, agentRole: null,
+            gitInfo: { sha: "a".repeat(40), branch: "main", originUrl: "https://private.fixture.invalid/repo",
+              internalMarker: "nested-metadata-leak" },
+            name: "Synthetic thread", daybreakEnabled: null, turns: [],
+            internalMarker: "top-metadata-leak",
+          } }
+          : { thread: { id: "fixture-thread", turns: [] } };
+        if (message.method === "thread/read" && message.id === "metadata-invalid")
+          result = { thread: { id: message.params?.threadId, historyMode: "paginated",
+            turns: [{ id: "unexpected-turn" }] } };
         socket.send(JSON.stringify({ id: message.id, result }));
       },
     },
@@ -347,7 +367,10 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: true, readOnly: true });
     legacyClient.send({ id: "legacy-metadata", method: "thread/read",
       params: { threadId, includeTurns: false, readOnly: true } });
-    expect((await legacyClient.next()).result?.thread).toEqual({ id: "fixture-thread", turns: [] });
+    const legacyMetadata = (await legacyClient.next()).result?.thread as Record<string, unknown>;
+    expect(legacyMetadata.id).toBe(threadId);
+    expect(legacyMetadata.internalMarker).toBeUndefined();
+    expect(legacyMetadata.turns).toEqual([]);
     expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: false, readOnly: true });
     legacyClient.send({ id: "legacy-turn", method: "turn/start", params: { threadId, input: [] } });
     expect((await legacyClient.next()).error?.code).toBe(-32601);
@@ -366,8 +389,23 @@ test("Codex gate blocks tokens, host commands and state writes while preserving 
     expect(reached.filter(method => method === "thread/read").length).toBe(ownerReadsBeforeMetadata);
     metadataClient.send({ id: "metadata-only", method: "thread/read",
       params: { threadId, includeTurns: false, readOnly: true } });
-    expect((await metadataClient.next()).result?.thread).toEqual({ id: "fixture-thread", turns: [] });
+    const projectedMetadata = (await metadataClient.next()).result?.thread as Record<string, unknown>;
+    expect(projectedMetadata.id).toBe(threadId);
+    expect(projectedMetadata.historyMode).toBe("paginated");
+    expect(projectedMetadata.preview).toBe("Private fixture conversation");
+    expect(projectedMetadata.cwd).toBe("/tmp/fixture/project");
+    expect(projectedMetadata.projectId).toBe("fixture_project_1");
+    expect(projectedMetadata.section).toEqual({ id: "550e8400-e29b-41d4-a716-446655440001",
+      name: "Fixture section", appearance: { icon: "folder", color: "blue" } });
+    expect(projectedMetadata.name).toBe("Synthetic thread");
+    expect(projectedMetadata.turns).toEqual([]);
+    expect(projectedMetadata.path).toBeNull();
+    expect(projectedMetadata.internalMarker).toBeUndefined();
+    expect(projectedMetadata.gitInfo).toEqual({ sha: "a".repeat(40), branch: "main", originUrl: null });
     expect(ownerThreadReadParams).toEqual({ threadId, includeTurns: false, readOnly: true });
+    metadataClient.send({ id: "metadata-invalid", method: "thread/read",
+      params: { threadId, includeTurns: false, readOnly: true } });
+    expect((await metadataClient.next()).error?.message).toBe("Codex thread metadata unavailable");
 
     const pageCalls: PaginatedPageRequest[] = [];
     let pageResult: Record<string, unknown> = { data: [{ id: "fixture-turn" }], nextCursor: "cursor-2",
