@@ -16,7 +16,14 @@ int main(int argc, char **argv) {
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_LOOPBACK"), "1");
   private_socket_pairs = getenv("ORBIT_PRIVATE_BROKER_PAIRS") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_PAIRS"), "1");
-  if (private_loopback_netlink) {
+  const char *tcp_port = getenv("ORBIT_PRIVATE_BROKER_TCP_PORT");
+  if (tcp_port) {
+    if (!*tcp_port || strlen(tcp_port) > 5 || strspn(tcp_port, "0123456789") != strlen(tcp_port)) return 2;
+    unsigned long value = strtoul(tcp_port, NULL, 10);
+    if (!value || value > 65535) return 2;
+    private_tcp_port = (unsigned int)value;
+  }
+  if (private_loopback_netlink || private_tcp_port) {
     int reference = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     socklen_t length = sizeof(broker_netns_cookie);
     if (reference < 0 || getsockopt(reference, SOL_SOCKET, SO_NETNS_COOKIE, &broker_netns_cookie, &length) || !broker_netns_cookie) return 2;
@@ -107,8 +114,9 @@ int main(int argc, char **argv) {
   close(selected);
   if (additional_stream_handle >= 0) close(additional_stream_handle);
   int application_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"forwardedLoopback\":%zu,\"createdPairs\":%zu,\"forwardedPairMessages\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
+  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"forwardedLoopback\":%zu,\"createdPairs\":%zu,\"forwardedPairMessages\":%zu,\"tcpConnections\":%zu,\"forwardedTcpData\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
          approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, forwarded_loopback,
-         private_pair_cookie_count / 2, forwarded_pair_messages, application_exit, failed, (int)stopping);
+         private_pair_cookie_count / 2, forwarded_pair_messages, private_tcp_cookie_count, forwarded_tcp_data,
+         application_exit, failed, (int)stopping);
   return failed ? 1 : application_exit;
 }

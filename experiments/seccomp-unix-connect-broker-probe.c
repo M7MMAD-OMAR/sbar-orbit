@@ -60,6 +60,10 @@ static int private_socket_pairs;
 static uint64_t private_pair_cookies[256];
 static size_t private_pair_cookie_count;
 static size_t forwarded_pair_messages;
+static unsigned int private_tcp_port;
+static uint64_t private_tcp_cookies[32];
+static size_t private_tcp_cookie_count;
+static size_t forwarded_tcp_data;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -519,6 +523,27 @@ static int approved_socket(int fd) {
   return 0;
 }
 
+static int private_tcp_socket(int fd) {
+  int domain = 0, type = 0, protocol = 0;
+  uint64_t namespace_cookie = 0;
+  socklen_t length = sizeof(int);
+  if (!private_tcp_port || getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &length) || domain != AF_INET) return 0;
+  length = sizeof(int);
+  if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length) || type != SOCK_STREAM) return 0;
+  length = sizeof(int);
+  if (getsockopt(fd, SOL_SOCKET, SO_PROTOCOL, &protocol, &length) || protocol != IPPROTO_TCP) return 0;
+  length = sizeof(namespace_cookie);
+  return broker_netns_cookie && !getsockopt(fd, SOL_SOCKET, SO_NETNS_COOKIE, &namespace_cookie, &length)
+    && namespace_cookie == broker_netns_cookie;
+}
+
+static int approved_tcp_socket(int fd) {
+  uint64_t cookie;
+  if (!private_tcp_socket(fd) || !socket_cookie(fd, &cookie)) return 0;
+  for (size_t i = 0; i < private_tcp_cookie_count; i++) if (private_tcp_cookies[i] == cookie) return 1;
+  return 0;
+}
+
 static int private_bus_credential_slot(int fd, pid_t tid, struct ucred *credentials) {
   uint64_t cookie;
   if (!private_bus_credentials || !socket_cookie(fd, &cookie)) return -1;
@@ -620,9 +645,11 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   }
   if (!total) return;
   duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request->data.args[0], 0);
-  if (duplicate < 0 || (!unix_socket_type(duplicate, SOCK_STREAM) &&
+  int tcp_allowed = duplicate >= 0 && approved_tcp_socket(duplicate);
+  if (duplicate < 0 || (!tcp_allowed && !unix_socket_type(duplicate, SOCK_STREAM) &&
       !(broker_created_pair(duplicate) && unix_socket_type(duplicate, SOCK_SEQPACKET))) ||
-      (!approved_socket(duplicate) && !broker_created_pair(duplicate))) goto done;
+      (!tcp_allowed && !approved_socket(duplicate) && !broker_created_pair(duplicate)) ||
+      (tcp_allowed && source.msg_controllen)) goto done;
   struct iovec io = {payload, total};
   struct msghdr copied = {.msg_iov = &io, .msg_iovlen = 1};
   if (source.msg_controllen) {
@@ -672,6 +699,7 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   if (sent >= 0) {
     response->error = 0; response->val = sent;
     if (broker_created_pair(duplicate)) forwarded_pair_messages++;
+    if (tcp_allowed) forwarded_tcp_data++;
     if (credential_slot >= 0 && sent == 1) {
       private_bus_handshakes[credential_slot] = 1;
       forwarded_bus_credentials++;
@@ -745,18 +773,21 @@ done:
 
 struct bounded_connect_request {
   int fd, result, error;
-  struct sockaddr_un address;
+  struct sockaddr_storage address;
+  socklen_t length;
 };
 
 static void *connect_worker(void *argument) {
   struct bounded_connect_request *request = argument;
-  request->result = connect(request->fd, (struct sockaddr *)&request->address, sizeof(request->address));
+  request->result = connect(request->fd, (struct sockaddr *)&request->address, request->length);
   request->error = request->result < 0 ? errno : 0;
   return NULL;
 }
 
-static int connect_with_deadline(int fd, const struct sockaddr_un *address) {
-  struct bounded_connect_request request = {.fd = fd, .result = -1, .address = *address};
+static int connect_with_deadline(int fd, const struct sockaddr *address, socklen_t length) {
+  if (length > sizeof(struct sockaddr_storage)) { errno = EINVAL; return -1; }
+  struct bounded_connect_request request = {.fd = fd, .result = -1, .length = length};
+  memcpy(&request.address, address, length);
   struct timespec deadline;
   if (clock_gettime(CLOCK_MONOTONIC, &deadline)) return -1;
   deadline.tv_nsec += 100000000;
@@ -788,27 +819,50 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
     create_private_pair(listener, &request, &response);
   if (live && broker_connected && request.data.nr == __NR_sendmsg)
     send_connected_copy(listener, pidfd, &request, &response);
+  if (live && private_tcp_port && request.data.nr == __NR_connect && request.data.args[2] == sizeof(struct sockaddr_in)) {
+    struct sockaddr_in address = {0};
+    unsigned char zeros[sizeof(address.sin_zero)] = {0};
+    if (private_tcp_cookie_count < 32 && copy_child(request.pid, &address, request.data.args[1], sizeof(address)) &&
+        address.sin_family == AF_INET && address.sin_addr.s_addr == htonl(INADDR_LOOPBACK) &&
+        address.sin_port == htons(private_tcp_port) && !memcmp(address.sin_zero, zeros, sizeof(zeros))) {
+      int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0);
+      if (duplicate >= 0 && private_tcp_socket(duplicate) && ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
+        int result = connect_with_deadline(duplicate, (struct sockaddr *)&address, sizeof(address));
+        int error = result < 0 ? errno : 0;
+        if (!error || error == EINPROGRESS) {
+          uint64_t cookie;
+          if (socket_cookie(duplicate, &cookie)) {
+            private_tcp_cookies[private_tcp_cookie_count++] = cookie;
+            response.error = -error; response.val = 0;
+          }
+        } else response.error = -error;
+      }
+      if (duplicate >= 0) close(duplicate);
+    }
+  }
   if (live && private_loopback_netlink && request.data.nr == __NR_sendto)
     send_private_loopback(listener, pidfd, &request, &response);
-  if (live && (private_bus_credentials || private_socket_pairs) && request.data.nr == __NR_sendto &&
+  if (live && (private_bus_credentials || private_socket_pairs || private_tcp_port) && request.data.nr == __NR_sendto &&
       !request.data.args[4] && !request.data.args[5] && request.data.args[2] > 0 &&
       request.data.args[2] <= 4096 && !(request.data.args[3] & ~(uint64_t)(MSG_DONTWAIT | MSG_NOSIGNAL))) {
     int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0);
     uint64_t cookie;
-    if (duplicate >= 0 && (unix_socket_type(duplicate, SOCK_STREAM) ||
+    if (duplicate >= 0 && (approved_tcp_socket(duplicate) || unix_socket_type(duplicate, SOCK_STREAM) ||
         (broker_created_pair(duplicate) && unix_socket_type(duplicate, SOCK_SEQPACKET))) && socket_cookie(duplicate, &cookie)) {
-      int pair_allowed = broker_created_pair(duplicate), bus_allowed = 0;
+      int pair_allowed = broker_created_pair(duplicate), bus_allowed = 0, tcp_allowed = approved_tcp_socket(duplicate);
       for (size_t slot = 0; slot < private_bus_cookie_count; slot++) {
         if (cookie == private_bus_cookies[slot] && private_bus_handshakes[slot]) { bus_allowed = 1; break; }
       }
-      if (pair_allowed || bus_allowed) {
+      if (pair_allowed || bus_allowed || tcp_allowed) {
         char payload[4096];
         if (copy_child(request.pid, payload, request.data.args[1], request.data.args[2]) &&
             ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
           ssize_t sent = send(duplicate, payload, request.data.args[2], (int)request.data.args[3] | MSG_NOSIGNAL | MSG_DONTWAIT);
           if (sent >= 0) {
             response.error = 0; response.val = sent;
-            if (pair_allowed) forwarded_pair_messages++; else forwarded_bus_data++;
+            if (pair_allowed) forwarded_pair_messages++;
+            else if (tcp_allowed) forwarded_tcp_data++;
+            else forwarded_bus_data++;
           }
           else response.error = -errno;
         }
@@ -879,7 +933,7 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
           struct sockaddr_un broker_addr = {.sun_family = AF_UNIX};
           strcpy(broker_addr.sun_path, resolved);
           if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
-            if (connect_with_deadline(duplicate, &broker_addr) == 0) {
+            if (connect_with_deadline(duplicate, (struct sockaddr *)&broker_addr, sizeof(broker_addr)) == 0) {
               response.error = 0;
               if (broker_connected) {
                 uint64_t cookie;
