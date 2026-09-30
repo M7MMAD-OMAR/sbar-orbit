@@ -93,3 +93,27 @@ pending stylesheets and later image and XHR work. This supports the bounded
 transport correction; it does not prove every resource or Talk function works.
 The earlier TLS failures are retained above. Account refresh, device use,
 other applications and full application parity remain unmeasured by this work.
+
+## Managed service check
+
+The broker was restarted after confirming it had no open sessions, using
+commit `c4bfba7` plus the current-pixel capture in `c9a9d8b`.
+Session `1514c7e1-d3c0-49c5-91fd-aaf385617180` successfully navigated to Talk
+and its captured frame showed the existing conversation list. Its read and
+navigate policy correctly refused the click action as a disallowed write.
+The session was closed, and a new private clone with read, navigate and write
+was created to open the existing self conversation without sending a message.
+
+In session `94893ccc-52d7-4b7f-b138-29aa2cb7f6f4`, the first navigation failed
+with `net::ERR_TUNNEL_CONNECTION_FAILED` (diagnostic
+`390d8bd2-29be-445e-af2c-ac4bd18cd4e5`). A second navigation exceeded the
+action deadline (diagnostic `04601126-dce0-4ba6-84ab-6a6f2b190d37`), but the
+subsequent frame showed Talk loaded with the existing conversation list.
+Clicking Note to self then succeeded. The frame showed the previously saved
+Orbit test message from this date together with older conversation content.
+No new message was sent. Both owned sessions were stopped.
+
+These checks verify visible account and conversation continuity in the managed
+service. Repeated navigation is still unreliable. The page also displayed a
+browser-support warning. Calling, microphone, camera, screen sharing and
+device permissions were not measured, and are not implied by message access.
