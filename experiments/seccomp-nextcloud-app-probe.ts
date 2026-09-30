@@ -20,6 +20,8 @@ const accountClone = process.env.ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE === "1";
 const emptySecrets = process.env.ORBIT_NEXTCLOUD_EMPTY_SECRETS === "1";
 const oneSecret = process.env.ORBIT_NEXTCLOUD_ONE_SECRET === "1";
 const accountTunnel = process.env.ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL === "1";
+const nativeSync = process.env.ORBIT_NEXTCLOUD_NATIVE_SYNC === "1";
+if (nativeSync && !accountTunnel) throw new Error("Native sync requires the one-account tunnel arm");
 if (accountTunnel && !oneSecret) throw new Error("Account tunnel requires the one-credential account-copy arm");
 const assertSecrets = process.env.ORBIT_NEXTCLOUD_SECRET_ASSERT === "1";
 if (emptySecrets && !accountClone) throw new Error("Empty secret service requires the offline account-copy arm");
@@ -33,7 +35,7 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${nativeSync ? "native-sync-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
@@ -52,10 +54,24 @@ let secretService: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 let tunnel: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 const secretSummaryPath = join(root, "secret-service-summary.json");
 const tunnelSummaryPath = join(root, "tunnel-summary.json");
+let syncPrepared = false;
+let syncSummary: { localUploadObserved: boolean; remoteDownloadObserved: boolean; cleaned: boolean; controlCredentialLoads: number } | null = null;
+async function syncControl(action: string): Promise<typeof syncSummary> {
+  const command = Bun.spawn(["/usr/bin/python3", resolve("experiments/nextcloud-native-sync-control.py"), action, root],
+    { stdout: "pipe", stderr: "ignore" });
+  const result = await new Response(command.stdout).text();
+  if (await command.exited !== 0) throw new Error(`Scoped native sync ${action} failed`);
+  return JSON.parse(result) as typeof syncSummary;
+}
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
   if (accountClone) privateConfig = await preparePrivateNextcloudConfig(sourceConfig, join(config, "nextcloud.cfg"));
+  if (nativeSync) {
+    // Mark the cleanup obligation before provisioning, the helper saves ownership after MKCOL.
+    syncPrepared = true;
+    await syncControl("prepare");
+  }
   if (tls) {
     await mkdir(certificateDirectory, { mode: 0o700 });
     const generate = Bun.spawn(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-noenc", "-days", "1",
@@ -139,6 +155,7 @@ try {
     await Bun.sleep(250);
   }
   if (visible) {
+    if (nativeSync) syncSummary = await syncControl("observe");
     await Bun.sleep(8000);
     const frame = await backend.observe();
     const pixels = Buffer.from(frame.image, "base64");
@@ -214,11 +231,13 @@ try {
     visible, title: accountClone ? "not retained" : title, exit, scopedStop, broker, accountClone, cloneSummary,
     emptySecretService: emptySecrets ? await Bun.file(secretSummaryPath).json() : null,
     oneSecretService: oneSecret ? await Bun.file(secretSummaryPath).json() : null,
-    accountTunnel: accountTunnel ? await Bun.file(tunnelSummaryPath).json() : null,
+    accountTunnel: accountTunnel ? await Bun.file(tunnelSummaryPath).json() : null, nativeSync: syncSummary,
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
     certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
-    limits: [accountTunnel && cloneSummary?.accountConnected ? "Account connected through a matching-CONNECT opaque TLS tunnel; no file sync was proved." :
+    limits: [nativeSync && syncSummary?.localUploadObserved && syncSummary.remoteDownloadObserved ?
+      "Two generated files uploaded and downloaded through native sync in one disposable folder; general personal-folder parity is unproved." :
+      accountTunnel && cloneSummary?.accountConnected ? "Account connected through a matching-CONNECT opaque TLS tunnel; no file sync was proved." :
       accountClone ? "Original config copied with sync folders removed; no native authentication or file sync was proved." :
       "Disposable home and configuration only; existing native account state was not copied or measured.",
       "Experimental launch outside the production session action.",
@@ -230,8 +249,10 @@ try {
         "No public CA, remote service, TLS version or mutual TLS was measured."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
-  if (cloneSummary && (!cloneSummary.originalConfigUnchanged || cloneSummary.folderSyncScheduled ||
+  if (cloneSummary && (!cloneSummary.originalConfigUnchanged || (!nativeSync && cloneSummary.folderSyncScheduled) ||
       !report.originalProcessesStillPresent)) throw new Error("Nextcloud account copy isolation check failed");
+  if (nativeSync && (!syncSummary?.localUploadObserved || !syncSummary.remoteDownloadObserved))
+    throw new Error("Native sync did not prove both disposable file directions");
   if (assertSecrets) {
     const summary = report.emptySecretService as { searches: number; secretsReturned: number } | null;
     const selected = report.oneSecretService as { originalItemsRead: number; privateItems: number; secretsReturned: number } | null;
@@ -260,7 +281,19 @@ try {
     if (tunnel.exitCode === null) tunnel.kill("SIGTERM");
     await tunnel.exited;
   }
+  let cleanupFailure: unknown;
+  try {
+    if (syncPrepared && await Bun.file(join(root, "native-sync-receipt.json")).exists()) {
+      syncSummary = await syncControl("cleanup");
+      await writeFile(join(output, "sync-cleanup.json"), JSON.stringify(syncSummary, null, 2), { mode: 0o600 });
+      console.log(JSON.stringify({ nativeSyncCleanup: syncSummary }));
+    }
+  } catch (error) { cleanupFailure = error; }
   await sessions.close();
   fixture?.stop(true);
+  if (cleanupFailure) {
+    console.error(JSON.stringify({ cleanupFailed: true, recoveryRoot: root }));
+    throw cleanupFailure;
+  }
   await rm(root, { recursive: true, force: true });
 }

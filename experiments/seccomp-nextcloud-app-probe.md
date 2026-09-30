@@ -7,8 +7,10 @@ A later offline arm copied one existing account configuration without its sync
 folders and visibly restored the cached account identity. A subsequent private
 service delivered one existing unlocked account credential to the client.
 An exact-CONNECT tunnel subsequently let the client authenticate and display
-existing account activities. Sync and conversations remain unproved. This is
-not full current-account parity or production integration.
+existing account activities. A later native-sync arm uploaded and downloaded
+two generated files in one disposable folder. General sync parity and
+conversations remain unproved. This is not full current-account parity or
+production integration.
 
 ## Setup and independent control
 
@@ -408,6 +410,72 @@ other virtual hosts on the same address. Payloads are not filtered; this is
 functional evidence for the installed client, not a complete network sandbox.
 Multiple DNS addresses, IPv6, redirects to a different authority, all failure
 paths and production integration remain unmeasured.
+
+## Disposable native sync with the existing account
+
+The [native sync control](nextcloud-native-sync-control.py) provisions a fresh
+UUID-named collection using MKCOL and requires HTTP 201 before treating it as
+owned. It seeds one known server file and one known local file. It adds one
+folder definition only to the prepared private Accounts section, with a local
+directory inside the disposable run root, a private journal and virtual files
+disabled. The original seven folder settings remain removed. Fields follow
+[FolderDefinition at v34.0.3](https://github.com/nextcloud/desktop/blob/v34.0.3/src/gui/folder.cpp).
+The original client config is not modified.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_ONE_SECRET=1 ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL=1 ORBIT_NEXTCLOUD_NATIVE_SYNC=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+```
+
+The installed Nextcloud client connected on the owned display and scheduled its
+fresh folder. A trusted host-side oracle read back `client-seed.txt` from that
+new collection and matched the exact generated local payload. The oracle found
+`server-seed.txt` in the new private local folder and matched the exact generated
+remote payload. The oracle performs no upload of `client-seed.txt` and no local
+write of `server-seed.txt`, so those directions require the native client. Both
+booleans were true. The first successful run registered fourteen TCP attempts and the tunnel
+accepted seven connections without an aggregate I/O failure. The app required
+a scoped stop, exit 128, with no broker failure. The original configuration's
+content and inode remained unchanged and its original process stayed present.
+
+After stopping the private client and its credential and tunnel sidecars, the
+oracle deleted its owned collection and confirmed HTTP 404 with PROPFIND. Its
+receipt reported `cleaned: true`. The private local folder, config, journal and
+receipt were removed with scoped cleanup. Only sanitized `report.json` and
+`sync-cleanup.json`, plus sanitized recovery evidence for the unsuccessful repeat, are saved in
+`output/seccomp-nextcloud-account-clone-one-secret-tunnel-native-sync-2026-09-30/`.
+The report is a pre-cleanup snapshot, so its `cleaned: false` field is superseded
+by the separate cleanup evidence.
+
+The oracle uses the same exact one-item selection and refuses locked or
+ambiguous entries. It loads the credential once per prepare, observe and cleanup
+action, three control loads total, plus the credential sidecar's one load. Thus
+four loads of one original item occurred in this arm, not one total load. The
+controller disables dumps before lookup, blocks HTTP redirects and writes no
+credential value. Credential reuse is measured only for this configured
+account. A pending creation receipt is saved before MKCOL; an uncertain response
+requires an absence check instead of claiming cleanup. If PROPFIND returns 404,
+the unknown-creation arm records that no live collection remains without issuing
+DELETE. Any other result requires recovery. If remote cleanup fails, the
+private display is still closed and the recovery root is retained. These paths
+were exercised in a repeat run: a five-second timeout left creation
+unacknowledged; automatic cleanup failed and retained its root. A later limited
+request with a fifteen-second timeout confirmed 404, saved sanitized recovery
+evidence and removed the private recovery root. No sync success was claimed for
+that run. Abrupt-parent-death recovery remains unmeasured.
+The final run with the longer control timeout passed both payload gates and
+remote cleanup again. It registered sixteen TCP attempts, one accepted tunnel
+and seven aggregate I/O failures while still reaching Connected and transferring
+both generated files. These failures are not classified as an upstream outage;
+the positive file evidence does not make the whole network path failure-free.
+
+The harness now requires both payload matches for success in native-sync mode.
+Its no-sync arms still reject a sync scheduling pattern. Type checking and
+`git diff --check` passed. This is measured initial upload and download of small
+generated files in one fresh folder. Edits, deletions propagated by the client,
+conflicts, selective sync, original folder reuse, permissions, devices and
+production session integration remain unmeasured. The host's original client
+may observe and sync this newly created remote test collection under its own
+ordinary policy; that behavior is not controlled by this harness.
 
 ## Limits
 
