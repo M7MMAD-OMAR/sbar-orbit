@@ -3,8 +3,9 @@
 Status on 30 September 2026: the person's Nextcloud account, file list, and
 existing Talk conversation were visible through Orbit's private Chromium
 browser backend. One message to the account's own "Note to self" conversation
-appeared after submission. Persistence after a reload or fresh copy was not
-verified because subsequent Talk loads showed a blank page.
+appeared after submission. A later fresh private copy displayed that same
+message, and it remained after reloading the conversation. Earlier Talk loads
+had shown a blank page, so load reliability remains limited.
 
 `orbit_profiles` reported the installed system Chromium profile as clonable.
 Orbit created a private browser session from a copy with extensions disabled
@@ -27,19 +28,36 @@ with the current time. No other conversation received a message.
 A direct navigation back to Talk after the send displayed only its blank
 loading background. A fresh third Chromium copy authenticated to the
 dashboard, but Talk again displayed a blank page. The session journals
-recorded no blocked Nextcloud origin. These observations do not establish
-whether the message remained after reload, whether Talk supports a completed
-second session on this browser, or whether the service's device features
-work. The first private session, the send session, and the fresh check session
+recorded no blocked Nextcloud origin. At that stage, persistence and repeated
+Talk use were unverified. The first private session, the send session, and the fresh check session
 were stopped. No screenshot containing account content was retained as a
 file.
 
 This is stronger account evidence than the separate Zen website pilot, which
 showed a Nextcloud login form. It proves authenticated browser access to the
 existing file list and one observed Talk send from an independent display. It
-does not prove native Nextcloud Desktop authentication, message persistence
-after restart, or full device parity. The later file test below measures live
+does not prove native Nextcloud Desktop authentication or full device parity.
+The later follow-up below verifies message persistence. The file test measures live
 sync and one small web file write.
+
+## Talk persistence follow-up
+
+Later on the same day, a fresh private Chromium copy opened the Talk app and
+displayed its conversation list. Its navigation action exceeded the 15 second
+deadline, but the subsequent frame showed the loaded UI. Orbit stopped that
+read-only session and created another copy allowing the click action needed
+to open a conversation. Talk loaded there in about 13 seconds. Opening
+"Note to self" displayed the earlier Orbit test message with its original
+timestamp. Reloading that conversation route again displayed the same
+message. No new message was sent. Both private sessions closed, and no frame
+containing conversation content was retained as a file.
+
+This verifies persistence of the one self message across a fresh private
+profile copy and a page reload. The earlier blank loads remain recorded
+failures, and their cause was not identified. The unsupported-browser warning
+was still present. Message attachments, calls, microphone and camera access,
+other conversations, and reliable loading across repeated sessions remain
+unmeasured.
 
 ## Shared file sync in both directions
 
