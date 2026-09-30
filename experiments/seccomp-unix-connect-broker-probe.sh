@@ -11,7 +11,8 @@ pathlib.Path(sys.argv[1]).unlink(missing_ok=True)
 PY
 }
 trap cleanup EXIT
+ulimit -c 0
 
-cc -Wall -Wextra -O2 -o "$probe_bin" \
+cc -Wall -Wextra -O2 -pthread -o "$probe_bin" \
   experiments/seccomp-unix-connect-broker-probe.c
 "$probe_bin" "$@"

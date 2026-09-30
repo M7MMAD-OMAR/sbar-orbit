@@ -21,6 +21,11 @@ bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh strict
 bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh broker-dgram
+bun run scripts/limited.ts timeout 20s bash \
+  experiments/seccomp-unix-connect-broker-probe.sh broker-connected
+# Deliberate negative control, expected exit 1:
+bun run scripts/limited.ts timeout 20s bash \
+  experiments/seccomp-unix-connect-broker-probe.sh strict-connected
 ```
 
 The fixture creates two disposable host UNIX stream sockets and an outer
@@ -142,6 +147,83 @@ The [direct private mount fixture](namespace-unix-peer-credential-probe.md)
 measures one route that preserves client process identity without a brokered
 connection, but it does not isolate every host socket path.
 
+## Bounded connected messages and file descriptors
+
+The `strict-connected` negative control adds a selected stream connection and
+attempts a two-byte, two-vector `sendmsg(2)` containing one `SCM_RIGHTS` pipe
+descriptor. It was run before the connected-message implementation. The
+connection succeeded, but `sendmsg` returned `EACCES`; the server received no
+message or descriptor and the fixture exited 1. It was rerun after the changes
+and still failed as expected. This measures the strict arm's IPC compatibility
+failure rather than treating connection success as a usable IPC route.
+
+The new `broker-connected` arm intercepts `sendmsg` in addition to `connect`
+and `sendto`. After each selected stream connection, it records the kernel
+`SO_COOKIE` of the duplicated connected socket. A later send is admitted only
+when its current duplicated socket has an approved cookie. A descriptor number
+alone is not authority. The broker copies the message header, up to eight
+vectors and 4096 payload bytes into its own memory. It never resumes a syscall
+with inspected child-controlled pointers. Ancillary data is limited to one
+`SCM_RIGHTS` item holding up to four regular-file or pipe descriptors. Each is
+duplicated from the notifying task, validated and closed after the broker send.
+Socket and device descriptor transfers are denied in this arm.
+
+The first filter permits the trusted listener-handoff `sendmsg` on its one
+channel descriptor. A second filter permanently denies `sendmsg` on that
+descriptor number before target operations start. Reusing that descriptor does
+not reopen the handoff exception. This remains trusted fixture startup code,
+not a production application launcher.
+
+Measured final connected output on 30 September 2026 included:
+
+```text
+connected_sendmsg_result=2 connected_sendmsg_errno=0
+oversized_sendmsg_result=-1 oversized_sendmsg_errno=13
+device_rights_result=-1 device_rights_errno=13
+unapproved_pair_result=-1 unapproved_pair_errno=13
+handoff_reuse_result=-1 handoff_reuse_errno=13
+descriptor_reuse_result=-1 descriptor_reuse_errno=13
+thread_connected_sendmsg_result=2
+x32_signal=31
+selected_accepts=4 blocked_accepts=0
+connected_messages=2 connected_rights=2 unexpected_stream_bytes=0
+selected_datagrams=2 blocked_datagrams=0
+probe_exit=0
+```
+
+The selected server received both exact `AB` messages and read the expected
+`K` marker from both passed pipe descriptors, one from the main thread and one
+from a worker thread. It received no trailing payload from the denied cases.
+The nested mount replacement and the three direct blocked datagram sends
+remained denied or pinned to their original selected destinations.
+
+Two additional failures were reproduced before correction. A worker-thread
+connection returned `EACCES` when the broker used a process-only pidfd. The
+connected arm now opens the notifying task with `PIDFD_THREAD` rather than
+guessing its process leader. This requires Linux 6.9 or newer, as documented
+in the [pidfd_open manual](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
+The final worker-thread message and descriptor transfer passed on this host.
+
+An x32-marked `getpid` test was not rejected by the former filters, producing
+`x32_signal=0` and a failing fixture. All fixture filters now reject the x32
+syscall bit explicitly; the same test terminated with `SIGSYS` (31) and passed.
+This test does not establish that an x32 connect bypass worked on this kernel.
+The [seccomp manual](https://man7.org/linux/man-pages/man2/seccomp.2.html)
+explains that x86-64 and x32 share the architecture identifier and need separate
+syscall-bit handling. The runner disables core dumps for this intentional
+signal test. Baseline, naive, strict and broker-dgram arms were also rerun.
+
+This is still not a production isolation policy. Connected sends require zero
+flags and no explicit destination; the map holds at most 32 approved cookies.
+Unapproved socket pairs are denied, so ordinary application-created private
+socket pairs need a separate design. Large messages, other ancillary types,
+socket/device rights and nonblocking send semantics are unsupported. The
+sender credential difference remains. Inherited connected sockets can still
+send through `write` or `writev`; these changes do not close that route. Broker
+blocking, cancellation, concurrent descriptor races, listener failure and
+resource exhaustion need further design and adversarial tests. No personal
+application, account, conversation or profile was launched or changed here.
+
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
 Bubblewrap. It does not establish full pathname UNIX isolation. The baseline
@@ -151,8 +233,9 @@ support abstract sockets, dynamically created private sockets, nonblocking
 semantics, network sockets, or every architecture. The broker's handling of app
 shutdown, PID reuse, thread races, listener failure, descriptor exhaustion,
 and socket replacement needs production design and tests. The
-fixture is limited to x86_64, two selected sockets, two short lived stream
-connections, and two selected datagrams in the new arm. App login, existing
+original fixture is limited to x86_64, two selected sockets, two short lived
+stream connections, and two selected datagrams. The connected arm adds the
+bounded message, descriptor and thread checks above. App login, existing
 sessions, chats, files, and devices were not measured.
 
 The [Linux seccomp documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
