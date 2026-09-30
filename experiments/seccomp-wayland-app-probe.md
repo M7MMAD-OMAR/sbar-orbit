@@ -229,6 +229,11 @@ and bus-data forwards. Type checking and `git diff --check` passed.
 
 ## Limits
 
+The [installed Loupe measurement](seccomp-loupe-app-probe.md) demonstrates why
+the successful small GTK4 image case cannot stand for real application image
+support: Loupe's nested glycin loader fails through this broker, while the
+direct private-display control renders the same generated PNG.
+
 The GTK client is launched by the experimental C program using the owned
 backend environment, not by Orbit's production `session.act` launch action.
 This does not establish the production launch boundary. The transport still

@@ -5,6 +5,7 @@
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <linux/audit.h>
+#include <linux/netlink.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -49,6 +50,7 @@ static unsigned char private_bus_handshakes[32];
 static size_t private_bus_cookie_count;
 static size_t forwarded_bus_credentials;
 static size_t forwarded_bus_data;
+static int broker_metadata_audit;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -725,6 +727,40 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
         } else fprintf(stderr, "pidfd_getfd_errno=%d\n", errno);
       }
     }
+  }
+  if (broker_metadata_audit && response.error) {
+    char comm_path[64], comm[64] = "unknown";
+    snprintf(comm_path, sizeof(comm_path), "/proc/%u/comm", request.pid);
+    FILE *comm_file = fopen(comm_path, "r");
+    if (comm_file) { if (!fgets(comm, sizeof(comm), comm_file)) strcpy(comm, "unknown"); fclose(comm_file); }
+    comm[strcspn(comm, "\n")] = '\0';
+    int duplicate = pidfd >= 0 ? syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0) : -1;
+    int domain = -1, type = -1, protocol = -1, peer_bytes = -1, nl_type = -1, different_netns = -1;
+    if (duplicate >= 0) {
+      socklen_t length = sizeof(int);
+      if (getsockopt(duplicate, SOL_SOCKET, SO_DOMAIN, &domain, &length)) domain = -1;
+      length = sizeof(int);
+      if (getsockopt(duplicate, SOL_SOCKET, SO_TYPE, &type, &length)) type = -1;
+      length = sizeof(int);
+      if (getsockopt(duplicate, SOL_SOCKET, SO_PROTOCOL, &protocol, &length)) protocol = -1;
+      struct sockaddr_un peer = {0}; length = sizeof(peer);
+      if (!getpeername(duplicate, (struct sockaddr *)&peer, &length)) peer_bytes = (int)length;
+      if (domain == AF_NETLINK && request.data.nr == __NR_sendto) {
+        struct nlmsghdr header = {0};
+        if (request.data.args[2] >= sizeof(header) &&
+            copy_child(request.pid, &header, request.data.args[1], sizeof(header))) nl_type = header.nlmsg_type;
+        int reference = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+        uint64_t actual_cookie = 0, reference_cookie = 0;
+        socklen_t actual_length = sizeof(actual_cookie), reference_length = sizeof(reference_cookie);
+        if (reference >= 0 && !getsockopt(duplicate, SOL_SOCKET, SO_NETNS_COOKIE, &actual_cookie, &actual_length) &&
+            !getsockopt(reference, SOL_SOCKET, SO_NETNS_COOKIE, &reference_cookie, &reference_length))
+          different_netns = actual_cookie != reference_cookie;
+        if (reference >= 0) close(reference);
+      }
+      close(duplicate);
+    }
+    fprintf(stderr, "broker_denied syscall=%d fd=%llu comm=%s errno=%d domain=%d type=%d protocol=%d peerBytes=%d nlType=%d differentNetns=%d\n",
+      request.data.nr, (unsigned long long)request.data.args[0], comm, -response.error, domain, type, protocol, peer_bytes, nl_type, different_netns);
   }
   if (pidfd >= 0) close(pidfd);
   if (ioctl(listener, SECCOMP_IOCTL_NOTIF_SEND, &response)) return -1;

@@ -10,6 +10,8 @@ static volatile sig_atomic_t stopping;
 static void stop_probe(int signal_number) { (void)signal_number; stopping = 1; }
 
 int main(int argc, char **argv) {
+  broker_metadata_audit = getenv("ORBIT_PRIVATE_BROKER_AUDIT") &&
+    !strcmp(getenv("ORBIT_PRIVATE_BROKER_AUDIT"), "1");
   if (argc < 4 || strncmp(argv[1], "/tmp/orbit-native-", 18)) return 2;
   char *name = strrchr(argv[1], '/');
   if (!name || strncmp(name + 1, "wayland-", 8) || !name[9] ||
