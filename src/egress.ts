@@ -1,10 +1,9 @@
 import { chmod, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import { createServer, request as httpRequest, type IncomingHttpHeaders, type IncomingMessage } from "node:http";
-import { BlockList, connect as netConnect, isIP, type Socket as NetSocket } from "node:net";
+import { BlockList, connect as netConnect, createServer as createNetServer, isIP, type Server as NetServer, type Socket as NetSocket } from "node:net";
 import { networkInterfaces } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { connect, listen, type Socket, type TCPSocketListener, type UnixSocketListener } from "bun";
 import { OrbitError } from "./errors";
 
 /**
@@ -65,8 +64,7 @@ export function leasedAuthorities(origins: string[]): string[] {
   }))];
 }
 
-type Pending = { buffer: Uint8Array; upstream?: Socket<unknown>; piping: boolean; closed: boolean };
-type RelayPending = { buffer: Uint8Array; peer?: Socket<RelayPending>; closed: boolean };
+type StreamListener = { port: number; stop: (force?: boolean) => void };
 
 function append(left: Uint8Array, right: Uint8Array): Uint8Array {
   const joined = new Uint8Array(left.length + right.length);
@@ -340,168 +338,165 @@ export async function openPublicWebLease(request: PublicWebLeaseRequest): Promis
   } };
 }
 
-function startProxy(path: string, origins: () => string[], onRefused: (authority: string) => void,
-  resolveHost: (hostname: string) => Promise<string[]>): UnixSocketListener<Pending> {
-  const refuse = (client: Socket<Pending>, authority: string) => {
+function trackStream(sockets: Set<NetSocket>, socket: NetSocket): NetSocket {
+  sockets.add(socket);
+  socket.once("close", () => sockets.delete(socket));
+  return socket;
+}
+
+async function bindStreams(server: NetServer, endpoint: string | { host: string; port: number }, sockets: Set<NetSocket>): Promise<StreamListener> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    const ready = () => { server.off("error", reject); resolve(); };
+    if (typeof endpoint === "string") server.listen(endpoint, ready);
+    else server.listen(endpoint.port, endpoint.host, ready);
+  });
+  const address = server.address();
+  let stopped = false;
+  return { port: address && typeof address !== "string" ? address.port : 0, stop: (force = false) => {
+    if (force) for (const socket of sockets) socket.destroy();
+    if (!stopped) { stopped = true; server.close(); }
+  } };
+}
+
+async function startProxy(path: string, origins: () => string[], onRefused: (authority: string) => void,
+  resolveHost: (hostname: string) => Promise<string[]>): Promise<StreamListener> {
+  const sockets = new Set<NetSocket>();
+  const refuse = (client: NetSocket, authority: string) => {
     onRefused(authority);
-    client.write("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-    client.end();
+    client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
   };
-  const pipeTo = (client: Socket<Pending>, host: string, port: number, authority: string,
-    first?: Uint8Array, announce?: string) => {
-    client.data.piping = true;
-    // Resolve on the host once, reject private answers for names other than explicit localhost, and
-    // dial the selected numeric address. A second DNS lookup inside connect would reopen rebinding.
-    // Private intranet names are refused until the policy can authorize them explicitly.
+  const pipeTo = (client: NetSocket, host: string, port: number, authority: string,
+    first: Uint8Array, announce?: string) => {
+    // Pausing the reader keeps bytes in the socket until the checked destination
+    // connects. Stream piping preserves partial writes and propagates backpressure.
+    client.pause();
     void (async () => {
       const name = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
       const addresses = isIP(name) ? [name] : await resolveWithin(name, resolveHost).catch(() => []);
       const candidates = [...new Set(isIP(name) ? [name] : name === "localhost"
         ? addresses.filter(loopbackAddress) : addresses.filter(address => publicAddress(address) && !hostInterfaceAddress(address)))];
       if (!candidates.length) return refuse(client, authority);
-      if (client.data.closed) return;
       const attempt = (index: number): void => {
-        if (client.data.closed) return;
+        if (client.destroyed) return;
         const pinned = candidates[index];
-        if (!pinned) {
-          // Every permitted answer failed to connect. This is a transport failure, not a refusal.
-          client.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-          client.end();
-          return;
-        }
-        let settled = false;
-        const next = () => { if (settled) return; settled = true; attempt(index + 1); };
-        connect<unknown>({
-          hostname: pinned, port,
-          socket: {
-            open(upstream) {
-              if (settled || client.data.upstream) return void upstream.end();
-              settled = true;
-              client.data.upstream = upstream;
-              if (announce) client.write(announce);
-              if (first?.length) upstream.write(first);
-              // Whatever arrived while the connection was being made.
-              if (client.data.buffer.length) { upstream.write(client.data.buffer); client.data.buffer = new Uint8Array(0); }
-            },
-            data: (_upstream, chunk) => { client.write(chunk); },
-            close: () => { client.end(); },
-            error: () => { client.end(); },
-            connectError: next,
-          },
-        }).catch(next);
+        if (!pinned) { client.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"); return; }
+        const upstream = trackStream(sockets, netConnect({ host: pinned, port, allowHalfOpen: true }));
+        let connected = false;
+        upstream.setTimeout(5000, () => upstream.destroy(new Error("Proxy connect deadline")));
+        upstream.once("connect", () => {
+          if (client.destroyed) { upstream.destroy(); return; }
+          connected = true;
+          upstream.setTimeout(0);
+          if (announce) client.write(announce);
+          if (first.length) upstream.write(first);
+          client.pipe(upstream);
+          upstream.pipe(client);
+          client.resume(); upstream.resume();
+        });
+        upstream.once("error", () => { if (!connected) attempt(index + 1); else client.destroy(); });
+        client.once("close", () => upstream.destroy());
       };
       attempt(0);
-    })().catch(() => { if (!client.data.closed) refuse(client, authority); });
+    })().catch(() => { if (!client.destroyed) refuse(client, authority); });
   };
-  return listen<Pending>({
-    unix: path,
-    socket: {
-      open(client) { client.data = { buffer: new Uint8Array(0), piping: false, closed: false }; },
-      data(client, chunk) {
-        if (client.data.piping) {
-          // Past the first request the connection is a tunnel, and its authority was fixed when it
-          // was opened. A second plain HTTP request on the same connection therefore goes to the host
-          // the first one named, which is not where a page asking for somewhere else wanted it.
-          if (client.data.upstream) client.data.upstream.write(chunk);
-          else client.data.buffer = append(client.data.buffer, chunk);
-          return;
-        }
-        client.data.buffer = append(client.data.buffer, chunk);
-        const text = new TextDecoder().decode(client.data.buffer);
-        const headerEnd = text.indexOf("\r\n\r\n");
-        if (headerEnd < 0) {
-          // A request line that never ends is a request that never gets forwarded.
-          if (client.data.buffer.length > 65536) client.end();
-          return;
-        }
-        const headerBlock = text.slice(0, headerEnd + 4);
-        if (/(^|[^\r])\n|\r(?!\n)/.test(headerBlock)) return refuse(client, "(malformed headers)");
-        const [requestLine = ""] = text.split("\r\n");
-        const [method = "", target = ""] = requestLine.split(" ");
-        const allowed = origins();
-        if (method === "CONNECT") {
-          const authority = target.includes(":") ? target : `${target}:443`;
-          client.data.buffer = client.data.buffer.slice(headerEnd + 4);
-          if (!leasedAuthorities(allowed).includes(authority)) return refuse(client, authority);
-          const endpoint = new URL(`http://${authority}/`);
-          return pipeTo(client, endpoint.hostname, Number(endpoint.port || 80), authority,
-            undefined, "HTTP/1.1 200 Connection Established\r\n\r\n");
-        }
-        // Plain HTTP arrives as an absolute URI, which carries the scheme, so here the lease is
-        // checked at the resolution it was written at rather than by authority.
-        let url: URL;
-        try { url = new URL(target); } catch { return refuse(client, "(unparseable)"); }
-        if (url.protocol !== "http:" || url.username || url.password || !allowed.includes(url.origin))
-          return refuse(client, url.host);
-        const headers = text.slice(requestLine.length + 2, headerEnd);
-        if (!matchingHttpHost(headers, url)) return refuse(client, url.host);
-        const request = client.data.buffer.slice(0, headerEnd + 4);
-        client.data.buffer = client.data.buffer.slice(headerEnd + 4);
-        const port = Number(url.port || 80);
-        return pipeTo(client, url.hostname, port, url.host, request);
-      },
-      close(client) { client.data.closed = true; void client.data.upstream?.end(); },
-      error(client) { client.data.closed = true; void client.data.upstream?.end(); client.end(); },
-    },
+  const server = createNetServer({ allowHalfOpen: true }, client => {
+    trackStream(sockets, client);
+    client.on("error", () => client.destroy());
+    let buffer: Uint8Array = new Uint8Array(0);
+    const header = (chunk: Buffer) => {
+      buffer = append(buffer, chunk);
+      const text = new TextDecoder().decode(buffer);
+      const headerEnd = text.indexOf("\r\n\r\n");
+      if (headerEnd < 0) { if (buffer.length > 65536) client.destroy(); return; }
+      client.off("data", header);
+      client.pause();
+      const headerBlock = text.slice(0, headerEnd + 4);
+      if (/(^|[^\r])\n|\r(?!\n)/.test(headerBlock)) return refuse(client, "(malformed headers)");
+      const [requestLine = ""] = text.split("\r\n");
+      const [method = "", target = ""] = requestLine.split(" ");
+      const allowed = origins();
+      if (method === "CONNECT") {
+        const authority = target.includes(":") ? target : `${target}:443`;
+        if (!leasedAuthorities(allowed).includes(authority)) return refuse(client, authority);
+        let endpoint: URL;
+        try { endpoint = new URL(`http://${authority}/`); } catch { return refuse(client, "(unparseable)"); }
+        return pipeTo(client, endpoint.hostname, Number(endpoint.port || 80), authority,
+          buffer.slice(headerEnd + 4), "HTTP/1.1 200 Connection Established\r\n\r\n");
+      }
+      let url: URL;
+      try { url = new URL(target); } catch { return refuse(client, "(unparseable)"); }
+      if (url.protocol !== "http:" || url.username || url.password || !allowed.includes(url.origin)) return refuse(client, url.host);
+      const headers = text.slice(requestLine.length + 2, headerEnd);
+      if (!matchingHttpHost(headers, url)) return refuse(client, url.host);
+      return pipeTo(client, url.hostname, Number(url.port || 80), url.host, buffer);
+    };
+    client.on("data", header);
   });
+  return bindStreams(server, path, sockets);
 }
 
 /**
- * Carry CDP across the namespace boundary without connecting to a name the browser can replace.
- * The host creates the Unix listener first, and a helper inside the namespace connects outward to
- * it after Chrome publishes its debugging port. The host pairs that connection with its local CDP
- * client. Connecting from the host to a socket created in the browser's writable directory allowed
- * a symlink there to redirect the host to an unrelated Unix service.
+ * The host owns both listeners. The browser connects out to the Unix listener,
+ * so replacing a pathname in the private profile cannot redirect the host.
+ * Bounded early buffers preserve the handshake; stream pipes retain write tails.
  */
-function startCdpRelay(socketPath: string): { local: TCPSocketListener<RelayPending>; browser: UnixSocketListener<RelayPending> } {
-  const waitingLocal: Socket<RelayPending>[] = [];
-  const waitingBrowser: Socket<RelayPending>[] = [];
-  const pair = (local: Socket<RelayPending>, browser: Socket<RelayPending>) => {
-    local.data.peer = browser;
-    browser.data.peer = local;
-    if (local.data.buffer.length) browser.write(local.data.buffer);
-    if (browser.data.buffer.length) local.write(browser.data.buffer);
-    local.data.buffer = browser.data.buffer = new Uint8Array(0);
+async function startCdpRelay(socketPath: string): Promise<{ local: StreamListener; browser: StreamListener }> {
+  const waitingLocal: NetSocket[] = [];
+  const waitingBrowser: NetSocket[] = [];
+  const localSockets = new Set<NetSocket>();
+  const browserSockets = new Set<NetSocket>();
+  const peers = new Map<NetSocket, NetSocket>();
+  const earlyBuffers = new Map<NetSocket, Uint8Array>();
+  const earlyReaders = new Map<NetSocket, (chunk: Buffer) => void>();
+  const pair = (local: NetSocket, browser: NetSocket) => {
+    peers.set(local, browser); peers.set(browser, local);
+    for (const socket of [local, browser]) {
+      const reader = earlyReaders.get(socket);
+      if (reader) socket.off("data", reader);
+      const buffer = earlyBuffers.get(socket);
+      if (buffer?.length) peers.get(socket)?.write(buffer);
+      earlyReaders.delete(socket); earlyBuffers.delete(socket);
+    }
+    local.pipe(browser); browser.pipe(local);
+    local.resume(); browser.resume();
   };
-  const opened = (socket: Socket<RelayPending>, mine: Socket<RelayPending>[], other: Socket<RelayPending>[], fromBrowser: boolean) => {
-    socket.data = { buffer: new Uint8Array(0), closed: false };
-    let peer: Socket<RelayPending> | undefined;
+  const opened = (socket: NetSocket, mine: NetSocket[], other: NetSocket[], sockets: Set<NetSocket>, fromBrowser: boolean) => {
+    trackStream(sockets, socket);
+    const early = (chunk: Buffer) => {
+      const buffer = append(earlyBuffers.get(socket) ?? new Uint8Array(0), chunk);
+      if (buffer.length > 65536) socket.destroy();
+      else earlyBuffers.set(socket, buffer);
+    };
+    earlyReaders.set(socket, early);
+    socket.on("data", early);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    socket.once("close", () => {
+      if (timer !== undefined) clearTimeout(timer);
+      earlyReaders.delete(socket); earlyBuffers.delete(socket);
+      const index = mine.indexOf(socket);
+      if (index >= 0) mine.splice(index, 1);
+      const peer = peers.get(socket);
+      peers.delete(socket);
+      if (peer) { peers.delete(peer); peer.end(); }
+    });
+    socket.once("error", () => { peers.get(socket)?.destroy(); socket.destroy(); });
+    let peer: NetSocket | undefined;
     while ((peer = other.shift())) {
-      if (!peer.data.closed) return fromBrowser ? pair(peer, socket) : pair(socket, peer);
+      if (!peer.destroyed) { fromBrowser ? pair(peer, socket) : pair(socket, peer); return; }
     }
-    if (mine.length >= 8) return void socket.end();
+    if (mine.length >= 8) { socket.end(); return; }
     mine.push(socket);
-    if (!fromBrowser) setTimeout(() => { if (!socket.data.peer && !socket.data.closed) socket.end(); }, 10000);
-  };
-  const received = (socket: Socket<RelayPending>, chunk: Uint8Array) => {
-    if (socket.data.peer) socket.data.peer.write(chunk);
-    else {
-      socket.data.buffer = append(socket.data.buffer, chunk);
-      if (socket.data.buffer.length > 65536) socket.end();
+    if (!fromBrowser) {
+      timer = setTimeout(() => { if (!peers.has(socket) && !socket.destroyed) socket.end(); }, 10000);
+      timer.unref();
     }
   };
-  const closed = (socket: Socket<RelayPending>, queue: Socket<RelayPending>[]) => {
-    if (socket.data.closed) return;
-    socket.data.closed = true;
-    const index = queue.indexOf(socket);
-    if (index >= 0) queue.splice(index, 1);
-    const peer = socket.data.peer;
-    socket.data.peer = undefined;
-    if (peer && !peer.data.closed) { peer.data.peer = undefined; peer.end(); }
-  };
-  const browser = listen<RelayPending>({ unix: socketPath, socket: {
-    open: socket => opened(socket, waitingBrowser, waitingLocal, true),
-    data: received,
-    close: socket => closed(socket, waitingBrowser),
-    error: socket => { closed(socket, waitingBrowser); socket.end(); },
-  } });
+  const browserServer = createNetServer({ allowHalfOpen: true }, socket => opened(socket, waitingBrowser, waitingLocal, browserSockets, true));
+  const browser = await bindStreams(browserServer, socketPath, browserSockets);
   try {
-    const local = listen<RelayPending>({ hostname: "127.0.0.1", port: 0, socket: {
-      open: socket => opened(socket, waitingLocal, waitingBrowser, false),
-      data: received,
-      close: socket => closed(socket, waitingLocal),
-      error: socket => { closed(socket, waitingLocal); socket.end(); },
-    } });
+    const localServer = createNetServer({ allowHalfOpen: true }, socket => opened(socket, waitingLocal, waitingBrowser, localSockets, false));
+    const local = await bindStreams(localServer, { host: "127.0.0.1", port: 0 }, localSockets);
     return { local, browser };
   } catch (error) { browser.stop(true); throw error; }
 }
@@ -655,12 +650,12 @@ export async function openEgressLease(request: EgressLeaseRequest & { confinable
   const cdpSocket = join(request.directory, "cdp.sock");
   const wrapperDirectory = `${request.directory}-host`;
   const refused: string[] = [];
-  let proxy: UnixSocketListener<Pending> | undefined;
-  let relay: ReturnType<typeof startCdpRelay> | undefined;
+  let proxy: StreamListener | undefined;
+  let relay: Awaited<ReturnType<typeof startCdpRelay>> | undefined;
   try {
-    proxy = startProxy(proxySocket, request.origins, authority => { if (!refused.includes(authority)) refused.push(authority); },
+    proxy = await startProxy(proxySocket, request.origins, authority => { if (!refused.includes(authority)) refused.push(authority); },
       request.resolveHost ?? systemResolveHost);
-    relay = startCdpRelay(cdpSocket);
+    relay = await startCdpRelay(cdpSocket);
     await chmod(proxySocket, 0o600);
     await chmod(cdpSocket, 0o600);
     const wrapper = await writeWrapper(request.directory, request.executable, request.profile, proxySocket, cdpSocket, request.sessionBus);
