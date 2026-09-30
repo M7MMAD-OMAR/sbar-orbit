@@ -743,6 +743,40 @@ done:
   close(duplicate);
 }
 
+struct bounded_connect_request {
+  int fd, result, error;
+  struct sockaddr_un address;
+};
+
+static void *connect_worker(void *argument) {
+  struct bounded_connect_request *request = argument;
+  request->result = connect(request->fd, (struct sockaddr *)&request->address, sizeof(request->address));
+  request->error = request->result < 0 ? errno : 0;
+  return NULL;
+}
+
+static int connect_with_deadline(int fd, const struct sockaddr_un *address) {
+  struct bounded_connect_request request = {.fd = fd, .result = -1, .address = *address};
+  struct timespec deadline;
+  if (clock_gettime(CLOCK_MONOTONIC, &deadline)) return -1;
+  deadline.tv_nsec += 100000000;
+  if (deadline.tv_nsec >= 1000000000) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000; }
+  pthread_t worker;
+  int error = pthread_create(&worker, NULL, connect_worker, &request);
+  if (error) { errno = error; return -1; }
+  error = pthread_clockjoin_np(worker, NULL, CLOCK_MONOTONIC, &deadline);
+  if (error) {
+    // connect is a deferred cancellation point. Join before the stack request
+    // and duplicate FD can be released. Never toggle the shared FD's flags.
+    int cancel_error = pthread_cancel(worker);
+    int join_error = pthread_join(worker, NULL);
+    errno = cancel_error ? cancel_error : join_error ? join_error : error;
+    return -1;
+  }
+  errno = request.error;
+  return request.result;
+}
+
 static int handle_one(int listener, int selected_handle, int selected_dgram_handle,
                       int naive, int broker_datagram, int broker_connected) {
   struct seccomp_notif request = {0};
@@ -845,8 +879,7 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
           struct sockaddr_un broker_addr = {.sun_family = AF_UNIX};
           strcpy(broker_addr.sun_path, resolved);
           if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
-            if (connect(duplicate, (struct sockaddr *)&broker_addr,
-                        sizeof(broker_addr)) == 0) {
+            if (connect_with_deadline(duplicate, &broker_addr) == 0) {
               response.error = 0;
               if (broker_connected) {
                 uint64_t cookie;

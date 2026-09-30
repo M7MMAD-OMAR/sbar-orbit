@@ -232,10 +232,60 @@ again rendered the expected green/blue PNG with exit 0, five private pairs,
 thirteen pair message forwards and no forced stop or broker failure.
 
 The saturation regression directly measures private stream `sendmsg` and plain
-`send` only. Full selected-datagram and netlink queues, selected stream connect
-backlog pressure, user-memory faults and cancellation races remain unmeasured.
-This change is not proof that the entire broker's deadline is bounded, or that
-arbitrary application blocking semantics are preserved.
+`send` only. Full selected-datagram and netlink queues, user-memory faults and
+cancellation races remain unmeasured.
+This change alone is not proof that the entire broker's deadline is bounded,
+or that arbitrary application blocking semantics are preserved. The following
+experiment addresses the previously unmeasured connect backlog case.
+
+## Selected connect backlog pressure
+
+The [connect pressure control](seccomp-connect-pressure-controls.ts) creates
+only a disposable owned selected UNIX listener. Its backlog is one and two
+fixture connections fill the pending queue; a third nonblocking fixture
+connection confirms EAGAIN before the target launch. Against the unfixed source,
+the broker's synchronous duplicated-FD `connect` then stalled. Its target
+remained at `connecting` until the independent 2.5-second watchdog killed the
+owned target process group and broker, exit 137 with no final broker JSON.
+
+```sh
+# Run on the unfixed source to observe the blocking connect regression.
+ORBIT_CONNECT_PRESSURE_CONTROLS=1 ORBIT_CONNECT_PRESSURE_EXPECT_STALL=1 bun run scripts/limited.ts bun run experiments/seccomp-connect-pressure-controls.ts
+# Require timeouts, unchanged FD flags, released workers and later connectivity.
+ORBIT_CONNECT_PRESSURE_CONTROLS=1 bun run scripts/limited.ts bun run experiments/seccomp-connect-pressure-controls.ts
+```
+
+The experimental relay now executes the copied pinned-address connect in one
+broker worker thread and waits with a 100-millisecond monotonic deadline. On
+expiry, it requests deferred cancellation and joins the worker before releasing
+the duplicated FD and stack request. The [GNU C library clocked join interface](https://sourceware.org/glibc/manual/2.41/html_node/Waiting-with-Explicit-Clocks.html)
+supports `CLOCK_MONOTONIC`; [Linux pthread cancellation documentation](https://man7.org/linux/man-pages/man7/pthreads.7.html)
+lists `connect` as a cancellation point. No socket flags or timeouts are changed
+on the application's shared file description. The worker remains in the same
+broker process, preserving the experiment's existing broker PID semantics for
+private bus peer credentials.
+
+The fixed blocking target made eight sequential attempts against the full
+queue. All returned ETIMEDOUT (110) in 100.4 to 101.2 milliseconds, retaining
+blocking FD flags. After each cancellation the broker had one thread; its FD
+count remained five before and after the attempts. The nonblocking target
+returned EAGAIN (11) in approximately 0.42 milliseconds and retained its
+nonblocking flag, also leaving one broker thread and five FDs. Both controls
+then drained the two fixture connections and successfully connected a fresh
+target socket, delivered exact `AB` bytes and exited 0 without the watchdog.
+Installed Loupe again rendered the expected green/blue PNG and exited 0 with
+five approved connections, five created pairs, thirteen pair message forwards,
+no forced stop and no broker failure. The earlier disconnect and send-pressure
+controls passed after the worker change, as did type checking.
+
+The 100-millisecond limit is experimental, not transparent indefinite blocking
+behavior. Deadline expiry racing with successful connection can leave that
+socket connected while returning a timeout and without registering its cookie.
+Only the pinned approved destination can be affected. The final cancellation
+join has no separate hard deadline: the observed local UNIX backlog waits were
+cancellable, but arbitrary kernel waits, user-memory faults and other
+notification operations remain unmeasured. This does not establish a globally
+bounded broker or justify production integration by itself.
 
 ## Verification and limits
 
