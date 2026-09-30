@@ -2,9 +2,8 @@
 
 Status on 30 September 2026: a private Zen copy reached the person's Nextcloud
 server, but it did not have an authenticated website session. No file contents
-or sync operation were measured. A network policy defect was reproduced and
-fixed in source, with a local proxy test. The installed broker has not yet
-been updated to this source revision.
+or sync operation were measured. A network policy defect was reproduced,
+fixed, and checked against a real private Zen window.
 
 The host Nextcloud Desktop client remained active throughout the pilot. Its
 configuration was read only to obtain the server hostname. No password, token,
@@ -26,11 +25,23 @@ lease. Plain HTTP checks the exact origin. HTTPS CONNECT checks the allowed
 host and port before DNS. A session with no named origins cannot launch Zen
 in `public-web` mode. A narrowing of the live policy is read on each proxy
 request. Local tests confirm that another host, another port, and a previously
-allowed host after narrowing return 403 before DNS. This still cannot inspect
-TLS SNI or the encrypted HTTP origin inside an allowed CONNECT tunnel.
+allowed host after narrowing return 403 before DNS. After updating and
+restarting the managed broker, another private Zen copy loaded the Nextcloud
+login page with the same Nextcloud-only policy. Clicking the GitLab button
+then displayed a 403 error instead of the GitLab login form. The host
+Nextcloud client remained active, and the private session closed. The live
+browser result confirms that the revised proxy rejects that navigation. A
+second source change connected native Zen proxy refusals to the session
+journal. After restarting the broker, a third private Zen run returned 403 for
+the same unlisted GitLab host, and `session.journal` listed
+`gl.team.masaar.com:443` among refused authorities. The journal also listed
+several Zen startup services outside the Nextcloud-only policy. This makes
+the boundary visible but may require explicit origins for websites whose
+assets or identity routes use other hosts. The proxy cannot inspect TLS SNI
+or the encrypted HTTP origin inside an allowed CONNECT tunnel.
 
 The account acceptance target remains open. Browser profile copying did not
 reuse the native Nextcloud client's authentication. A second sync client was
-not started against the person's folder. A live test after updating the
-managed broker, plus authenticated file access and coexistence checks, is
-still required before this route can be claimed for Nextcloud.
+not started against the person's folder. Authenticated file access and
+coexistence checks are still required before this route can be claimed for
+Nextcloud.

@@ -94,6 +94,7 @@ test("Zen public web mode mounts only its lease socket and writes proxy preferen
     prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
       { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web", [], () => ["https://example.com"]);
     expect(prepared.zenSnapshot.network).toBe("public-web");
+    expect(prepared.refusedAuthorities()).toEqual([]);
     const proxyMount = prepared.argv.indexOf("/orbit/zen/runtime/lease.sock");
     expect(proxyMount).toBeGreaterThan(0);
     const leaseSocket = prepared.argv[proxyMount - 1]!;

@@ -143,6 +143,7 @@ export class FedoraBackend {
   private listenersNotified = false;
   private cleanupFailures: unknown[] = [];
   private zenLaunchReserved = false;
+  private zenRefusedAuthorities: () => string[] = () => [];
   private prepareZen = prepareZenLaunch;
   // Each entry is a supervisor and the group leader it reported, so a supervisor that dies without
   // reaping still leaves the group identifier that has to be swept.
@@ -150,6 +151,7 @@ export class FedoraBackend {
   private compositorGroup?: number;
   /** The compositor's process, for whoever measures it; the supervisor reports it once the display is up. */
   get compositorPid() { return this.compositorGroup; }
+  refusedAuthorities() { return this.zenRefusedAuthorities(); }
   private device?: ChildProcessWithoutNullStreams;
   // Where the compositor put its socket and display, learned once it is up. Typed as strings
   // rather than read back out of the environment with an assertion at every use.
@@ -520,6 +522,7 @@ export class FedoraBackend {
       child.once("exit", () => { void this.reap(supervised).catch(() => {}); });
       await this.ipc(`[con_id=${mapped}]`, "focus");
       await sleep(500);
+      if ("zenSnapshot" in prepared) this.zenRefusedAuthorities = prepared.refusedAuthorities;
       return { pid: applicationPid, applied: true, selectedFiles,
         ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}),
         ...("accountSnapshot" in prepared ? { profileSnapshot: prepared.accountSnapshot } : {}),

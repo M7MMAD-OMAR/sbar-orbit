@@ -90,6 +90,7 @@ export type PreparedZenLaunch = {
   zenSnapshot: Pick<ZenProfileSnapshot, "files" | "bytes" | "databases" | "recoveryFiles" | "recoveredTabs"> &
     { network: "offline" | "public-web"; hostFiles: "unavailable" | "selected-live";
       sharedFiles?: { hostPath: string; privatePath: string }[] };
+  refusedAuthorities: () => string[];
   release: () => Promise<void>;
 };
 
@@ -226,6 +227,7 @@ export async function prepareZenLaunch(
         network, hostFiles: sharedFiles.length ? "selected-live" : "unavailable",
         ...(sharedFiles.length ? { sharedFiles: sharedFiles.map((hostPath, index) => ({
           hostPath, privatePath: `/orbit/shared/${index + 1}/${basename(hostPath)}` })) } : {}) },
+      refusedAuthorities: () => lease?.refused() ?? [],
       release: async () => {
         const results = await Promise.allSettled([
           lease?.close(), rm(privateDirectory, { recursive: true, force: true }),

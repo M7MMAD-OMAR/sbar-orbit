@@ -612,7 +612,8 @@ export class Sessions {
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
     if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints,
-      egressTier: session.egress.tier, refusedAuthorities: session.egress.refused() };
+      egressTier: session.egress.tier, refusedAuthorities: [...new Set([...session.egress.refused(),
+        ...(session.backend instanceof FedoraBackend ? session.backend.refusedAuthorities() : [])])] };
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {
