@@ -39,6 +39,12 @@ static int connected_rights;
 static int unexpected_stream_bytes;
 static uint64_t approved_cookies[32];
 static size_t approved_cookie_count;
+static volatile sig_atomic_t broker_sigpipe_count;
+
+static void record_sigpipe(int signal_number) {
+  (void)signal_number;
+  broker_sigpipe_count++;
+}
 
 static int send_fd(int channel, int fd) {
   char byte = 'F';
@@ -160,11 +166,11 @@ static int attempt(const char *name, const char *path) {
   return result == 0 ? 0 : errno;
 }
 
-static int send_connected(int handoff_fd, int probe_denials);
+static int send_connected(int handoff_fd, int probe_denials, int send_flags);
 
 static void *thread_attempt(void *unused) {
   (void)unused;
-  int result = send_connected(-1, 0);
+  int result = send_connected(-1, 0, MSG_DONTWAIT | MSG_NOSIGNAL);
   printf("thread_connected_sendmsg_result=%d\n", result);
   fflush(stdout);
   return (void *)(intptr_t)(result == 2 ? 0 : 1);
@@ -198,7 +204,7 @@ static int send_datagram(const char *name, const char *path, int method) {
   return result < 0 ? -send_errno : result;
 }
 
-static int send_connected(int handoff_fd, int probe_denials) {
+static int send_connected(int handoff_fd, int probe_denials, int send_flags) {
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
   strcpy(addr.sun_path, SELECTED_PATH);
@@ -216,8 +222,8 @@ static int send_connected(int handoff_fd, int probe_denials) {
   item->cmsg_len = CMSG_LEN(sizeof(int));
   memcpy(CMSG_DATA(item), &pipe_fds[0], sizeof(int));
   errno = 0;
-  int sent = sendmsg(fd, &msg, 0);
-  printf("connected_sendmsg_result=%d connected_sendmsg_errno=%d\n", sent, errno);
+  int sent = sendmsg(fd, &msg, send_flags);
+  printf("connected_sendmsg_result=%d connected_sendmsg_errno=%d connected_sendmsg_flags=%d\n", sent, errno, send_flags);
   fflush(stdout);
   int denied = 1;
   if (probe_denials) {
@@ -266,9 +272,44 @@ static int send_connected(int handoff_fd, int probe_denials) {
   return denied ? sent : -1;
 }
 
+static int send_disconnected(void) {
+  int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  struct sockaddr_un addr = {.sun_family = AF_UNIX};
+  strcpy(addr.sun_path, SELECTED_PATH);
+  if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr))) ERR("disconnect fixture");
+  if (shutdown(fd, SHUT_WR)) ERR("disconnect shutdown");
+  char byte = 'X';
+  struct iovec io = {&byte, 1};
+  struct msghdr msg = {.msg_iov = &io, .msg_iovlen = 1};
+  errno = 0;
+  int sent = sendmsg(fd, &msg, 0);
+  int send_errno = errno;
+  printf("disconnected_sendmsg_result=%d disconnected_sendmsg_errno=%d\n", sent, send_errno);
+  fflush(stdout);
+  close(fd);
+  return sent == -1 && send_errno == EPIPE && attempt("after_disconnect", SELECTED_PATH) == 0;
+}
+
+static int send_wrong_type(void) {
+  int pair[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) ERR("wrong-type pair");
+  struct sockaddr_un addr = {.sun_family = AF_UNIX};
+  strcpy(addr.sun_path, SELECTED_DGRAM_PATH);
+  errno = 0;
+  int sent = sendto(pair[0], "T", 1, 0, (struct sockaddr *)&addr, sizeof(addr));
+  int send_errno = errno;
+  char byte;
+  int received = recv(pair[1], &byte, 1, MSG_DONTWAIT);
+  printf("wrong_type_sendto_result=%d wrong_type_sendto_errno=%d wrong_type_received=%d\n",
+         sent, send_errno, received);
+  fflush(stdout);
+  close(pair[0]); close(pair[1]);
+  return sent == -1 && send_errno == EACCES && received == -1;
+}
+
 static int child_main(const char *self, int channel, const char *blocked_path,
                       const char *blocked_datagram, int mode) {
-  int broker_connected = mode == 3;
+  int broker_connected = mode == 3 || mode == 5;
   int broker_datagram = mode == 2 || broker_connected;
   int strict = mode != 0;
   int listener = install_connect_filter(broker_datagram, broker_connected, channel);
@@ -286,7 +327,7 @@ static int child_main(const char *self, int channel, const char *blocked_path,
   int via_sendmmsg = send_datagram("blocked_sendmmsg", blocked_datagram, 2);
   int selected_datagram = broker_datagram
     ? send_datagram("selected_sendto", SELECTED_DGRAM_PATH, 0) : 0;
-  int connected = mode == 4 || broker_connected ? send_connected(channel, broker_connected) : 2;
+  int connected = mode == 4 || broker_connected ? send_connected(channel, broker_connected, 0) : 2;
   int threaded = 1;
   if (broker_connected) {
     pthread_t thread;
@@ -294,6 +335,8 @@ static int child_main(const char *self, int channel, const char *blocked_path,
     if (pthread_create(&thread, NULL, thread_attempt, NULL) || pthread_join(thread, &result)) ERR("thread fixture");
     threaded = (intptr_t)result == 0;
   }
+  int disconnected = mode != 5 || send_disconnected();
+  int wrong_type = mode != 5 || send_wrong_type();
   int x32_denied = 1;
   if (broker_connected) {
     pid_t x32 = fork();
@@ -333,6 +376,8 @@ static int child_main(const char *self, int channel, const char *blocked_path,
          && connected == 2
          && x32_denied
          && threaded
+         && disconnected
+         && wrong_type
          && nested_exit == 0 ? 0 : 1;
 }
 
@@ -342,7 +387,7 @@ static int make_server(const char *path) {
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
   strcpy(addr.sun_path, path);
   if (bind(fd, (struct sockaddr *)&addr, sizeof(addr))) ERR("server bind");
-  if (listen(fd, 4)) ERR("server listen");
+  if (listen(fd, 16)) ERR("server listen");
   if (fcntl(fd, F_SETFL, O_NONBLOCK)) ERR("server nonblock");
   return fd;
 }
@@ -434,6 +479,15 @@ static int socket_cookie(int fd, uint64_t *cookie) {
   return !getsockopt(fd, SOL_SOCKET, SO_COOKIE, cookie, &length) && length == sizeof(*cookie);
 }
 
+static int unix_socket_type(int fd, int expected_type) {
+  int domain = 0, type = 0;
+  socklen_t domain_length = sizeof(domain), type_length = sizeof(type);
+  return !getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &domain_length)
+    && domain_length == sizeof(domain) && domain == AF_UNIX
+    && !getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_length)
+    && type_length == sizeof(type) && type == expected_type;
+}
+
 static int approved_socket(int fd) {
   uint64_t cookie;
   if (!socket_cookie(fd, &cookie)) return 0;
@@ -451,7 +505,8 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   int rights[4] = {-1, -1, -1, -1};
   size_t rights_count = 0, total = 0;
   int duplicate = -1;
-  if (request->data.args[2] != 0 ||
+  const uint64_t allowed_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+  if ((request->data.args[2] & ~allowed_flags) ||
       !copy_child(request->pid, &source, request->data.args[1], sizeof(source)) ||
       source.msg_name || source.msg_namelen || !source.msg_iovlen || source.msg_iovlen > 8 ||
       source.msg_controllen > sizeof(control.bytes) ||
@@ -466,7 +521,7 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   }
   if (!total) return;
   duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request->data.args[0], 0);
-  if (duplicate < 0 || !approved_socket(duplicate)) goto done;
+  if (duplicate < 0 || !unix_socket_type(duplicate, SOCK_STREAM) || !approved_socket(duplicate)) goto done;
   struct iovec io = {payload, total};
   struct msghdr copied = {.msg_iov = &io, .msg_iovlen = 1};
   if (source.msg_controllen) {
@@ -493,7 +548,7 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
     memcpy(CMSG_DATA(item), rights, count * sizeof(int));
   }
   if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
-  ssize_t sent = sendmsg(duplicate, &copied, 0);
+  ssize_t sent = sendmsg(duplicate, &copied, (int)request->data.args[2] | MSG_NOSIGNAL);
   if (sent >= 0) { response->error = 0; response->val = sent; }
   else response->error = -errno;
 done:
@@ -537,7 +592,8 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
         snprintf(selected_path, sizeof(selected_path), "/proc/self/fd/%d", selected_dgram_handle);
         struct sockaddr_un selected_addr = {.sun_family = AF_UNIX};
         strcpy(selected_addr.sun_path, selected_path);
-        if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
+        if (unix_socket_type(duplicate, SOCK_DGRAM) &&
+            ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
           ssize_t sent = sendto(duplicate, payload, local_data.iov_len, 0,
                                 (struct sockaddr *)&selected_addr, sizeof(selected_addr));
           if (sent >= 0) { response.error = 0; response.val = sent; }
@@ -608,7 +664,8 @@ int main(int argc, char **argv) {
   int naive = argc == 2 && !strcmp(argv[1], "naive");
   int strict = argc == 2 && !strcmp(argv[1], "strict");
   int strict_connected = argc == 2 && !strcmp(argv[1], "strict-connected");
-  int broker_connected = argc == 2 && !strcmp(argv[1], "broker-connected");
+  int broker_disconnect = argc == 2 && !strcmp(argv[1], "broker-disconnect");
+  int broker_connected = (argc == 2 && !strcmp(argv[1], "broker-connected")) || broker_disconnect;
   int broker_datagram = (argc == 2 && !strcmp(argv[1], "broker-dgram")) || broker_connected;
   int check_connected = strict_connected || broker_connected;
   if (argc != 1 && !naive && !strict && !broker_datagram && !strict_connected) return 2;
@@ -641,6 +698,7 @@ int main(int argc, char **argv) {
     if (broker_datagram) mode_text[0] = '2';
     if (strict_connected) mode_text[0] = '4';
     if (broker_connected) mode_text[0] = '3';
+    if (broker_disconnect) mode_text[0] = '5';
     char *args[] = {"/usr/bin/bwrap", "--bind", "/", "/", "--dev", "/dev",
                     "--proc", "/proc", "--tmpfs", "/tmp", "--dir", "/tmp/orbit-probe",
                     "--bind", selected, SELECTED_PATH,
@@ -653,8 +711,15 @@ int main(int argc, char **argv) {
   int listener = recv_fd(channel[0]);
   close(channel[0]);
   if (listener < 0) ERR("receive listener");
+  // Observe the regression without killing the fixture and leaking its child.
+  // Production correctness requires no signal, not reliance on this observer.
+  if (broker_disconnect) {
+    struct sigaction observer = {.sa_handler = record_sigpipe};
+    if (sigaction(SIGPIPE, &observer, NULL)) ERR("SIGPIPE observer");
+  }
   printf("broker_mode=%s\n", naive ? "naive" : strict || strict_connected ? "pinned-strict"
-         : broker_connected ? "pinned-connected" : broker_datagram ? "pinned-datagram" : "pinned");
+         : broker_disconnect ? "pinned-disconnect" : broker_connected ? "pinned-connected"
+         : broker_datagram ? "pinned-datagram" : "pinned");
   fflush(stdout);
   int status = 0;
   for (;;) {
@@ -676,6 +741,7 @@ int main(int argc, char **argv) {
   printf("selected_stream_broker_pid=%d\n", selected_stream_broker_pid);
   if (check_connected) printf("connected_messages=%d connected_rights=%d unexpected_stream_bytes=%d\n",
                               connected_messages, connected_rights, unexpected_stream_bytes);
+  if (broker_disconnect) printf("broker_sigpipe_count=%d\n", (int)broker_sigpipe_count);
   printf("selected_datagrams=%d blocked_datagrams=%d\n", selected_datagrams, blocked_datagrams);
   if (broker_datagram) printf("selected_dgram_broker_pid=%d\n", selected_dgram_broker_pid);
   close(selected_server);
@@ -690,8 +756,9 @@ int main(int argc, char **argv) {
   unlink(blocked_datagram);
   rmdir(root);
   printf("probe_exit=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : 128);
-  return WIFEXITED(status) && !WEXITSTATUS(status)
-         && selected_count == (naive ? 1 : broker_connected ? 4 : check_connected ? 3 : 2)
+  int passed = WIFEXITED(status) && !WEXITSTATUS(status)
+         && selected_count == (naive ? 1 : broker_disconnect ? 6 : broker_connected ? 4 : check_connected ? 3 : 2)
+         && (!broker_disconnect || broker_sigpipe_count == 0)
          && (!check_connected || (connected_messages == (broker_connected ? 2 : 1)
                                  && connected_rights == (broker_connected ? 2 : 1)
                                  && unexpected_stream_bytes == 0))
@@ -700,4 +767,6 @@ int main(int argc, char **argv) {
          && selected_datagrams == (broker_datagram ? 2 : 0)
          && (!broker_datagram || selected_dgram_broker_pid)
          && blocked_datagrams == (strict || strict_connected || broker_datagram ? 0 : 3) ? 0 : 1;
+  printf("fixture_exit=%d\n", passed);
+  return passed;
 }

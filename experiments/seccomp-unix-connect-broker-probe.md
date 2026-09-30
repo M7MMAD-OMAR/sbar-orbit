@@ -23,6 +23,8 @@ bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh broker-dgram
 bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh broker-connected
+bun run scripts/limited.ts timeout 20s bash \
+  experiments/seccomp-unix-connect-broker-probe.sh broker-disconnect
 # Deliberate negative control, expected exit 1:
 bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh strict-connected
@@ -213,16 +215,74 @@ explains that x86-64 and x32 share the architecture identifier and need separate
 syscall-bit handling. The runner disables core dumps for this intentional
 signal test. Baseline, naive, strict and broker-dgram arms were also rerun.
 
-This is still not a production isolation policy. Connected sends require zero
-flags and no explicit destination; the map holds at most 32 approved cookies.
+The subsequent checks below extend the admitted connected-send flags.
+This is still not a production isolation policy. Connected sends admit only
+`MSG_DONTWAIT` and `MSG_NOSIGNAL` and no explicit destination; the map holds
+at most 32 approved cookies.
 Unapproved socket pairs are denied, so ordinary application-created private
 socket pairs need a separate design. Large messages, other ancillary types,
-socket/device rights and nonblocking send semantics are unsupported. The
+socket/device rights and full nonblocking/congestion semantics are not established. The
 sender credential difference remains. Inherited connected sockets can still
 send through `write` or `writev`; these changes do not close that route. Broker
 blocking, cancellation, concurrent descriptor races, listener failure and
 resource exhaustion need further design and adversarial tests. No personal
 application, account, conversation or profile was launched or changed here.
+
+## Disconnect and per-call flags
+
+The `broker-disconnect` arm creates an approved stream connection, calls
+`shutdown(SHUT_WR)` on that socket, then attempts a copied `sendmsg`. Because
+the duplicate refers to the same socket object, the broker's send encounters
+the shutdown. The fixture installs a broker-only signal observer so the
+baseline can report a SIGPIPE without killing the broker or stranding its
+child. A passing result requires zero signals, not reliance on that observer.
+
+Before correction, the client received `EPIPE` (32), but the broker recorded
+one SIGPIPE. The command exited 1 even though the child's own checks succeeded.
+The broker now adds `MSG_NOSIGNAL` to its copied send, keeping the EPIPE error
+without generating that signal in the broker. The
+[send manual](https://man7.org/linux/man-pages/man2/send.2.html)
+documents the per-call suppression and retained EPIPE result. After correction:
+
+```text
+disconnected_sendmsg_result=-1 disconnected_sendmsg_errno=32
+after_disconnect_result=0 after_disconnect_errno=0
+broker_sigpipe_count=0
+connected_messages=2 connected_rights=2 unexpected_stream_bytes=0
+selected_accepts=6 blocked_accepts=0
+probe_exit=0
+fixture_exit=0
+```
+
+The subsequent approved connection succeeded. No payload reached the shutdown
+connection, and the existing selected message, descriptor, thread, nested
+mount and denied-destination checks still passed. `probe_exit` reports the
+child's status; the added `fixture_exit` reports the complete fixture decision
+and matches the command exit status. This avoids mistaking a healthy child for
+a passing broker check.
+
+The worker-thread fixture was then changed to send with
+`MSG_DONTWAIT | MSG_NOSIGNAL` (16448 on this host). The former zero-flags-only
+policy denied that message and descriptor with EACCES, and the fixture exited
+1. The broker now admits these two flags and forwards `MSG_DONTWAIT` to the
+kernel. The same two-byte message and descriptor transfer then passed. Other
+send flags remain denied. This verifies an uncongested nonblocking send, not
+queue exhaustion, partial writes or blocking behavior under pressure.
+
+A wrong-type check used an unapproved connected UNIX stream socket pair in a
+`sendto` request naming the selected datagram path. Before explicit type
+validation, the kernel rejected it with EISCONN (106), with no byte received.
+This did not demonstrate a successful bypass on this host. The broker now
+requires `AF_UNIX/SOCK_DGRAM` for the explicit datagram route and
+`AF_UNIX/SOCK_STREAM` for the approved connected route. The wrong-type request
+is refused by policy with EACCES (13), again with no byte received. It does not
+depend on the kernel choosing to reject a destination on a connected stream.
+
+Client-side SIGPIPE delivery when the original caller omitted MSG_NOSIGNAL is
+not emulated. Thus the error result is preserved in this check, but complete
+signal semantics are not. Cancellation, listener loss, slow peers and full
+application compatibility remain unmeasured. No application account or
+personal socket was used in these disposable fixtures.
 
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
