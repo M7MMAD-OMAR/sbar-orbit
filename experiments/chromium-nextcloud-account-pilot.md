@@ -37,5 +37,34 @@ file.
 This is stronger account evidence than the separate Zen website pilot, which
 showed a Nextcloud login form. It proves authenticated browser access to the
 existing file list and one observed Talk send from an independent display. It
-does not prove native Nextcloud Desktop authentication, live sync, file writes,
-message persistence after restart, or full device parity.
+does not prove native Nextcloud Desktop authentication, message persistence
+after restart, or full device parity. The later file test below measures live
+sync and one small web file write.
+
+## Shared file sync in both directions
+
+A later pilot used another private Chromium copy while the original Nextcloud
+Desktop client remained active. The client's existing configuration was read
+only to identify its local sync root; it mapped the account root and was not
+paused. No credential or unrelated file content was read. In the private
+Files app, Orbit created a uniquely named blank Markdown document, wrote the
+marker `Orbit private display sync probe. 2026-09-30.`, and saw it in the
+editor. The original client's local sync root contained the same file with
+the exact marker bytes. Orbit then unlocked its own test document, deleted
+that file through the private Files UI, and confirmed the file disappeared
+from the local sync root. The private session closed.
+
+For the reverse direction, a separate temporary text file with a unique name
+was created in the local sync root using exclusive creation. A fresh private
+Chromium copy showed it in the signed-in Files list. Removing that exact
+local test file made the Files search return no result after reload. The
+private session closed. Both temporary filenames were absent locally at the
+end, and the original Nextcloud Desktop process was still running.
+
+These two disposable file paths demonstrate bidirectional propagation
+between the private account browser and the person's original sync client on
+this workstation. They do not establish how concurrent edits to one file are
+resolved, large-file behavior, selective sync of other folders, account token
+refresh, or hardware device access. The Markdown marker was verified in the
+local file. The reverse-direction text file was verified by name in the web
+list, not by opening its content in the web editor.
