@@ -14,6 +14,8 @@ int main(int argc, char **argv) {
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_AUDIT"), "1");
   private_loopback_netlink = getenv("ORBIT_PRIVATE_BROKER_LOOPBACK") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_LOOPBACK"), "1");
+  private_socket_pairs = getenv("ORBIT_PRIVATE_BROKER_PAIRS") &&
+    !strcmp(getenv("ORBIT_PRIVATE_BROKER_PAIRS"), "1");
   if (private_loopback_netlink) {
     int reference = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     socklen_t length = sizeof(broker_netns_cookie);
@@ -68,6 +70,7 @@ int main(int argc, char **argv) {
     close(listener);
     close(channel[1]);
     if (install_strict_send_filter(0, 1, -1)) _exit(125);
+    if (private_socket_pairs && syscall(__NR_close_range, 3u, ~0u, 0)) _exit(125);
     execv(argv[command], &argv[command]);
     _exit(127);
   }
@@ -104,7 +107,8 @@ int main(int argc, char **argv) {
   close(selected);
   if (additional_stream_handle >= 0) close(additional_stream_handle);
   int application_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"forwardedLoopback\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
-         approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, forwarded_loopback, application_exit, failed, (int)stopping);
+  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"forwardedLoopback\":%zu,\"createdPairs\":%zu,\"forwardedPairMessages\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
+         approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, forwarded_loopback,
+         private_pair_cookie_count / 2, forwarded_pair_messages, application_exit, failed, (int)stopping);
   return failed ? 1 : application_exit;
 }

@@ -1,9 +1,10 @@
 # Installed Loupe through the experimental socket broker
 
-Status on 30 September 2026: the installed Loupe window opens through the
-experimental broker, but it cannot load the generated PNG. The direct control
-on a fresh Orbit-owned display loads the same generated image. Brokered image
-viewing is failed, not passed by the application's normal exit.
+Status on 30 September 2026: the baseline broker opens Loupe but fails to load
+the generated PNG. The opt-in loopback and broker-created pair modes together
+now render that one generated PNG, matching the direct private-display control.
+Current application state and production integration remain unproved. The
+stages below retain the failures that established the regression.
 
 The [harness](seccomp-loupe-app-probe.ts) creates a normal Fedora backend session
 and uses only that owned display environment. It checks the private compositor,
@@ -111,7 +112,7 @@ termination, with five approved connections, one bus credential forward and
 five bus data forwards. Artifacts are in
 `output/seccomp-loupe-loopback-2026-09-30/`.
 
-This closes the measured loopback setup failure only. It does not establish
+The loopback-only arm closes the measured loopback setup failure only. It does not establish
 that the FD's namespace is the notifying task's namespace, prove ownership of
 every foreign namespace, or handle arbitrary netlink messages, private socket
 pairs, large messages or application identity. Borrowed foreign namespace FDs,
@@ -119,6 +120,79 @@ namespace transitions and adversarial races remain unmeasured. The route is
 disabled by default and is not deployed to the managed service or personal
 applications. The original synthetic `broker-disconnect` arm still exited 0
 with its existing denial, thread, FD reuse and disconnect controls intact.
+
+## Broker-created private pairs
+
+`ORBIT_LOUPE_BROKER_PAIRS=1` enables `ORBIT_PRIVATE_BROKER_PAIRS=1` in the
+experimental launcher. The filter now notifies `socketpair` calls in this mode.
+The broker creates only protocol-0 UNIX stream or sequenced-packet pairs,
+preserves the requested nonblocking and close-on-exec flags, and injects both
+endpoints through
+[SECCOMP_IOCTL_NOTIF_ADDFD](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html).
+It records both kernel `SO_COOKIE` values. An existing FD number or a generic
+unnamed socket is not sufficient for admission.
+
+Before injection, the broker opens the notifying target's `/proc/<tid>/mem`,
+revalidates the live notification, and checks the output array through that
+handle. It writes the result through the same handle after revalidating again.
+The [proc memory interface](https://man7.org/linux/man-pages/man5/proc_pid_mem.5.html)
+requires ptrace access. The
+[upstream kernel implementation](https://raw.githubusercontent.com/torvalds/linux/v6.19/fs/proc/base.c)
+stores the opened memory context in the file, so these result writes do not
+re-resolve a numeric PID. This is not a proof of transactional cancellation or
+every user-memory mapping semantic.
+
+The target launcher closes all inherited FDs above stderr before executing the
+application in pair mode. The recorded pairs may send copied messages through
+the existing bounded `sendmsg` route and null-destination `send` route. Their
+registered endpoints may be delegated with `SCM_RIGHTS` over another registered
+pair only. Device and other socket rights remain denied. Regular file/pipe
+rights keep the pre-existing policy. The copied limits remain 4096 payload
+bytes, eight iovecs, four rights and the two supported send flags.
+
+The first pair arm allowed streams only. It then found the loader's legitimate
+sequenced-packet creation requests. After admitting that type, the next failure
+was plain pair data; after that route, Loupe's delegation of a registered
+endpoint was still denied. Reports retained in the pair output directory are
+`before-seqpacket.json`, `before-pair-plain-data.json` and
+`before-pair-rights.json`. Those stages all failed the image color check.
+
+```sh
+ORBIT_LOUPE_BROKER_PROBE=1 ORBIT_LOUPE_BROKER_LOOPBACK=1 ORBIT_LOUPE_BROKER_PAIRS=1 ORBIT_LOUPE_BROKER_AUDIT=1 bun run scripts/limited.ts bun run experiments/seccomp-loupe-app-probe.ts
+ORBIT_PAIR_CONTROLS=1 bun run scripts/limited.ts bun run experiments/seccomp-pair-controls.ts
+ORBIT_PAIR_CONTROLS=1 ORBIT_PAIR_UNFIXED_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-pair-controls.ts
+```
+
+With all three pieces, installed Loupe visibly rendered the green/blue PNG. The
+frame positions measured RGB (24,179,75) and (25,76,230), matching the control's
+color check. A final run after pinning the result memory handle again passed:
+application exit 0, no forced stop, no broker failure, five approved
+connections, one bus credential forward, five bus data forwards, four loopback
+forwards, five created pairs and thirteen pair message forwards. Artifacts are
+in `output/seccomp-loupe-loopback-pairs-2026-09-30/`. The loader's nested sandbox
+was retained; no image-loader sandbox was disabled.
+
+The [pair controls](seccomp-pair-controls.ts) proved exact stream bytes `AB`,
+plain bytes `G`, separate sequenced-packet messages `CD`/`EF`, and delegation
+bytes `FZ`. Nonblocking and close-on-exec flags were preserved. Oversized data,
+unsupported send flags, device rights, unregistered socket rights, a reused FD
+number and datagram creation were denied with EACCES. The receiver got EAGAIN
+instead of any rejected payload. An invalid output array returned EFAULT before
+creation. The bounded registry accepted 128 pairs total, including 125 closed
+extra pairs after the first three, and rejected the next creation. Closing a
+pair does not reclaim that session's registration slot. The unfixed control
+leaves pair mode off: its initial `sendmsg` fails with EACCES and zero registered
+pairs. The original synthetic `broker-disconnect` arm still passed unchanged.
+
+The pairs are created in the broker's socket namespace and carry its peer
+credentials, not the original target's identity. Injection of two descriptors
+and writing the result array is not atomic; partial failure, interruption,
+read-only/mutating output mappings and resource-pressure recovery remain
+unmeasured. Cancellation can leave an injected private FD even when the call
+fails. Registry lifetime, larger messages, other pair types and complete kernel
+ABI parity are unsupported. The mode is disabled by default and remains outside
+production. These limits prevent claiming arbitrary application compatibility
+or full isolation from the successful one-image measurement.
 
 ## Verification and limits
 

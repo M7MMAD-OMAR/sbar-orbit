@@ -56,6 +56,10 @@ static int broker_metadata_audit;
 static int private_loopback_netlink;
 static uint64_t broker_netns_cookie;
 static size_t forwarded_loopback;
+static int private_socket_pairs;
+static uint64_t private_pair_cookies[256];
+static size_t private_pair_cookie_count;
+static size_t forwarded_pair_messages;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -107,6 +111,8 @@ static int install_connect_filter(int broker_datagram, int broker_connected, int
   };
   struct sock_filter connected_code[] = {
     NATIVE_SYSCALL,
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, private_socket_pairs ? __NR_socketpair : (unsigned)-1, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_USER_NOTIF),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_connect, 5, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendto, 4, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendmsg, 0, 4),
@@ -539,6 +545,49 @@ static int private_bus_credential_slot(int fd, pid_t tid, struct ucred *credenti
   return (int)slot;
 }
 
+static int broker_created_pair(int fd) {
+  uint64_t cookie;
+  if (!private_socket_pairs || !socket_cookie(fd, &cookie)) return 0;
+  for (size_t i = 0; i < private_pair_cookie_count; i++) if (private_pair_cookies[i] == cookie) return 1;
+  return 0;
+}
+
+static void create_private_pair(int listener, struct seccomp_notif *request,
+                                struct seccomp_notif_resp *response) {
+  int type = (int)request->data.args[1], original[2], remote_fds[2];
+  int base_type = type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK);
+  if (request->data.args[0] != AF_UNIX || request->data.args[2] ||
+      (base_type != SOCK_STREAM && base_type != SOCK_SEQPACKET) || private_pair_cookie_count > 254) return;
+  // Pin the target memory handle, then revalidate the notification before any
+  // writes. Numeric PID reuse cannot retarget this already-open memory handle.
+  char memory_path[64];
+  snprintf(memory_path, sizeof(memory_path), "/proc/%u/mem", request->pid);
+  int memory = open(memory_path, O_RDWR | O_CLOEXEC);
+  off_t offset = (off_t)request->data.args[3];
+  if (memory < 0) { response->error = -errno; return; }
+  if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id) ||
+      pread(memory, original, sizeof(original), offset) != sizeof(original) ||
+      pwrite(memory, original, sizeof(original), offset) != sizeof(original)) {
+    response->error = -EFAULT; close(memory); return;
+  }
+  int pair[2]; uint64_t cookies[2];
+  if (socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair)) { response->error = -errno; close(memory); return; }
+  if (!socket_cookie(pair[0], &cookies[0]) || !socket_cookie(pair[1], &cookies[1])) goto done;
+  for (size_t i = 0; i < 2; i++) {
+    struct seccomp_notif_addfd addition = {.id = request->id, .srcfd = (unsigned int)pair[i],
+      .newfd_flags = (type & SOCK_CLOEXEC) ? O_CLOEXEC : 0};
+    remote_fds[i] = ioctl(listener, SECCOMP_IOCTL_NOTIF_ADDFD, &addition);
+    if (remote_fds[i] < 0) { response->error = -errno; goto done; }
+  }
+  if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id) ||
+      pwrite(memory, remote_fds, sizeof(remote_fds), offset) != sizeof(remote_fds)) { response->error = -EFAULT; goto done; }
+  private_pair_cookies[private_pair_cookie_count++] = cookies[0];
+  private_pair_cookies[private_pair_cookie_count++] = cookies[1];
+  response->error = 0; response->val = 0;
+done:
+  close(pair[0]); close(pair[1]); close(memory);
+}
+
 static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *request,
                                 struct seccomp_notif_resp *response) {
   struct msghdr source = {0};
@@ -550,6 +599,10 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   int duplicate = -1;
   int credential_slot = -1;
   const uint64_t allowed_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+  if (broker_metadata_audit && copy_child(request->pid, &source, request->data.args[1], sizeof(source)))
+    fprintf(stderr, "broker_send_shape fd=%llu flags=%llu vectors=%zu controlBytes=%zu named=%d\n",
+      (unsigned long long)request->data.args[0], (unsigned long long)request->data.args[2],
+      source.msg_iovlen, source.msg_controllen, source.msg_name != NULL);
   if ((request->data.args[2] & ~allowed_flags) ||
       !copy_child(request->pid, &source, request->data.args[1], sizeof(source)) ||
       source.msg_name || source.msg_namelen || !source.msg_iovlen || source.msg_iovlen > 8 ||
@@ -558,6 +611,8 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   if (!copy_child(request->pid, vectors, (uintptr_t)source.msg_iov,
                   source.msg_iovlen * sizeof(vectors[0]))) return;
   for (size_t i = 0; i < source.msg_iovlen; i++) {
+    if (broker_metadata_audit && vectors[i].iov_len > sizeof(payload) - total)
+      fprintf(stderr, "broker_send_limit vectorBytes=%zu copiedBytes=%zu\n", vectors[i].iov_len, total);
     if (vectors[i].iov_len > sizeof(payload) - total ||
         (vectors[i].iov_len && !copy_child(request->pid, payload + total,
           (uintptr_t)vectors[i].iov_base, vectors[i].iov_len))) return;
@@ -565,13 +620,16 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   }
   if (!total) return;
   duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request->data.args[0], 0);
-  if (duplicate < 0 || !unix_socket_type(duplicate, SOCK_STREAM) || !approved_socket(duplicate)) goto done;
+  if (duplicate < 0 || (!unix_socket_type(duplicate, SOCK_STREAM) &&
+      !(broker_created_pair(duplicate) && unix_socket_type(duplicate, SOCK_SEQPACKET))) ||
+      (!approved_socket(duplicate) && !broker_created_pair(duplicate))) goto done;
   struct iovec io = {payload, total};
   struct msghdr copied = {.msg_iov = &io, .msg_iovlen = 1};
   if (source.msg_controllen) {
     if (!copy_child(request->pid, control.bytes, (uintptr_t)source.msg_control, source.msg_controllen)) goto done;
     copied.msg_control = control.bytes; copied.msg_controllen = source.msg_controllen;
     struct cmsghdr *item = CMSG_FIRSTHDR(&copied);
+    if (broker_metadata_audit && item) fprintf(stderr, "broker_control_type=%d\n", item->cmsg_type);
     if (!item || item->cmsg_level != SOL_SOCKET || item->cmsg_len < CMSG_LEN(0) ||
         item->cmsg_len > source.msg_controllen || CMSG_NXTHDR(&copied, item)) goto done;
     if (item->cmsg_type == SCM_CREDENTIALS) {
@@ -597,9 +655,12 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
         if (passed < 0) goto done;
         rights[rights_count++] = passed;
         struct stat info;
-        // Regular files (including memfd) and pipes only. Socket and device rights
-        // need a separate policy before this route can be used by real apps.
-        if (fstat(passed, &info) || (!S_ISREG(info.st_mode) && !S_ISFIFO(info.st_mode))) goto done;
+        // Registered private pair endpoints may move over registered pairs only.
+        // Devices and all other socket rights remain outside this experiment.
+        if (fstat(passed, &info)) goto done;
+        if (broker_metadata_audit) fprintf(stderr, "broker_rights_kind=%u\n", (unsigned int)(info.st_mode & S_IFMT));
+        if (!S_ISREG(info.st_mode) && !S_ISFIFO(info.st_mode) &&
+            !(S_ISSOCK(info.st_mode) && broker_created_pair(passed) && broker_created_pair(duplicate))) goto done;
       }
       memcpy(CMSG_DATA(item), rights, count * sizeof(int));
     }
@@ -608,6 +669,7 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   ssize_t sent = sendmsg(duplicate, &copied, (int)request->data.args[2] | MSG_NOSIGNAL);
   if (sent >= 0) {
     response->error = 0; response->val = sent;
+    if (broker_created_pair(duplicate)) forwarded_pair_messages++;
     if (credential_slot >= 0 && sent == 1) {
       private_bus_handshakes[credential_slot] = 1;
       forwarded_bus_credentials++;
@@ -686,26 +748,34 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
   struct seccomp_notif_resp response = {.id = request.id, .error = -EACCES};
   int pidfd = syscall(__NR_pidfd_open, request.pid, broker_connected ? PIDFD_THREAD : 0);
   int live = pidfd >= 0 && ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0;
+  if (live && private_socket_pairs && request.data.nr == __NR_socketpair)
+    create_private_pair(listener, &request, &response);
   if (live && broker_connected && request.data.nr == __NR_sendmsg)
     send_connected_copy(listener, pidfd, &request, &response);
   if (live && private_loopback_netlink && request.data.nr == __NR_sendto)
     send_private_loopback(listener, pidfd, &request, &response);
-  if (live && private_bus_credentials && request.data.nr == __NR_sendto &&
+  if (live && (private_bus_credentials || private_socket_pairs) && request.data.nr == __NR_sendto &&
       !request.data.args[4] && !request.data.args[5] && request.data.args[2] > 0 &&
       request.data.args[2] <= 4096 && !(request.data.args[3] & ~(uint64_t)(MSG_DONTWAIT | MSG_NOSIGNAL))) {
     int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0);
     uint64_t cookie;
-    if (duplicate >= 0 && unix_socket_type(duplicate, SOCK_STREAM) && socket_cookie(duplicate, &cookie)) {
+    if (duplicate >= 0 && (unix_socket_type(duplicate, SOCK_STREAM) ||
+        (broker_created_pair(duplicate) && unix_socket_type(duplicate, SOCK_SEQPACKET))) && socket_cookie(duplicate, &cookie)) {
+      int pair_allowed = broker_created_pair(duplicate), bus_allowed = 0;
       for (size_t slot = 0; slot < private_bus_cookie_count; slot++) {
-        if (cookie != private_bus_cookies[slot] || !private_bus_handshakes[slot]) continue;
+        if (cookie == private_bus_cookies[slot] && private_bus_handshakes[slot]) { bus_allowed = 1; break; }
+      }
+      if (pair_allowed || bus_allowed) {
         char payload[4096];
         if (copy_child(request.pid, payload, request.data.args[1], request.data.args[2]) &&
             ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
           ssize_t sent = send(duplicate, payload, request.data.args[2], (int)request.data.args[3] | MSG_NOSIGNAL);
-          if (sent >= 0) { response.error = 0; response.val = sent; forwarded_bus_data++; }
+          if (sent >= 0) {
+            response.error = 0; response.val = sent;
+            if (pair_allowed) forwarded_pair_messages++; else forwarded_bus_data++;
+          }
           else response.error = -errno;
         }
-        break;
       }
     }
     if (duplicate >= 0) close(duplicate);
@@ -801,8 +871,14 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
     FILE *comm_file = fopen(comm_path, "r");
     if (comm_file) { if (!fgets(comm, sizeof(comm), comm_file)) strcpy(comm, "unknown"); fclose(comm_file); }
     comm[strcspn(comm, "\n")] = '\0';
-    int duplicate = pidfd >= 0 ? syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0) : -1;
+    int duplicate = pidfd >= 0 && request.data.nr != __NR_socketpair
+      ? syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0) : -1;
     int domain = -1, type = -1, protocol = -1, peer_bytes = -1, nl_type = -1, different_netns = -1;
+    if (request.data.nr == __NR_socketpair) {
+      domain = (int)request.data.args[0];
+      type = (int)request.data.args[1] & ~(SOCK_CLOEXEC | SOCK_NONBLOCK);
+      protocol = (int)request.data.args[2];
+    }
     if (duplicate >= 0) {
       socklen_t length = sizeof(int);
       if (getsockopt(duplicate, SOL_SOCKET, SO_DOMAIN, &domain, &length)) domain = -1;

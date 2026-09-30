@@ -11,9 +11,10 @@ const control = process.env.ORBIT_LOUPE_BROKER_CONTROL === "1";
 const details = process.env.ORBIT_LOUPE_BROKER_DETAILS === "1";
 const audit = process.env.ORBIT_LOUPE_BROKER_AUDIT === "1";
 const loopback = process.env.ORBIT_LOUPE_BROKER_LOOPBACK === "1";
+const pairs = process.env.ORBIT_LOUPE_BROKER_PAIRS === "1";
 const root = await mkdtemp("/var/tmp/orbit-loupe-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-loupe-${loopback ? "loopback-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-loupe-${loopback ? "loopback-" : ""}${pairs ? "pairs-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const image = join(root, "orbit-generated-halves.png"), binary = join(root, "broker");
 let client: ReturnType<typeof Bun.spawn> | undefined;
 try {
@@ -41,6 +42,7 @@ surface.write_to_png(sys.argv[1])`, image], { stdout: "pipe", stderr: "pipe" });
   const env: NodeJS.ProcessEnv = { ...(backend as unknown as { env: NodeJS.ProcessEnv }).env, GDK_BACKEND: "wayland" };
   if (audit) env.ORBIT_PRIVATE_BROKER_AUDIT = "1";
   if (loopback) env.ORBIT_PRIVATE_BROKER_LOOPBACK = "1";
+  if (pairs) env.ORBIT_PRIVATE_BROKER_PAIRS = "1";
   const runtime = env.XDG_RUNTIME_DIR, display = env.WAYLAND_DISPLAY;
   if (!runtime?.startsWith("/tmp/orbit-native-") || !display?.match(/^wayland-[0-9]+$/) ||
       env.DBUS_SESSION_BUS_ADDRESS !== `unix:path=${join(runtime, "bus")}` ||
@@ -96,11 +98,12 @@ print(json.dumps({"left":left,"right":right,"matched":left[0]<70 and left[1]>150
   const lastLine = text.trim().split("\n").at(-1);
   const broker: unknown = control || !lastLine ? null : JSON.parse(lastLine);
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/loupe",
-    transport: control ? "direct-control" : "brokered", audit, details, loopback, visible, title, exit, forcedStop, broker,
+    transport: control ? "direct-control" : "brokered", audit, details, loopback, pairs, visible, title, exit, forcedStop, broker,
     renderedColors,
     limits: ["Experimental launch, not the production session action.", "Generated file and disposable application state only.",
       "No current accounts, conversations, personal files or devices were measured.",
-      ...(!control ? ["The brokered private bus reports broker PID, not application PID."] : [])] };
+      ...(!control ? ["The brokered private bus reports broker PID, not application PID."] : []),
+      ...(pairs && !control ? ["Broker-created pairs carry broker peer credentials and socket namespace."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
 } finally {
