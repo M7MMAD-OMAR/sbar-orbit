@@ -1,7 +1,14 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
+
+const test = linuxOnlySuite("native Zen file mounts use Linux mount namespaces and Python helpers");
+
+const namespaces = process.platform === "linux" && !!Bun.which("bwrap") &&
+  Bun.spawnSync(["bwrap", "--ro-bind", "/", "/", "--unshare-user", "/usr/bin/true"],
+    { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
 
 const modulePath = join(dirname(import.meta.dir), "src/native");
 
@@ -52,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='orbit-zen-files-') as root:
   expect(result).toBe("8");
 });
 
-test("Zen exact file mount writes one selected host inode and hides its sibling", () => {
+test.if(namespaces)("Zen exact file mount writes one selected host inode and hides its sibling", () => {
   const result = python(`
 import os, pathlib, subprocess, sys, tempfile
 sys.path.insert(0, sys.argv[1])

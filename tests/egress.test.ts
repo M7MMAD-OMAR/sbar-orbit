@@ -10,7 +10,7 @@ import { Sessions } from "../src/session";
 import type { CloneResult } from "../src/clone";
 import { AccountLease } from "../src/profiles";
 import { expectPrivatePath } from "./private-path";
-import { fixtureRoot } from "./platform-support";
+import { fixtureRoot, needsSymlink } from "./platform-support";
 
 const confinable = (await detectPlatform()).confinedEgress;
 
@@ -232,7 +232,7 @@ test.if(confinable)("plain HTTP Host must match the leased absolute URL", async 
 });
 
 test("public web lease routes two HTTP hosts on one proxy connection without cross-host forwarding", async () => {
-  const root = await fixtureRoot("orbit-public-web-http-");
+  const root = await fixtureRoot("opw-", process.platform === "darwin" ? "/tmp" : undefined);
   const loopback = [127, 0, 0, 1].join(".");
   const seenA: string[] = [], seenB: string[] = [], dialed: string[] = [], resolved: string[] = [];
   let firstRequest = "";
@@ -292,7 +292,7 @@ test("public web lease routes two HTTP hosts on one proxy connection without cro
 });
 
 test("public web CONNECT keeps a delayed response stream open", async () => {
-  const root = await fixtureRoot("orbit-public-web-stream-");
+  const root = await fixtureRoot("opw-", process.platform === "darwin" ? "/tmp" : undefined);
   const loopback = [127, 0, 0, 1].join(".");
   let request = "";
   const target = listen<undefined>({ hostname: loopback, port: 0, socket: {
@@ -338,7 +338,7 @@ test("public web CONNECT keeps a delayed response stream open", async () => {
 });
 
 test("public web refuses an origin outside the session policy before DNS", async () => {
-  const root = await fixtureRoot("orbit-public-web-origin-");
+  const root = await fixtureRoot("opw-", process.platform === "darwin" ? "/tmp" : undefined);
   let resolved = 0;
   let origins = ["https://allowed.example"];
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
@@ -366,7 +366,7 @@ test("public web refuses an origin outside the session policy before DNS", async
 });
 
 test("public web lease refuses local, private, reserved and host interface destinations", async () => {
-  const root = await fixtureRoot("orbit-public-web-private-");
+  const root = await fixtureRoot("opw-", process.platform === "darwin" ? "/tmp" : undefined);
   const loopback = [127, 0, 0, 1].join(".");
   let answer = loopback, dialed = 0;
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
@@ -409,8 +409,8 @@ test("public web lease refuses local, private, reserved and host interface desti
   } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-test("public web lease owns only its generated directory and closes an active CONNECT tunnel", async () => {
-  const root = await fixtureRoot("orbit-public-web-owned-");
+needsSymlink("lease ownership fixture checks a linked parent directory")("public web lease owns only its generated directory and closes an active CONNECT tunnel", async () => {
+  const root = await fixtureRoot("opw-", process.platform === "darwin" ? "/tmp" : undefined);
   const loopback = [127, 0, 0, 1].join(".");
   const existing = join(root, "existing");
   await mkdir(existing);

@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
+const test = linuxOnlySuite("native Codex state snapshots require Linux reflinks and Python helpers");
 
 const snapshotScript = resolve(import.meta.dir, "../src/native/codex_state_snapshot.py");
 

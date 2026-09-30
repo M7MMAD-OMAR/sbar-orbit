@@ -1,7 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { linuxOnlySuite } from "../tests/platform-support";
+import { afterEach, expect } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { preparePrivateNextcloudConfig, privateNextcloudSourceUnchanged } from "./nextcloud-private-config";
+
+const test = linuxOnlySuite("the Nextcloud private configuration probe is confined to disposable Linux paths");
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });

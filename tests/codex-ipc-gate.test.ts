@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { startCodexScopedIpcGate } from "../src/codex-ipc-gate";
+
+const test = linuxOnlySuite("native Codex IPC belongs to the Linux private display");
 
 type Message = Record<string, unknown>;
 const THREAD = "550e8400-e29b-41d4-a716-446655440000";

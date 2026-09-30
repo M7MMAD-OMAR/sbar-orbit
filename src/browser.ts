@@ -2,7 +2,7 @@ import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type CDPSession, type Page } from "playwright";
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
@@ -242,7 +242,7 @@ export class BrowserBackend {
       const [chooser] = await Promise.all([page.waitForEvent("filechooser"), target.click()]);
       await chooser.setFiles(paths);
     }
-    return { applied: true, via: isFileInput ? "input" : "chooser", files: resolved.map(file => ({ name: file.path.split("/").at(-1) ?? file.path, bytes: file.bytes })) };
+    return { applied: true, via: isFileInput ? "input" : "chooser", files: resolved.map(file => ({ name: basename(file.path), bytes: file.bytes })) };
   }
   private select(tab: number): Page {
     const pages = this.context.pages();

@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { FedoraBackend } from "../src/fedora";
+
+const test = linuxOnlySuite("Fedora private display cleanup has no backend on other platforms");
 
 test("private display close waits for an already running application release", async () => {
   const directory = await mkdtemp("/tmp/orbit-zen-cleanup-");

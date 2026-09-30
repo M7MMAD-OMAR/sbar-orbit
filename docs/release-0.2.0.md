@@ -7,12 +7,17 @@ conversation, file permission and device is incomplete.
 
 ## Included work
 
-- Browser navigation, font capture and file upload corrections.
+- Browser navigation, font capture and file upload corrections, including
+  portable upload file names on Windows.
 - Expanded private desktop keyboard input and preference snapshots.
 - Native application profile, credential and file access admission checks.
 - Explicit authority gates for experimental Codex attachment and owner routing.
 - Regression coverage for private IPC, outbound connection handling, process
   cleanup and application admission failures.
+- CI fixtures now gate Linux native subjects on Linux, retain shorter Unix
+  socket paths on macOS, and probe GI, bubblewrap namespaces and Landlock
+  ABI before requiring runtime-specific integration checks. Socket replacement
+  fixtures retain the old inode so allocator reuse cannot hide replacement.
 
 The source archive includes the stopped research checkpoint and its evidence.
 The registry package does not include the experimental application harnesses.

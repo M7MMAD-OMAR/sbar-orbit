@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect, test as schemaTest } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createServer } from "node:net";
 import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
@@ -6,6 +7,8 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseNativeAction } from "../src/fedora";
 import { cleanOrphanCodexSnapshots, prepareCodexLaunch } from "../src/native-codex";
+
+const test = linuxOnlySuite("native Codex account and project preparation is supported only on Linux");
 
 const fixtureAccess = `header.${Buffer.from(JSON.stringify({ exp: 4102444800 })).toString("base64url")}.signature`;
 const fixtureAuth = JSON.stringify({
@@ -47,7 +50,7 @@ test("Codex orphan sweep removes only an expired private snapshot", async () => 
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("Codex active launch accepts no snapshot or project arguments", () => {
+schemaTest("Codex active launch accepts no snapshot or project arguments", () => {
   expect(parseNativeAction({ type: "launch-app", app: "codex", profile: "active" })).toEqual(
     { type: "launch-app", app: "codex", profile: "active" });
   expect(() => parseNativeAction({ type: "launch-app", app: "codex", profile: "active", projectPath: "/home/example/project" })).toThrow();

@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { snapshotZenProfile } from "../src/native-zen";
+
+const test = linuxOnlySuite("native Flatpak Zen profile snapshots are a Linux private display feature");
 
 function recovery(tabs: number): Buffer {
   const json = Buffer.from(JSON.stringify({ windows: [{ tabs: Array.from({ length: tabs }, () => ({ entries: [] })) }] }));

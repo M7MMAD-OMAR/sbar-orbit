@@ -1,9 +1,13 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite, needsCommand } from "./platform-support";
+import { expect, test as schemaTest } from "bun:test";
 import { createServer } from "node:net";
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { FedoraBackend, nativeSupervisorSafetyFlags, parseNativeAction } from "../src/fedora";
 import { discoverZenInstallation, prepareZenLaunch } from "../src/native-zen-launch";
+
+const nativeTest = linuxOnlySuite("native Flatpak Zen launch uses Linux bubblewrap and Wayland sockets");
+const test = process.platform !== "linux" ? nativeTest : needsCommand("bwrap", "Zen launch preparation needs bubblewrap");
 
 async function fixture() {
   const root = await mkdtemp("/tmp/orbit-zen-launch-");
@@ -26,7 +30,7 @@ async function fixture() {
   return { root, home, profileBase, profile, deploymentFiles, session, libraries, wayland, server };
 }
 
-test("Zen launch-app accepts no caller paths or executable arguments", () => {
+schemaTest("Zen launch-app accepts no caller paths or executable arguments", () => {
   expect(parseNativeAction({ type: "launch-app", app: "zen", profile: "active" }))
     .toEqual({ type: "launch-app", app: "zen", profile: "active" });
   for (const extra of [
@@ -44,7 +48,7 @@ test("Zen launch-app accepts no caller paths or executable arguments", () => {
     .toEqual([]);
 });
 
-test("Zen shared files require an explicit bounded list of canonical paths", () => {
+schemaTest("Zen shared files require an explicit bounded list of canonical paths", () => {
   expect(parseNativeAction({ type: "launch-app", app: "zen", profile: "active", sharedFiles: ["/tmp/notes.txt"] }))
     .toEqual({ type: "launch-app", app: "zen", profile: "active", sharedFiles: ["/tmp/notes.txt"] });
   for (const sharedFiles of [[], ["relative.txt"], ["/tmp/../secret"], ["/tmp//secret"],

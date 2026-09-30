@@ -7,6 +7,11 @@ import { linuxOnlySuite } from "./platform-support";
 
 const linuxTest = linuxOnlySuite("pathname UNIX socket Landlock policy is a Linux supervisor feature");
 
+const pathnameAbi = process.platform === "linux" ? Bun.spawnSync(["/usr/bin/python3", "-c",
+  "import sys;sys.path.insert(0,'src/native');from landlock_unix import syscall,CREATE_RULESET,CREATE_RULESET_VERSION;print(syscall(CREATE_RULESET,None,0,CREATE_RULESET_VERSION))"],
+  { stdout: "pipe", stderr: "ignore" }) : undefined;
+const pathnameSupported = pathnameAbi?.exitCode === 0 && Number(pathnameAbi.stdout.toString()) >= 9;
+
 async function listen(path: string): Promise<Server> {
   const server = createServer(socket => socket.end());
   await new Promise<void>((resolve, reject) => {
@@ -45,7 +50,7 @@ async function supervised(root: string, sockets: Awaited<ReturnType<typeof ident
   }
 }
 
-linuxTest("supervised app permits one exact socket and ordinary file work", async () => {
+test.if(pathnameSupported)("supervised app permits one exact socket and ordinary file work", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-landlock-test-"));
   const allowed = join(root, "allowed.sock");
   const denied = join(root, "denied.sock");

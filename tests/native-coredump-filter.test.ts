@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
+const test = linuxOnlySuite("the Linux supervisor configures proc coredump filters and prctl");
 
 test("supervisor's zero core filter survives child exec without disabling dumpability", async () => {
   const directory = await mkdtemp("/tmp/orbit-coredump-filter-");

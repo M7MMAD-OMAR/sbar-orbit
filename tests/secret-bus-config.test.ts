@@ -1,5 +1,11 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect, test as bunTest } from "bun:test";
 import { join } from "node:path";
+
+const runtime = process.platform === "linux" && Bun.spawnSync(["/usr/bin/python3", "-c",
+  "import gi;gi.require_version('Secret','1');from gi.repository import Gio,GLib,Secret"],
+  { stdout: "ignore", stderr: "ignore" }).exitCode === 0 && !!Bun.which("dbus-daemon");
+const test = runtime ? linuxOnlySuite("the private Linux secret bus uses Gio and libsecret") : bunTest.skip;
 
 test("the one-item secret bus refuses host service activation", async () => {
   const python = `

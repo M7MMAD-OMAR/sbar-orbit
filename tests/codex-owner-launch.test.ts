@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { formatCodexOwnerDryRun, prepareCodexOwnerLaunch } from "../src/codex-owner-launch";
 import { writeStagedCodexCandidateManifest } from "../src/native-codex-candidate";
+
+const test = linuxOnlySuite("the native Codex owner launcher is a Linux shell and private display feature");
 
 async function fixture() {
   const sandbox = await mkdtemp("/var/tmp/orbit-owner-launch-test-");

@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { chmod, link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { validateStagedCodexCandidate, writeStagedCodexCandidateManifest } from "../src/native-codex-candidate";
+
+const test = linuxOnlySuite("native Codex executable candidates are admitted only to the Linux private display");
 
 async function fixture(location: "temporary" | "durable" = "temporary") {
   const sandbox = location === "durable" ? await mkdtemp("/var/tmp/orbit-codex-home-test-") : undefined;

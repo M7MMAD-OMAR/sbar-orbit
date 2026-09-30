@@ -1,10 +1,13 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { createConnection, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { startCodexReadOnlyGate, type GateNotificationShape,
   type PaginatedPageRequest } from "../src/codex-authority-gate";
+
+const test = linuxOnlySuite("the native Linux Codex owner uses Unix sockets and Linux identity checks");
 
 type Rpc = { id?: string | number; method?: string; params?: Record<string, unknown>;
   result?: Record<string, unknown>; error?: Record<string, unknown> };
@@ -640,6 +643,7 @@ test("Codex gate rejects owner socket replacement after preparation", async () =
   let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
   try {
     gate = await startCodexReadOnlyGate(root, ownerPath, statePath, { ownerIdentity, stateIdentity });
+    await rename(ownerPath, join(root, "retained-owner.sock"));
     owner.stop(true);
     owner = Bun.serve({
       unix: ownerPath,

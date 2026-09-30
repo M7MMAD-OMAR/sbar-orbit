@@ -1,9 +1,12 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect, test as schemaTest } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { parseNativeAction } from "../src/fedora";
+
+const test = linuxOnlySuite("native VS Code profiles belong to the Linux private display");
 
 const selectedExtension = "pkief.material-icon-theme-5.38.1";
 
@@ -38,7 +41,7 @@ function privateFlag(argv: string[], flag: string): string {
   return value;
 }
 
-test("launch-app accepts only a VS Code profile request, not caller launch arguments", () => {
+schemaTest("launch-app accepts only a VS Code profile request, not caller launch arguments", () => {
   const valid = { type: "launch-app" as const, app: "vscode" as const, profile: "default" as const, extensions: [selectedExtension] };
   expect(parseNativeAction(valid)).toEqual(valid);
   for (const extra of [

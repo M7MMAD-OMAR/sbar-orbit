@@ -1,10 +1,13 @@
-import { expect, test } from "bun:test";
+import { linuxOnlySuite } from "./platform-support";
+import { expect } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareCodexAttachedLaunch } from "../src/native-codex-attach";
 import { FedoraBackend, parseNativeAction } from "../src/fedora";
+
+const test = linuxOnlySuite("existing Codex conversation attachment is a Linux private display experiment");
 
 const runtime = `/run/user/${process.getuid?.()}`;
 const enabled = process.platform === "linux" && process.env.XDG_RUNTIME_DIR === runtime &&
