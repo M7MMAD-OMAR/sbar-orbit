@@ -81,6 +81,15 @@ identify which request delayed the earlier Talk page or explain its blank
 loads. Navigation success still requires inspecting the application's state
 before claiming it is ready.
 
+After restarting the managed broker with this change, a fresh read-only
+Chromium clone still returned `DEADLINE_EXCEEDED` for the Talk app in about
+15 seconds. The next frame showed the signed-in Talk home and conversation
+list. The launcher resolves to this checkout and starts its `src/cli.ts`, so
+this was a run of the changed implementation. The session closed. This
+preserves the live failure: changing the image load wait alone did not resolve
+Talk's navigation deadline, and document readiness or a different navigation
+stage still needs investigation.
+
 ## Shared file sync in both directions
 
 A later pilot used another private Chromium copy while the original Nextcloud
