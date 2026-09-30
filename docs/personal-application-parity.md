@@ -39,6 +39,13 @@ The workstation has many installed application entries, including aliases and
 system utilities. This table groups implementation paths, not the person's
 actual usage. An unlisted application is not implicitly supported at parity.
 
+The disposable Ptyxis preference bridge now propagated a font change in each
+direction between two owned application windows, including visible repaint
+and private-window reopening (`experiments/ptyxis-live-preferences.md`). Its
+no-bridge control failed as expected. This does not change the personal route's
+snapshot limit above: the bridge has not been connected to the person's
+database, and concurrent writes, recovery and general preferences are unmeasured.
+
 ## Per-application acceptance gate
 
 1. In a disposable account or profile, record account identity, existing
