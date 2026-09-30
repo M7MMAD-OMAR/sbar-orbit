@@ -68,6 +68,24 @@ static int install_connect_filter(void) {
                  SECCOMP_FILTER_FLAG_NEW_LISTENER, &program);
 }
 
+static int install_strict_send_filter(void) {
+  struct sock_filter code[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendto, 4, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendmsg, 3, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_sendmmsg, 2, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_io_uring_setup, 1, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_io_uring_enter, 0, 1),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EACCES),
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+  struct sock_fprog program = {.len = sizeof(code) / sizeof(code[0]), .filter = code};
+  return syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program);
+}
+
 static int attempt(const char *name, const char *path) {
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0) ERR("socket");
@@ -82,7 +100,7 @@ static int attempt(const char *name, const char *path) {
   return result == 0 ? 0 : errno;
 }
 
-static int send_datagram(const char *name, const char *path, int with_msg) {
+static int send_datagram(const char *name, const char *path, int method) {
   int fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   if (fd < 0) ERR("datagram socket");
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
@@ -90,33 +108,41 @@ static int send_datagram(const char *name, const char *path, int with_msg) {
   char byte = 'x';
   int result;
   errno = 0;
-  if (with_msg) {
+  if (method) {
     struct iovec io = {.iov_base = &byte, .iov_len = 1};
     struct msghdr msg = {.msg_name = &addr, .msg_namelen = sizeof(addr),
                          .msg_iov = &io, .msg_iovlen = 1};
-    result = sendmsg(fd, &msg, 0);
+    if (method == 2) {
+      struct mmsghdr batch = {.msg_hdr = msg};
+      result = sendmmsg(fd, &batch, 1, 0);
+    } else {
+      result = sendmsg(fd, &msg, 0);
+    }
   } else {
     result = sendto(fd, &byte, 1, 0, (struct sockaddr *)&addr, sizeof(addr));
   }
-  printf("%s_result=%d %s_errno=%d\n", name, result, name, errno);
+  int send_errno = errno;
+  printf("%s_result=%d %s_errno=%d\n", name, result, name, send_errno);
   fflush(stdout);
   close(fd);
-  return result;
+  return result < 0 ? -send_errno : result;
 }
 
 static int child_main(const char *self, int channel, const char *blocked_path,
-                      const char *blocked_datagram) {
+                      const char *blocked_datagram, int strict) {
   int listener = install_connect_filter();
   if (listener < 0) ERR("seccomp listener");
   if (send_fd(channel, listener) != 1) ERR("send listener");
   close(listener);
   close(channel);
+  if (strict && install_strict_send_filter()) ERR("strict send filter");
   printf("blocked_visible=%d\n", access(blocked_path, F_OK) == 0);
   fflush(stdout);
   int selected = attempt("selected", SELECTED_PATH);
   int blocked = attempt("blocked", blocked_path);
   int via_sendto = send_datagram("blocked_sendto", blocked_datagram, 0);
   int via_sendmsg = send_datagram("blocked_sendmsg", blocked_datagram, 1);
+  int via_sendmmsg = send_datagram("blocked_sendmmsg", blocked_datagram, 2);
   pid_t nested = fork();
   if (nested < 0) ERR("fork nested");
   if (!nested) {
@@ -131,8 +157,10 @@ static int child_main(const char *self, int channel, const char *blocked_path,
   int nested_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
   printf("nested_exit=%d\n", nested_exit);
   fflush(stdout);
-  return selected == 0 && blocked == EACCES && via_sendto == 1
-         && via_sendmsg == 1 && nested_exit == 0 ? 0 : 1;
+  return selected == 0 && blocked == EACCES
+         && via_sendto == (strict ? -EACCES : 1)
+         && via_sendmsg == (strict ? -EACCES : 1)
+         && via_sendmmsg == (strict ? -EACCES : 1) && nested_exit == 0 ? 0 : 1;
 }
 
 static int make_server(const char *path) {
@@ -229,11 +257,12 @@ int main(int argc, char **argv) {
   if (argc == 2 && !strcmp(argv[1], "nested")) {
     return attempt("nested_selected", SELECTED_PATH) == 0 ? 0 : 1;
   }
-  if (argc == 5 && !strcmp(argv[1], "child")) {
-    return child_main(argv[0], atoi(argv[2]), argv[3], argv[4]);
+  if (argc == 6 && !strcmp(argv[1], "child")) {
+    return child_main(argv[0], atoi(argv[2]), argv[3], argv[4], atoi(argv[5]));
   }
   int naive = argc == 2 && !strcmp(argv[1], "naive");
-  if (argc != 1 && !naive) return 2;
+  int strict = argc == 2 && !strcmp(argv[1], "strict");
+  if (argc != 1 && !naive && !strict) return 2;
   char root[] = "/var/tmp/orbit-seccomp-probe-XXXXXX";
   if (!mkdtemp(root)) ERR("mkdtemp");
   char selected[256], blocked[256], blocked_datagram[256];
@@ -254,10 +283,12 @@ int main(int argc, char **argv) {
     fcntl(channel[1], F_SETFD, 0);
     char fd_text[16];
     snprintf(fd_text, sizeof(fd_text), "%d", channel[1]);
+    char strict_text[] = "0";
+    if (strict) strict_text[0] = '1';
     char *args[] = {"/usr/bin/bwrap", "--bind", "/", "/", "--dev", "/dev",
                     "--proc", "/proc", "--tmpfs", "/tmp", "--dir", "/tmp/orbit-probe",
                     "--bind", selected, SELECTED_PATH, "--", argv[0], "child",
-                    fd_text, blocked, blocked_datagram, NULL};
+                    fd_text, blocked, blocked_datagram, strict_text, NULL};
     execv(args[0], args);
     _exit(127);
   }
@@ -265,7 +296,7 @@ int main(int argc, char **argv) {
   int listener = recv_fd(channel[0]);
   close(channel[0]);
   if (listener < 0) ERR("receive listener");
-  printf("broker_mode=%s\n", naive ? "naive" : "pinned");
+  printf("broker_mode=%s\n", naive ? "naive" : strict ? "pinned-strict" : "pinned");
   fflush(stdout);
   int status = 0;
   for (;;) {
@@ -293,5 +324,5 @@ int main(int argc, char **argv) {
   return WIFEXITED(status) && !WEXITSTATUS(status)
          && selected_count == (naive ? 1 : 2)
          && blocked_count == (naive ? 1 : 0)
-         && blocked_datagrams == 2 ? 0 : 1;
+         && blocked_datagrams == (strict ? 0 : 3) ? 0 : 1;
 }
