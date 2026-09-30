@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { Sessions } from "../src/session";
@@ -11,20 +11,19 @@ const control = process.env.ORBIT_NEXTCLOUD_BROKER_CONTROL === "1";
 const software = process.env.ORBIT_NEXTCLOUD_BROKER_SOFTWARE === "1";
 const network = process.env.ORBIT_NEXTCLOUD_BROKER_NETWORK === "1";
 const tcp = process.env.ORBIT_NEXTCLOUD_BROKER_TCP === "1";
+const tls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS === "1";
+const trustFixture = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_UNTRUSTED !== "1";
+const assertTls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT === "1";
 if (tcp && !network) throw new Error("TCP mode requires the owned network fixture");
-const requests: { method: string; path: string }[] = [];
-const fixture = network ? Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
-  const path = new URL(request.url).pathname;
-  requests.push({ method: request.method, path });
-  if (path === "/status.php") return Response.json({ installed: true, maintenance: false, needsDbUpgrade: false,
-    version: "32.0.0.0", versionstring: "32.0.0", edition: "", productname: "Nextcloud", extendedSupport: false });
-  // Never return a login URL, token or redirect that could launch a browser.
-  return Response.json({ error: "Disposable Orbit discovery fixture. Authentication is disabled." }, { status: 503 });
-} }) : undefined;
+if (tls && !network) throw new Error("TLS mode requires the owned network fixture");
+if (assertTls && (!tls || (!control && !tcp))) throw new Error("TLS assertions require TLS and a reachable direct or TCP arm");
+const requests: { method: string; path: string; encrypted: boolean }[] = [];
+let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${network ? "network-" : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
+const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 async function nextcloudProcesses(): Promise<number[]> {
   const processList = Bun.spawn(["pgrep", "-x", "nextcloud"], { stdout: "pipe", stderr: "pipe" });
   const text = await new Response(processList.stdout).text();
@@ -37,6 +36,25 @@ let client: ReturnType<typeof Bun.spawn> | undefined;
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
+  if (tls) {
+    await mkdir(certificateDirectory, { mode: 0o700 });
+    const generate = Bun.spawn(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-noenc", "-days", "1",
+      "-subj", "/CN=Orbit disposable TLS fixture", "-addext", "subjectAltName=IP:127.0.0.1",
+      "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "extendedKeyUsage=serverAuth",
+      "-keyout", key, "-out", certificate], { stdout: "pipe", stderr: "pipe" });
+    const diagnostic = await new Response(generate.stderr).text();
+    if (await generate.exited !== 0) throw new Error(diagnostic);
+  }
+  if (network) fixture = Bun.serve({ hostname: "127.0.0.1", port: 0,
+    ...(tls ? { tls: { key: Bun.file(key), cert: Bun.file(certificate) } } : {}),
+    fetch(request) {
+      const url = new URL(request.url);
+      requests.push({ method: request.method, path: url.pathname, encrypted: url.protocol === "https:" });
+      if (url.pathname === "/status.php") return Response.json({ installed: true, maintenance: false, needsDbUpgrade: false,
+        version: "32.0.0.0", versionstring: "32.0.0", edition: "", productname: "Nextcloud", extendedSupport: false });
+      // Never return a login URL, token or redirect that could launch a browser.
+      return Response.json({ error: "Disposable Orbit discovery fixture. Authentication is disabled." }, { status: 503 });
+    } });
   if (!await Bun.file("/usr/bin/nextcloud").exists()) throw new Error("Installed Nextcloud is absent");
   const compile = Bun.spawn(["cc", "-Wall", "-Wextra", "-Werror", "-O2", "-pthread", "-o", binary,
     resolve("experiments/seccomp-wayland-app-probe.c")], { stdout: "pipe", stderr: "pipe" });
@@ -82,13 +100,23 @@ try {
       // The observed setup frame locates the empty server field and Log in.
       await backend.control({ type: "click", x: 400, y: 135 });
       await Bun.sleep(250);
-      await backend.control({ type: "text", text: `http://127.0.0.1:${fixture.port}` });
+      await backend.control({ type: "text", text: `${tls ? "https" : "http"}://127.0.0.1:${fixture.port}` });
       await Bun.sleep(250);
       const entered = await backend.observe();
       await writeFile(join(output, "nextcloud-entered.jpg"), Buffer.from(entered.image, "base64"), { mode: 0o600 });
       await backend.control({ type: "click", x: 1205, y: 135 });
       await Bun.sleep(5000);
-      if (control || tcp) {
+      if (tls && trustFixture) {
+        const certificateFrame = await backend.observe();
+        await writeFile(join(output, "nextcloud-certificate.jpg"), Buffer.from(certificateFrame.image, "base64"), { mode: 0o600 });
+        // The observed private certificate dialog identifies our generated
+        // local fixture. Accept this one certificate in disposable app state.
+        await backend.control({ type: "click", x: 659, y: 733 });
+        await Bun.sleep(250);
+        await backend.control({ type: "click", x: 1142, y: 770 });
+        await Bun.sleep(2000);
+      }
+      if (!tls && (control || tcp)) {
         const tlsFrame = await backend.observe();
         await writeFile(join(output, "nextcloud-tls.jpg"), Buffer.from(tlsFrame.image, "base64"), { mode: 0o600 });
         // The observed direct control prompts to retry this credential-free
@@ -110,15 +138,28 @@ try {
   const lastLine = text.trim().split("\n").at(-1);
   const broker: unknown = control || !lastLine ? null : JSON.parse(lastLine);
   const finalProcesses = await nextcloudProcesses();
+  const applicationLog = tls ? await readFile(join(output, "application.log"), "utf8") : "";
+  const certificateRejectionObserved = tls && applicationLog.includes("The certificate is self-signed, and untrusted");
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/nextcloud",
-    transport: control ? "direct-control" : "brokered", software, network, tcp, visible, title, exit, scopedStop, broker,
+    transport: control ? "direct-control" : "brokered", software, network, tcp, tls, trustFixture: tls && trustFixture,
+    visible, title, exit, scopedStop, broker,
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
+    certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
     limits: ["Disposable home and configuration only; existing native account state was not copied or measured.",
       "Experimental launch outside the production session action.", "No personal sync folders or credentials were read.",
-      "Window presence alone does not prove functional setup or networking."] };
+      "Window presence alone does not prove functional setup or networking.",
+      ...(tls ? ["TLS fixture uses a generated self-signed certificate; the trusted arm accepts that certificate in disposable app state only.",
+        "No public CA, remote service, TLS version or mutual TLS was measured."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
+  if (assertTls) {
+    const reachable = requests.some(request => request.path === "/status.php") &&
+      requests.some(request => request.method === "POST" && request.path === "/index.php/login/v2") &&
+      requests.every(request => request.encrypted);
+    if (!visible || !report.originalProcessesStillPresent || !certificateRejectionObserved ||
+      (trustFixture ? !reachable : requests.length !== 0)) throw new Error("Nextcloud TLS certificate control failed");
+  }
 } finally {
   if (client && client.exitCode === null) { client.kill("SIGTERM"); await client.exited; }
   await sessions.close();

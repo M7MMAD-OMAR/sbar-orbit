@@ -114,11 +114,71 @@ controls and original `broker-disconnect` fixture passed. Type checking and
 `git diff --check` passed. No full production-suite claim is made for this
 experimental change.
 
+## TLS fixture and certificate rejection
+
+The next arm runs the same owned discovery fixture with TLS. The harness
+generates a one-day RSA certificate and key inside its disposable private
+directory, with an IP subject alternative name for `127.0.0.1`. Bun's TLS server
+uses that certificate on its still-bound ephemeral port. No system certificate
+store, original application configuration or real account is changed; the
+generated private key is removed with the temporary directory and is not
+retained as an artifact.
+
+An initial direct trial set process-only `SSL_CERT_FILE` and `SSL_CERT_DIR`
+paths, including an OpenSSL-hashed certificate directory. Nextcloud still
+displayed its self-signed-certificate rejection and sent zero HTTP requests.
+[OpenSSL documents those default trust paths](https://docs.openssl.org/3.3/man3/SSL_CTX_load_verify_locations/),
+but the trial did not establish that this Nextcloud setup path used them. That
+attempt is a recorded failure, not evidence of general Qt/OpenSSL behavior or
+a broker fault. The final harness no longer sets those environment variables.
+
+The successful arm instead uses Nextcloud's observed private certificate
+dialog to accept the single generated fixture certificate in its disposable
+application state. This is a certificate exception for the test server, not
+automatic trust for arbitrary certificates or proof of public CA validation.
+The direct control and brokered TCP arm then both recorded the same four
+requests: GET status, GET root, PROPFIND and POST login/v2. Each recorded
+request had the HTTPS scheme and arrived at the TLS-only fixture. No plaintext
+fallback action runs in the TLS arm. The generated login endpoint still returns
+HTTP 503 and never supplies authentication material or a browser URL.
+
+The brokered successful TLS run registered six TCP attempts, no copied TCP
+send forwards, five private UNIX connections and one bus credential forward.
+The client used ordinary writes, as in the earlier HTTP measurement. Its setup
+frame retained the same hash as direct control. The original Nextcloud PID was
+still present and the test instance was stopped only within its owned scope.
+The wrapper reported stopped status 128 and no broker failure. TLS version,
+cipher suite, session resumption and mutual TLS were not recorded.
+
+The negative arm does not accept the certificate. It still registered six TCP
+attempts, but Nextcloud reported that the certificate was self-signed and
+untrusted and the server received zero HTTP requests. This separates certificate
+rejection from a denied network connect. The TLS assertion gate requires that
+rejection to be present in the application log in both arms; the accepted arm
+must additionally deliver HTTPS status and login-flow requests, while the
+unaccepted arm must deliver no request. Both brokered assertion runs passed.
+The direct accepted control was observed separately before adding the gate.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_NETWORK=1 ORBIT_NEXTCLOUD_BROKER_TLS=1 ORBIT_NEXTCLOUD_BROKER_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_NETWORK=1 ORBIT_NEXTCLOUD_BROKER_TCP=1 ORBIT_NEXTCLOUD_BROKER_TLS=1 ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_NETWORK=1 ORBIT_NEXTCLOUD_BROKER_TCP=1 ORBIT_NEXTCLOUD_BROKER_TLS=1 ORBIT_NEXTCLOUD_BROKER_TLS_UNTRUSTED=1 ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+```
+
+Artifacts are in `output/seccomp-nextcloud-network-tls-control-2026-09-30/`,
+`output/seccomp-nextcloud-network-tls-tcp-2026-09-30/` and
+`output/seccomp-nextcloud-network-tls-untrusted-tcp-2026-09-30/`: reports, the
+generated-state UI frames and logs. The successful brokered run also retains
+the certificate dialog frame before accepting the fixture. These files contain
+test state only. Current-account authentication, production CA chains and a
+remote real service remain unmeasured.
+Type checking and `git diff --check` passed after the TLS harness changes.
+
 ## Limits
 
 This route is disabled by default and exists only in the experimental wrapper.
 It is one numeric loopback endpoint, not Internet connectivity, DNS, remote
-TLS, IPv6, general UDP, current-account login, token refresh or native sync.
+service TLS, IPv6, general UDP, current-account login, token refresh or native sync.
 Port reuse after the selected server closes is not pinned like a UNIX O_PATH
 endpoint. The measured harness keeps its server bound until scoped cleanup;
 adversarial port rebinding, borrowed descriptors, concurrent target memory
