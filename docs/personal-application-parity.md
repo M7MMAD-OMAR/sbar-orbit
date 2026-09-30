@@ -1,6 +1,6 @@
 # Personal application parity contract
 
-Status on 29 September 2026: acceptance contract and source audit, not a claim
+Status on 30 September 2026: acceptance contract, source audit and scoped evidence, not a claim
 that Orbit meets it. This document does not launch or change any personal
 application or profile.
 
@@ -27,6 +27,8 @@ the native display alone supplies only input and window separation.
 | Route | Current evidence | Parity limit |
 | --- | --- | --- |
 | Generic Fedora application | Private Wayland display and input; the backend creates private XDG config, data, cache, and state directories (`src/fedora.ts:136-240`). | A generic launch starts with separate application state. A mapped window does not show the person's sessions or drafts. `launch` selects at most 32 files (`src/fedora.ts:33-97`). |
+| Installed Ptyxis | The corrected generic launcher executes commands, accepts private keyboard input, reopens a generated file and retains the inherited Orbit cgroup (`experiments/ptyxis-functional-probe.md`). Six current host settings matched in the normal default shell, and three personal Bash startup settings loaded. A fresh-profile control was rejected; original configuration and history remained unchanged (`experiments/ptyxis-personal-state-probe.md`). | Preferences are an initial copy. Existing tabs, commands, scrollback and live preference changes are not shared. History sharing, containers, SSH sessions, complete file permissions and devices remain unmeasured. |
+| Native Nextcloud experiment | One existing account authenticated through a private Secret Service and exact account CONNECT tunnel. Generated files uploaded and downloaded, then edits and deletions propagated in both directions. The owned remote collection was removed and absence confirmed (`experiments/seccomp-nextcloud-app-probe.md`). | This is an experimental broker path, not the generic production launcher. Original sync folders, conflicts, selective sync and arbitrary file permissions remain unmeasured. The socket broker and CONNECT authority are incomplete isolation boundaries. |
 | Browser profile clone | An owned browser session can start from a copied profile (`src/clone.ts:92-147`). | The copy is a point-in-time branch. It does not by itself share live tabs, bookmarks, or local state changes with the person's running browser. |
 | Zen | The private launcher snapshots the detected profile and starts `--no-remote` on a private display (`src/native-zen-launch.ts:153-241`). | The snapshot is not a live shared profile. Starting Zen against a fresh or wrong profile fails the user's identity and state requirement even if a browser window opens. |
 | VS Code | The launcher copies bounded User settings and selected extensions into a private data directory (`src/native-vscode.ts:28-183`). | That does not establish the person's active sign-in, open editors, extension state, or a shared live application session. |
