@@ -172,10 +172,10 @@ request, one rejected `thread-owner-discovery` request, and two rejected
 following broadcasts. It also blocked owner discovery directed at the
 follower, while the second Desktop still received 13 owner state broadcasts
 for the pinned thread. This is a disposable compatibility and policy proof.
-It is not yet wired into Orbit's attached Desktop launcher. The attached
-window still needs the existing app-server authority gate, and the broader
-UNIX socket and descriptor isolation gaps remain open before any personal
-profile can use this route.
+At that stage it was not wired into Orbit's attached Desktop launcher. The
+following section records that integration in a disposable fixture. The
+broader UNIX socket and descriptor isolation gaps remain open before any
+personal profile can use this route.
 
 An additional run of the existing fixture without `--ipc-probe` passed owner
 account inspection and cold thread activation, then failed while waiting for
@@ -185,3 +185,64 @@ account had previously lacked Work access. This result leaves that older UI
 write path unverified in the current run; it does not weaken the separate
 read-only IPC snapshot measurement above. The failed capture is
 `/var/tmp/codex-private-smoke-u/orbit-client-after-write-first.jpg`.
+
+## Orbit attached window with a scoped IPC gate
+
+The fixture path now uses `src/codex-ipc-gate.ts` in Orbit's attached Desktop
+launcher. The gate is enabled only with a private fixture executable, one
+pinned thread ID, and a disposable owner IPC socket under the fixture root.
+It creates the private window's IPC socket inside its own `CODEX_HOME`, checks
+the owner's socket identity, and permits registration and following state for
+the selected thread on host `local`. It forwards matching state broadcasts,
+including snapshots, and declines owner discovery. It denies client requests
+for writes and other threads. The app-server authority gate remains in place.
+
+The first end-to-end mount probe failed: the private Orbit window could still
+see the fake owner's raw IPC socket under `/var/tmp`, because the desktop mount
+bound `/` before masking `/tmp` and `/home`. The observed visibility was:
+
+```json
+{"ownerIpcVisible":true,"privateIpcVisible":true,"fixtureAppVisible":true}
+```
+
+The fixture mount policy now masks that specific fake IPC directory with a
+private tmpfs. It accepts only the disposable fixture path and checks that
+the directory belongs to the current user, is private, and has no symlink in
+its resolved path. A path in the person's home is rejected. This mask is
+specific to the disposable test. It is not a general UNIX socket isolation
+policy.
+
+Run the attached window test with the fake account and mock model:
+
+```sh
+bun run scripts/limited.ts timeout 170s /usr/bin/python3 \
+  experiments/codex-cold-reply-fixture/run-orbit-switch-codex.py \
+  /var/tmp/codex-private-smoke-u . \
+  --attached-ipc-probe
+```
+
+The test opens the saved synthetic conversation in an Orbit private Wayland
+window, then starts another synthetic turn through the fake owner's
+app-server. It checks that the new user text and response appear in the Orbit
+window. It also probes the raw and gated IPC paths inside the same mount
+policy. No personal window, account, profile, or socket is used.
+
+The completed run returned:
+
+```json
+{"mountVisibility":{"ownerIpcVisible":false,"privateIpcVisible":true,"fixtureAppVisible":true},"ipcGateStats":{"connections":8,"followingForwarded":1,"snapshotsForwarded":3,"clientRequestsDenied":0},"desktopAlive":true,"privateProjectCount":1,"privateAuthFile":false}
+```
+
+The final capture is
+`/var/tmp/codex-private-smoke-u/orbit-client-live-ipcsnapshot.jpg`. It shows
+the saved fixture conversation and the later live user and assistant text in
+the private Orbit window. The gate counter of zero denied requests means the
+Desktop did not attempt a prohibited request in this run; the separate gate
+tests exercised rejection of writes and other threads.
+
+The result establishes a scoped read and live update path for this fixture.
+It does not establish safe access to personal conversations or permission
+equivalence for every app, file, and device. Other reachable host paths,
+inherited descriptors, and the UNIX socket gaps described in the separate
+seccomp experiment remain unresolved. The attached window's composer was
+still absent, so sending a turn from that window remains unverified.

@@ -8,6 +8,7 @@ import type { CodexDisplayEnv } from "./native-codex";
 import { validateStagedCodexCandidate } from "./native-codex-candidate";
 import { seedNativePreferences } from "./native-preferences";
 import { startCodexReadOnlyGate, type PaginatedPageRequest } from "./codex-authority-gate";
+import { startCodexScopedIpcGate } from "./codex-ipc-gate";
 
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
 
@@ -33,6 +34,8 @@ export type PreparedCodexAttachedLaunch = {
   toolkit: "wayland";
   selectedFiles: [];
   privateHome: string;
+  ipcGateStats?: () => { connections: number; followingForwarded: number;
+    snapshotsForwarded: number; clientRequestsDenied: number };
   release: () => Promise<void>;
 };
 
@@ -119,7 +122,8 @@ export async function prepareCodexAttachedLaunch(
   options: { allowFixture?: boolean; candidateManifestSha256?: string;
     fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown>;
     fixtureTurnThreadId?: string;
-    fixtureAllowOrbitTool?: boolean } = { allowFixture: true },
+    fixtureAllowOrbitTool?: boolean;
+    fixtureIpcSocketPath?: string } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
@@ -128,7 +132,8 @@ export async function prepareCodexAttachedLaunch(
   await ownedPrivateDirectory(session);
   const fixturePageReader = options.fixturePaginatedPageReader;
   const fixtureTurnThreadId = options.fixtureTurnThreadId;
-  if ((fixturePageReader || fixtureTurnThreadId !== undefined || options.fixtureAllowOrbitTool) &&
+  if ((fixturePageReader || fixtureTurnThreadId !== undefined || options.fixtureAllowOrbitTool ||
+       options.fixtureIpcSocketPath !== undefined) &&
       (options.allowFixture !== true || !executable.startsWith(session + sep) ||
       options.candidateManifestSha256 !== undefined))
     throw new OrbitError("UNSUPPORTED", "Codex fixture access needs a private fixture executable");
@@ -137,6 +142,12 @@ export async function prepareCodexAttachedLaunch(
   if (fixtureTurnThreadId !== undefined && (!fixturePageReader ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(fixtureTurnThreadId)))
     throw new OrbitError("INVALID_REQUEST", "Codex fixture turn needs one thread and a page reader");
+  if (options.fixtureIpcSocketPath !== undefined && !fixtureTurnThreadId)
+    throw new OrbitError("INVALID_REQUEST", "Codex fixture IPC gate needs one pinned thread");
+  if (options.fixtureIpcSocketPath !== undefined &&
+      !/^\/var\/tmp\/codex-private-smoke-[A-Za-z0-9-]+\/owner-codex-orbit-[0-9a-f]{8}\/ipc\/ipc\.sock$/u
+        .test(options.fixtureIpcSocketPath))
+    throw new OrbitError("UNSUPPORTED", "Codex fixture IPC gate needs a disposable owner socket");
   let verifiedSockets: [CodexAuthoritySocket, CodexAuthoritySocket];
   try {
     const owner = await liveAuthoritySocket(authoritySocketPath);
@@ -149,6 +160,7 @@ export async function prepareCodexAttachedLaunch(
   await attachCapableExecutable(executable, session, options);
   const root = await mkdtemp(join(session, "codex-attach-"));
   let gate: Awaited<ReturnType<typeof startCodexReadOnlyGate>> | undefined;
+  let ipcGate: Awaited<ReturnType<typeof startCodexScopedIpcGate>> | undefined;
   try {
     await chmod(root, 0o700);
     const privateHome = join(root, "home");
@@ -183,6 +195,9 @@ export async function prepareCodexAttachedLaunch(
           { encoding: "utf8", mode: 0o600, flag: "a" });
       } } : {}),
     });
+    if (options.fixtureIpcSocketPath !== undefined && fixtureTurnThreadId)
+      ipcGate = await startCodexScopedIpcGate(privateHome, options.fixtureIpcSocketPath,
+        fixtureTurnThreadId);
     const insideHome = homedir();
     const argv = [
       "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_SESSION_TYPE=wayland",
@@ -204,9 +219,13 @@ export async function prepareCodexAttachedLaunch(
       `--user-data-dir=${join(insideHome, ".config", "Codex")}`,
     ];
     const activeGate = gate;
+    const activeIpcGate = ipcGate;
     return { argv, toolkit: "wayland", selectedFiles: [], privateHome,
-      release: async () => { await activeGate.close(); await rm(root, { recursive: true, force: true }); } };
+      ...(activeIpcGate ? { ipcGateStats: activeIpcGate.stats } : {}),
+      release: async () => { await activeIpcGate?.close(); await activeGate.close();
+        await rm(root, { recursive: true, force: true }); } };
   } catch (error) {
+    await ipcGate?.close();
     await gate?.close();
     await rm(root, { recursive: true, force: true });
     throw error;

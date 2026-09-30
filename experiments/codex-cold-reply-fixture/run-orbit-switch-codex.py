@@ -14,7 +14,8 @@ DIRECT_ONLY='--direct-only' in sys.argv[3:]
 ROUTER_RELAY_PROBE='--dual-window-router-relay-probe' in sys.argv[3:]
 DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:] or ROUTER_RELAY_PROBE
 IPC_GATE_PROBE='--ipc-gate-probe' in sys.argv[3:]
-IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE or IPC_GATE_PROBE
+ATTACHED_IPC_PROBE='--attached-ipc-probe' in sys.argv[3:]
+IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE or IPC_GATE_PROBE or ATTACHED_IPC_PROBE
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
 PERSONAL_HOME=Path.home()
 ORBIT_REPO=Path(sys.argv[2]).resolve()
@@ -413,6 +414,60 @@ async def main():
       await fake_owner
      if synthetic.get('resultType')!='success':
       raise RuntimeError('disposable IPC router did not forward fixture owner discovery')
+     attached_result=None
+     if ATTACHED_IPC_PROBE:
+      page_fixture=ROOT/f'page-fixture-{TAG}'
+      page_fixture.mkdir(mode=0o700)
+      shutil.copytree(OWNER/'sessions',page_fixture/'sessions')
+      for db_name in ('state_5.sqlite','thread_history_1.sqlite'):
+       source=sqlite3.connect(f'file:{OWNER/db_name}?mode=ro',uri=True)
+       target=sqlite3.connect(page_fixture/db_name)
+       source.backup(target);source.close()
+       if db_name=='state_5.sqlite':
+        old=target.execute('SELECT rollout_path FROM threads WHERE id=?',(tid,)).fetchone()[0]
+        selected=Path(old).relative_to(OWNER/'sessions')
+        target.execute('UPDATE threads SET rollout_path=? WHERE id=?',(str(Path('/fixture/sessions')/selected),tid))
+        target.commit()
+       target.execute('PRAGMA journal_mode=DELETE');target.close()
+      args=['bun',str(Path(__file__).with_name('orbit-attached-codex-switch.ts')),
+       str(ROOT),str(APP_SOCKET),str(dirs(2,'config')/'dconf/user'),str(ORBIT_REPO),
+       'ipcsnapshot',str(page_fixture),
+       '/var/tmp/orbit-codex-source-tag/codex-rs/target/debug/deps/codex_thread_store-db4c58d0ebdf7cab',
+       tid,'ipc-snapshot-only']
+      ready_path=ROOT/f'attached-ipc-ready-{TAG}'
+      complete_path=ROOT/f'attached-ipc-turn-complete-{TAG}'
+      attached=subprocess.Popen(args,cwd=str(ORBIT_REPO),stdout=subprocess.PIPE,
+       stderr=subprocess.PIPE,text=True)
+      try:
+       for _ in range(700):
+        if ready_path.is_file():break
+        if attached.poll() is not None:
+         output,error=attached.communicate()
+         raise RuntimeError('attached private IPC fixture exited early: '+error[-3000:])
+        await asyncio.sleep(.1)
+       else:raise RuntimeError('attached private IPC fixture did not open its saved conversation')
+       async with websockets.unix_connect(str(APP_SOCKET),uri='ws://localhost/rpc',compression=None) as live_ws:
+        await rpc(live_ws,80,'initialize',{'clientInfo':{'name':'attached_live_update','title':'Attached live update','version':'1'},'capabilities':{'experimentalApi':True}})
+        await live_ws.send(json.dumps({'method':'initialized'}))
+        new_turn=await rpc(live_ws,81,'turn/start',{'threadId':tid,'input':[{'type':'text','text':'Second window live update'}]})
+        if new_turn.get('error'):raise RuntimeError('attached fixture live turn failed: '+json.dumps(new_turn['error']))
+        for _ in range(100):
+         turns=await rpc(live_ws,82,'thread/turns/list',{'threadId':tid,'limit':10})
+         if len([turn for turn in (turns.get('result') or {}).get('data',[]) if turn.get('status')=='completed'])>=2:break
+         await asyncio.sleep(.1)
+        else:raise RuntimeError('attached fixture live turn did not complete')
+       complete_path.write_text('complete')
+       output,error=await asyncio.to_thread(attached.communicate,timeout=40)
+       if attached.returncode:raise RuntimeError('attached private IPC fixture failed: '+error[-3000:])
+       attached_result=json.loads(output.strip().splitlines()[-1])
+      finally:
+       if attached.poll() is None:
+        attached.terminate()
+        try:await asyncio.to_thread(attached.wait,timeout=5)
+        except subprocess.TimeoutExpired:attached.kill();await asyncio.to_thread(attached.wait)
+      stats=attached_result.get('ipcGateStats') or {}
+      if min(stats.get('connections',0),stats.get('followingForwarded',0),stats.get('snapshotsForwarded',0))<1:
+       raise RuntimeError('attached Desktop did not use scoped IPC gate: '+json.dumps(stats))
      image=ROOT/f'ipc-owner-{TAG}.jpg'
      capture=subprocess.run(['/usr/bin/import','-display',f':{displays[0]}',
        '-window','root','-quality','85',str(image)],
@@ -557,7 +612,7 @@ asyncio.run(main())'''
        'secondLiveUserTextPresent':second_live_user_text,
        'secondLiveAnswerTextPresent':second_live_answer_text,
        'gate':gate_result,'routerRelay':router_relay.summary() if router_relay else None,
-       'routerAttack':router_attack}),flush=True)
+       'routerAttack':router_attack,'attachedIpc':attached_result}),flush=True)
      return
     model_record=ROOT/f'model-tools-{TAG}.json'
     if not model_record.is_file():raise RuntimeError('fixture model was not called')

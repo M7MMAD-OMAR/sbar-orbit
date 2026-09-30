@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
-import { chmod, lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareCodexAttachedLaunch } from "../src/native-codex-attach";
@@ -47,12 +47,14 @@ async function close(server?: Server) {
 test("Codex paginated viewer injection requires a private fixture executable", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
   const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
+  const fixtureRoot = await mkdtemp("/var/tmp/codex-private-smoke-test-");
   const authorityPath = join(socketDirectory, "authority.sock");
   const executable = join(session, "fixture-client");
   const display = { runtimeDirectory: session, waylandDisplay: "wayland-0", libraryPath: "/usr/lib" };
   const reader = async () => ({ data: [], nextCursor: null, backwardsCursor: null });
   let authority: Server | undefined;
   let authorityState: Server | undefined;
+  let ownerIpc: Server | undefined;
   let prepared: Awaited<ReturnType<typeof prepareCodexAttachedLaunch>> | undefined;
   try {
     await writeFile(executable, "fixture", { mode: 0o700 });
@@ -79,6 +81,10 @@ test("Codex paginated viewer injection requires a private fixture executable", a
       { allowFixture: false, fixturePaginatedPageReader: reader,
         fixtureTurnThreadId, fixtureAllowOrbitTool: true }))
       .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("private fixture executable") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId,
+        fixtureIpcSocketPath: join(homedir(), ".codex", "ipc", "ipc.sock") }))
+      .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("disposable owner socket") });
     authority = await listen(authorityPath, "fixture-authority");
     authorityState = await listen(`${authorityPath}.state`, "");
     await chmod(authorityPath, 0o600);
@@ -92,12 +98,27 @@ test("Codex paginated viewer injection requires a private fixture executable", a
     prepared = await prepareCodexAttachedLaunch(session, display, authorityPath, executable,
       { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId });
     expect(prepared.argv).toContain("CODEX_LINUX_ATTACH_FIXTURE_WRITE_READY=1");
+    await prepared.release();
+    prepared = undefined;
+    const ipcDirectory = join(fixtureRoot,
+      `owner-codex-orbit-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, "ipc");
+    await mkdir(ipcDirectory, { recursive: true, mode: 0o700 });
+    const ipcPath = join(ipcDirectory, "ipc.sock");
+    ownerIpc = await listen(ipcPath, "");
+    await chmod(ipcPath, 0o600);
+    prepared = await prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixturePaginatedPageReader: reader,
+        fixtureTurnThreadId, fixtureIpcSocketPath: ipcPath });
+    expect(await readdir(join(prepared.privateHome, ".codex", "ipc"))).toEqual(["ipc.sock"]);
+    expect(prepared.argv.join(" ")).not.toContain(ipcPath);
   } finally {
     await prepared?.release();
+    await close(ownerIpc);
     await close(authorityState);
     await close(authority);
     await rm(session, { recursive: true, force: true });
     await rm(socketDirectory, { recursive: true, force: true });
+    await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
 
@@ -177,6 +198,13 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
       "/usr/bin/true"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     await invalid.exited;
     expect(JSON.parse(await readFile(refused, "utf8")).error.code).toBe("UNSUPPORTED");
+    const maskedRefused = join(session, "masked-refused.json");
+    const invalidMask = Bun.spawn(["/usr/bin/python3", resolve("src/native/supervise.py"), maskedRefused,
+      "--desktop-mount-policy", JSON.stringify({ ...policy,
+        maskedIpcDirectory: join(homedir(), ".codex", "ipc") }),
+      "/usr/bin/true"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+    await invalidMask.exited;
+    expect(JSON.parse(await readFile(maskedRefused, "utf8")).error.code).toBe("UNSUPPORTED");
   } finally {
     if (child?.stdin && typeof child.stdin !== "number") child.stdin.end();
     if (child) await child.exited;

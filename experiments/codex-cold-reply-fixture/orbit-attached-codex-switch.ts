@@ -7,6 +7,7 @@ const authorityPath = process.argv[3]!;
 const orbitRepo = process.argv[5]!;
 const runLabel = process.argv[6] ?? "single";
 if (!/^[a-z0-9]{1,16}$/.test(runLabel)) throw new Error("Invalid fixture run label");
+const ipcSnapshotOnly = process.argv.includes("ipc-snapshot-only");
 const publicAttach = process.argv[7] === "public";
 if (publicAttach) {
   process.env.ORBIT_CODEX_AUTHORITY_SOCKET = authorityPath;
@@ -20,6 +21,7 @@ const privateBackend = backend as any;
 let prepared: Awaited<ReturnType<typeof prepareCodexAttachedLaunch>> | undefined;
 let gateAuditSource: string | undefined;
 let child: ReturnType<typeof Bun.spawn> | undefined;
+let mountVisibility: Record<string, boolean> | undefined;
 try {
   const session = privateBackend.directory as string;
   gateAuditSource = join(session, "codex-gate-audit.jsonl");
@@ -58,7 +60,8 @@ try {
     waylandDisplay: privateBackend.waylandDisplay,
     libraryPath: env.LD_LIBRARY_PATH ?? "",
   }, authorityPath, join(app, "ChatGPT"),
-  { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId: process.argv[9]! });
+  { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId: process.argv[9]!,
+    ...(ipcSnapshotOnly ? { fixtureIpcSocketPath: join(ownerDirectory, "ipc", "ipc.sock") } : {}) });
   await copyFile(process.argv[4]!,
     join(prepared.privateHome, ".config/dconf/user"));
   const policy = {
@@ -67,7 +70,28 @@ try {
     privateHome: prepared.privateHome,
     authoritySocket: prepared.authoritySocket,
     authorityStateSocket: prepared.authorityStateSocket,
+    ...(ipcSnapshotOnly ? { maskedIpcDirectory: join(ownerDirectory, "ipc") } : {}),
   };
+  if (ipcSnapshotOnly) {
+    const probeOutput = join(session, "ipc-mount-visibility.json");
+    const probeReport = join(session, "ipc-mount-visibility-report.json");
+    const script = `import json,pathlib
+pathlib.Path(${JSON.stringify(probeOutput)}).write_text(json.dumps({
+ "ownerIpcVisible": pathlib.Path(${JSON.stringify(join(ownerDirectory, "ipc", "ipc.sock"))}).exists(),
+ "privateIpcVisible": pathlib.Path(${JSON.stringify(join(process.env.HOME!, ".codex", "ipc", "ipc.sock"))}).is_socket(),
+ "fixtureAppVisible": pathlib.Path(${JSON.stringify(join(root, "app", "ChatGPT"))}).is_file()
+}))`;
+    const probe = Bun.spawn(["/usr/bin/python3", join(orbitRepo, "src/native/supervise.py"),
+      probeReport, "--desktop-mount-policy", JSON.stringify(policy), "/usr/bin/python3", "-c", script],
+    { stdin: "pipe", stdout: "ignore", stderr: "pipe" });
+    await probe.exited;
+    if (!await Bun.file(probeOutput).exists())
+      throw new Error(`Scoped IPC mount probe failed: ${await readFile(probeReport, "utf8")}`);
+    const visibility = JSON.parse(await readFile(probeOutput, "utf8"));
+    mountVisibility = visibility;
+    if (visibility.ownerIpcVisible || !visibility.privateIpcVisible || !visibility.fixtureAppVisible)
+      throw new Error(`Scoped IPC mount visibility failed: ${JSON.stringify(visibility)}`);
+  }
   const report = join(session, "attached-report.json");
   const stderrFd = openSync(join(root, "orbit-client-stderr.log"), "w", 0o600);
   child = Bun.spawn(["/usr/bin/python3", join(orbitRepo, "src/native/supervise.py"),
@@ -105,6 +129,7 @@ try {
   const imagePath = join(root, `orbit-client-${runLabel}.${frame.mimeType === "image/png" ? "png" : "jpg"}`);
   const footerOnly = process.argv.includes("footer-only");
   let openedImagePath = imagePath;
+  let liveImagePath: string | undefined;
   if (!footerOnly) {
     let target: string[] | undefined;
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -128,27 +153,57 @@ try {
     const opened = await backend.observe();
     openedImagePath = join(root, `orbit-client-opened-${runLabel}.${opened.mimeType === "image/png" ? "png" : "jpg"}`);
     await writeFile(openedImagePath, Buffer.from(opened.image, "base64"));
-    if (runLabel === "first") {
+    if (runLabel === "first" && !ipcSnapshotOnly) {
       await backend.act({ type: "pointer", x: 630, y: 710 });
       await backend.act({ type: "text", text: "Orbit private saved-thread follow-up" });
       await backend.act({ type: "key", key: "Enter" });
     }
-    let afterWritePath = "";
-    let answerVisible = false;
-    for (let attempt = 0; attempt < 12; attempt++) {
-      await Bun.sleep(1500);
-      const afterWrite = await backend.observe();
-      afterWritePath = join(root, `orbit-client-after-write-${runLabel}.${afterWrite.mimeType === "image/png" ? "png" : "jpg"}`);
-      await writeFile(afterWritePath, Buffer.from(afterWrite.image, "base64"));
-      const ocr = Bun.spawnSync(["tesseract", afterWritePath, "stdout"]);
+    if (ipcSnapshotOnly) {
+      const ocr = Bun.spawnSync(["tesseract", openedImagePath, "stdout"]);
       const recognized = new TextDecoder().decode(ocr.stdout);
-      if (ocr.exitCode === 0 && recognized.includes("owner preflight answer")) {
-        answerVisible = true;
-        break;
+      if (ocr.exitCode !== 0 || !recognized.includes("Private fixture conversation") ||
+          !recognized.includes("Orbit completed fixture answer"))
+        throw new Error("Scoped IPC fixture conversation was not visible in the private window");
+      const suffix = process.argv[7]!.split("-").at(-1);
+      const readyPath = join(root, `attached-ipc-ready-${suffix}`);
+      const completedPath = join(root, `attached-ipc-turn-complete-${suffix}`);
+      await writeFile(readyPath, "ready");
+      for (let attempt = 0; attempt < 80 && !await Bun.file(completedPath).exists(); attempt++)
+        await Bun.sleep(250);
+      if (!await Bun.file(completedPath).exists()) throw new Error("Fixture live turn did not complete");
+      let liveVisible = false;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await Bun.sleep(500);
+        const liveFrame = await backend.observe();
+        liveImagePath = join(root, `orbit-client-live-${runLabel}.${liveFrame.mimeType === "image/png" ? "png" : "jpg"}`);
+        await writeFile(liveImagePath, Buffer.from(liveFrame.image, "base64"));
+        const liveOcr = Bun.spawnSync(["tesseract", liveImagePath, "stdout"]);
+        const liveText = new TextDecoder().decode(liveOcr.stdout);
+        if (liveOcr.exitCode === 0 && liveText.includes("Second window live update") &&
+            liveText.includes("owner preflight answer")) {
+          liveVisible = true;
+          break;
+        }
       }
+      if (!liveVisible) throw new Error("Scoped IPC live turn was not visible in the private window");
+    } else {
+      let afterWritePath = "";
+      let answerVisible = false;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        await Bun.sleep(1500);
+        const afterWrite = await backend.observe();
+        afterWritePath = join(root, `orbit-client-after-write-${runLabel}.${afterWrite.mimeType === "image/png" ? "png" : "jpg"}`);
+        await writeFile(afterWritePath, Buffer.from(afterWrite.image, "base64"));
+        const ocr = Bun.spawnSync(["tesseract", afterWritePath, "stdout"]);
+        const recognized = new TextDecoder().decode(ocr.stdout);
+        if (ocr.exitCode === 0 && recognized.includes("owner preflight answer")) {
+          answerVisible = true;
+          break;
+        }
+      }
+      process.stdout.write(JSON.stringify({ afterWritePath, answerVisible }) + "\n");
+      if (!answerVisible) throw new Error("Saved private answer did not render within 18 seconds");
     }
-    process.stdout.write(JSON.stringify({ afterWritePath, answerVisible }) + "\n");
-    if (!answerVisible) throw new Error("Saved private answer did not render within 18 seconds");
   } else {
     await writeFile(imagePath, Buffer.from(frame.image, "base64"));
   }
@@ -156,7 +211,8 @@ try {
   print({ report: status, imagePath, openedImagePath, desktopAlive: publicAttach ? status.applied === true : child?.exitCode === null,
     privateStateFile: await Bun.file(statePath).exists(),
     privateProjectCount: Object.keys(state["local-projects"] ?? {}).length,
-    privateAuthFile: auth, presence: frame.presence });
+    privateAuthFile: auth, presence: frame.presence, liveImagePath, mountVisibility,
+    ipcGateStats: prepared?.ipcGateStats?.() });
 } finally {
   if (gateAuditSource && await Bun.file(gateAuditSource).exists())
     await copyFile(gateAuditSource, join(root, `gate-audit-${runLabel}.jsonl`));

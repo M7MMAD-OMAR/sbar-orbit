@@ -96,9 +96,11 @@ def render_device_mounts():
 
 
 def mount_command(arguments, report_directory, selected_files, policy):
+    allowed_keys = ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"},
+                    {"runtime", "sockets", "privateHome", "sharedProject"},
+                    {"runtime", "sockets", "privateHome", "maskedIpcDirectory"})
     if (not isinstance(policy, dict)
-            or set(policy) not in ({"runtime", "sockets"}, {"runtime", "sockets", "privateHome"},
-                                   {"runtime", "sockets", "privateHome", "sharedProject"})
+            or set(policy) not in allowed_keys
             or not isinstance(policy["runtime"], str)
             or not isinstance(policy["sockets"], list)
             or not 1 <= len(policy["sockets"]) <= 8):
@@ -119,6 +121,20 @@ def mount_command(arguments, report_directory, selected_files, policy):
                "--bind", "/", "/", "--dev", "/dev", *render_device_mounts(), "--proc", "/proc",
                "--tmpfs", "/tmp", "--bind", session, session,
                "--tmpfs", runtime]
+    if "maskedIpcDirectory" in policy:
+        masked = policy["maskedIpcDirectory"]
+        if (not isinstance(masked, str) or not re.fullmatch(
+                r"/var/tmp/codex-private-smoke-[A-Za-z0-9-]+/owner-codex-orbit-[0-9a-f]{8}/ipc",
+                masked) or os.path.realpath(masked) != masked):
+            raise PrivateMountUnavailable("Fixture IPC mask path is unavailable")
+        try:
+            info = os.lstat(masked)
+        except OSError as error:
+            raise PrivateMountUnavailable("Fixture IPC mask directory is unavailable") from error
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            raise PrivateMountUnavailable("Fixture IPC mask directory is unsafe")
+        command += ["--tmpfs", masked]
     descriptors = []
     try:
         if "privateHome" in policy:
