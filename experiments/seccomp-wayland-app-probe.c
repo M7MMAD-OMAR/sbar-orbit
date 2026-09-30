@@ -12,6 +12,14 @@ static void stop_probe(int signal_number) { (void)signal_number; stopping = 1; }
 int main(int argc, char **argv) {
   broker_metadata_audit = getenv("ORBIT_PRIVATE_BROKER_AUDIT") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_AUDIT"), "1");
+  private_loopback_netlink = getenv("ORBIT_PRIVATE_BROKER_LOOPBACK") &&
+    !strcmp(getenv("ORBIT_PRIVATE_BROKER_LOOPBACK"), "1");
+  if (private_loopback_netlink) {
+    int reference = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    socklen_t length = sizeof(broker_netns_cookie);
+    if (reference < 0 || getsockopt(reference, SOL_SOCKET, SO_NETNS_COOKIE, &broker_netns_cookie, &length) || !broker_netns_cookie) return 2;
+    close(reference);
+  }
   if (argc < 4 || strncmp(argv[1], "/tmp/orbit-native-", 18)) return 2;
   char *name = strrchr(argv[1], '/');
   if (!name || strncmp(name + 1, "wayland-", 8) || !name[9] ||
@@ -96,7 +104,7 @@ int main(int argc, char **argv) {
   close(selected);
   if (additional_stream_handle >= 0) close(additional_stream_handle);
   int application_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
-         approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, application_exit, failed, (int)stopping);
+  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"forwardedLoopback\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
+         approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, forwarded_loopback, application_exit, failed, (int)stopping);
   return failed ? 1 : application_exit;
 }

@@ -65,8 +65,60 @@ network mutation there.
 configures loopback with `RTM_NEWADDR` and then `RTM_NEWLINK` after creating its
 network namespace. The observed denied message is consistent with that first
 operation. This identifies a necessary failure to address; it does not prove
-that no later loader, private IPC or file-descriptor problem remains. No netlink
-allowance or sandbox-disable workaround was added.
+that no later loader, private IPC or file-descriptor problem remains. That
+baseline added no netlink allowance or sandbox-disable workaround.
+
+## Opt-in private loopback transport
+
+The follow-up arm uses `ORBIT_LOUPE_BROKER_LOOPBACK=1`, which enables
+`ORBIT_PRIVATE_BROKER_LOOPBACK=1` only in this experimental launcher. It copies
+and validates the two exact loopback messages used by the measured bubblewrap
+version: a 40-byte `RTM_NEWADDR` for interface 1, IPv4 127.0.0.1/8, permanent
+host scope, with exactly the local/address attributes and create/exclusive/ack
+flags; and an attribute-free `RTM_NEWLINK` setting only `IFF_UP` on interface 1.
+The destination must be the kernel, with no groups, padding or send flags.
+The message PID must equal the duplicated socket's bound netlink port ID.
+
+The FD must be an `AF_NETLINK` raw `NETLINK_ROUTE` socket whose network namespace
+cookie differs from a broker-side reference recorded before launching the
+application. The notifying task's current network namespace must also differ
+from the broker's namespace. The broker sends its own validated copy through
+that duplicated FD; it does not continue a mutable application buffer. Its
+kernel response remains on the application's socket. This does not enter the
+application's network namespace or mutate the broker's own network socket.
+
+```sh
+ORBIT_LOUPE_BROKER_PROBE=1 ORBIT_LOUPE_BROKER_LOOPBACK=1 ORBIT_LOUPE_BROKER_AUDIT=1 bun run scripts/limited.ts bun run experiments/seccomp-loupe-app-probe.ts
+ORBIT_LOOPBACK_CONTROLS=1 bun run scripts/limited.ts bun run experiments/seccomp-loopback-controls.ts
+ORBIT_LOOPBACK_CONTROLS=1 ORBIT_LOOPBACK_UNFIXED_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-loopback-controls.ts
+```
+
+The [controls](seccomp-loopback-controls.ts) use disposable fixtures. A valid
+loopback address message on a host-namespace socket was denied with EACCES and
+zero forwards. In a fresh `bwrap --unshare-all` namespace, its two setup messages
+were forwarded and the fixture started. Nine modified cases were denied with
+EACCES: wrong address, address interface, address flags, message type, extra
+data, userspace destination, link interface, link flags and link change mask.
+The unfixed control disables the opt-in route: bubblewrap then exits 1 with
+`Failed RTM_NEWADDR: Permission denied` before the private fixture starts,
+with zero forwards. The host message remains denied in both arms.
+
+Loupe's opt-in run forwarded four loopback messages and reached the actual
+`glycin-image-rs` process. Its next denied call was `sendmsg` on an unnamed
+`AF_UNIX` stream socket, with peer address length 2. The displayed image still
+failed the green/blue check. The application and broker exited 0 without forced
+termination, with five approved connections, one bus credential forward and
+five bus data forwards. Artifacts are in
+`output/seccomp-loupe-loopback-2026-09-30/`.
+
+This closes the measured loopback setup failure only. It does not establish
+that the FD's namespace is the notifying task's namespace, prove ownership of
+every foreign namespace, or handle arbitrary netlink messages, private socket
+pairs, large messages or application identity. Borrowed foreign namespace FDs,
+namespace transitions and adversarial races remain unmeasured. The route is
+disabled by default and is not deployed to the managed service or personal
+applications. The original synthetic `broker-disconnect` arm still exited 0
+with its existing denial, thread, FD reuse and disconnect controls intact.
 
 ## Verification and limits
 

@@ -6,6 +6,8 @@
 #include <linux/seccomp.h>
 #include <linux/audit.h>
 #include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <net/if.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -51,6 +53,9 @@ static size_t private_bus_cookie_count;
 static size_t forwarded_bus_credentials;
 static size_t forwarded_bus_data;
 static int broker_metadata_audit;
+static int private_loopback_netlink;
+static uint64_t broker_netns_cookie;
+static size_t forwarded_loopback;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -614,6 +619,66 @@ done:
   if (duplicate >= 0) close(duplicate);
 }
 
+static void send_private_loopback(int listener, int pidfd, struct seccomp_notif *request,
+                                  struct seccomp_notif_resp *response) {
+  union { struct nlmsghdr align; unsigned char bytes[64]; } packet = {0};
+  struct sockaddr_nl destination = {0}, bound = {0};
+  if (request->data.args[3] || request->data.args[2] > sizeof(packet) ||
+      request->data.args[2] < sizeof(struct nlmsghdr) || request->data.args[5] != sizeof(destination) ||
+      !copy_child(request->pid, &destination, request->data.args[4], sizeof(destination)) ||
+      destination.nl_family != AF_NETLINK || destination.nl_pad || destination.nl_pid || destination.nl_groups ||
+      !copy_child(request->pid, packet.bytes, request->data.args[1], request->data.args[2])) return;
+  struct nlmsghdr *header = &packet.align;
+  if (header->nlmsg_len != request->data.args[2]) return;
+  if (header->nlmsg_type == RTM_NEWADDR) {
+    if (header->nlmsg_len != 40 || header->nlmsg_flags != (NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK)) return;
+    struct ifaddrmsg address;
+    memcpy(&address, packet.bytes + NLMSG_HDRLEN, sizeof(address));
+    if (address.ifa_family != AF_INET || address.ifa_prefixlen != 8 || address.ifa_flags != IFA_F_PERMANENT ||
+        address.ifa_scope != RT_SCOPE_HOST || address.ifa_index != 1) return;
+    for (size_t i = 0; i < 2; i++) {
+      struct rtattr attribute; uint32_t ip;
+      size_t offset = NLMSG_HDRLEN + sizeof(address) + i * 8;
+      memcpy(&attribute, packet.bytes + offset, sizeof(attribute));
+      memcpy(&ip, packet.bytes + offset + sizeof(attribute), sizeof(ip));
+      if (attribute.rta_len != 8 || attribute.rta_type != (i ? IFA_ADDRESS : IFA_LOCAL) ||
+          ip != htonl(INADDR_LOOPBACK)) return;
+    }
+  } else if (header->nlmsg_type == RTM_NEWLINK) {
+    if (header->nlmsg_len != NLMSG_LENGTH(sizeof(struct ifinfomsg)) || header->nlmsg_flags != (NLM_F_REQUEST | NLM_F_ACK)) return;
+    struct ifinfomsg link;
+    memcpy(&link, packet.bytes + NLMSG_HDRLEN, sizeof(link));
+    if (link.ifi_family != AF_UNSPEC || link.__ifi_pad || link.ifi_type || link.ifi_index != 1 ||
+        link.ifi_flags != IFF_UP || link.ifi_change != IFF_UP) return;
+  } else return;
+  int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request->data.args[0], 0);
+  if (duplicate < 0) return;
+  int domain = 0, type = 0, protocol = -1;
+  uint64_t cookie = 0; socklen_t length = sizeof(int);
+  struct stat task_namespace, broker_namespace;
+  char namespace_path[64];
+  snprintf(namespace_path, sizeof(namespace_path), "/proc/%u/ns/net", request->pid);
+  if (getsockopt(duplicate, SOL_SOCKET, SO_DOMAIN, &domain, &length) || domain != AF_NETLINK) goto done;
+  length = sizeof(int);
+  if (getsockopt(duplicate, SOL_SOCKET, SO_TYPE, &type, &length) || type != SOCK_RAW) goto done;
+  length = sizeof(int);
+  if (getsockopt(duplicate, SOL_SOCKET, SO_PROTOCOL, &protocol, &length) || protocol != NETLINK_ROUTE) goto done;
+  length = sizeof(cookie);
+  if (!broker_netns_cookie || getsockopt(duplicate, SOL_SOCKET, SO_NETNS_COOKIE, &cookie, &length) ||
+      !cookie || cookie == broker_netns_cookie || stat(namespace_path, &task_namespace) ||
+      stat("/proc/self/ns/net", &broker_namespace) ||
+      (task_namespace.st_dev == broker_namespace.st_dev && task_namespace.st_ino == broker_namespace.st_ino)) goto done;
+  length = sizeof(bound);
+  if (getsockname(duplicate, (struct sockaddr *)&bound, &length) || bound.nl_family != AF_NETLINK ||
+      bound.nl_pid != header->nlmsg_pid || ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
+  ssize_t sent = sendto(duplicate, packet.bytes, header->nlmsg_len, 0,
+                        (struct sockaddr *)&destination, sizeof(destination));
+  if (sent >= 0) { response->error = 0; response->val = sent; forwarded_loopback++; }
+  else response->error = -errno;
+done:
+  close(duplicate);
+}
+
 static int handle_one(int listener, int selected_handle, int selected_dgram_handle,
                       int naive, int broker_datagram, int broker_connected) {
   struct seccomp_notif request = {0};
@@ -623,6 +688,8 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
   int live = pidfd >= 0 && ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0;
   if (live && broker_connected && request.data.nr == __NR_sendmsg)
     send_connected_copy(listener, pidfd, &request, &response);
+  if (live && private_loopback_netlink && request.data.nr == __NR_sendto)
+    send_private_loopback(listener, pidfd, &request, &response);
   if (live && private_bus_credentials && request.data.nr == __NR_sendto &&
       !request.data.args[4] && !request.data.args[5] && request.data.args[2] > 0 &&
       request.data.args[2] <= 4096 && !(request.data.args[3] & ~(uint64_t)(MSG_DONTWAIT | MSG_NOSIGNAL))) {
