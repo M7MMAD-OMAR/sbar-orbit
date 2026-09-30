@@ -26,6 +26,17 @@ int main(int argc, char **argv) {
   int selected = open(argv[1], O_PATH | O_NOFOLLOW | O_CLOEXEC);
   struct stat identity;
   if (selected < 0 || fstat(selected, &identity) || !S_ISSOCK(identity.st_mode) || identity.st_uid != getuid()) return 2;
+  int command = 2;
+  if (!strcmp(argv[2], "--bus")) {
+    char bus_path[PATH_MAX];
+    if (argc < 6 || snprintf(bus_path, sizeof(bus_path), "%s/bus", directory) >= (int)sizeof(bus_path) ||
+        strcmp(argv[3], bus_path) || !realpath(argv[3], canonical) || strcmp(argv[3], canonical)) return 2;
+    additional_stream_path = argv[3];
+    additional_stream_handle = open(argv[3], O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (additional_stream_handle < 0 || fstat(additional_stream_handle, &identity) ||
+        !S_ISSOCK(identity.st_mode) || identity.st_uid != getuid()) return 2;
+    command = 4;
+  }
   int channel[2];
   if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, channel)) return 2;
   struct sigaction action = {.sa_handler = stop_probe};
@@ -36,18 +47,28 @@ int main(int argc, char **argv) {
     setpgid(0, 0);
     prctl(PR_SET_PDEATHSIG, SIGKILL);
     close(channel[0]); close(selected);
-    int listener = install_connect_filter(0, 1, channel[1]);
-    if (listener < 0 || send_fd(channel[1], listener) != 1) _exit(125);
+    if (additional_stream_handle >= 0) close(additional_stream_handle);
+    // Transfer the listener through pidfd_getfd after a numeric write/ack.
+    // No sendmsg exception or permanently reserved application FD is needed.
+    int listener = install_connect_filter(0, 1, -1);
+    int acknowledged = 0;
+    if (listener < 0 || write(channel[1], &listener, sizeof(listener)) != sizeof(listener) ||
+        read(channel[1], &acknowledged, sizeof(acknowledged)) != sizeof(acknowledged) || !acknowledged) _exit(125);
     close(listener);
-    int handoff = channel[1];
-    close(handoff);
-    if (install_strict_send_filter(0, 1, handoff)) _exit(125);
-    execv(argv[2], &argv[2]);
+    close(channel[1]);
+    execv(argv[command], &argv[command]);
     _exit(127);
   }
   setpgid(child, child);
   close(channel[1]);
-  int listener = recv_fd(channel[0]);
+  int child_listener = -1, acknowledged = 0;
+  int child_pidfd = syscall(__NR_pidfd_open, child, 0);
+  int listener = -1;
+  if (child_pidfd >= 0 && read(channel[0], &child_listener, sizeof(child_listener)) == sizeof(child_listener))
+    listener = syscall(__NR_pidfd_getfd, child_pidfd, child_listener, 0);
+  if (child_pidfd >= 0) close(child_pidfd);
+  acknowledged = listener >= 0;
+  if (write(channel[0], &acknowledged, sizeof(acknowledged)) != sizeof(acknowledged)) acknowledged = 0;
   close(channel[0]);
   int status = 0, finished = 0, failed = listener < 0;
   time_t started = time(NULL);
@@ -69,6 +90,7 @@ int main(int argc, char **argv) {
   }
   if (listener >= 0) close(listener);
   close(selected);
+  if (additional_stream_handle >= 0) close(additional_stream_handle);
   int application_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
   printf("{\"approvedConnections\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
          approved_cookie_count, application_exit, failed, (int)stopping);

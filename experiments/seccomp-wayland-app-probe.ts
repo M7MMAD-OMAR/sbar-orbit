@@ -11,6 +11,7 @@ if (process.env.ORBIT_WAYLAND_BROKER_PROBE !== "1") throw new Error("Set ORBIT_W
 await requireResourceBudget();
 const control = process.env.ORBIT_WAYLAND_BROKER_CONTROL === "1";
 const gtk4 = process.env.ORBIT_WAYLAND_BROKER_GTK4 === "1";
+const privateBus = process.env.ORBIT_WAYLAND_BROKER_BUS === "1";
 const title = control ? "Orbit direct Wayland control" : "Orbit brokered Wayland application";
 const description = control ? "Direct private display control without the experimental broker" : "Real GTK client through the experimental socket broker";
 const root = await mkdtemp("/var/tmp/orbit-wayland-broker-");
@@ -19,8 +20,9 @@ const binary = join(root, "broker");
 const script = join(root, "window.py");
 const typed = join(root, "typed.txt");
 const imageReport = join(root, "image.json");
+const busReport = join(root, "bus.json");
 const blockedSocket = join(root, "blocked.sock"), blockedReport = join(root, "blocked.json");
-const output = resolve(`output/seccomp-wayland-app-${gtk4 ? "gtk4-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-wayland-app-${gtk4 ? "gtk4-" : ""}${privateBus ? "bus-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const phrase = control ? "Orbit direct Wayland control verified" : "Orbit brokered Wayland keyboard verified";
 let clientProcess: ReturnType<typeof Bun.spawn> | undefined;
 let blockedAccepts = 0;
@@ -49,6 +51,16 @@ finally:
 with open(sys.argv[3],"w") as result: json.dump(blocked,result)
 gi.require_version("Gtk",${JSON.stringify(gtk4 ? "4.0" : "3.0")})
 from gi.repository import Gtk,GLib
+from gi.repository import Gio
+bus={"connected":False,"getId":False,"error":None}
+try:
+    connection=Gio.bus_get_sync(Gio.BusType.SESSION,None)
+    bus["connected"]=True
+    reply=connection.call_sync("org.freedesktop.DBus","/org/freedesktop/DBus","org.freedesktop.DBus","GetId",None,GLib.VariantType.new("(s)"),Gio.DBusCallFlags.NONE,3000,None)
+    bus["getId"]=len(reply.unpack()[0])==32
+except GLib.Error as error:
+    bus["error"]=error.message
+with open(sys.argv[5],"w") as result: json.dump(bus,result)
 window=Gtk.Window(title=${JSON.stringify(title)})
 window.set_default_size(720,${gtk4 ? 440 : 240})
 box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=24)
@@ -101,8 +113,12 @@ Gtk.main()`}
   const runtime = env.XDG_RUNTIME_DIR, display = env.WAYLAND_DISPLAY;
   if (!runtime?.startsWith("/tmp/orbit-native-") || !display?.match(/^wayland-[0-9]+$/))
     throw new Error("Missing private Wayland endpoint");
-  const app = ["/usr/bin/python3", script, typed, blockedSocket, blockedReport, imageReport];
-  const launched = Bun.spawn(control ? app : [binary, join(runtime, display), ...app], { env, stdout: "pipe", stderr: "pipe" });
+  const busPath = join(runtime, "bus");
+  if (privateBus && env.DBUS_SESSION_BUS_ADDRESS !== `unix:path=${busPath}`)
+    throw new Error("Missing owned private session bus");
+  const app = ["/usr/bin/python3", script, typed, blockedSocket, blockedReport, imageReport, busReport];
+  const launched = Bun.spawn(control ? app : [binary, join(runtime, display),
+    ...(privateBus ? ["--bus", busPath] : []), ...app], { env, stdout: "pipe", stderr: "pipe" });
   clientProcess = launched;
   const standard = new Response(launched.stdout).text();
   const errors = new Response(launched.stderr).text();
@@ -131,8 +147,9 @@ Gtk.main()`}
   const broker = line ? JSON.parse(line) : null;
   const blockedAttempt: unknown = JSON.parse(await readFile(blockedReport, "utf8"));
   const image: unknown = gtk4 ? JSON.parse(await readFile(imageReport, "utf8").catch(() => "null")) : null;
+  const bus: unknown = JSON.parse(await readFile(busReport, "utf8").catch(() => "null"));
   const report = { date: new Date().toISOString().slice(0, 10), transport: control ? "direct-control" : "brokered",
-    toolkit: gtk4 ? "GTK4" : "GTK3", visible, textVerified, image, exit, broker, blockedAttempt, blockedAccepts,
+    toolkit: gtk4 ? "GTK4" : "GTK3", privateBus, bus, visible, textVerified, image, exit, broker, blockedAttempt, blockedAccepts,
     limits: ["The launcher is experimental and not the production session launch action.",
       "No account state, existing conversations, files or device use was tested.",
       "Full outbound isolation and application compatibility remain unproved."] };

@@ -93,6 +93,61 @@ This measures GTK4's public filename image path for one generated PNG. It does
 not establish which loader implementation or sandbox process handled it, nor
 prove glycin, every image format, or arbitrary nested sandbox compatibility.
 
+## Private session bus and listener handoff
+
+`ORBIT_WAYLAND_BROKER_BUS=1` adds exactly the owned backend's `bus` socket as a
+second pinned stream endpoint. The harness requires its address to equal
+`unix:path=<this private runtime>/bus`; the launcher requires its canonical
+pathname to be in the same private directory as the compositor. The person's
+session bus is never used. With this flag absent, no second endpoint is allowed.
+The synthetic probe retains its original selected endpoint and default policy.
+
+The client now attempts `Gio.bus_get_sync` and the bus's `GetId` method with a
+3-second call timeout, writing only connection status and whether a 32-character
+ID was returned. No bus ID, account data or credential content is saved.
+
+```sh
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 ORBIT_WAYLAND_BROKER_BUS=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 ORBIT_WAYLAND_BROKER_BUS=1 ORBIT_WAYLAND_BROKER_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+```
+
+The measurement before admitting the bus failed with permission denied at
+connection, while GTK4 still displayed and accepted input. Admitting its pinned
+socket moved the failure to sending credentials. The first such run also failed
+to initialize GTK and exited 1. That run's report and traceback are retained as
+`before-handoff-fix.json` and `before-handoff-fix-stderr.txt` in the bus output
+directory.
+
+The owned-display launcher formerly handed its seccomp listener to the parent
+with a `sendmsg` exception on one FD number, then permanently denied that number.
+Opening the additional bus exposed a legitimate reuse conflict. The launcher
+now writes the listener's number, waits for an acknowledgement, and the parent
+duplicates the listener with `pidfd_getfd` while the child holds it open. The
+filter has no `sendmsg` handoff exception and no reserved application FD number.
+This changes the real-client experiment only; the synthetic fixture retains its
+explicit numeric-reuse negative control.
+
+After that change, the same bus arm displayed GTK4, showed the PNG, accepted the
+exact text, and exited 0. It reported nine approved connections, no broker
+failure, and zero accepts at the blocked server. Bus authentication still failed
+with `Error sending credentials: Error sending message: Permission denied`.
+The direct control on a fresh owned display connected and completed `GetId`,
+displayed the PNG and accepted text, and exited 0. Thus the private bus itself
+was operational; admitting its socket did not establish brokered D-Bus support.
+
+Artifacts are in `output/seccomp-wayland-app-gtk4-bus-2026-09-30/` and
+`output/seccomp-wayland-app-gtk4-bus-control-2026-09-30/`. The transport currently
+admits only `SCM_RIGHTS` ancillary messages, so it rejects explicit
+`SCM_CREDENTIALS`. [Linux's UNIX socket documentation](https://man7.org/linux/man-pages/man7/unix.7.html)
+also distinguishes connection peer credentials from message credentials and
+describes kernel restrictions on sending another PID. A future implementation
+must resolve these semantics before claiming application or service identity
+parity. No credential rewrite or extra ancillary policy was added here.
+After the handoff change, the no-bus GTK3 arm still displayed and accepted the
+exact keyboard text, exited 0, and denied the blocked endpoint. The synthetic
+`broker-disconnect` arm also exited 0 with its original stream, rights, thread,
+FD reuse, nested-path and disconnect controls intact. Type checking passed.
+
 ## Limits
 
 The GTK client is launched by the experimental C program using the owned
@@ -100,8 +155,8 @@ backend environment, not by Orbit's production `session.act` launch action.
 This does not establish the production launch boundary. The transport still
 has the synthetic probe's limits: only bounded selected stream messages and
 file descriptors are admitted; private socket pairs, larger messages, other
-rights, signal parity, cancellation and slow peers need further work. Only one
-selected compositor socket is configured here, so account/keyring buses,
+rights, signal parity, cancellation and slow peers need further work. Only the
+selected compositor and, optionally, its private bus are configured, so account/keyring buses,
 application owner sockets, shared audio and portals are not authorized by this
 experiment. The client runs with disposable XDG state, not the person's current
 application state. No claim about real account app compatibility is made.
