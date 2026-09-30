@@ -194,6 +194,49 @@ ABI parity are unsupported. The mode is disabled by default and remains outside
 production. These limits prevent claiming arbitrary application compatibility
 or full isolation from the successful one-image measurement.
 
+## Send buffer pressure control
+
+The successful image did not exercise a full outgoing socket buffer. The
+single broker handler previously forwarded copied payloads without adding
+`MSG_DONTWAIT`. A blocking application's send could therefore stop that handler
+inside `sendmsg` or `send`, preventing the launcher's outer deadline from being
+checked. The [pressure controls](seccomp-send-pressure-controls.ts) reproduced
+both cases against the unfixed source before changing it. A private stream pair
+with a requested 4096-byte send buffer accepted 8128 bytes of nonblocking fill
+data. The next one-byte send with flags zero stalled until the independent
+2.5-second watchdog killed only that experiment's target process group and
+broker. Both broker exits were 137 and neither produced its final status JSON.
+
+```sh
+# Run on the unfixed source to verify the watchdog observes the stall.
+ORBIT_SEND_PRESSURE_CONTROLS=1 ORBIT_SEND_PRESSURE_EXPECT_STALL=1 bun run scripts/limited.ts bun run experiments/seccomp-send-pressure-controls.ts
+# Run on the fixed source to require prompt EAGAIN and successful later traffic.
+ORBIT_SEND_PRESSURE_CONTROLS=1 bun run scripts/limited.ts bun run experiments/seccomp-send-pressure-controls.ts
+```
+
+All copied outbound send operations now add `MSG_DONTWAIT`, including private
+bus/pair data, connected `sendmsg`, explicit selected datagrams and the bounded
+loopback netlink relay. They do not set `O_NONBLOCK` on the duplicated shared
+file description. The [Linux send documentation](https://man7.org/linux/man-pages/man2/send.2.html)
+specifies that this flag applies to one call and returns EAGAIN/EWOULDBLOCK
+instead of waiting for space. This is an explicit experimental ABI difference:
+a target using a blocking FD can receive EAGAIN. Transparent blocking behavior
+would require a cancellable queue/retry design and remains unsupported.
+
+After the change, both pressure controls exited 0 without the watchdog. The
+full-buffer calls returned EAGAIN (11) in approximately 17 and 16 microseconds.
+Both targets retained their blocking FD flag, drained exactly the original
+8128 bytes without the rejected byte, and exchanged `Z` afterwards. The existing
+pair bounds, descriptor delegation and denial controls passed. Installed Loupe
+again rendered the expected green/blue PNG with exit 0, five private pairs,
+thirteen pair message forwards and no forced stop or broker failure.
+
+The saturation regression directly measures private stream `sendmsg` and plain
+`send` only. Full selected-datagram and netlink queues, selected stream connect
+backlog pressure, user-memory faults and cancellation races remain unmeasured.
+This change is not proof that the entire broker's deadline is bounded, or that
+arbitrary application blocking semantics are preserved.
+
 ## Verification and limits
 
 Artifacts are in `output/seccomp-loupe-2026-09-30/` and

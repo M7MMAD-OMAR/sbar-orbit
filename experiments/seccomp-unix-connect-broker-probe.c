@@ -666,7 +666,9 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
     }
   }
   if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
-  ssize_t sent = sendmsg(duplicate, &copied, (int)request->data.args[2] | MSG_NOSIGNAL);
+  // A full target socket must not block the sole notification handler.
+  // EAGAIN is explicit experimental behavior even for a blocking target FD.
+  ssize_t sent = sendmsg(duplicate, &copied, (int)request->data.args[2] | MSG_NOSIGNAL | MSG_DONTWAIT);
   if (sent >= 0) {
     response->error = 0; response->val = sent;
     if (broker_created_pair(duplicate)) forwarded_pair_messages++;
@@ -733,7 +735,7 @@ static void send_private_loopback(int listener, int pidfd, struct seccomp_notif 
   length = sizeof(bound);
   if (getsockname(duplicate, (struct sockaddr *)&bound, &length) || bound.nl_family != AF_NETLINK ||
       bound.nl_pid != header->nlmsg_pid || ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
-  ssize_t sent = sendto(duplicate, packet.bytes, header->nlmsg_len, 0,
+  ssize_t sent = sendto(duplicate, packet.bytes, header->nlmsg_len, MSG_DONTWAIT,
                         (struct sockaddr *)&destination, sizeof(destination));
   if (sent >= 0) { response->error = 0; response->val = sent; forwarded_loopback++; }
   else response->error = -errno;
@@ -769,7 +771,7 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
         char payload[4096];
         if (copy_child(request.pid, payload, request.data.args[1], request.data.args[2]) &&
             ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
-          ssize_t sent = send(duplicate, payload, request.data.args[2], (int)request.data.args[3] | MSG_NOSIGNAL);
+          ssize_t sent = send(duplicate, payload, request.data.args[2], (int)request.data.args[3] | MSG_NOSIGNAL | MSG_DONTWAIT);
           if (sent >= 0) {
             response.error = 0; response.val = sent;
             if (pair_allowed) forwarded_pair_messages++; else forwarded_bus_data++;
@@ -809,7 +811,7 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
         strcpy(selected_addr.sun_path, selected_path);
         if (unix_socket_type(duplicate, SOCK_DGRAM) &&
             ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
-          ssize_t sent = sendto(duplicate, payload, local_data.iov_len, 0,
+          ssize_t sent = sendto(duplicate, payload, local_data.iov_len, MSG_DONTWAIT,
                                 (struct sockaddr *)&selected_addr, sizeof(selected_addr));
           if (sent >= 0) { response.error = 0; response.val = sent; }
           else response.error = -errno;
