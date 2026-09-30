@@ -137,6 +137,46 @@ UNIX socket bypasses and compatibility limits. A production gate also needs
 session-bound access, socket identity checks, bounded lifetime, and failure
 handling before connecting to any personal authority.
 
+The `--dual-window-router-relay-probe` mode adds a framed IPC relay for a
+full second Desktop window. The second window has its own `CODEX_HOME`. Its
+IPC path points to the relay, and the fake owner's IPC directory is hidden
+inside that window's mount namespace. The relay pins one thread and host
+`local`. It accepts registration and following state for that thread, and
+forwards only matching owner snapshots and following state. It discards
+unneeded cache and client status broadcasts. Owner discovery challenges are
+answered with `canHandle: false`, so the follower cannot claim ownership.
+Run the bounded fixture:
+
+```sh
+bun run scripts/limited.ts timeout 120s /usr/bin/python3 \
+  experiments/codex-cold-reply-fixture/run-orbit-switch-codex.py \
+  /var/tmp/codex-private-smoke-u . \
+  --dual-window-router-relay-probe
+```
+
+The second window displayed the saved conversation and the later live user
+turn and model answer through the scoped relay. Its final private capture is
+`/var/tmp/codex-private-smoke-u/ipc-second-live-7c477638.jpg`.
+The same run launched another isolated client against the relay. The fake
+owner IPC path and direct app-server socket were hidden from that client.
+The relay rejected a follower write request, discovery for another thread,
+a following broadcast with a forged client ID, and a following broadcast for
+another thread. Measured policy result:
+
+```json
+{"clientRegistered":true,"ownerSocketHidden":true,"appSocketHidden":true,"writeDenied":true,"otherThreadDenied":true}
+```
+
+The relay's own counters recorded one rejected `thread-follower-start-turn`
+request, one rejected `thread-owner-discovery` request, and two rejected
+following broadcasts. It also blocked owner discovery directed at the
+follower, while the second Desktop still received 13 owner state broadcasts
+for the pinned thread. This is a disposable compatibility and policy proof.
+It is not yet wired into Orbit's attached Desktop launcher. The attached
+window still needs the existing app-server authority gate, and the broader
+UNIX socket and descriptor isolation gaps remain open before any personal
+profile can use this route.
+
 An additional run of the existing fixture without `--ipc-probe` passed owner
 account inspection and cold thread activation, then failed while waiting for
 a second model answer through its attached UI. Its captured private window

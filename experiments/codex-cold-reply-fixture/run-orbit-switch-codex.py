@@ -2,6 +2,7 @@
 import asyncio, base64, ctypes, datetime, http.client, json, os, secrets, shutil, signal, socket, sqlite3, stat, subprocess, sys, time, uuid
 from pathlib import Path
 import websockets
+from ipc_router_relay import DisposableIpcRouterRelay
 ROOT=Path(sys.argv[1]).resolve(); assert ROOT.parent==Path('/var/tmp') and ROOT.name.startswith('codex-private-smoke-')
 RESTRICT_TOOLS='--restrict-tools' in sys.argv[3:]
 ORBIT_TOOL='--orbit-tool' in sys.argv[3:]
@@ -10,7 +11,8 @@ RESTART_OWNER='--restart-owner' in sys.argv[3:]
 PUBLIC_ATTACH='--public-attach' in sys.argv[3:]
 FOOTER_ONLY='--footer-only' in sys.argv[3:]
 DIRECT_ONLY='--direct-only' in sys.argv[3:]
-DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:]
+ROUTER_RELAY_PROBE='--dual-window-router-relay-probe' in sys.argv[3:]
+DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:] or ROUTER_RELAY_PROBE
 IPC_GATE_PROBE='--ipc-gate-probe' in sys.argv[3:]
 IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE or IPC_GATE_PROBE
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
@@ -19,6 +21,7 @@ ORBIT_REPO=Path(sys.argv[2]).resolve()
 assert (ORBIT_REPO/'src/native/supervise.py').is_file()
 APP=ROOT/'app/ChatGPT'; UID=os.getuid(); AUTH_DIR=Path(f'/run/user/{UID}')/('orbit-codex-smoke-'+uuid.uuid4().hex[:8]); APP_SOCKET=AUTH_DIR/'app-server.sock'; STATE_SOCKET=Path(str(APP_SOCKET)+'.state')
 TAG=uuid.uuid4().hex[:8]; OWNER=ROOT/f'owner-codex-orbit-{TAG}'; CLIENT=ROOT/f'client-codex-orbit-{TAG}'; PROJECT=ROOT/f'workspace-orbit-{TAG}'; PROJECT_ID=str(uuid.uuid4())
+RELAY_DIR=ROOT/f'ipc-relay-{TAG}'
 FAKE_EMAIL='orbit-owner' + chr(64) + 'fixture.invalid'
 
 def fake_jwt(payload):
@@ -151,7 +154,9 @@ def ns(display,role):
  placeholder=tmp/'.X11-unix'/f'X{display}';placeholder.parent.mkdir(parents=True,exist_ok=True);placeholder.touch(exist_ok=True)
  codex=OWNER if role==1 else CLIENT
  args=['bwrap','--unshare-user','--unshare-pid','--unshare-net','--unshare-ipc','--unshare-uts','--die-with-parent','--ro-bind','/','/','--bind',str(ROOT),str(ROOT)]
- if role==2 and DUAL_WINDOW_PROBE:args.extend(['--bind',str(OWNER/'ipc'),str(CLIENT/'ipc')])
+ if role==2 and DUAL_WINDOW_PROBE:
+  args.extend(['--bind',str(RELAY_DIR if ROUTER_RELAY_PROBE else OWNER/'ipc'),str(CLIENT/'ipc')])
+  if ROUTER_RELAY_PROBE:args.extend(['--tmpfs',str(OWNER/'ipc')])
  if REAL_ORBIT:args.extend(['--ro-bind',str(ORBIT_REPO),str(ROOT/'orbit-repo')])
  args.extend(['--bind',str(home),str(PERSONAL_HOME),'--bind',str(runtime),f'/run/user/{UID}','--bind',str(AUTH_DIR),str(AUTH_DIR),'--bind',str(tmp),'/tmp','--bind',f'/tmp/.X11-unix/X{display}',f'/tmp/.X11-unix/X{display}','--dev','/dev','--proc','/proc','--','/usr/bin/env','-i',f'HOME={home}',f'CODEX_HOME={codex}',f'XDG_CONFIG_HOME={dirs(role,"config")}',f'XDG_DATA_HOME={dirs(role,"data")}',f'XDG_CACHE_HOME={dirs(role,"cache")}',f'XDG_RUNTIME_DIR={runtime}',f'TMPDIR={tmp}',f'XAUTHORITY={ROOT/"xauth"}',f'DISPLAY=:{display}','XDG_SESSION_TYPE=x11','GSETTINGS_BACKEND=dconf',f'CODEX_ELECTRON_USER_DATA_PATH={user}',f'CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET={APP_SOCKET}',f'CODEX_LINUX_APP_DIR={ROOT/"app"}',f'CODEX_CLI_PATH={ROOT/"app/resources/codex"}','PATH=/usr/bin:/bin','LANG=C.UTF-8'])
  if role==2:args.extend(['CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1',f'CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME={codex}'])
@@ -235,6 +240,7 @@ async def main():
  if DUAL_WINDOW_PROBE:
   (OWNER/'ipc').mkdir(mode=0o700,exist_ok=True)
   (CLIENT/'ipc').mkdir(mode=0o700,exist_ok=True)
+  if ROUTER_RELAY_PROBE:RELAY_DIR.mkdir(mode=0o700,exist_ok=True)
  (PROJECT/'fixture.txt').write_text('Disposable Codex project for private Orbit evidence.\n')
  mock_wrapper=ROOT/f'mock-owner-desktop-{TAG}.py';shutil.copyfile(Path(__file__).with_name('mock-owner-desktop.py'),mock_wrapper)
  toy_mcp=ROOT/f'toy-orbit-mcp-{TAG}.py'
@@ -270,7 +276,7 @@ async def main():
  if len(displays)!=display_count:raise RuntimeError('private display count unavailable')
  for display in displays:subprocess.run(['xauth','-f',str(ROOT/'xauth'),'add',f':{display}','MIT-MAGIC-COOKIE-1',secrets.token_hex(16)],check=True,capture_output=True)
  (ROOT/'xauth').chmod(0o600)
- xservers=[];desktops=[];logs=[];broker=None;real_session=None
+ xservers=[];desktops=[];logs=[];broker=None;real_session=None;router_relay=None
  try:
   if REAL_ORBIT:
    broker_home=ROOT/f'broker-home-{TAG}';broker_runtime=ROOT/f'broker-runtime-{TAG}'
@@ -449,9 +455,12 @@ asyncio.run(main())'''
        if not all(gate_result.values()):raise RuntimeError('private IPC gate scope check failed: '+json.dumps(gate_result))
       finally:
        gate.close();await gate.wait_closed();gate_socket.unlink(missing_ok=True)
+     router_attack=None
      second_image=None;second_user_text=False;second_answer_text=False
      second_live_image=None;second_live_user_text=False;second_live_answer_text=False
      if DUAL_WINDOW_PROBE:
+      if ROUTER_RELAY_PROBE:
+       router_relay=await DisposableIpcRouterRelay(ipc_path,RELAY_DIR/'ipc.sock',tid).start()
       second=launch(2,displays[1])
       await asyncio.sleep(25)
       if second.poll() is not None:raise RuntimeError('second disposable Desktop exited')
@@ -488,6 +497,50 @@ asyncio.run(main())'''
       second_live_answer_text='owner preflight answer' in live_visible
       if not all((second_user_text,second_answer_text,second_live_user_text,second_live_answer_text)):
        raise RuntimeError('second disposable Desktop did not display both fixture turns')
+      if ROUTER_RELAY_PROBE:
+       attack_code='''import asyncio,json,pathlib,sys
+async def main():
+ path,owner,app,thread=sys.argv[1:]
+ reader,writer=await asyncio.open_unix_connection(path)
+ async def send(message):
+  body=json.dumps(message).encode();writer.write(len(body).to_bytes(4,'little')+body);await writer.drain()
+ async def call(message):
+  await send(message)
+  while True:
+   size=int.from_bytes(await asyncio.wait_for(reader.readexactly(4),5),'little')
+   response=json.loads(await asyncio.wait_for(reader.readexactly(size),5))
+   if response.get('type')=='response' and response.get('requestId')==message['requestId']:return response
+ init=await call({'type':'request','requestId':'init','method':'initialize','version':1,
+  'params':{'clientType':'fixture-adversary'}})
+ client=init.get('result',{}).get('clientId')
+ write=await call({'type':'request','requestId':'write','sourceClientId':client,
+  'method':'thread-follower-start-turn','version':2,'hostId':'local',
+  'params':{'conversationId':thread,'turnStart':{}}})
+ other=await call({'type':'request','requestId':'other','sourceClientId':client,
+  'method':'thread-owner-discovery','version':1,
+  'params':{'conversationId':'different-thread','hostId':'local'}})
+ await send({'type':'broadcast','method':'thread-stream-following-changed','version':1,
+  'sourceClientId':'forged-client','params':{'conversationId':thread,'hostId':'local','following':True}})
+ await send({'type':'broadcast','method':'thread-stream-following-changed','version':1,
+  'sourceClientId':client,'params':{'conversationId':'different-thread','hostId':'local','following':True}})
+ await asyncio.sleep(.2)
+ print(json.dumps({'clientRegistered':isinstance(client,str),
+  'ownerSocketHidden':not pathlib.Path(owner).exists(),
+  'appSocketHidden':not pathlib.Path(app).exists(),
+  'writeDenied':write.get('resultType')=='error' and write.get('error')=='denied',
+  'otherThreadDenied':other.get('resultType')=='error' and other.get('error')=='denied'}))
+ writer.close();await writer.wait_closed()
+asyncio.run(main())'''
+       command=ns(displays[1],2)
+       split=command.index('--')
+       command[split:split]=['--tmpfs',str(AUTH_DIR)]
+       attacker=await asyncio.create_subprocess_exec(*command,'/usr/bin/python3','-c',attack_code,
+        str(CLIENT/'ipc/ipc.sock'),str(ipc_path),str(APP_SOCKET),tid,
+        stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+       output,error=await asyncio.wait_for(attacker.communicate(),20)
+       if attacker.returncode:raise RuntimeError('private IPC relay attack child failed: '+error.decode()[-1000:])
+       router_attack=json.loads(output)
+       if not all(router_attack.values()):raise RuntimeError('private IPC relay policy failed: '+json.dumps(router_attack))
      print(json.dumps({'ipcSocketPresent':True,'discoveryResultType':discovery.get('resultType'),
        'discoveryError':discovery.get('error'),'ownerFound':discovery.get('resultType')=='success',
        'historyResultType':history.get('resultType') if history else None,
@@ -503,7 +556,8 @@ asyncio.run(main())'''
        'secondLiveScreenshot':str(second_live_image) if second_live_image else None,
        'secondLiveUserTextPresent':second_live_user_text,
        'secondLiveAnswerTextPresent':second_live_answer_text,
-       'gate':gate_result}),flush=True)
+       'gate':gate_result,'routerRelay':router_relay.summary() if router_relay else None,
+       'routerAttack':router_attack}),flush=True)
      return
     model_record=ROOT/f'model-tools-{TAG}.json'
     if not model_record.is_file():raise RuntimeError('fixture model was not called')
@@ -652,6 +706,7 @@ asyncio.run(main())'''
 
  finally:
   for p in reversed(desktops):stop(p)
+  if router_relay:await router_relay.close()
   for p in reversed(xservers):stop(p)
   if real_session:
    try:broker_call(broker_socket,'session.stop',{'sessionId':real_session})
