@@ -224,13 +224,20 @@ static int make_datagram_server(const char *path) {
   return fd;
 }
 
-static int drain_server(int fd) {
+static int drain_server(int fd, int *all_broker_pid) {
   int count = 0;
   for (;;) {
     int peer = accept4(fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if (peer < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) return count;
       ERR("accept");
+    }
+    if (all_broker_pid) {
+      struct ucred credentials = {0};
+      socklen_t length = sizeof(credentials);
+      if (getsockopt(peer, SOL_SOCKET, SO_PEERCRED, &credentials, &length) ||
+          length != sizeof(credentials) || credentials.pid != getpid())
+        *all_broker_pid = 0;
     }
     count++;
     close(peer);
@@ -415,12 +422,14 @@ int main(int argc, char **argv) {
     if (waitpid(child, &status, WNOHANG) == child) break;
   }
   close(listener);
-  int selected_count = drain_server(selected_server);
+  int selected_stream_broker_pid = 1;
+  int selected_count = drain_server(selected_server, &selected_stream_broker_pid);
   int selected_dgram_broker_pid = 1;
   int selected_datagrams = drain_datagrams(selected_dgram_server, &selected_dgram_broker_pid);
-  int blocked_count = drain_server(blocked_server);
+  int blocked_count = drain_server(blocked_server, NULL);
   int blocked_datagrams = drain_datagrams(blocked_dgram_server, NULL);
   printf("selected_accepts=%d blocked_accepts=%d\n", selected_count, blocked_count);
+  printf("selected_stream_broker_pid=%d\n", selected_stream_broker_pid);
   printf("selected_datagrams=%d blocked_datagrams=%d\n", selected_datagrams, blocked_datagrams);
   if (broker_datagram) printf("selected_dgram_broker_pid=%d\n", selected_dgram_broker_pid);
   close(selected_server);
@@ -437,6 +446,7 @@ int main(int argc, char **argv) {
   printf("probe_exit=%d\n", WIFEXITED(status) ? WEXITSTATUS(status) : 128);
   return WIFEXITED(status) && !WEXITSTATUS(status)
          && selected_count == (naive ? 1 : 2)
+         && selected_stream_broker_pid
          && blocked_count == (naive ? 1 : 0)
          && selected_datagrams == (broker_datagram ? 2 : 0)
          && (!broker_datagram || selected_dgram_broker_pid)

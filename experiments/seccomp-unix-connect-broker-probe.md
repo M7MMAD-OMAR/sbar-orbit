@@ -53,6 +53,7 @@ blocked_sendmmsg_result=1 blocked_sendmmsg_errno=0
 nested_selected_result=0 nested_selected_errno=0
 nested_exit=0
 selected_accepts=2 blocked_accepts=0
+selected_stream_broker_pid=1
 selected_datagrams=0
 blocked_datagrams=3
 probe_exit=0
@@ -61,7 +62,8 @@ probe_exit=0
 The nested Bubblewrap mount deliberately puts the blocked host socket over
 the selected path in its own namespace. The broker still connects to the
 original selected socket. The selected server accepted both connections;
-the blocked stream server accepted none. In the `naive` arm, the same nested
+the blocked stream server accepted none. `SO_PEERCRED` reported the broker PID
+for both selected connections. In the `naive` arm, the same nested
 connection was diverted to the blocked host socket: the selected server
 accepted once and the blocked server accepted once. The datagram server
 received three messages in the pinned baseline. The path race therefore needs
@@ -86,6 +88,7 @@ blocked_sendmmsg_result=-1 blocked_sendmmsg_errno=13
 nested_selected_result=0 nested_selected_errno=0
 nested_exit=0
 selected_accepts=2 blocked_accepts=0
+selected_stream_broker_pid=1
 selected_datagrams=0
 blocked_datagrams=0
 probe_exit=0
@@ -120,6 +123,7 @@ blocked_sendmmsg_result=-1 blocked_sendmmsg_errno=13
 selected_sendto_result=1 selected_sendto_errno=0
 nested_selected_sendto_result=1 nested_selected_sendto_errno=0
 selected_accepts=2 blocked_accepts=0
+selected_stream_broker_pid=1
 selected_datagrams=2 blocked_datagrams=0
 selected_dgram_broker_pid=1
 probe_exit=0
@@ -134,6 +138,9 @@ zero flags and a payload from 1 to 4096 bytes. Connected sends, `sendmsg(2)`
 ancillary data, larger messages, abstract sockets, and real application
 behavior remain unmeasured or unsupported. The sender credential difference
 and these limitations prevent treating this as a production socket policy.
+The [direct private mount fixture](namespace-unix-peer-credential-probe.md)
+measures one route that preserves client process identity without a brokered
+connection, but it does not isolate every host socket path.
 
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
