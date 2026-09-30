@@ -28,6 +28,15 @@ A local proxy fixture then sent two delayed response chunks through the same
 every streamed CONNECT response in the tested transport path. It does not
 identify the ChatGPT request, response status, or reason for the model error.
 
+A separate read-only comparison used Orbit's browser backend with a copy of
+the system Chrome profile. The first origin list omitted Cloudflare's challenge
+host, and the session journal recorded that origin as blocked. A second copy
+allowed that exact host and the observed static asset host. It reached a
+Cloudflare `Verify you are human` challenge. No challenge interaction, account
+read, or service write was performed in either Chrome copy. Both comparison
+sessions were closed. The Chrome result does not explain the Zen model error
+and does not establish ChatGPT account continuity in Chrome.
+
 This supports authenticated access to current ChatGPT conversation history
 and persistence of one user turn from the private display. It does not support
 a claim that Orbit can complete a model turn in an existing ChatGPT
