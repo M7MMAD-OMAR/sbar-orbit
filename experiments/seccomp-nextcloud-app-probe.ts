@@ -21,6 +21,8 @@ const emptySecrets = process.env.ORBIT_NEXTCLOUD_EMPTY_SECRETS === "1";
 const oneSecret = process.env.ORBIT_NEXTCLOUD_ONE_SECRET === "1";
 const accountTunnel = process.env.ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL === "1";
 const nativeSync = process.env.ORBIT_NEXTCLOUD_NATIVE_SYNC === "1";
+const syncLifecycle = process.env.ORBIT_NEXTCLOUD_SYNC_LIFECYCLE === "1";
+if (syncLifecycle && !nativeSync) throw new Error("Sync lifecycle requires the native sync arm");
 if (nativeSync && !accountTunnel) throw new Error("Native sync requires the one-account tunnel arm");
 if (accountTunnel && !oneSecret) throw new Error("Account tunnel requires the one-credential account-copy arm");
 const assertSecrets = process.env.ORBIT_NEXTCLOUD_SECRET_ASSERT === "1";
@@ -35,7 +37,7 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${nativeSync ? "native-sync-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${nativeSync ? "native-sync-" : ""}${syncLifecycle ? "lifecycle-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
@@ -55,7 +57,8 @@ let tunnel: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 const secretSummaryPath = join(root, "secret-service-summary.json");
 const tunnelSummaryPath = join(root, "tunnel-summary.json");
 let syncPrepared = false;
-let syncSummary: { localUploadObserved: boolean; remoteDownloadObserved: boolean; cleaned: boolean; controlCredentialLoads: number } | null = null;
+let syncSummary: { localUploadObserved: boolean; remoteDownloadObserved: boolean; cleaned: boolean; controlCredentialLoads: number;
+  localEditObserved?: boolean; remoteEditObserved?: boolean; localDeleteObserved?: boolean; remoteDeleteObserved?: boolean } | null = null;
 async function syncControl(action: string): Promise<typeof syncSummary> {
   const command = Bun.spawn(["/usr/bin/python3", resolve("experiments/nextcloud-native-sync-control.py"), action, root],
     { stdout: "pipe", stderr: "ignore" });
@@ -156,6 +159,7 @@ try {
   }
   if (visible) {
     if (nativeSync) syncSummary = await syncControl("observe");
+    if (syncLifecycle) syncSummary = await syncControl("lifecycle");
     await Bun.sleep(8000);
     const frame = await backend.observe();
     const pixels = Buffer.from(frame.image, "base64");
@@ -235,7 +239,10 @@ try {
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
     certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
-    limits: [nativeSync && syncSummary?.localUploadObserved && syncSummary.remoteDownloadObserved ?
+    limits: [syncLifecycle && syncSummary?.localEditObserved && syncSummary.remoteEditObserved &&
+      syncSummary.localDeleteObserved && syncSummary.remoteDeleteObserved ?
+      "Generated files uploaded, downloaded, edited and deleted in both directions in one disposable folder; general personal-folder parity is unproved." :
+      nativeSync && syncSummary?.localUploadObserved && syncSummary.remoteDownloadObserved ?
       "Two generated files uploaded and downloaded through native sync in one disposable folder; general personal-folder parity is unproved." :
       accountTunnel && cloneSummary?.accountConnected ? "Account connected through a matching-CONNECT opaque TLS tunnel; no file sync was proved." :
       accountClone ? "Original config copied with sync folders removed; no native authentication or file sync was proved." :
@@ -253,6 +260,8 @@ try {
       !report.originalProcessesStillPresent)) throw new Error("Nextcloud account copy isolation check failed");
   if (nativeSync && (!syncSummary?.localUploadObserved || !syncSummary.remoteDownloadObserved))
     throw new Error("Native sync did not prove both disposable file directions");
+  if (syncLifecycle && (!syncSummary?.localEditObserved || !syncSummary.remoteEditObserved ||
+      !syncSummary.localDeleteObserved || !syncSummary.remoteDeleteObserved)) throw new Error("Native lifecycle is incomplete");
   if (assertSecrets) {
     const summary = report.emptySecretService as { searches: number; secretsReturned: number } | null;
     const selected = report.oneSecretService as { originalItemsRead: number; privateItems: number; secretsReturned: number } | null;

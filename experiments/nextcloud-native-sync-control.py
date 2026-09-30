@@ -92,6 +92,10 @@ def run(action, root):
         status, _ = request("PUT", "/server-seed.txt", b"Orbit native remote seed\n")
         if status not in (201, 204):
             raise ValueError("Could not seed disposable collection")
+        if os.environ.get("ORBIT_NEXTCLOUD_SYNC_LIFECYCLE") == "1":
+            status, _ = request("PUT", "/keep.txt", b"Orbit native deletion sentinel\n")
+            if status not in (201, 204):
+                raise ValueError("Could not seed the deletion sentinel")
         local.mkdir(mode=0o700)
         (local / "client-seed.txt").write_bytes(b"Orbit native local seed\n")
         prefix = account_id + "\\Folders\\OrbitNativeSync\\"
@@ -102,6 +106,14 @@ def run(action, root):
         start = next(i for i, line in enumerate(lines) if line.strip() == "[Accounts]")
         end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
         lines[end:end] = [prefix + key + "=" + value + "\n" for key, value in fields.items()]
+        if os.environ.get("ORBIT_NEXTCLOUD_SYNC_LIFECYCLE") == "1":
+            # v34.0.3 stores this interval in milliseconds under the app group.
+            if not any(line.strip() == "[Nextcloud]" for line in lines):
+                lines.extend(["\n[Nextcloud]\n", "remotePollInterval=5000\n"])
+            else:
+                start = next(i for i, line in enumerate(lines) if line.strip() == "[Nextcloud]")
+                end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+                lines[start + 1:end] = [line for line in lines[start + 1:end] if not line.startswith("remotePollInterval=")] + ["remotePollInterval=5000\n"]
         with open(configuration, "w", opener=lambda path, flags: os.open(path, flags | os.O_NOFOLLOW)) as stream:
             stream.write("".join(lines))
     elif action == "observe":
@@ -116,6 +128,36 @@ def run(action, root):
             if state["localUploadObserved"] and state["remoteDownloadObserved"]:
                 break
             time.sleep(1)
+    elif action == "lifecycle":
+        if not state["created"] or state["cleaned"] or not state["localUploadObserved"] or not state["remoteDownloadObserved"]:
+            raise ValueError("Lifecycle requires a live folder with both initial directions proved")
+
+        def await_phase(name, predicate):
+            started = time.monotonic()
+            deadline = started + 20
+            state[name] = False
+            while time.monotonic() < deadline:
+                if predicate():
+                    state[name] = True
+                    break
+                time.sleep(1)
+            state[name + "Seconds"] = round(time.monotonic() - started, 2)
+            save()
+            if not state[name]:
+                raise ValueError("Native lifecycle phase did not reach its opposite endpoint")
+
+        (local / "client-seed.txt").write_bytes(b"Orbit native local edited\n")
+        await_phase("localEditObserved", lambda: request("GET", "/client-seed.txt") == (200, b"Orbit native local edited\n"))
+        status, _ = request("PUT", "/server-seed.txt", b"Orbit native remote edited\n")
+        if status not in (201, 204):
+            raise ValueError("Could not edit owned remote fixture")
+        await_phase("remoteEditObserved", lambda: (local / "server-seed.txt").read_bytes() == b"Orbit native remote edited\n")
+        (local / "client-seed.txt").unlink()
+        await_phase("localDeleteObserved", lambda: request("GET", "/client-seed.txt")[0] == 404)
+        status, _ = request("DELETE", "/server-seed.txt")
+        if status != 204:
+            raise ValueError("Could not delete owned remote fixture")
+        await_phase("remoteDeleteObserved", lambda: not (local / "server-seed.txt").exists())
     elif action == "cleanup":
         if state.get("creationUncertain"):
             status, _ = request("PROPFIND")

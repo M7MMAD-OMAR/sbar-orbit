@@ -8,7 +8,8 @@ folders and visibly restored the cached account identity. A subsequent private
 service delivered one existing unlocked account credential to the client.
 An exact-CONNECT tunnel subsequently let the client authenticate and display
 existing account activities. A later native-sync arm uploaded and downloaded
-two generated files in one disposable folder. General sync parity and
+two generated files in one disposable folder, then propagated edits and
+deletions in both directions. General sync parity and
 conversations remain unproved. This is not full current-account parity or
 production integration.
 
@@ -476,6 +477,64 @@ conflicts, selective sync, original folder reuse, permissions, devices and
 production session integration remain unmeasured. The host's original client
 may observe and sync this newly created remote test collection under its own
 ordinary policy; that behavior is not controlled by this harness.
+
+## Native edit and deletion propagation
+
+The opt-in lifecycle arm requires the native-sync arm. Its preparation seeds a
+third generated `keep.txt` sentinel so deleting the two measured files does not
+empty the folder or require bypassing the client's mass-deletion confirmation.
+Only the private copy's Nextcloud app group gets `remotePollInterval=5000`.
+[The v34.0.3 ConfigFile implementation](https://github.com/nextcloud/desktop/blob/v34.0.3/src/libsync/configfile.cpp)
+uses milliseconds and accepts a minimum five-second interval. Original polling
+settings are not changed.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_ONE_SECRET=1 ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL=1 ORBIT_NEXTCLOUD_NATIVE_SYNC=1 ORBIT_NEXTCLOUD_SYNC_LIFECYCLE=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+```
+
+After proving initial upload and download, the host-side oracle performs four
+sequential operations. It edits the local client seed, then requires the exact
+new remote payload. It edits the remote server seed, then requires the exact
+new local payload. It removes the local client seed, then requires remote GET
+404. Finally it deletes the remote server seed, then requires local absence.
+The oracle never writes or removes the opposite endpoint for these checks.
+Each phase records a boolean and elapsed seconds in the private receipt, with
+a nominal twenty-second observation loop and a fifteen-second HTTP request
+timeout. A request can extend the loop beyond its nominal deadline; this is
+not a hard twenty-second end-to-end guarantee.
+
+The installed client passed all four phases on 30 September 2026:
+
+| Operation | Opposite endpoint evidence | Observed seconds |
+| --- | --- | --- |
+| Local edit | Remote exact payload match | 2.95 |
+| Remote edit | Local exact payload match | 2.00 |
+| Local deletion | Remote GET 404 | 3.44 |
+| Remote deletion | Local file absent | 2.00 |
+
+The run also passed both initial payload checks and the Connected assertion.
+It registered sixteen TCP attempts, accepted eight tunnels and recorded zero
+aggregate I/O failures. The application exited 128, with no harness scoped-stop
+flag and no broker failure. This exit value is reported as observed, not called
+a normal application exit. The original config's identity and content remained
+unchanged, and the original client process stayed present. Cleanup deleted the
+owned remote collection and confirmed its absence; `cleaned` was true.
+
+The controller loaded the same exact keyring item in four actions, prepare,
+observe, lifecycle and cleanup, plus the private credential service's one load:
+five loads total for this successful arm. The public report and cleanup evidence
+contain only counts, booleans and phase durations, in
+`output/seccomp-nextcloud-account-clone-one-secret-tunnel-native-sync-lifecycle-2026-09-30/`.
+No private activity image or raw application log is retained.
+
+The success gate requires all four lifecycle booleans as well as both initial
+payload matches. The measured durations are one-run observations, not latency
+targets or a stability result. Original sync-folder reuse, conflicts, selective
+sync, arbitrary file types and sizes, permissions, devices, conversations and
+production integration remain unmeasured. This establishes a small generated
+file lifecycle on the installed native client's current account, not full
+application parity. The oracle's negative timeout paths have not been exercised
+against a client that does not propagate these operations.
 
 ## Limits
 
