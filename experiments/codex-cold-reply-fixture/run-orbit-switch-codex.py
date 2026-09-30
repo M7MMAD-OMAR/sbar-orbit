@@ -11,7 +11,8 @@ PUBLIC_ATTACH='--public-attach' in sys.argv[3:]
 FOOTER_ONLY='--footer-only' in sys.argv[3:]
 DIRECT_ONLY='--direct-only' in sys.argv[3:]
 DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:]
-IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE
+IPC_GATE_PROBE='--ipc-gate-probe' in sys.argv[3:]
+IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE or IPC_GATE_PROBE
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
 PERSONAL_HOME=Path.home()
 ORBIT_REPO=Path(sys.argv[2]).resolve()
@@ -73,6 +74,30 @@ async def ipc_owner_discovery(socket_path, thread_id, load_history=False):
  finally:
   writer.close()
   await writer.wait_closed()
+
+async def ipc_read_gate(owner_socket, gate_socket, pinned_thread):
+ async def handle(reader,writer):
+  try:
+   line=await asyncio.wait_for(reader.readline(),5)
+   request=json.loads(line)
+   if not isinstance(request,dict) or request.get('method')!='thread.snapshot' or request.get('threadId')!=pinned_thread or set(request)!={'method','threadId'}:
+    result={'ok':False,'error':'denied'}
+   else:
+    discovery,history,snapshot=await ipc_owner_discovery(owner_socket,pinned_thread,load_history=True)
+    if discovery.get('resultType')!='success' or history is None or history.get('resultType')!='success' or snapshot is None:
+     result={'ok':False,'error':'unavailable'}
+    else:
+     state=(snapshot.get('params') or {}).get('change',{}).get('conversationState')
+     result={'ok':True,'threadId':pinned_thread,'conversationState':state}
+   writer.write((json.dumps(result,separators=(',',':'))+'\n').encode())
+   await writer.drain()
+  except (asyncio.TimeoutError,ValueError,asyncio.LimitOverrunError):pass
+  finally:
+   writer.close()
+   await writer.wait_closed()
+ server=await asyncio.start_unix_server(handle,path=str(gate_socket),limit=4096)
+ gate_socket.chmod(0o600)
+ return server
 
 async def ipc_fixture_owner(socket_path, thread_id, ready):
  reader,writer=await asyncio.open_unix_connection(str(socket_path))
@@ -388,6 +413,42 @@ async def main():
        env={'DISPLAY':f':{displays[0]}','XAUTHORITY':str(ROOT/'xauth'),
             'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=10)
      if capture.returncode:raise RuntimeError('private IPC fixture capture failed')
+     gate_result=None
+     if IPC_GATE_PROBE:
+      gate_socket=ROOT/f'ipc-read-gate-{TAG}.sock'
+      gate=await ipc_read_gate(ipc_path,gate_socket,tid)
+      try:
+       child_code='''import asyncio,json,pathlib,sys
+async def call(path,request):
+ reader,writer=await asyncio.open_unix_connection(path)
+ writer.write((json.dumps(request)+'\\n').encode());await writer.drain()
+ result=json.loads(await asyncio.wait_for(reader.readline(),10))
+ writer.close();await writer.wait_closed()
+ return result
+async def main():
+ gate,owner,app,thread=sys.argv[1:]
+ allowed=await call(gate,{'method':'thread.snapshot','threadId':thread})
+ blocked_write=await call(gate,{'method':'thread-follower-start-turn','threadId':thread})
+ blocked_other=await call(gate,{'method':'thread.snapshot','threadId':'different-thread'})
+ print(json.dumps({'ownerSocketHidden':not pathlib.Path(owner).exists(),
+  'appSocketHidden':not pathlib.Path(app).exists(),'readAllowed':allowed.get('ok') is True,
+  'userTextPresent':'Private fixture conversation' in json.dumps(allowed),
+  'answerTextPresent':'Orbit completed fixture answer' in json.dumps(allowed),
+  'writeDenied':blocked_write.get('error')=='denied',
+  'otherThreadDenied':blocked_other.get('error')=='denied'}))
+asyncio.run(main())'''
+       command=ns(displays[0],2)
+       split=command.index('--')
+       command[split:split]=['--tmpfs',str(OWNER/'ipc'),'--tmpfs',str(AUTH_DIR)]
+       child=await asyncio.create_subprocess_exec(*command,'/usr/bin/python3','-c',child_code,
+        str(gate_socket),str(ipc_path),str(APP_SOCKET),tid,
+        stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+       output,error=await asyncio.wait_for(child.communicate(),30)
+       if child.returncode:raise RuntimeError('private IPC gate child failed: '+error.decode()[-1000:])
+       gate_result=json.loads(output)
+       if not all(gate_result.values()):raise RuntimeError('private IPC gate scope check failed: '+json.dumps(gate_result))
+      finally:
+       gate.close();await gate.wait_closed();gate_socket.unlink(missing_ok=True)
      second_image=None;second_user_text=False;second_answer_text=False
      second_live_image=None;second_live_user_text=False;second_live_answer_text=False
      if DUAL_WINDOW_PROBE:
@@ -441,7 +502,8 @@ async def main():
        'secondUserTextPresent':second_user_text,'secondAnswerTextPresent':second_answer_text,
        'secondLiveScreenshot':str(second_live_image) if second_live_image else None,
        'secondLiveUserTextPresent':second_live_user_text,
-       'secondLiveAnswerTextPresent':second_live_answer_text}),flush=True)
+       'secondLiveAnswerTextPresent':second_live_answer_text,
+       'gate':gate_result}),flush=True)
      return
     model_record=ROOT/f'model-tools-{TAG}.json'
     if not model_record.is_file():raise RuntimeError('fixture model was not called')

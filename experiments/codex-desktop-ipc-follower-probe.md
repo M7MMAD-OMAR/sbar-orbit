@@ -111,6 +111,32 @@ arbitrary same-user clients, and its follower API includes write methods.
 A trusted gate needs an explicit account, thread, and method scope before
 any personal IPC route is used.
 
+The fixture's `--ipc-gate-probe` mode tests a narrow application-level gate.
+The trusted test process pins one synthetic thread and owns the fake owner
+IPC connection. It serves only `thread.snapshot` for that thread. A separate
+Bubblewrap child has the owner IPC directory and app-server socket hidden by
+private mounts. It can reach the gate socket, read the selected snapshot, and
+receives `denied` for a follower write method and a different thread. Run:
+
+```sh
+bun run scripts/limited.ts timeout 100s /usr/bin/python3 \
+  experiments/codex-cold-reply-fixture/run-orbit-switch-codex.py \
+  /var/tmp/codex-private-smoke-u . \
+  --ipc-gate-probe
+```
+
+```json
+{"ownerSocketHidden":true,"appSocketHidden":true,"readAllowed":true,"userTextPresent":true,"answerTextPresent":true,"writeDenied":true,"otherThreadDenied":true}
+```
+
+This gate is a small read-only protocol probe, not a replacement IPC router
+for a full Desktop window. Its mount test hides two known fake socket paths;
+it does not prove that every other local IPC path, descriptor transfer, or
+network route is blocked. The [separate seccomp experiment](seccomp-unix-connect-broker-probe.md) documents other
+UNIX socket bypasses and compatibility limits. A production gate also needs
+session-bound access, socket identity checks, bounded lifetime, and failure
+handling before connecting to any personal authority.
+
 An additional run of the existing fixture without `--ipc-probe` passed owner
 account inspection and cold thread activation, then failed while waiting for
 a second model answer through its attached UI. Its captured private window
