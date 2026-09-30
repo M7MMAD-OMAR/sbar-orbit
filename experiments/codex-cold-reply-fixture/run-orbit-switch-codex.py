@@ -10,6 +10,7 @@ RESTART_OWNER='--restart-owner' in sys.argv[3:]
 PUBLIC_ATTACH='--public-attach' in sys.argv[3:]
 FOOTER_ONLY='--footer-only' in sys.argv[3:]
 DIRECT_ONLY='--direct-only' in sys.argv[3:]
+IPC_PROBE='--ipc-probe' in sys.argv[3:]
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
 PERSONAL_HOME=Path.home()
 ORBIT_REPO=Path(sys.argv[2]).resolve()
@@ -22,6 +23,67 @@ def fake_jwt(payload):
  def encoded(value):
   return base64.urlsafe_b64encode(json.dumps(value,separators=(',',':')).encode()).decode().rstrip('=')
  return encoded({'alg':'none','typ':'JWT'})+'.'+encoded(payload)+'.fixture'
+
+async def ipc_owner_discovery(socket_path, thread_id):
+ reader,writer=await asyncio.wait_for(asyncio.open_unix_connection(str(socket_path)),5)
+ async def call(request):
+  body=json.dumps(request,separators=(',',':')).encode()
+  writer.write(len(body).to_bytes(4,'little')+body)
+  await writer.drain()
+  while True:
+   size=int.from_bytes(await asyncio.wait_for(reader.readexactly(4),10),'little')
+   if size<1 or size>1024*1024:raise RuntimeError('invalid disposable IPC frame length')
+   message=json.loads(await asyncio.wait_for(reader.readexactly(size),10))
+   if message.get('type')=='response' and message.get('requestId')==request['requestId']:
+    return message
+ try:
+  initialized=await call({'type':'request','requestId':'orbit-ipc-init','method':'initialize',
+                          'version':1,'params':{'clientType':'orbit-fixture-probe'}})
+  if initialized.get('resultType')!='success':raise RuntimeError('fixture IPC registration failed')
+  return await call({'type':'request','requestId':'orbit-ipc-discovery',
+                     'sourceClientId':initialized.get('result',{}).get('clientId'),
+                     'method':'thread-owner-discovery','version':1,
+                     'params':{'hostId':'local','conversationId':thread_id}})
+ finally:
+  writer.close()
+  await writer.wait_closed()
+
+async def ipc_fixture_owner(socket_path, thread_id, ready):
+ reader,writer=await asyncio.open_unix_connection(str(socket_path))
+ async def send(message):
+  body=json.dumps(message,separators=(',',':')).encode()
+  writer.write(len(body).to_bytes(4,'little')+body)
+  await writer.drain()
+ async def receive():
+  size=int.from_bytes(await reader.readexactly(4),'little')
+  if size<1 or size>1024*1024:raise RuntimeError('invalid fixture owner IPC frame length')
+  return json.loads(await reader.readexactly(size))
+ try:
+  await send({'type':'request','requestId':'fixture-owner-init','method':'initialize',
+              'version':1,'params':{'clientType':'orbit-fixture-owner'}})
+  while True:
+   message=await receive()
+   if message.get('type')=='response' and message.get('requestId')=='fixture-owner-init':
+    if message.get('resultType')!='success':raise RuntimeError('fixture owner IPC registration failed')
+    break
+  ready.set()
+  while True:
+   message=await receive()
+   if message.get('type')=='client-discovery-request':
+    request=message.get('request') or {}
+    params=request.get('params') or {}
+    await send({'type':'client-discovery-response','requestId':message['requestId'],
+                'response':{'canHandle':request.get('method')=='thread-owner-discovery'
+                  and params.get('conversationId')==thread_id}})
+   elif message.get('type')=='request' and message.get('method')=='thread-owner-discovery':
+    await send({'type':'response','requestId':message['requestId'],
+                'method':'thread-owner-discovery','resultType':'success',
+                'result':{'supportsUntrustedAppInput':True}})
+ except asyncio.CancelledError:
+  pass
+ finally:
+  writer.close()
+  await writer.wait_closed()
 
 def stop(p):
  if p is None or p.poll() is not None:return
@@ -256,6 +318,35 @@ async def main():
     else:raise RuntimeError('fixture turn did not complete')
     read=await rpc(ws,5,'thread/read',{'threadId':tid,'includeTurns':True})
     if 'Orbit completed fixture answer' not in json.dumps(read):raise RuntimeError('fixture answer not persisted')
+    if IPC_PROBE:
+     ipc_path=OWNER/'ipc'/'ipc.sock'
+     for _ in range(100):
+      if ipc_path.is_socket():break
+      await asyncio.sleep(.05)
+     if not ipc_path.is_socket():raise RuntimeError('disposable Desktop IPC socket missing')
+     await asyncio.sleep(30)
+     discovery=await ipc_owner_discovery(ipc_path,tid)
+     ready=asyncio.Event()
+     fake_owner=asyncio.create_task(ipc_fixture_owner(ipc_path,tid,ready))
+     try:
+      await asyncio.wait_for(ready.wait(),5)
+      synthetic=await ipc_owner_discovery(ipc_path,tid)
+     finally:
+      fake_owner.cancel()
+      await fake_owner
+     if synthetic.get('resultType')!='success':
+      raise RuntimeError('disposable IPC router did not forward fixture owner discovery')
+     image=ROOT/f'ipc-owner-{TAG}.jpg'
+     capture=subprocess.run(['/usr/bin/import','-display',f':{displays[0]}',
+       '-window','root','-quality','85',str(image)],
+       env={'DISPLAY':f':{displays[0]}','XAUTHORITY':str(ROOT/'xauth'),
+            'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=10)
+     if capture.returncode:raise RuntimeError('private IPC fixture capture failed')
+     print(json.dumps({'ipcSocketPresent':True,'discoveryResultType':discovery.get('resultType'),
+       'discoveryError':discovery.get('error'),'ownerFound':discovery.get('resultType')=='success',
+       'syntheticOwnerFound':True,
+       'screenshot':str(image)}),flush=True)
+     return
     model_record=ROOT/f'model-tools-{TAG}.json'
     if not model_record.is_file():raise RuntimeError('fixture model was not called')
     model_tools=json.loads(model_record.read_text())
