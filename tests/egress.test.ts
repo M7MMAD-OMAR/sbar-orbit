@@ -291,6 +291,52 @@ test("public web lease routes two HTTP hosts on one proxy connection without cro
   }
 });
 
+test("public web CONNECT keeps a delayed response stream open", async () => {
+  const root = await fixtureRoot("orbit-public-web-stream-");
+  const loopback = [127, 0, 0, 1].join(".");
+  let request = "";
+  const target = listen<undefined>({ hostname: loopback, port: 0, socket: {
+    open: () => {}, data(socket, chunk) {
+      request += new TextDecoder().decode(chunk);
+      if (!request.includes("\r\n\r\n") || !request.startsWith("GET /stream HTTP/1.1")) return;
+      request = "handled";
+      socket.write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: first\n\n");
+      setTimeout(() => { socket.write("data: second\n\n"); socket.end(); }, 180);
+    }, close: () => {},
+  } });
+  let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
+  let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
+  try {
+    lease = await openPublicWebLease({ parentDirectory: root,
+      resolveHost: async () => ["8.8.8.8"],
+      routeForTest: (address, port) => {
+        expect(address).toBe("8.8.8.8");
+        expect(port).toBe(443);
+        return { address: loopback, port: target.port };
+      },
+    });
+    let reply = "";
+    client = await connect<undefined>({ unix: lease.socketPath, socket: {
+      data: (_socket, chunk) => { reply += new TextDecoder().decode(chunk); },
+      close: () => {}, error: () => {},
+    } });
+    client.write("CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n");
+    for (let i = 0; i < 100 && !reply.includes("200 Connection Established"); i++) await Bun.sleep(20);
+    expect(reply).toContain("200 Connection Established");
+    client.write("GET /stream HTTP/1.1\r\nHost: public.example\r\n\r\n");
+    for (let i = 0; i < 100 && !reply.includes("data: first"); i++) await Bun.sleep(20);
+    expect(reply).toContain("data: first");
+    expect(reply).not.toContain("data: second");
+    for (let i = 0; i < 100 && !reply.includes("data: second"); i++) await Bun.sleep(20);
+    expect(reply).toContain("data: second");
+  } finally {
+    client?.end();
+    await lease?.close();
+    target.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("public web lease refuses local, private, reserved and host interface destinations", async () => {
   const root = await fixtureRoot("orbit-public-web-private-");
   const loopback = [127, 0, 0, 1].join(".");
