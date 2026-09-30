@@ -47,6 +47,9 @@ int main(int argc, char **argv) {
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_LOOPBACK"), "1");
   private_socket_pairs = getenv("ORBIT_PRIVATE_BROKER_PAIRS") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_PAIRS"), "1");
+  int private_pid_namespace = getenv("ORBIT_PRIVATE_BROKER_PID_NAMESPACE") &&
+    !strcmp(getenv("ORBIT_PRIVATE_BROKER_PID_NAMESPACE"), "1");
+  if (private_pid_namespace && !private_socket_pairs) return 2;
   const char *tcp_port = getenv("ORBIT_PRIVATE_BROKER_TCP_PORT");
   if (tcp_port) {
     if (!*tcp_port || strlen(tcp_port) > 5 || strspn(tcp_port, "0123456789") != strlen(tcp_port)) return 2;
@@ -109,7 +112,16 @@ int main(int argc, char **argv) {
     close(channel[1]);
     if (install_strict_send_filter(0, 1, -1)) _exit(125);
     if (syscall(__NR_close_range, 3u, ~0u, 0)) _exit(125);
-    execv(argv[command], &argv[command]);
+    if (private_pid_namespace) {
+      char *prefix[] = {"/usr/bin/bwrap", "--die-with-parent", "--dev-bind", "/", "/",
+                        "--unshare-pid", "--proc", "/proc", "--"};
+      size_t count = sizeof(prefix) / sizeof(prefix[0]);
+      char **namespaced = calloc(count + (size_t)(argc - command) + 1, sizeof(char *));
+      if (!namespaced) _exit(125);
+      memcpy(namespaced, prefix, sizeof(prefix));
+      for (int i = command; i < argc; i++) namespaced[count + (size_t)(i - command)] = argv[i];
+      execv(prefix[0], namespaced);
+    } else execv(argv[command], &argv[command]);
     _exit(127);
   }
   setpgid(child, child);

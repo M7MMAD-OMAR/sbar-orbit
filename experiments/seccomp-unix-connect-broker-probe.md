@@ -326,3 +326,14 @@ passed. This closes the tested startup inheritance routes only. Later accepted
 or received descriptors, file/device/process authority and non-atomic pair
 injection remain outside that result. See
 [inherited descriptor evidence](seccomp-inherited-fd-controls.md).
+
+## Private process visibility experiment, 30 September 2026
+
+An opt-in PID namespace hides the fixture's own host launcher from `/proc`,
+signal-zero reachability and `pidfd_open`, while private child control and a
+generated file remain usable. Private bus validation now understands kernel
+namespace TGID metadata. Installed Loupe still fails to load its generated
+image under the namespace, and broker-created pair peer PID becomes 0 there.
+These are unresolved compatibility facts. The namespace remains optional and
+experimental; it is not a completed process or application isolation policy.
+See [private PID namespace evidence](seccomp-pid-namespace-controls.md).

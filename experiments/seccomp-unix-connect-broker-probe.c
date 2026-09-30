@@ -2,6 +2,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 #include <linux/audit.h>
@@ -550,18 +551,38 @@ static int private_bus_credential_slot(int fd, pid_t tid, struct ucred *credenti
   size_t slot = 0;
   for (; slot < private_bus_cookie_count; slot++) if (private_bus_cookies[slot] == cookie) break;
   if (slot == private_bus_cookie_count || private_bus_handshakes[slot]) return -1;
-  char path[64], line[256];
+  char path[64], line[512];
   snprintf(path, sizeof(path), "/proc/%d/status", tid);
   FILE *status = fopen(path, "r");
   if (!status) return -1;
-  unsigned int tgid = 0, uid = (unsigned int)-1, gid = (unsigned int)-1;
+  unsigned int tgid = 0, namespace_tgid = 0, first_namespace_tgid = 0;
+  unsigned int uid = (unsigned int)-1, gid = (unsigned int)-1;
   while (fgets(line, sizeof(line), status)) {
     if (!strncmp(line, "Tgid:", 5)) sscanf(line + 5, "%u", &tgid);
+    if (!strncmp(line, "NStgid:", 7)) {
+      // SCM_CREDENTIALS carries the sender's PID in its own namespace. The
+      // listener sees host PIDs, so validate against the kernel's innermost TGID.
+      char *cursor = line + 7;
+      if (!strchr(cursor, '\n')) { fclose(status); return -1; }
+      while (*cursor) {
+        cursor += strspn(cursor, " \t\n");
+        if (!*cursor) break;
+        if (*cursor < '0' || *cursor > '9') { fclose(status); return -1; }
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(cursor, &end, 10);
+        if (errno || !value || value > INT_MAX || end == cursor) { fclose(status); return -1; }
+        if (!first_namespace_tgid) first_namespace_tgid = (unsigned int)value;
+        namespace_tgid = (unsigned int)value;
+        cursor = end;
+      }
+    }
     if (!strncmp(line, "Uid:", 4)) sscanf(line + 4, "%u", &uid);
     if (!strncmp(line, "Gid:", 4)) sscanf(line + 4, "%u", &gid);
   }
   fclose(status);
-  if (!tgid || credentials->pid <= 0 || (unsigned int)credentials->pid != tgid ||
+  if (!tgid || first_namespace_tgid != tgid || !namespace_tgid || credentials->pid <= 0 ||
+      (unsigned int)credentials->pid != namespace_tgid ||
       credentials->uid != uid || credentials->gid != gid || uid != getuid() || gid != getgid()) return -1;
   // Explicit experiment semantics: the private bus sees the connecting broker,
   // not the application's PID. Never claim transparent process identity.

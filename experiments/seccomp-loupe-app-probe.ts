@@ -12,9 +12,10 @@ const details = process.env.ORBIT_LOUPE_BROKER_DETAILS === "1";
 const audit = process.env.ORBIT_LOUPE_BROKER_AUDIT === "1";
 const loopback = process.env.ORBIT_LOUPE_BROKER_LOOPBACK === "1";
 const pairs = process.env.ORBIT_LOUPE_BROKER_PAIRS === "1";
+const pidNamespace = process.env.ORBIT_PRIVATE_BROKER_PID_NAMESPACE === "1";
 const root = await mkdtemp("/var/tmp/orbit-loupe-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-loupe-${loopback ? "loopback-" : ""}${pairs ? "pairs-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-loupe-${pidNamespace ? "pid-" : ""}${loopback ? "loopback-" : ""}${pairs ? "pairs-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const image = join(root, "orbit-generated-halves.png"), binary = join(root, "broker");
 let client: ReturnType<typeof Bun.spawn> | undefined;
 try {
@@ -98,7 +99,7 @@ print(json.dumps({"left":left,"right":right,"matched":left[0]<70 and left[1]>150
   const lastLine = text.trim().split("\n").at(-1);
   const broker: unknown = control || !lastLine ? null : JSON.parse(lastLine);
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/loupe",
-    transport: control ? "direct-control" : "brokered", audit, details, loopback, pairs, visible, title, exit, forcedStop, broker,
+    transport: control ? "direct-control" : "brokered", audit, details, loopback, pairs, pidNamespace: pidNamespace && !control, visible, title, exit, forcedStop, broker,
     renderedColors,
     limits: ["Experimental launch, not the production session action.", "Generated file and disposable application state only.",
       "No current accounts, conversations, personal files or devices were measured.",
@@ -106,6 +107,7 @@ print(json.dumps({"left":left,"right":right,"matched":left[0]<70 and left[1]>150
       ...(pairs && !control ? ["Broker-created pairs carry broker peer credentials and socket namespace."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
+  if (pidNamespace && !(renderedColors as { matched?: boolean } | null)?.matched) process.exitCode = 1;
 } finally {
   if (client && client.exitCode === null) { client.kill("SIGTERM"); await client.exited; }
   await sessions.close();
