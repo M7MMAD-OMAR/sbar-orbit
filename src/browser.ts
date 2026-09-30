@@ -253,7 +253,7 @@ export class BrowserBackend {
     const page = this.page;
     switch (action.type) {
       case "scroll": return this.control(action);
-      case "navigate": await page.goto(action.url); return { url: page.url() };
+      case "navigate": await page.goto(action.url, { waitUntil: "domcontentloaded" }); return { url: page.url() };
       case "fill": await page.locator(action.selector).fill(action.text); return { applied: true };
       case "click": return this.clickThrough(page, action.selector);
       case "read": return { text: await page.locator(action.selector).innerText() };
@@ -263,7 +263,7 @@ export class BrowserBackend {
         if (this.context.pages().length >= 64) throw new OrbitError("LIMIT_REACHED", "This session already has 64 tabs open");
         const opened = await this.context.newPage();
         await opened.setViewportSize(this.size).catch(() => {});
-        if (action.url) await opened.goto(action.url);
+        if (action.url) await opened.goto(action.url, { waitUntil: "domcontentloaded" });
         // After the navigation, not before: a page adopted while goto was in flight would otherwise
         // leave the returned tab number pointing at a tab the session no longer follows.
         this.active = opened;

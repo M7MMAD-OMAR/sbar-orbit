@@ -59,6 +59,28 @@ was still present. Message attachments, calls, microphone and camera access,
 other conversations, and reliable loading across repeated sessions remain
 unmeasured.
 
+## Navigation deadline regression
+
+The loaded Talk page after a navigation deadline prompted a separate local
+fixture investigation. A complete HTML document contained one image whose
+response remained open. With the original `page.goto` default load wait,
+both Orbit `navigate` and URL-bearing `open-tab` failed with
+`DEADLINE_EXCEEDED`. The regression ran before the fix: 0 pass, 2 fail in
+31.70 seconds. The image fixture's idle timeout was explicitly longer than
+the browser deadline.
+
+Both actions now wait for `DOMContentLoaded`. The same fixture then returned
+success and read the expected document text while the image and window load
+event remained pending. The navigation, tab and personal-browser tests passed
+9 tests. Type checking passed, and the standard suite passed 563 tests with
+45 skipped and no failures across 126 files. The regression is
+`tests/browser-navigation.test.ts`.
+
+This fixes the measured wait on a pending nonessential image. It does not
+identify which request delayed the earlier Talk page or explain its blank
+loads. Navigation success still requires inspecting the application's state
+before claiming it is ready.
+
 ## Shared file sync in both directions
 
 A later pilot used another private Chromium copy while the original Nextcloud
