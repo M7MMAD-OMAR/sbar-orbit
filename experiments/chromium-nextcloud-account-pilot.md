@@ -68,3 +68,11 @@ resolved, large-file behavior, selective sync of other folders, account token
 refresh, or hardware device access. The Markdown marker was verified in the
 local file. The reverse-direction text file was verified by name in the web
 list, not by opening its content in the web editor.
+
+Two further private browser copies checked whether Chrome offered another
+authenticated Talk route. The installed system Chrome profile and the Flatpak
+Chrome profile both redirected the Nextcloud dashboard to its login page, so
+neither provided an existing Nextcloud session. Both private sessions closed.
+This leaves system Chromium as the measured authenticated browser profile for
+this service on the current workstation. It does not explain the blank Talk
+page after reopening it.
