@@ -31,6 +31,65 @@ static uint32_t timestamp(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 }
+static const char *key_symbol_name(const char *name, char letter[2]) {
+    static const struct { const char *input; const char *symbol; } aliases[] = {
+        {"ArrowLeft", "Left"}, {"ArrowRight", "Right"}, {"ArrowUp", "Up"},
+        {"ArrowDown", "Down"}, {"PageUp", "Prior"}, {"PageDown", "Next"},
+        {"Space", "space"}, {"Minus", "minus"}, {"Equal", "equal"},
+        {"Enter", "Return"},
+    };
+    for (size_t i = 0; i < sizeof(aliases) / sizeof(aliases[0]); i++)
+        if (strcmp(name, aliases[i].input) == 0) return aliases[i].symbol;
+    if (name[0] >= 'A' && name[0] <= 'Z' && name[1] == 0) {
+        letter[0] = (char)(name[0] - 'A' + 'a'); letter[1] = 0; return letter;
+    }
+    if (name[0] >= '0' && name[0] <= '9' && name[1] == 0) return name;
+    if (name[0] == 'F' && name[1] >= '1' && name[1] <= '9' && name[2] == 0) return name;
+    if (name[0] == 'F' && name[1] == '1' && name[2] >= '0' && name[2] <= '2' && name[3] == 0) return name;
+    if (strcmp(name, "Tab") == 0 || strcmp(name, "Escape") == 0 ||
+        strcmp(name, "Backspace") == 0 ||
+        strcmp(name, "Delete") == 0 || strcmp(name, "Home") == 0 ||
+        strcmp(name, "End") == 0) return name;
+    return NULL;
+}
+static int parse_key(struct xkb_keymap *keymap, const char *line, uint32_t *code, uint32_t *modifiers) {
+    size_t length = strlen(line);
+    if (length < 5 || length >= 64 || line[length - 1] != '\n') return 0;
+    char copy[64];
+    memcpy(copy, line + 4, length - 5);
+    copy[length - 5] = 0;
+    const char *name = copy;
+    const struct { const char *prefix; const char *modifier; } prefixes[] = {
+        {"Ctrl+", XKB_MOD_NAME_CTRL}, {"Alt+", XKB_MOD_NAME_ALT},
+        {"Shift+", XKB_MOD_NAME_SHIFT},
+    };
+    *modifiers = 0;
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+        size_t prefix_length = strlen(prefixes[i].prefix);
+        if (strncmp(name, prefixes[i].prefix, prefix_length) != 0) continue;
+        xkb_mod_index_t index = xkb_keymap_mod_get_index(keymap, prefixes[i].modifier);
+        if (index == XKB_MOD_INVALID || index >= 32) return 0;
+        *modifiers |= 1u << index;
+        name += prefix_length;
+    }
+    char letter[2];
+    const char *symbol_name = key_symbol_name(name, letter);
+    if (!symbol_name) return 0;
+    xkb_keysym_t symbol = xkb_keysym_from_name(symbol_name, XKB_KEYSYM_NO_FLAGS);
+    if (symbol == XKB_KEY_NoSymbol) return 0;
+    for (xkb_keycode_t candidate = xkb_keymap_min_keycode(keymap);
+         candidate <= xkb_keymap_max_keycode(keymap); candidate++) {
+        for (xkb_level_index_t level = 0; level < 2; level++) {
+            const xkb_keysym_t *symbols;
+            int count = xkb_keymap_key_get_syms_by_level(keymap, candidate, 0, level, &symbols);
+            if (count == 1 && symbols[0] == symbol && candidate >= 8) {
+                *code = candidate - 8;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
 int main(int argc, char **argv) {
     if (argc != 2 || strncmp(argv[1], "/tmp/orbit-native-", 18) != 0) {
         fprintf(stderr, "Explicit Orbit private Wayland socket required\n"); return 1;
@@ -83,16 +142,7 @@ int main(int argc, char **argv) {
         }
         if (strncmp(line, "key ", 4) == 0) {
             uint32_t code = 0, modifiers = 0;
-            if (strcmp(line, "key Ctrl+A\n") == 0) code = KEY_A;
-            else if (strcmp(line, "key Ctrl+S\n") == 0) code = KEY_S;
-            else if (strcmp(line, "key Ctrl+O\n") == 0) code = KEY_O;
-            else if (strcmp(line, "key Ctrl+L\n") == 0) code = KEY_L;
-            else if (strcmp(line, "key Enter\n") == 0) code = KEY_ENTER;
-            else if (strcmp(line, "key Tab\n") == 0) code = KEY_TAB;
-            else if (strcmp(line, "key Escape\n") == 0) code = KEY_ESC;
-            else return 14;
-            if (strncmp(line, "key Ctrl+", 9) == 0)
-                modifiers = 1u << xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CTRL);
+            if (!parse_key(keymap, line, &code, &modifiers)) return 14;
             zwp_virtual_keyboard_v1_modifiers(keyboard, modifiers, 0, 0, 0);
             zwp_virtual_keyboard_v1_key(keyboard, timestamp(), code, WL_KEYBOARD_KEY_STATE_PRESSED);
             zwp_virtual_keyboard_v1_key(keyboard, timestamp(), code, WL_KEYBOARD_KEY_STATE_RELEASED);

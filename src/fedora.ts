@@ -30,6 +30,7 @@ export function nativeSupervisorSafetyFlags(action: NativeAction): string[] {
 /** Window management inside the private display. Nothing here can reach a window on the person's desktop. */
 const windowCommands = ["fullscreen", "restore", "focus", "close"] as const;
 export type WindowCommand = (typeof windowCommands)[number];
+const nativeKey = /^(?:Ctrl\+)?(?:Alt\+)?(?:Shift\+)?(?:[A-Z]|[0-9]|F(?:[1-9]|1[0-2])|Enter|Tab|Escape|Backspace|Delete|Space|Home|End|PageUp|PageDown|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Minus|Equal)$/u;
 export function parseNativeAction(value: unknown, size: Viewport = defaultViewport): NativeAction {
   const a = record(value);
   if (a.type === "resize") return { type: "resize", ...parseViewport(a) };
@@ -89,7 +90,7 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
     return { type: "paste", text: a.text };
   }
   if (a.type === "key") {
-    if (!["Ctrl+A", "Ctrl+S", "Ctrl+O", "Ctrl+L", "Enter", "Tab", "Escape"].includes(String(a.key)))
+    if (typeof a.key !== "string" || !nativeKey.test(a.key))
       throw new OrbitError("UNSUPPORTED", "Unsupported native key");
     return { type: "key", key: String(a.key) };
   }
