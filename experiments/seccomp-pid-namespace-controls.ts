@@ -6,13 +6,24 @@ import { requireResourceBudget } from "../src/resource-budget";
 
 await requireResourceBudget();
 const control = process.env.ORBIT_PID_NAMESPACE_CONTROL === "1";
+const factoryControl = process.env.ORBIT_PID_PAIR_FACTORY_CONTROL === "1";
+if (control && factoryControl) throw new Error("Choose one control arm");
 const root = await mkdtemp("/var/tmp/orbit-pid-controls-"), runtime = await mkdtemp("/tmp/orbit-native-pid-");
 const endpoint = join(runtime, "wayland-0"), binary = join(root, "broker"), report = join(root, "result.json");
 const fixture = join(root, "generated.txt");
 const server = createServer(socket => socket.destroy());
 try {
   await new Promise<void>((ready, fail) => { server.once("error", fail); server.listen(endpoint, ready); });
-  const compile = Bun.spawn(["cc", "-Wall", "-Wextra", "-Werror", "-O2", "-pthread", "-o", binary, resolve("experiments/seccomp-wayland-app-probe.c")], { stdout: "pipe", stderr: "pipe" });
+  let source = resolve("experiments/seccomp-wayland-app-probe.c");
+  if (factoryControl) {
+    // Reproduce the old host-created pair path in an owned temporary build.
+    source = join(root, "seccomp-wayland-app-probe.c");
+    const original = await readFile(resolve("experiments/seccomp-wayland-app-probe.c"), "utf8");
+    if (!original.includes("namespace_socket_pairs = private_pid_namespace;")) throw new Error("Factory control marker absent");
+    await writeFile(source, original.replace("namespace_socket_pairs = private_pid_namespace;", "namespace_socket_pairs = 0;"));
+    await writeFile(join(root, "seccomp-unix-connect-broker-probe.c"), await readFile(resolve("experiments/seccomp-unix-connect-broker-probe.c")));
+  }
+  const compile = Bun.spawn(["cc", "-Wall", "-Wextra", "-Werror", "-O2", "-pthread", "-o", binary, source], { stdout: "pipe", stderr: "pipe" });
   const errors = await new Response(compile.stderr).text();
   if (await compile.exited !== 0) throw new Error(errors);
   await writeFile(fixture, "generated-before\n", { mode: 0o600 });
@@ -41,16 +52,17 @@ with open(sys.argv[1],'w') as f: json.dump(results,f)
   if (exit !== 0) throw new Error(JSON.stringify({ exit, standard, diagnostic }));
   const result = JSON.parse(await readFile(report, "utf8")) as { pid: number; hostProcVisible: boolean; hostSignal: { errno: number | null }; hostPidfd: { errno: number | null }; privateChildSignal: boolean; pairBytes: string; pairPeerPid: number; fileRead: boolean; visibleProcessCount: number };
   const fileWrite = await readFile(fixture, "utf8") === "generated-after\n";
+  const output = join(process.cwd(), "output", `seccomp-pid-controls${factoryControl ? "-factory-control" : control ? "-control" : ""}-${new Date().toISOString().slice(0, 10)}`);
+  await mkdir(output, { recursive: true, mode: 0o700 });
+  const evidence = { control, factoryControl, broker: JSON.parse(standard.trim()), result, fileWrite };
+  await writeFile(join(output, "report.json"), JSON.stringify(evidence, null, 2) + "\n");
+  console.log(JSON.stringify(evidence));
   if (!result.privateChildSignal || result.pairBytes !== "A" || !result.fileRead || !fileWrite) throw new Error("Private process or file capability failed");
   if (control) {
     if (!result.hostProcVisible || result.hostSignal.errno !== null || result.hostPidfd.errno !== null || result.pairPeerPid <= 0) throw new Error("Host visibility baseline not reproduced");
-  } else if (result.hostProcVisible || result.hostSignal.errno !== 3 || result.hostPidfd.errno !== 3 || result.visibleProcessCount > 4 || result.pairPeerPid !== 0)
-    throw new Error("Host processes remain reachable");
-  const output = join(process.cwd(), "output", `seccomp-pid-controls${control ? "-control" : ""}-${new Date().toISOString().slice(0, 10)}`);
-  await mkdir(output, { recursive: true, mode: 0o700 });
-  const evidence = { control, broker: JSON.parse(standard.trim()), result, fileWrite };
-  await writeFile(join(output, "report.json"), JSON.stringify(evidence, null, 2) + "\n");
-  console.log(JSON.stringify(evidence));
+  } else if (result.hostProcVisible || result.hostSignal.errno !== 3 || result.hostPidfd.errno !== 3 || result.visibleProcessCount > 4 || result.pairPeerPid <= 0)
+    throw new Error("Host visibility or namespace-local pair identity gate failed");
+
 } finally {
   await new Promise<void>(ready => server.close(() => ready()));
   await rm(root, { recursive: true, force: true }); await rm(runtime, { recursive: true, force: true });

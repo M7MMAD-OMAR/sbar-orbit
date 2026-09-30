@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
   int private_pid_namespace = getenv("ORBIT_PRIVATE_BROKER_PID_NAMESPACE") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_PID_NAMESPACE"), "1");
   if (private_pid_namespace && !private_socket_pairs) return 2;
+  namespace_socket_pairs = private_pid_namespace;
   const char *tcp_port = getenv("ORBIT_PRIVATE_BROKER_TCP_PORT");
   if (tcp_port) {
     if (!*tcp_port || strlen(tcp_port) > 5 || strspn(tcp_port, "0123456789") != strlen(tcp_port)) return 2;

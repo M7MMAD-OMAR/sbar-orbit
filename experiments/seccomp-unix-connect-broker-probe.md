@@ -332,8 +332,9 @@ injection remain outside that result. See
 An opt-in PID namespace hides the fixture's own host launcher from `/proc`,
 signal-zero reachability and `pidfd_open`, while private child control and a
 generated file remain usable. Private bus validation now understands kernel
-namespace TGID metadata. Installed Loupe still fails to load its generated
-image under the namespace, and broker-created pair peer PID becomes 0 there.
-These are unresolved compatibility facts. The namespace remains optional and
+namespace TGID metadata. The original host-created pair returned peer PID 0
+and broke Rustix credential decoding. A trusted namespace-local pair factory
+now restores a nonzero factory peer identity, and installed Loupe loads its
+generated image with the original image sandbox enabled. The namespace remains optional and
 experimental; it is not a completed process or application isolation policy.
 See [private PID namespace evidence](seccomp-pid-namespace-controls.md).

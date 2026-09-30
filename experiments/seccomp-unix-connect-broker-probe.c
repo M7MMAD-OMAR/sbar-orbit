@@ -12,6 +12,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sched.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -58,6 +59,7 @@ static int private_loopback_netlink;
 static uint64_t broker_netns_cookie;
 static size_t forwarded_loopback;
 static int private_socket_pairs;
+static int namespace_socket_pairs;
 static uint64_t private_pair_cookies[256];
 static size_t private_pair_cookie_count;
 static size_t forwarded_pair_messages;
@@ -598,6 +600,86 @@ static int broker_created_pair(int fd) {
   return 0;
 }
 
+// Only the opt-in PID namespace experiment uses this trusted factory. It
+// creates endpoints inside the requesting task's pinned namespaces. Cookies,
+// copied sends and descriptor injection remain mediated by the host broker.
+static int create_namespace_pair(int listener, struct seccomp_notif *request, int type, int pair[2]) {
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%u/ns/pid", request->pid);
+  int pidns = open(path, O_RDONLY | O_CLOEXEC);
+  snprintf(path, sizeof(path), "/proc/%u/ns/user", request->pid);
+  int userns = open(path, O_RDONLY | O_CLOEXEC);
+  struct stat target, current;
+  int channel[2] = {-1, -1}, result = -1, failure = EACCES;
+  pid_t helper = -1;
+  if (pidns < 0 || userns < 0 || fstat(pidns, &target) || stat("/proc/self/ns/pid", &current) ||
+      ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
+  if (target.st_dev == current.st_dev && target.st_ino == current.st_ino) {
+    result = socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair);
+    failure = errno;
+    goto done;
+  }
+  if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, channel)) { failure = errno; goto done; }
+  helper = fork();
+  if (helper < 0) { failure = errno; goto done; }
+  if (!helper) {
+    setpgid(0, 0);
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
+    // Keep only the factory channel and two pinned namespace handles. Duplicate
+    // above the destination range first so overlapping source FDs are safe.
+    int kept[3] = {channel[1], userns, pidns};
+    for (size_t i = 0; i < 3; i++) {
+      kept[i] = fcntl(kept[i], F_DUPFD_CLOEXEC, 6);
+      if (kept[i] < 0) _exit(125);
+    }
+    for (size_t i = 0; i < 3; i++) if (dup2(kept[i], (int)i + 3) < 0) _exit(125);
+    if (syscall(__NR_close_range, 6u, ~0u, 0) || setns(4, CLONE_NEWUSER) || setns(5, CLONE_NEWPID)) _exit(125);
+    close(4); close(5);
+    pid_t creator = fork();
+    if (creator < 0) _exit(125);
+    if (!creator) {
+      int endpoints[2];
+      if (socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, endpoints)) _exit(125);
+      char byte = 'P'; struct iovec io = {&byte, 1};
+      union { struct cmsghdr align; char bytes[CMSG_SPACE(2 * sizeof(int))]; } control = {0};
+      struct msghdr message = {.msg_iov = &io, .msg_iovlen = 1,
+        .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes)};
+      struct cmsghdr *item = CMSG_FIRSTHDR(&message);
+      item->cmsg_level = SOL_SOCKET; item->cmsg_type = SCM_RIGHTS; item->cmsg_len = CMSG_LEN(sizeof(endpoints));
+      memcpy(CMSG_DATA(item), endpoints, sizeof(endpoints));
+      _exit(sendmsg(3, &message, MSG_NOSIGNAL) == 1 ? 0 : 125);
+    }
+    close(3);
+    int status;
+    _exit(waitpid(creator, &status, 0) == creator && WIFEXITED(status) && !WEXITSTATUS(status) ? 0 : 125);
+  }
+  setpgid(helper, helper);
+  close(channel[1]); channel[1] = -1;
+  struct pollfd ready = {.fd = channel[0], .events = POLLIN};
+  if (poll(&ready, 1, 1000) != 1 || !(ready.revents & POLLIN)) { failure = ETIMEDOUT; goto done; }
+  char byte = 0; struct iovec io = {&byte, 1};
+  union { struct cmsghdr align; char bytes[CMSG_SPACE(2 * sizeof(int))]; } control = {0};
+  struct msghdr message = {.msg_iov = &io, .msg_iovlen = 1,
+    .msg_control = control.bytes, .msg_controllen = sizeof(control.bytes)};
+  ssize_t received = recvmsg(channel[0], &message, MSG_CMSG_CLOEXEC | MSG_DONTWAIT);
+  struct cmsghdr *item = CMSG_FIRSTHDR(&message);
+  if (received != 1 || byte != 'P' || (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) ||
+      !item || item->cmsg_level != SOL_SOCKET || item->cmsg_type != SCM_RIGHTS ||
+      item->cmsg_len != CMSG_LEN(2 * sizeof(int)) || CMSG_NXTHDR(&message, item)) goto done;
+  memcpy(pair, CMSG_DATA(item), 2 * sizeof(int));
+  result = 0;
+done:
+  // The factory never runs application code. Kill its own group before reaping
+  // so a stalled namespace operation cannot hold the broker indefinitely.
+  if (helper > 0) { kill(-helper, SIGKILL); kill(helper, SIGKILL); while (waitpid(helper, NULL, 0) < 0 && errno == EINTR) {} }
+  if (pidns >= 0) close(pidns);
+  if (userns >= 0) close(userns);
+  if (channel[0] >= 0) close(channel[0]);
+  if (channel[1] >= 0) close(channel[1]);
+  if (result < 0) errno = failure;
+  return result;
+}
+
 static void create_private_pair(int listener, struct seccomp_notif *request,
                                 struct seccomp_notif_resp *response) {
   int type = (int)request->data.args[1], original[2], remote_fds[2];
@@ -617,7 +699,8 @@ static void create_private_pair(int listener, struct seccomp_notif *request,
     response->error = -EFAULT; close(memory); return;
   }
   int pair[2]; uint64_t cookies[2];
-  if (socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair)) { response->error = -errno; close(memory); return; }
+  if (namespace_socket_pairs ? create_namespace_pair(listener, request, type, pair) :
+      socketpair(AF_UNIX, type | SOCK_CLOEXEC, 0, pair)) { response->error = -errno; close(memory); return; }
   if (!socket_cookie(pair[0], &cookies[0]) || !socket_cookie(pair[1], &cookies[1])) goto done;
   for (size_t i = 0; i < 2; i++) {
     struct seccomp_notif_addfd addition = {.id = request->id, .srcfd = (unsigned int)pair[i],

@@ -104,7 +104,7 @@ print(json.dumps({"left":left,"right":right,"matched":left[0]<70 and left[1]>150
     limits: ["Experimental launch, not the production session action.", "Generated file and disposable application state only.",
       "No current accounts, conversations, personal files or devices were measured.",
       ...(!control ? ["The brokered private bus reports broker PID, not application PID."] : []),
-      ...(pairs && !control ? ["Broker-created pairs carry broker peer credentials and socket namespace."] : [])] };
+      ...(pairs && !control ? [pidNamespace ? "Pairs carry a trusted factory creator PID in the caller namespace, not the application PID. Socket network namespace remains the broker namespace." : "Broker-created pairs carry broker peer credentials and socket namespace."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
   if (pidNamespace && !(renderedColors as { matched?: boolean } | null)?.matched) process.exitCode = 1;
