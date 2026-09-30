@@ -83,7 +83,8 @@ async function privateDirectory(path: string) {
 }
 
 export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPath: string,
-                                              threadId: string) {
+                                              threadId: string,
+                                              auditDenied?: (message: Message) => void) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(threadId))
     throw new Error("Codex IPC gate needs one thread ID");
   const owner = await socketIdentity(ownerSocketPath);
@@ -159,6 +160,8 @@ export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPa
         }
         if (kind === "request" && typeof message.requestId === "string") {
           counts.clientRequestsDenied += 1;
+          try { auditDenied?.(message); }
+          catch { /* Audit failure cannot change the IPC policy. */ }
           forward(downstream, ownerConnection, frame({ type: "response", requestId: message.requestId,
             method, resultType: "error", error: "denied" }));
         }

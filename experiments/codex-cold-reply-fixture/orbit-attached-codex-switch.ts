@@ -8,6 +8,8 @@ const orbitRepo = process.argv[5]!;
 const runLabel = process.argv[6] ?? "single";
 if (!/^[a-z0-9]{1,16}$/.test(runLabel)) throw new Error("Invalid fixture run label");
 const ipcSnapshotOnly = process.argv.includes("ipc-snapshot-only");
+const ipcWriteProbe = process.argv.includes("ipc-write-probe");
+if (ipcWriteProbe && !ipcSnapshotOnly) throw new Error("IPC write probe needs the scoped snapshot fixture");
 const publicAttach = process.argv[7] === "public";
 if (publicAttach) {
   process.env.ORBIT_CODEX_AUTHORITY_SOCKET = authorityPath;
@@ -22,6 +24,8 @@ let prepared: Awaited<ReturnType<typeof prepareCodexAttachedLaunch>> | undefined
 let gateAuditSource: string | undefined;
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let mountVisibility: Record<string, boolean> | undefined;
+let writeImagePath: string | undefined;
+let writeTextVisible: boolean | undefined;
 try {
   const session = privateBackend.directory as string;
   gateAuditSource = join(session, "codex-gate-audit.jsonl");
@@ -186,6 +190,27 @@ pathlib.Path(${JSON.stringify(probeOutput)}).write_text(json.dumps({
         }
       }
       if (!liveVisible) throw new Error("Scoped IPC live turn was not visible in the private window");
+      if (ipcWriteProbe) {
+        if (!liveImagePath) throw new Error("Scoped IPC fixture live image is unavailable");
+        const liveOcr = Bun.spawnSync(["tesseract", liveImagePath, "stdout"]);
+        if (liveOcr.exitCode !== 0 || !new TextDecoder().decode(liveOcr.stdout).includes("anything"))
+          throw new Error("Scoped IPC fixture composer is unavailable");
+        await backend.act({ type: "pointer", x: 630, y: 710 });
+        await backend.act({ type: "text", text: "Orbit scoped IPC follow-up" });
+        await backend.act({ type: "key", key: "Enter" });
+        writeTextVisible = false;
+        for (let attempt = 0; attempt < 24; attempt++) {
+          await Bun.sleep(500);
+          const writeFrame = await backend.observe();
+          writeImagePath = join(root, `orbit-client-write-${runLabel}.${writeFrame.mimeType === "image/png" ? "png" : "jpg"}`);
+          await writeFile(writeImagePath, Buffer.from(writeFrame.image, "base64"));
+          const writeOcr = Bun.spawnSync(["tesseract", writeImagePath, "stdout"]);
+          if (writeOcr.exitCode === 0 && new TextDecoder().decode(writeOcr.stdout).includes("Orbit scoped IPC follow-up")) {
+            writeTextVisible = true;
+            break;
+          }
+        }
+      }
     } else {
       let afterWritePath = "";
       let answerVisible = false;
@@ -211,7 +236,8 @@ pathlib.Path(${JSON.stringify(probeOutput)}).write_text(json.dumps({
   print({ report: status, imagePath, openedImagePath, desktopAlive: publicAttach ? status.applied === true : child?.exitCode === null,
     privateStateFile: await Bun.file(statePath).exists(),
     privateProjectCount: Object.keys(state["local-projects"] ?? {}).length,
-    privateAuthFile: auth, presence: frame.presence, liveImagePath, mountVisibility,
+    privateAuthFile: auth, presence: frame.presence, liveImagePath, writeImagePath, writeTextVisible,
+    mountVisibility,
     ipcGateStats: prepared?.ipcGateStats?.() });
 } finally {
   if (gateAuditSource && await Bun.file(gateAuditSource).exists())

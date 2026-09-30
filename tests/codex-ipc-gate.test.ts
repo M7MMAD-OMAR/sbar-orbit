@@ -58,6 +58,7 @@ test("Codex IPC gate shares one thread and rejects writes, spoofing, and owner c
   await mkdir(privateHome, { mode: 0o700 });
   let ownerPeer: FramedPeer | undefined;
   const ownerMessages: Message[] = [];
+  const deniedRequests: Message[] = [];
   const owner = createServer(socket => {
     const peer = new FramedPeer(socket);
     ownerPeer = peer;
@@ -76,7 +77,8 @@ test("Codex IPC gate shares one thread and rejects writes, spoofing, and owner c
   let client: Socket | undefined;
   try {
     await listen(owner, ownerPath);
-    gate = await startCodexScopedIpcGate(privateHome, ownerPath, THREAD);
+    gate = await startCodexScopedIpcGate(privateHome, ownerPath, THREAD,
+      message => deniedRequests.push(message));
     client = createConnection({ path: gate.socketPath });
     await new Promise<void>((resolveConnect, rejectConnect) => {
       client?.once("connect", resolveConnect);
@@ -126,6 +128,8 @@ test("Codex IPC gate shares one thread and rejects writes, spoofing, and owner c
       change: { marker: "allowed" } } });
     await expect(follower.next(100)).rejects.toThrow("Timed out");
     expect(ownerMessages.some(message => message.method === "thread-follower-start-turn")).toBe(false);
+    expect(deniedRequests.map(message => message.method)).toEqual([
+      "thread-follower-start-turn", "thread-owner-discovery"]);
   } finally {
     client?.destroy();
     await gate?.close();

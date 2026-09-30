@@ -197,7 +197,21 @@ export async function prepareCodexAttachedLaunch(
     });
     if (options.fixtureIpcSocketPath !== undefined && fixtureTurnThreadId)
       ipcGate = await startCodexScopedIpcGate(privateHome, options.fixtureIpcSocketPath,
-        fixtureTurnThreadId);
+        fixtureTurnThreadId, fixtureAudit ? message => {
+          const params = message.params;
+          const fields = params !== null && typeof params === "object" && !Array.isArray(params)
+            ? params as Record<string, unknown> : {};
+          const paramKeys = Object.keys(fields).slice(0, 32);
+          const nestedKeys = Object.fromEntries(paramKeys.map(key => {
+            const value = fields[key];
+            return [key, value !== null && typeof value === "object" && !Array.isArray(value)
+              ? Object.keys(value).slice(0, 32) : []];
+          }));
+          appendFileSync(auditPath, JSON.stringify({ ipcMethod: message.method,
+            requestKeys: Object.keys(message).slice(0, 32), paramKeys, nestedKeys,
+            outcome: "deny" }) + "\n",
+            { encoding: "utf8", mode: 0o600, flag: "a" });
+        } : undefined);
     const insideHome = homedir();
     const argv = [
       "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_SESSION_TYPE=wayland",

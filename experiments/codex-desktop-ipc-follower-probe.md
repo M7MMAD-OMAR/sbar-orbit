@@ -246,3 +246,35 @@ equivalence for every app, file, and device. Other reachable host paths,
 inherited descriptors, and the UNIX socket gaps described in the separate
 seccomp experiment remain unresolved. The attached window's composer was
 still absent, so sending a turn from that window remains unverified.
+
+## Scoped IPC write probe on the newer copied Desktop
+
+A second disposable bundle, SHA-256
+`31a6f56fffb65d7dd3de01e01071016b1688af1591d2bdbcd7ec7a38c84deb33`,
+showed the composer while retaining the scoped live update path. Its test
+used the fake account, fake owner, mock model, and private Orbit display:
+
+```sh
+bun run scripts/limited.ts timeout 170s /usr/bin/python3 \
+  experiments/codex-cold-reply-fixture/run-orbit-switch-codex.py \
+  /var/tmp/codex-private-smoke-write-v . \
+  --attached-ipc-write-probe
+```
+
+The UI accepted typed text but rejected submission with `denied`. The text
+remained in the composer, and the fake owner's saved history had no completed
+follow-up. The [private capture](/var/tmp/codex-private-smoke-write-v/orbit-client-write-ipcsnapshot.jpg)
+shows the error. An earlier OCR check saw the text in the composer and could
+have mistaken that for a submitted bubble. The fixture now requires a
+completed owner history turn, so this state fails the probe.
+
+The IPC gate audit recorded three denied `ide-context` requests, each with a
+`workspaceRoot` parameter, then a denied `thread-follower-start-turn`
+request. That write request targeted a client and carried `conversationId`
+and `turnStart`; `turnStart` held `request` and `context`. The audit stores
+field names rather than message content. This establishes why the current
+read gate leaves the composer unusable. Forwarding the raw follower request
+would bypass the app-server gate's text-only and tool restrictions, so the
+write method remains denied. A controlled translation or equally strict
+validation of the follower request is still required. The test did not use
+the person's account, socket, files, or window.

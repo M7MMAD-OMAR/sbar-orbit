@@ -14,7 +14,8 @@ DIRECT_ONLY='--direct-only' in sys.argv[3:]
 ROUTER_RELAY_PROBE='--dual-window-router-relay-probe' in sys.argv[3:]
 DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:] or ROUTER_RELAY_PROBE
 IPC_GATE_PROBE='--ipc-gate-probe' in sys.argv[3:]
-ATTACHED_IPC_PROBE='--attached-ipc-probe' in sys.argv[3:]
+ATTACHED_IPC_WRITE_PROBE='--attached-ipc-write-probe' in sys.argv[3:]
+ATTACHED_IPC_PROBE='--attached-ipc-probe' in sys.argv[3:] or ATTACHED_IPC_WRITE_PROBE
 IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE or IPC_GATE_PROBE or ATTACHED_IPC_PROBE
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
 PERSONAL_HOME=Path.home()
@@ -433,7 +434,7 @@ async def main():
        str(ROOT),str(APP_SOCKET),str(dirs(2,'config')/'dconf/user'),str(ORBIT_REPO),
        'ipcsnapshot',str(page_fixture),
        '/var/tmp/orbit-codex-source-tag/codex-rs/target/debug/deps/codex_thread_store-db4c58d0ebdf7cab',
-       tid,'ipc-snapshot-only']
+       tid,'ipc-snapshot-only',*(['ipc-write-probe'] if ATTACHED_IPC_WRITE_PROBE else [])]
       ready_path=ROOT/f'attached-ipc-ready-{TAG}'
       complete_path=ROOT/f'attached-ipc-turn-complete-{TAG}'
       attached=subprocess.Popen(args,cwd=str(ORBIT_REPO),stdout=subprocess.PIPE,
@@ -468,6 +469,20 @@ async def main():
       stats=attached_result.get('ipcGateStats') or {}
       if min(stats.get('connections',0),stats.get('followingForwarded',0),stats.get('snapshotsForwarded',0))<1:
        raise RuntimeError('attached Desktop did not use scoped IPC gate: '+json.dumps(stats))
+      if ATTACHED_IPC_WRITE_PROBE:
+       if not attached_result.get('writeImagePath'):
+        raise RuntimeError('attached Desktop did not capture its scoped fixture follow-up')
+       async with websockets.unix_connect(str(APP_SOCKET),uri='ws://localhost/rpc',compression=None) as verify_ws:
+        await rpc(verify_ws,90,'initialize',{'clientInfo':{'name':'attached_write_verify','title':'Attached write verify','version':'1'},'capabilities':{'experimentalApi':True}})
+        await verify_ws.send(json.dumps({'method':'initialized'}))
+        for _ in range(100):
+         saved=await rpc(verify_ws,91,'thread/turns/list',{'threadId':tid,'limit':10})
+         turns=(saved.get('result') or {}).get('data',[])
+         matched=[turn for turn in turns if 'Orbit scoped IPC follow-up' in json.dumps(turn)]
+         if matched and matched[0].get('status')=='completed':break
+         await asyncio.sleep(.1)
+        else:raise RuntimeError('attached fixture follow-up was not completed in owner history')
+       attached_result['ownerWriteCompleted']=True
      image=ROOT/f'ipc-owner-{TAG}.jpg'
      capture=subprocess.run(['/usr/bin/import','-display',f':{displays[0]}',
        '-window','root','-quality','85',str(image)],
