@@ -54,6 +54,45 @@ The C launcher compiled with `-Wall -Wextra -Werror`, and type checking passed.
 An initial harness run stopped before session creation because a local variable
 shadowed Node's process object; that was corrected before the measured runs.
 
+## GTK4 image and input measurement
+
+The same harness has a GTK4 arm, selected with
+`ORBIT_WAYLAND_BROKER_GTK4=1`. It uses the installed GTK 4.22.5 Python bindings,
+creates a disposable 240 by 120 PNG with green and blue halves, and opens it
+through `Gtk.Picture.new_for_filename`. The picture's paintable reports its
+intrinsic dimensions after loading; a frame provides separate visual evidence.
+Neither the image nor the entry contains personal content.
+
+```sh
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 ORBIT_WAYLAND_BROKER_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+```
+
+On 30 September 2026 both arms displayed the image, reported a loaded paintable
+with width 240 and height 120, accepted the exact ASCII keyboard text, and exited
+0. The brokered arm reported four approved compositor connections and no broker
+failure. Its denied server received zero connections and the client received
+EACCES. The direct arm connected successfully to the same kind of disposable
+server, which accepted one connection. Artifacts are in
+`output/seccomp-wayland-app-gtk4-2026-09-30/` and
+`output/seccomp-wayland-app-gtk4-control-2026-09-30/`.
+
+Both arms emitted theme parser, Vulkan surface and Mesa device warnings despite
+the visible frame. Thus these runs do not attribute those warnings to the
+experimental broker or prove accelerated rendering. The brokered arm also
+reported inability to acquire its session bus, with permission denied; the
+direct arm instead reported an unavailable accessibility bus service. Session
+bus and accessibility parity are not established. No warnings were suppressed.
+Type checking passed after adding this arm.
+The original brokered GTK3 arm was rerun after the shared harness changes: the
+window and exact text still succeeded, the process exited 0, the broker reported
+one approved connection and no failure, and the blocked server accepted zero
+connections.
+
+This measures GTK4's public filename image path for one generated PNG. It does
+not establish which loader implementation or sandbox process handled it, nor
+prove glycin, every image format, or arbitrary nested sandbox compatibility.
+
 ## Limits
 
 The GTK client is launched by the experimental C program using the owned
@@ -67,7 +106,7 @@ application owner sockets, shared audio and portals are not authorized by this
 experiment. The client runs with disposable XDG state, not the person's current
 application state. No claim about real account app compatibility is made.
 
-GTK4 image loaders, nested application sandboxes, GPU paths, non-ASCII entry,
+Other GTK4 image paths, nested application sandboxes, GPU paths, non-ASCII entry,
 physical devices and the person's existing application sessions were not
 measured. Full outbound isolation remains unproved, including the inherited
 connected-descriptor routes documented in the synthetic probe. The launcher

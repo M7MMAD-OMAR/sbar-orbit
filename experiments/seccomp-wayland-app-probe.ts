@@ -10,6 +10,7 @@ import { requireResourceBudget } from "../src/resource-budget";
 if (process.env.ORBIT_WAYLAND_BROKER_PROBE !== "1") throw new Error("Set ORBIT_WAYLAND_BROKER_PROBE=1 for the owned GTK experiment");
 await requireResourceBudget();
 const control = process.env.ORBIT_WAYLAND_BROKER_CONTROL === "1";
+const gtk4 = process.env.ORBIT_WAYLAND_BROKER_GTK4 === "1";
 const title = control ? "Orbit direct Wayland control" : "Orbit brokered Wayland application";
 const description = control ? "Direct private display control without the experimental broker" : "Real GTK client through the experimental socket broker";
 const root = await mkdtemp("/var/tmp/orbit-wayland-broker-");
@@ -17,8 +18,9 @@ const sessions = new Sessions(join(root, "workspace"));
 const binary = join(root, "broker");
 const script = join(root, "window.py");
 const typed = join(root, "typed.txt");
+const imageReport = join(root, "image.json");
 const blockedSocket = join(root, "blocked.sock"), blockedReport = join(root, "blocked.json");
-const output = resolve(`output/seccomp-wayland-app-${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-wayland-app-${gtk4 ? "gtk4-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const phrase = control ? "Orbit direct Wayland control verified" : "Orbit brokered Wayland keyboard verified";
 let clientProcess: ReturnType<typeof Bun.spawn> | undefined;
 let blockedAccepts = 0;
@@ -45,22 +47,48 @@ except OSError as error:
 finally:
     client.close()
 with open(sys.argv[3],"w") as result: json.dump(blocked,result)
-gi.require_version("Gtk","3.0")
+gi.require_version("Gtk",${JSON.stringify(gtk4 ? "4.0" : "3.0")})
 from gi.repository import Gtk,GLib
 window=Gtk.Window(title=${JSON.stringify(title)})
-window.set_default_size(720,240)
+window.set_default_size(720,${gtk4 ? 440 : 240})
 box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=24)
-box.set_border_width(32)
-box.pack_start(Gtk.Label(label=${JSON.stringify(description)}),False,False,0)
+${gtk4 ? `for edge in ["top","bottom","start","end"]: getattr(box,"set_margin_"+edge)(32)
+box.append(Gtk.Label(label=${JSON.stringify(description)}))` : `box.set_border_width(32)
+box.pack_start(Gtk.Label(label=${JSON.stringify(description)}),False,False,0)`}
 entry=Gtk.Entry()
 entry.connect("changed",lambda item:open(sys.argv[1],"w").write(item.get_text()))
-box.pack_start(entry,False,False,0)
+${gtk4 ? `box.append(entry)
+import cairo
+image_path=sys.argv[4]+".png"
+surface=cairo.ImageSurface(cairo.FORMAT_ARGB32,240,120)
+context=cairo.Context(surface)
+for x,color in [(0,(0.1,0.7,0.3)),(120,(0.1,0.3,0.9))]:
+    context.set_source_rgb(*color)
+    context.rectangle(x,0,120,120)
+    context.fill()
+surface.write_to_png(image_path)
+picture=Gtk.Picture.new_for_filename(image_path)
+picture.set_size_request(240,120)
+box.append(picture)
+def record_image():
+    paintable=picture.get_paintable()
+    with open(sys.argv[4],"w") as result:
+        json.dump({"loaded":paintable is not None,"width":paintable.get_intrinsic_width() if paintable else 0,"height":paintable.get_intrinsic_height() if paintable else 0},result)
+    return False
+GLib.timeout_add(2500,record_image)
+window.set_child(box)
+loop=GLib.MainLoop()
+window.connect("close-request",lambda item:(loop.quit(),False)[1])
+window.present()
+entry.grab_focus()
+GLib.timeout_add(18000,lambda:(loop.quit(),False)[1])
+loop.run()` : `box.pack_start(entry,False,False,0)
 window.add(box)
 window.connect("destroy",Gtk.main_quit)
 window.show_all()
 entry.grab_focus()
 GLib.timeout_add(18000,lambda:(Gtk.main_quit(),False)[1])
-Gtk.main()
+Gtk.main()`}
 `, { mode: 0o600 });
   const created = await sessions.dispatch({ method: "session.create", params: { backend: "fedora", agentName: "Codex",
     taskName: "Real GTK client over the experimental Wayland broker", projectName: "sbar-orbit",
@@ -73,7 +101,7 @@ Gtk.main()
   const runtime = env.XDG_RUNTIME_DIR, display = env.WAYLAND_DISPLAY;
   if (!runtime?.startsWith("/tmp/orbit-native-") || !display?.match(/^wayland-[0-9]+$/))
     throw new Error("Missing private Wayland endpoint");
-  const app = ["/usr/bin/python3", script, typed, blockedSocket, blockedReport];
+  const app = ["/usr/bin/python3", script, typed, blockedSocket, blockedReport, imageReport];
   const launched = Bun.spawn(control ? app : [binary, join(runtime, display), ...app], { env, stdout: "pipe", stderr: "pipe" });
   clientProcess = launched;
   const standard = new Response(launched.stdout).text();
@@ -102,8 +130,9 @@ Gtk.main()
   const line = stdout.trim().split("\n").at(-1);
   const broker = line ? JSON.parse(line) : null;
   const blockedAttempt: unknown = JSON.parse(await readFile(blockedReport, "utf8"));
+  const image: unknown = gtk4 ? JSON.parse(await readFile(imageReport, "utf8").catch(() => "null")) : null;
   const report = { date: new Date().toISOString().slice(0, 10), transport: control ? "direct-control" : "brokered",
-    visible, textVerified, exit, broker, blockedAttempt, blockedAccepts,
+    toolkit: gtk4 ? "GTK4" : "GTK3", visible, textVerified, image, exit, broker, blockedAttempt, blockedAccepts,
     limits: ["The launcher is experimental and not the production session launch action.",
       "No account state, existing conversations, files or device use was tested.",
       "Full outbound isolation and application compatibility remain unproved."] };
