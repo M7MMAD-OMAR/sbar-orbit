@@ -457,6 +457,16 @@ export class FedoraBackend {
       const [executable] = prepared.argv;
       if (!executable) throw new OrbitError("INVALID_REQUEST", "Launch needs an executable");
       if (!await Bun.file(executable).exists()) throw new OrbitError("INVALID_REQUEST", "Executable does not exist");
+      // Ptyxis detects systemd-run by its version, then requires a host user scope.
+      // Keep shells in our inherited resource budget and supervisor instead. Only
+      // its discovery probe is disabled; explicit systemd-run calls still use the real binary.
+      let launchEnv = applicationEnv;
+      if (action.type === "launch" && executable === "/usr/bin/ptyxis") {
+        const bin = join(this.directory, "ptyxis-bin");
+        await mkdir(bin, { recursive: true, mode: 0o700 });
+        await writeFile(join(bin, "systemd-run"), '#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then exit 1; fi\nexec /usr/bin/systemd-run "$@"\n', { mode: 0o700 });
+        launchEnv = { ...applicationEnv, PATH: `${bin}:${applicationEnv.PATH ?? "/usr/bin:/bin"}` };
+      }
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
       // Inkscape and Writer spawn glycin, whose own bubblewrap needs to make mounts. Keep the
       // pathname Landlock policy on other apps. These two system launchers use a private mount and
@@ -480,7 +490,7 @@ export class FedoraBackend {
         ...("zenFilePolicy" in prepared && prepared.zenFilePolicy
           ? ["--zen-file-policy", JSON.stringify(prepared.zenFilePolicy)] : []),
         ...socketPolicy, executable, ...prepared.argv.slice(1)],
-      { env: { ...applicationEnv, GDK_BACKEND: prepared.toolkit,
+      { env: { ...launchEnv, GDK_BACKEND: prepared.toolkit,
         ...(prepared.toolkit === "x11" && socketPolicy.length ? { DISPLAY: this.x11SocketPath() } : {}) }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
       const supervised: SupervisedApplication = { child, ...("release" in prepared ? { release: prepared.release } : {}) };
