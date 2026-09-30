@@ -1,6 +1,6 @@
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
-import { type BrowserContext, type Page } from "playwright";
+import { type BrowserContext, type CDPSession, type Page } from "playwright";
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
@@ -94,6 +94,7 @@ export class BrowserBackend {
   readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
+  private captureSessions = new Map<Page, Promise<CDPSession>>();
   private active: Page;
   onClose(listener: () => void) { this.owned.onClose(listener); }
   get surface(): Viewport { return this.size; }
@@ -177,6 +178,7 @@ export class BrowserBackend {
   private watch(page: Page) {
     page.once("close", () => {
       this.pointers.delete(page);
+      this.captureSessions.delete(page);
       if (this.active !== page) return;
       const survivor = this.context.pages().filter(open => open !== page).at(-1);
       if (survivor) this.active = survivor;
@@ -312,22 +314,39 @@ export class BrowserBackend {
     // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
     // which matters because every frame is captured, base64 encoded and decoded again per poll.
     //
-    // The budget was a bare 3000, chosen against the viewer's 1000 ms cadence on the development
-    // host. A 2 vCPU GitHub Windows runner beat it on the very first capture after a cold navigate,
-    // while Playwright was still waiting for fonts, and what an agent read back was
-    // `BACKEND_ERROR: Request failed` with the real cause only in the broker's own stderr. That is
-    // the unattributable failure ipc.ts already names: a timeout is attributable, so it says so
-    // here, with the budget it exceeded and the knob that raises it.
+    // A viewer needs the current pixels while the application loads. Playwright's screenshot
+    // waits for web fonts and can fail on a usable page with one pending font. Capture directly
+    // from this owned Chromium surface without changing the application's loading state.
     const budget = captureTimeoutMs();
+    const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
+    let capture: CDPSession | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let expired = false;
+    let attachment = this.captureSessions.get(page);
+    if (!attachment) {
+      attachment = this.context.newCDPSession(page);
+      this.captureSessions.set(page, attachment);
+      void attachment.catch(() => { if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page); });
+    }
+    const operation = (async () => {
+      capture = await attachment;
+      // An attachment that settles after the deadline must not start a late capture.
+      if (expired) { void capture.detach().catch(() => {}); throw timeout(); }
+      return (await capture.send("Page.captureScreenshot", {
+        format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
+      })).data;
+    })();
     let image: string;
-    try { image = (await page.screenshot({ type: "jpeg", quality: 80, timeout: budget })).toString("base64"); }
-    catch (error) {
-      if (error instanceof Error && error.name === "TimeoutError") {
-        const stage = error.message.includes("fonts loaded") ? "capturing pixels"
-          : error.message.includes("waiting for fonts to load") ? "waiting for fonts" : "preparing capture";
-        throw new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (${stage}). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
+    try {
+      image = await Promise.race([operation, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { expired = true; reject(timeout()); }, budget);
+      })]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (expired) {
+        if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page);
+        void capture?.detach().catch(() => {});
       }
-      throw error;
     }
     return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }

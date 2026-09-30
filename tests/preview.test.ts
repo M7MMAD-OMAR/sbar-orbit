@@ -135,10 +135,14 @@ test("observation stays available while an agent waits for an element", async ()
 // A slow capture must not be advertised as newly captured when it completes.
 test("frame age includes capture work", async () => {
   const { BrowserBackend } = await import("../src/browser");
-  const page = { url: () => "about:blank", title: async () => "", isClosed: () => false, screenshot: async () => { await Bun.sleep(80); return Buffer.from("fixture"); } };
+  const page = { url: () => "about:blank", title: async () => "", isClosed: () => false };
   // Built on the real prototype so the active-tab getter is exercised rather than bypassed.
   const fake = Object.assign(Object.create(BrowserBackend.prototype), {
-    pointers: new Map(), active: page, size: { width: 1280, height: 800 }, context: { pages: () => [page] } });
+    pointers: new Map(), captureSessions: new Map(), active: page, size: { width: 1280, height: 800 }, context: {
+      pages: () => [page], newCDPSession: async () => ({
+        send: async () => { await Bun.sleep(80); return { data: Buffer.from("fixture").toString("base64") }; }, detach: async () => {},
+      }),
+    } });
   const frame = await BrowserBackend.prototype.observe.call(fake as typeof BrowserBackend.prototype);
   expect(Date.now() - frame.capturedAt).toBeGreaterThanOrEqual(60);
 });

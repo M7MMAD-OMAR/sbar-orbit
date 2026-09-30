@@ -20,6 +20,10 @@ software rendered guest, or a workstation running several agents against one bud
 a hardcoded 3000 until a 2 vCPU GitHub runner beat it on the first capture after a cold navigate,
 which reached the agent as an unattributable `BACKEND_ERROR`; a capture that runs out of budget now
 answers `TIMEOUT` and names both the budget and this variable.
+Browser frames capture the current Chromium surface directly, without waiting for web fonts or
+application readiness. A fallback font or incomplete page can therefore appear in a loading frame.
+The private capture connection stays with its owned tab and is detached after a capture timeout;
+closing the tab or session closes it as well.
 
 ## Install
 
