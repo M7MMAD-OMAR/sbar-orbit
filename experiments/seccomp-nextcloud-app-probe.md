@@ -4,8 +4,9 @@ Status on 30 September 2026: the installed Qt Nextcloud client rendered its
 setup UI on the owned Orbit display. A new opt-in copied TCP route let it
 discover a disposable loopback fixture and request the login-flow endpoint.
 A later offline arm copied one existing account configuration without its sync
-folders and visibly restored the cached account identity. Credential retrieval,
-native authentication, sync and conversations remain unproved. This is not
+folders and visibly restored the cached account identity. A subsequent private
+service delivered one existing unlocked account credential to the client.
+Native authentication, sync and conversations remain unproved. This is not
 current-account parity or production integration.
 
 ## Setup and independent control
@@ -281,6 +282,62 @@ closed normally with exit 0. Type checking and `git diff --check` passed.
 reads client certificate and key entries before the account password, and can
 retry legacy key locations when an entry is missing. Therefore eighteen search
 calls do not imply eighteen credentials or eighteen accounts.
+
+## One existing credential, still offline
+
+The new [one-credential adapter](nextcloud-one-secret-service.py) runs as a
+trusted host-side helper before the private client starts. It derives an exact
+selection from the prepared disposable configuration, requiring exactly one
+flat webflow account, a simple HTTPS URL and an unescaped user value. It rejects
+unsupported encodings or account shapes instead of guessing. It uses
+[the v34.0.3 key format](https://github.com/nextcloud/desktop/blob/v34.0.3/src/libsync/creds/abstractcredentials.cpp)
+and [QtKeychain's libsecret schema](https://github.com/frankosterfeld/qtkeychain/blob/main/qtkeychain/libsecret.cpp)
+to select the `plaintext` item with the exact account key and `Nextcloud` server
+attribute. Account values are never included in command arguments or reports.
+
+The helper verifies the original Secret Service already owns its name, searches
+with no unlock or load-search flags, requires exactly one unlocked match, then
+loads that item's value only. It disables core dumps and process dumpability
+before lookup, holds the value in memory and exposes it through the existing
+one-item protocol holder on the owned private bus. The client receives neither
+the host bus address nor a forwarding proxy. The helper provides no mutation
+implementation and never forwards private operations to the host keyring.
+Existing holder methods expose only one item; unsupported mutation operations
+are rejected. Memory zeroization and protection from privileged processes are
+not established.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_ONE_SECRET=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+bun run scripts/limited.ts /usr/bin/python3 experiments/nextcloud-one-secret-service.test.py
+```
+
+The installed client rendered on the owned display. The sidecar loaded one
+original item, exposed one private item and returned its secret once. Nine
+search calls included one matching search. No mutation handler was reached;
+this counter does not establish the absence of attempts rejected by D-Bus
+before dispatch. The client needed a scoped stop, exit 128, with no broker
+failure. Its original config remained unchanged, its original process remained
+present and no folder sync scheduling pattern appeared. TCP registration stayed
+zero and a denied IPv4/IPv6 connect diagnostic appeared. The secret-service
+missing diagnostic was absent. `Entry not found` still appeared, consistent
+with absent certificate-related entries; it is not an account-password verdict.
+[Webflow credential loading](https://github.com/nextcloud/desktop/blob/v34.0.3/src/gui/creds/webflowcredentials.cpp)
+performs certificate lookups before reading the password, then can attempt
+private persistence. No server accepted this credential during the offline arm.
+
+The real application assertion passed, requiring an observed private window,
+one original item read, one private item and at least one secret delivery.
+Four synthetic selector tests passed for the observed key construction,
+multiple-account rejection, source-symlink rejection and unsupported encoded or
+non-webflow settings. These tests have not been demonstrated against a selector
+without those guards, so no regression-detection claim is made. Type checking
+and `git diff --check` passed. Saved evidence contains counts and booleans only
+in `output/seccomp-nextcloud-account-clone-one-secret-2026-09-30/`.
+
+This remains an experiment. The adapter is not integrated into production
+session launch, does not establish all QSettings schemas or path-race defenses,
+and does not prove host-keyring immutability against other processes, public
+network authority, account authentication, conversations, sync or devices.
 
 ## Limits
 
