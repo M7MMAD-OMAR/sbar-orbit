@@ -19,6 +19,8 @@ bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh naive
 bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh strict
+bun run scripts/limited.ts timeout 20s bash \
+  experiments/seccomp-unix-connect-broker-probe.sh broker-dgram
 ```
 
 The fixture creates two disposable host UNIX stream sockets and an outer
@@ -33,9 +35,10 @@ cannot redirect the broker to a different socket. All other intercepted
 connections receive `EACCES` in this fixture.
 
 The extended fixture also creates a host UNIX datagram socket and attempts
-`sendto(2)`, `sendmsg(2)`, and `sendmmsg(2)` to it. The broker still intercepts
-only `connect(2)`. The runner accepts `naive` to replace the pinned descriptor
-with a lookup through the notifying process's mount namespace. The first two
+`sendto(2)`, `sendmsg(2)`, and `sendmmsg(2)` to it. In the baseline and `naive`
+arms the broker still intercepts only `connect(2)`. The runner accepts `naive`
+to replace the pinned descriptor with a lookup through the notifying process's
+mount namespace. The first two
 arms were run on 30 September 2026. The baseline was rerun after adding the
 `sendmmsg(2)` attempt. Measured pinned output:
 
@@ -50,6 +53,7 @@ blocked_sendmmsg_result=1 blocked_sendmmsg_errno=0
 nested_selected_result=0 nested_selected_errno=0
 nested_exit=0
 selected_accepts=2 blocked_accepts=0
+selected_datagrams=0
 blocked_datagrams=3
 probe_exit=0
 ```
@@ -82,6 +86,7 @@ blocked_sendmmsg_result=-1 blocked_sendmmsg_errno=13
 nested_selected_result=0 nested_selected_errno=0
 nested_exit=0
 selected_accepts=2 blocked_accepts=0
+selected_datagrams=0
 blocked_datagrams=0
 probe_exit=0
 ```
@@ -96,21 +101,59 @@ connected socket can still be used through `write(2)` or `writev(2)`, and
 other descriptor transfer paths need analysis. Neither real application
 compatibility nor complete outbound isolation was measured.
 
+The `broker-dgram` arm allows one bounded `sendto(2)` route to a selected
+datagram socket. The first seccomp filter notifies the external broker for
+`connect(2)` and `sendto(2)`. After listener handoff, a second filter denies
+`sendmsg(2)`, `sendmmsg(2)`, `io_uring_setup(2)`, and `io_uring_enter(2)`.
+The broker copies at most 4096 payload bytes and an explicit pathname from
+the child, checks the notification ID, duplicates the child's socket, and
+sends to a pinned descriptor for the selected datagram socket. It never
+continues the original `sendto(2)` with a child-controlled pointer. A nested
+Bubblewrap process bind mounts the blocked datagram socket over the selected
+pathname and repeats the send. Measured output on 30 September 2026:
+
+```text
+broker_mode=pinned-datagram
+blocked_sendto_result=-1 blocked_sendto_errno=13
+blocked_sendmsg_result=-1 blocked_sendmsg_errno=13
+blocked_sendmmsg_result=-1 blocked_sendmmsg_errno=13
+selected_sendto_result=1 selected_sendto_errno=0
+nested_selected_sendto_result=1 nested_selected_sendto_errno=0
+selected_accepts=2 blocked_accepts=0
+selected_datagrams=2 blocked_datagrams=0
+selected_dgram_broker_pid=1
+probe_exit=0
+```
+
+This arm admits an approved datagram destination while denying the three
+measured sends to the blocked destination, including after the nested mount
+changes the child's path lookup. Both selected datagrams carried the broker
+process ID in `SCM_CREDENTIALS`. An application that checks sender credentials
+could reject this route. It accepts only explicit pathname `sendto(2)` with
+zero flags and a payload from 1 to 4096 bytes. Connected sends, `sendmsg(2)`
+ancillary data, larger messages, abstract sockets, and real application
+behavior remain unmeasured or unsupported. The sender credential difference
+and these limitations prevent treating this as a production socket policy.
+
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
 Bubblewrap. It does not establish full pathname UNIX isolation. The baseline
 filter does not intercept direct datagram sends. The strict arm denies them
-broadly but does not support abstract sockets, dynamically created private
-sockets, nonblocking semantics, network sockets, or every architecture. The
-broker's handling of app shutdown, PID reuse, thread races, listener failure, descriptor
-exhaustion, and socket replacement needs production design and tests. The
-fixture is limited to x86_64, UNIX stream sockets, one selected socket, and
-two short lived connections. App login, existing sessions, chats, files, and
-devices were not measured.
+broadly. The selected datagram arm supports one bounded route but does not
+support abstract sockets, dynamically created private sockets, nonblocking
+semantics, network sockets, or every architecture. The broker's handling of app
+shutdown, PID reuse, thread races, listener failure, descriptor exhaustion,
+and socket replacement needs production design and tests. The
+fixture is limited to x86_64, two selected sockets, two short lived stream
+connections, and two selected datagrams in the new arm. App login, existing
+sessions, chats, files, and devices were not measured.
 
 The [Linux seccomp documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html)
 documents user notification and warns that syscall filtering alone is not a
 complete sandbox. The
+[seccomp user notification manual](https://man7.org/linux/man-pages/man2/seccomp_unotify.2.html)
+describes notification ID validation and the risk of continuing a syscall
+after inspecting mutable arguments. The
 [pidfd_getfd manual](https://man7.org/linux/man-pages/man2/pidfd_getfd.2.html)
 documents that a duplicated socket descriptor refers to the same underlying
 socket object. This prototype uses that property to avoid resuming an
