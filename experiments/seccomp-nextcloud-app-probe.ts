@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -10,6 +11,9 @@ import { requireResourceBudget } from "../src/resource-budget";
 if (process.env.ORBIT_NEXTCLOUD_BROKER_PROBE !== "1") throw new Error("Set ORBIT_NEXTCLOUD_BROKER_PROBE=1");
 await requireResourceBudget();
 const control = process.env.ORBIT_NEXTCLOUD_BROKER_CONTROL === "1";
+const pidNamespace = process.env.ORBIT_NEXTCLOUD_BROKER_PID_NAMESPACE === "1";
+const pidControl = process.env.ORBIT_NEXTCLOUD_PID_UNFIXED_CONTROL === "1";
+if (pidNamespace && control) throw new Error("PID namespace requires the brokered arm");
 const software = process.env.ORBIT_NEXTCLOUD_BROKER_SOFTWARE === "1";
 const network = process.env.ORBIT_NEXTCLOUD_BROKER_NETWORK === "1";
 const tcp = process.env.ORBIT_NEXTCLOUD_BROKER_TCP === "1";
@@ -22,6 +26,8 @@ const oneSecret = process.env.ORBIT_NEXTCLOUD_ONE_SECRET === "1";
 const accountTunnel = process.env.ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL === "1";
 const nativeSync = process.env.ORBIT_NEXTCLOUD_NATIVE_SYNC === "1";
 const syncLifecycle = process.env.ORBIT_NEXTCLOUD_SYNC_LIFECYCLE === "1";
+if (pidControl && (!pidNamespace || !accountClone || oneSecret || accountTunnel || nativeSync || emptySecrets))
+  throw new Error("PID control requires the credential-free offline account-copy arm");
 if (syncLifecycle && !nativeSync) throw new Error("Sync lifecycle requires the native sync arm");
 if (nativeSync && !accountTunnel) throw new Error("Native sync requires the one-account tunnel arm");
 if (accountTunnel && !oneSecret) throw new Error("Account tunnel requires the one-credential account-copy arm");
@@ -37,7 +43,7 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${nativeSync ? "native-sync-" : ""}${syncLifecycle ? "lifecycle-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${pidNamespace ? pidControl ? "pid-control-" : "pid-" : ""}${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${nativeSync ? "native-sync-" : ""}${syncLifecycle ? "lifecycle-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
@@ -51,7 +57,47 @@ async function nextcloudProcesses(): Promise<number[]> {
   return text.trim().split("\n").filter(Boolean).map(Number);
 }
 const originalProcesses = await nextcloudProcesses();
+type PidEvidence = { namespaceDepth: number; applicationNamespacePid: number;
+  differentPidNamespace: boolean; privateProcInitPresent: boolean; harnessProcVisible: boolean };
+async function ownedNextcloudPidEvidence(): Promise<PidEvidence> {
+  const hostNamespace = await stat("/proc/self/ns/pid");
+  for (const pid of await nextcloudProcesses()) {
+    if (originalProcesses.includes(pid)) continue;
+    let directory;
+    try { directory = await open(`/proc/${pid}`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    try {
+      // Pin the process directory before reading. PID reuse cannot redirect
+      // later metadata reads to a different process directory.
+      const pinned = `/proc/self/fd/${directory.fd}`;
+      const argumentsList = (await readFile(`${pinned}/cmdline`, "utf8")).split("\0");
+      const index = argumentsList.indexOf("--confdir");
+      if (index < 0 || argumentsList[index + 1] !== config) continue;
+      const status = await readFile(`${pinned}/status`, "utf8");
+      const ids = /^NStgid:\s+([0-9\t ]+)$/m.exec(status)?.[1]?.trim().split(/\s+/).map(Number);
+      const last = ids?.at(-1);
+      if (!ids || ids[0] !== pid || !last || ids.some(id => !Number.isSafeInteger(id) || id <= 0))
+        throw new Error("Owned Nextcloud namespace metadata missing or malformed");
+      const applicationNamespace = await stat(`${pinned}/ns/pid`);
+      const procInit = await readFile(`${pinned}/root/proc/1/status`, "utf8");
+      const privateProcInitPresent = /^NStgid:\s+([0-9\t ]+)$/m.exec(procInit)?.[1]?.trim().split(/\s+/).at(-1) === "1";
+      let harnessProcVisible = true;
+      try { await readFile(`${pinned}/root/proc/${process.pid}/stat`, "utf8"); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        harnessProcVisible = false;
+      }
+      return { namespaceDepth: ids.length, applicationNamespacePid: last,
+        differentPidNamespace: applicationNamespace.ino !== hostNamespace.ino || applicationNamespace.dev !== hostNamespace.dev,
+        privateProcInitPresent, harnessProcVisible };
+    } finally { await directory.close(); }
+  }
+  throw new Error("Owned Nextcloud process not found");
+}
+let pidEvidence: PidEvidence | null = null;
 let client: ReturnType<typeof Bun.spawn> | undefined;
+let clientOutput: Promise<string> | undefined, clientErrors: Promise<string> | undefined;
+let activePhase = "startup";
 let secretService: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 let tunnel: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 const secretSummaryPath = join(root, "secret-service-summary.json");
@@ -60,6 +106,7 @@ let syncPrepared = false;
 let syncSummary: { localUploadObserved: boolean; remoteDownloadObserved: boolean; cleaned: boolean; controlCredentialLoads: number;
   localEditObserved?: boolean; remoteEditObserved?: boolean; localDeleteObserved?: boolean; remoteDeleteObserved?: boolean } | null = null;
 async function syncControl(action: string): Promise<typeof syncSummary> {
+  activePhase = action;
   const command = Bun.spawn(["/usr/bin/python3", resolve("experiments/nextcloud-native-sync-control.py"), action, root],
     { stdout: "pipe", stderr: "ignore" });
   const result = await new Response(command.stdout).text();
@@ -69,6 +116,8 @@ async function syncControl(action: string): Promise<typeof syncSummary> {
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
+  const applicationTemporaryDirectory = join(root, "application-tmp");
+  await mkdir(applicationTemporaryDirectory, { mode: 0o700 });
   if (accountClone) privateConfig = await preparePrivateNextcloudConfig(sourceConfig, join(config, "nextcloud.cfg"));
   if (nativeSync) {
     // Mark the cleanup obligation before provisioning, the helper saves ownership after MKCOL.
@@ -106,8 +155,10 @@ try {
   const backend = registry.sessions.get(created.sessionId)?.backend;
   if (!(backend instanceof FedoraBackend)) throw new Error("Missing owned native backend");
   const env: NodeJS.ProcessEnv = { ...(backend as unknown as { env: NodeJS.ProcessEnv }).env,
-    HOME: home, QT_QPA_PLATFORM: "wayland", ORBIT_PRIVATE_BROKER_AUDIT: "1",
-    ORBIT_PRIVATE_BROKER_PAIRS: "1", ORBIT_PRIVATE_BROKER_LOOPBACK: "1" };
+    HOME: home, TMPDIR: applicationTemporaryDirectory, QT_QPA_PLATFORM: "wayland",
+    QT_LOGGING_RULES: "kdsingleapplication.localsocket.debug=true", ORBIT_PRIVATE_BROKER_AUDIT: "1",
+    ORBIT_PRIVATE_BROKER_PAIRS: "1", ORBIT_PRIVATE_BROKER_LOOPBACK: "1",
+    ORBIT_PRIVATE_BROKER_PID_NAMESPACE: pidNamespace && !pidControl ? "1" : "0" };
   const runtime = env.XDG_RUNTIME_DIR, display = env.WAYLAND_DISPLAY;
   if (software) env.QT_QUICK_BACKEND = "software";
   if (tcp && fixture) env.ORBIT_PRIVATE_BROKER_TCP_PORT = String(fixture.port);
@@ -148,7 +199,8 @@ try {
   const launched = Bun.spawn(control ? app : [binary, join(runtime, display), "--bus-credentials", join(runtime, "bus"), ...app],
     { env, stdout: "pipe", stderr: "pipe" });
   client = launched;
-  const stdout = new Response(launched.stdout).text(), stderr = new Response(launched.stderr).text();
+  clientOutput = new Response(launched.stdout).text(); clientErrors = new Response(launched.stderr).text();
+  const stdout = clientOutput, stderr = clientErrors;
   let visible = false, title = "";
   let startupFrameSha256: string | null = null;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -158,7 +210,18 @@ try {
     await Bun.sleep(250);
   }
   if (visible) {
-    if (nativeSync) syncSummary = await syncControl("observe");
+    if (pidNamespace) {
+      pidEvidence = await ownedNextcloudPidEvidence();
+      await writeFile(join(output, "pid-namespace.json"), JSON.stringify({ pidControl, ...pidEvidence }, null, 2), { mode: 0o600 });
+      if (pidEvidence.namespaceDepth < 2 || !pidEvidence.differentPidNamespace ||
+          !pidEvidence.privateProcInitPresent || pidEvidence.harnessProcVisible)
+        throw new Error("Owned Nextcloud private PID namespace gate failed");
+    }
+    if (nativeSync) {
+      syncSummary = await syncControl("observe");
+      if (!syncSummary?.localUploadObserved || !syncSummary.remoteDownloadObserved)
+        throw new Error("Initial native sync did not prove both file directions");
+    }
     if (syncLifecycle) syncSummary = await syncControl("lifecycle");
     await Bun.sleep(8000);
     const frame = await backend.observe();
@@ -217,6 +280,8 @@ try {
   const broker: unknown = control || !lastLine ? null : JSON.parse(lastLine);
   const finalProcesses = await nextcloudProcesses();
   const applicationLog = tls || accountClone ? await readFile(applicationLogPath, "utf8") : "";
+  const primaryInstanceObserved = /kdsingleapplication.localsocket.*Primary instance/.test(errors);
+  const secondaryInstanceObserved = /kdsingleapplication.localsocket.*Secondary instance/.test(errors);
   const certificateRejectionObserved = tls && applicationLog.includes("The certificate is self-signed, and untrusted");
   const cloneSummary = privateConfig ? { accountsCopied: privateConfig.accounts,
     folderSettingsRemoved: privateConfig.removedFolderSettings, accountSettingsRetained: privateConfig.keptAccountSettings,
@@ -231,7 +296,7 @@ try {
     folderSyncScheduled: /Schedule folder .* to sync|sync of .* started/i.test(applicationLog),
     networkConnectDenied: /broker_denied syscall=42 .*domain=(?:2|10) /.test(errors) } : null;
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/nextcloud",
-    transport: control ? "direct-control" : "brokered", software, network, tcp, tls, trustFixture: tls && trustFixture,
+    transport: control ? "direct-control" : "brokered", pidNamespace, pidEvidence, primaryInstanceObserved, secondaryInstanceObserved, software, network, tcp, tls, trustFixture: tls && trustFixture,
     visible, title: accountClone ? "not retained" : title, exit, scopedStop, broker, accountClone, cloneSummary,
     emptySecretService: emptySecrets ? await Bun.file(secretSummaryPath).json() : null,
     oneSecretService: oneSecret ? await Bun.file(secretSummaryPath).json() : null,
@@ -256,6 +321,7 @@ try {
         "No public CA, remote service, TLS version or mutual TLS was measured."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
+  if (pidNamespace && (!visible || !pidEvidence)) throw new Error("Nextcloud PID namespace was not measured");
   if (cloneSummary && (!cloneSummary.originalConfigUnchanged || (!nativeSync && cloneSummary.folderSyncScheduled) ||
       !report.originalProcessesStillPresent)) throw new Error("Nextcloud account copy isolation check failed");
   if (nativeSync && (!syncSummary?.localUploadObserved || !syncSummary.remoteDownloadObserved))
@@ -278,6 +344,38 @@ try {
     if (!visible || !report.originalProcessesStillPresent || !certificateRejectionObserved ||
       (trustFixture ? !reachable : requests.length !== 0)) throw new Error("Nextcloud TLS certificate control failed");
   }
+} catch (error) {
+  // Stop only our private client before collecting bounded counters. Never
+  // retain raw application logs, account titles, URLs or credential values.
+  if (client && client.exitCode === null) { client.kill("SIGTERM"); await client.exited; }
+  const text = await clientOutput ?? "", errors = await clientErrors ?? "";
+  let broker: unknown = null;
+  const lastLine = text.trim().split("\n").at(-1);
+  if (lastLine && lastLine.startsWith("{")) { try { broker = JSON.parse(lastLine); } catch {} }
+  const applicationLog = await Bun.file(applicationLogPath).exists() ? await readFile(applicationLogPath, "utf8") : "";
+  const deniedSyscalls: Record<string, number> = {};
+  const deniedSocketKinds: Record<string, number> = {};
+  for (const item of errors.matchAll(/broker_denied syscall=([0-9]+)/g)) {
+    const syscall = item[1]; if (syscall) deniedSyscalls[syscall] = (deniedSyscalls[syscall] ?? 0) + 1;
+  }
+  for (const item of errors.matchAll(/broker_denied syscall=([0-9]+).*? errno=(-?[0-9]+) domain=(-?[0-9]+) type=(-?[0-9]+) protocol=(-?[0-9]+)/g)) {
+    const key = `syscall=${item[1]} errno=${item[2]} domain=${item[3]} type=${item[4]} protocol=${item[5]}`;
+    deniedSocketKinds[key] = (deniedSocketKinds[key] ?? 0) + 1;
+  }
+  const finalProcesses = await nextcloudProcesses();
+  const failure = { phase: activePhase,
+    primaryInstanceObserved: /kdsingleapplication.localsocket.*Primary instance/.test(errors),
+    secondaryInstanceObserved: /kdsingleapplication.localsocket.*Secondary instance/.test(errors), pidNamespace, pidControl, pidEvidence, broker, deniedSyscalls, deniedSocketKinds,
+    accountConnected: /AccountState state change:.*->\s*"Connected"/.test(applicationLog),
+    credentialFailureObserved: /(?:credentials|password|keychain|secret).*(?:error|fail|not found|not available|could not)|(?:error|fail).*(?:credentials|password|keychain|secret)/i.test(applicationLog),
+    folderSyncScheduled: /Schedule folder .* to sync|sync of .* started/i.test(applicationLog),
+    originalConfigUnchanged: privateConfig ? await privateNextcloudSourceUnchanged(sourceConfig, privateConfig) : null,
+    originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)), nativeSync: syncSummary,
+    oneSecretService: oneSecret && await Bun.file(secretSummaryPath).exists() ? await Bun.file(secretSummaryPath).json() : null,
+    accountTunnel: accountTunnel && await Bun.file(tunnelSummaryPath).exists() ? await Bun.file(tunnelSummaryPath).json() : null };
+  await writeFile(join(output, "failure.json"), JSON.stringify(failure, null, 2), { mode: 0o600 });
+  console.error(JSON.stringify({ sanitizedFailure: failure }));
+  throw error;
 } finally {
   if (client && client.exitCode === null) { client.kill("SIGTERM"); await client.exited; }
   if (secretService) {

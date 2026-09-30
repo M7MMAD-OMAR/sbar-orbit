@@ -68,7 +68,7 @@ async def run(configuration, summary_path):
     resolved = await asyncio.wait_for(loop.getaddrinfo(hostname, remote_port, family=socket.AF_INET, type=socket.SOCK_STREAM), 5)
     address = resolved[0][4][0]
     authority = f"{hostname}:{remote_port}"
-    summary = {"acceptedTunnels": 0, "blockedRequests": 0, "upstreamFailures": 0, "clientBytes": 0, "serverBytes": 0}
+    summary = {"acceptedTunnels": 0, "blockedRequests": 0, "upstreamFailures": 0, "clientBytes": 0, "serverBytes": 0, "failureStages": {}, "failureKinds": {}}
     active = set()
 
     def save():
@@ -87,6 +87,7 @@ async def run(configuration, summary_path):
         task = asyncio.current_task()
         active.add(task)
         upstream = None
+        stage = "client-header"
         try:
             async with asyncio.timeout(45):
                 header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 5)
@@ -96,14 +97,19 @@ async def run(configuration, summary_path):
                     writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                     await writer.drain()
                     return
+                stage = "upstream-connect"
                 remote_reader, upstream = await asyncio.wait_for(asyncio.open_connection(address, remote_port), 5)
                 summary["acceptedTunnels"] += 1
                 writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 await writer.drain()
                 save()
+                stage = "tunnel-io"
                 await asyncio.gather(pump(reader, upstream, "clientBytes"), pump(remote_reader, writer, "serverBytes"))
-        except (OSError, UnicodeError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
+        except (OSError, UnicodeError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError) as error:
             summary["upstreamFailures"] += 1
+            summary["failureStages"][stage] = summary["failureStages"].get(stage, 0) + 1
+            kind = type(error).__name__
+            summary["failureKinds"][kind] = summary["failureKinds"].get(kind, 0) + 1
         finally:
             writer.close()
             if upstream:
