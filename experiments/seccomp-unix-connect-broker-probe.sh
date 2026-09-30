@@ -14,4 +14,4 @@ trap cleanup EXIT
 
 cc -Wall -Wextra -O2 -o "$probe_bin" \
   experiments/seccomp-unix-connect-broker-probe.c
-"$probe_bin"
+"$probe_bin" "$@"

@@ -15,6 +15,8 @@ Run the [fixture](seccomp-unix-connect-broker-probe.c) through its
 ```sh
 bun run scripts/limited.ts timeout 20s bash \
   experiments/seccomp-unix-connect-broker-probe.sh
+bun run scripts/limited.ts timeout 20s bash \
+  experiments/seccomp-unix-connect-broker-probe.sh naive
 ```
 
 The fixture creates two disposable host UNIX stream sockets and an outer
@@ -28,22 +30,34 @@ socket, addressed through `/proc/self/fd`, so a later path mount in the child
 cannot redirect the broker to a different socket. All other intercepted
 connections receive `EACCES` in this fixture.
 
-Measured output:
+The extended fixture also creates a host UNIX datagram socket and attempts
+`sendto(2)` and `sendmsg(2)` to it. The broker still intercepts only
+`connect(2)`. The runner accepts `naive` to replace the pinned descriptor
+with a lookup through the notifying process's mount namespace. Both arms
+were run on 30 September 2026. Measured pinned output:
 
 ```text
 blocked_visible=1
+broker_mode=pinned
 selected_result=0 selected_errno=0
 blocked_result=-1 blocked_errno=13
+blocked_sendto_result=1 blocked_sendto_errno=0
+blocked_sendmsg_result=1 blocked_sendmsg_errno=0
 nested_selected_result=0 nested_selected_errno=0
 nested_exit=0
 selected_accepts=2 blocked_accepts=0
+blocked_datagrams=2
 probe_exit=0
 ```
 
 The nested Bubblewrap mount deliberately puts the blocked host socket over
 the selected path in its own namespace. The broker still connects to the
 original selected socket. The selected server accepted both connections;
-the blocked server accepted none.
+the blocked stream server accepted none. In the `naive` arm, the same nested
+connection was diverted to the blocked host socket: the selected server
+accepted once and the blocked server accepted once. The datagram server
+received two messages in both arms. The path race therefore needs the pinned
+socket identity, and a `connect(2)` filter alone leaves working bypasses.
 
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
