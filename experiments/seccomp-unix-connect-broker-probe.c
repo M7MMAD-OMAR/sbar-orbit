@@ -39,6 +39,7 @@ static int connected_rights;
 static int unexpected_stream_bytes;
 static uint64_t approved_cookies[32];
 static size_t approved_cookie_count;
+static const char *selected_stream_path = SELECTED_PATH;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -612,7 +613,7 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
     if (process_vm_readv(request.pid, &local, 1, &remote, 1, 0) == (ssize_t)local.iov_len
         && addr.sun_family == AF_UNIX && addr.sun_path[0]
         && memchr(addr.sun_path, '\0', sizeof(addr.sun_path))) {
-      if (!strcmp(addr.sun_path, SELECTED_PATH)) {
+      if (!strcmp(addr.sun_path, selected_stream_path)) {
         int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0);
         if (duplicate >= 0) {
           char resolved[sizeof(((struct sockaddr_un *)0)->sun_path)];

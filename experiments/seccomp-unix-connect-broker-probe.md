@@ -284,6 +284,12 @@ signal semantics are not. Cancellation, listener loss, slow peers and full
 application compatibility remain unmeasured. No application account or
 personal socket was used in these disposable fixtures.
 
+The subsequent [real GTK experiment](seccomp-wayland-app-probe.md) measured
+one disposable client rendering and accepting private keyboard input through
+this transport. Its direct control verified that the denied socket attempt
+can succeed without the filter. It does not establish production launch or
+account application parity, and retains the limits described here.
+
 This establishes a way past the specific Landlock mount conflict for
 `connect(2)` on this host, including a child launched inside nested
 Bubblewrap. It does not establish full pathname UNIX isolation. The baseline
