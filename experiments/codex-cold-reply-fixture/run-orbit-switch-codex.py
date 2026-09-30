@@ -10,7 +10,8 @@ RESTART_OWNER='--restart-owner' in sys.argv[3:]
 PUBLIC_ATTACH='--public-attach' in sys.argv[3:]
 FOOTER_ONLY='--footer-only' in sys.argv[3:]
 DIRECT_ONLY='--direct-only' in sys.argv[3:]
-IPC_PROBE='--ipc-probe' in sys.argv[3:]
+DUAL_WINDOW_PROBE='--dual-window-probe' in sys.argv[3:]
+IPC_PROBE='--ipc-probe' in sys.argv[3:] or DUAL_WINDOW_PROBE
 assert sum([RESTRICT_TOOLS,ORBIT_TOOL,REAL_ORBIT])<=1
 PERSONAL_HOME=Path.home()
 ORBIT_REPO=Path(sys.argv[2]).resolve()
@@ -125,9 +126,10 @@ def ns(display,role):
  placeholder=tmp/'.X11-unix'/f'X{display}';placeholder.parent.mkdir(parents=True,exist_ok=True);placeholder.touch(exist_ok=True)
  codex=OWNER if role==1 else CLIENT
  args=['bwrap','--unshare-user','--unshare-pid','--unshare-net','--unshare-ipc','--unshare-uts','--die-with-parent','--ro-bind','/','/','--bind',str(ROOT),str(ROOT)]
+ if role==2 and DUAL_WINDOW_PROBE:args.extend(['--bind',str(OWNER/'ipc'),str(CLIENT/'ipc')])
  if REAL_ORBIT:args.extend(['--ro-bind',str(ORBIT_REPO),str(ROOT/'orbit-repo')])
  args.extend(['--bind',str(home),str(PERSONAL_HOME),'--bind',str(runtime),f'/run/user/{UID}','--bind',str(AUTH_DIR),str(AUTH_DIR),'--bind',str(tmp),'/tmp','--bind',f'/tmp/.X11-unix/X{display}',f'/tmp/.X11-unix/X{display}','--dev','/dev','--proc','/proc','--','/usr/bin/env','-i',f'HOME={home}',f'CODEX_HOME={codex}',f'XDG_CONFIG_HOME={dirs(role,"config")}',f'XDG_DATA_HOME={dirs(role,"data")}',f'XDG_CACHE_HOME={dirs(role,"cache")}',f'XDG_RUNTIME_DIR={runtime}',f'TMPDIR={tmp}',f'XAUTHORITY={ROOT/"xauth"}',f'DISPLAY=:{display}','XDG_SESSION_TYPE=x11','GSETTINGS_BACKEND=dconf',f'CODEX_ELECTRON_USER_DATA_PATH={user}',f'CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET={APP_SOCKET}',f'CODEX_LINUX_APP_DIR={ROOT/"app"}',f'CODEX_CLI_PATH={ROOT/"app/resources/codex"}','PATH=/usr/bin:/bin','LANG=C.UTF-8'])
- if role==2:args.extend(['CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1',f'CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME={CLIENT}'])
+ if role==2:args.extend(['CODEX_LINUX_APP_SERVER_BRIDGE_ATTACH_ONLY=1',f'CODEX_LINUX_APP_SERVER_BRIDGE_PRIVATE_CODEX_HOME={codex}'])
  return args
 
 def state_req(method,params=None):
@@ -205,6 +207,9 @@ async def main():
  assert APP.is_file() and not APP.is_symlink() and not os.path.samefile(APP,'/usr/lib/chatgpt/ChatGPT')
  assert not os.path.samefile(ROOT/'app/resources/app.asar','/usr/lib/chatgpt/resources/app.asar')
  OWNER.mkdir(mode=0o700,exist_ok=True);CLIENT.mkdir(mode=0o700,exist_ok=True);PROJECT.mkdir(mode=0o700,exist_ok=True);APP_SOCKET.parent.mkdir(mode=0o700)
+ if DUAL_WINDOW_PROBE:
+  (OWNER/'ipc').mkdir(mode=0o700,exist_ok=True)
+  (CLIENT/'ipc').mkdir(mode=0o700,exist_ok=True)
  (PROJECT/'fixture.txt').write_text('Disposable Codex project for private Orbit evidence.\n')
  mock_wrapper=ROOT/f'mock-owner-desktop-{TAG}.py';shutil.copyfile(Path(__file__).with_name('mock-owner-desktop.py'),mock_wrapper)
  toy_mcp=ROOT/f'toy-orbit-mcp-{TAG}.py'
@@ -235,8 +240,9 @@ async def main():
              'last_refresh':datetime.datetime.now(datetime.timezone.utc).isoformat()}
  if not IPC_PROBE:
   auth_path=OWNER/'auth.json';auth_path.write_text(json.dumps(owner_auth));auth_path.chmod(0o600)
- displays=[i for i in range(170,230) if not Path(f'/tmp/.X11-unix/X{i}').exists() and not Path(f'/tmp/.X{i}-lock').exists()][:1]
- if len(displays)!=1:raise RuntimeError('one free display required')
+ display_count=2 if DUAL_WINDOW_PROBE else 1
+ displays=[i for i in range(170,230) if not Path(f'/tmp/.X11-unix/X{i}').exists() and not Path(f'/tmp/.X{i}-lock').exists()][:display_count]
+ if len(displays)!=display_count:raise RuntimeError('private display count unavailable')
  for display in displays:subprocess.run(['xauth','-f',str(ROOT/'xauth'),'add',f':{display}','MIT-MAGIC-COOKIE-1',secrets.token_hex(16)],check=True,capture_output=True)
  (ROOT/'xauth').chmod(0o600)
  xservers=[];desktops=[];logs=[];broker=None;real_session=None
@@ -282,6 +288,7 @@ async def main():
     if RESTRICT_TOOLS:env.insert(env.index('PATH=/usr/bin:/bin'),'ORBIT_EXPECT_EMPTY_TOOLS=1')
     if ORBIT_TOOL:env.insert(env.index('PATH=/usr/bin:/bin'),'ORBIT_EXPECT_ORBIT_TOOL=1')
     if REAL_ORBIT:env.insert(env.index('PATH=/usr/bin:/bin'),'ORBIT_EXPECT_REAL_ORBIT=1')
+   elif DUAL_WINDOW_PROBE:env.insert(env.index('PATH=/usr/bin:/bin'),'OPENAI_API_KEY=fixture-only')
    command=['/usr/bin/dbus-run-session','--',str(APP),'--no-sandbox','--disable-gpu','--password-store=basic',f'--user-data-dir={dirs(role,"user-data")}']
    if role==1:command=['/usr/bin/python3',str(mock_wrapper),*command]
    p=subprocess.Popen(env+command,stdin=subprocess.DEVNULL,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
@@ -381,6 +388,45 @@ async def main():
        env={'DISPLAY':f':{displays[0]}','XAUTHORITY':str(ROOT/'xauth'),
             'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=10)
      if capture.returncode:raise RuntimeError('private IPC fixture capture failed')
+     second_image=None;second_user_text=False;second_answer_text=False
+     second_live_image=None;second_live_user_text=False;second_live_answer_text=False
+     if DUAL_WINDOW_PROBE:
+      second=launch(2,displays[1])
+      await asyncio.sleep(25)
+      if second.poll() is not None:raise RuntimeError('second disposable Desktop exited')
+      private_click(displays[1],132,299)
+      await asyncio.sleep(5)
+      second_image=ROOT/f'ipc-second-{TAG}.jpg'
+      capture=subprocess.run(['/usr/bin/import','-display',f':{displays[1]}',
+       '-window','root','-quality','85',str(second_image)],
+       env={'DISPLAY':f':{displays[1]}','XAUTHORITY':str(ROOT/'xauth'),
+            'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=10)
+      if capture.returncode:raise RuntimeError('second private Desktop capture failed')
+      visible=subprocess.run(['tesseract',str(second_image),'stdout'],capture_output=True,text=True,check=True).stdout
+      second_user_text='Private fixture conversation' in visible
+      second_answer_text='Orbit completed fixture answer' in visible
+      async with websockets.unix_connect(str(APP_SOCKET),uri='ws://localhost/rpc',compression=None) as live_ws:
+       await rpc(live_ws,70,'initialize',{'clientInfo':{'name':'fixture_live_update','title':'Fixture live update','version':'1'},'capabilities':{'experimentalApi':True}})
+       await live_ws.send(json.dumps({'method':'initialized'}))
+       new_turn=await rpc(live_ws,71,'turn/start',{'threadId':tid,'input':[{'type':'text','text':'Second window live update'}]})
+       if new_turn.get('error'):raise RuntimeError('second fixture turn failed: '+json.dumps(new_turn['error']))
+       for _ in range(100):
+        turns=await rpc(live_ws,72,'thread/turns/list',{'threadId':tid,'limit':10})
+        if len([turn for turn in (turns.get('result') or {}).get('data',[]) if turn.get('status')=='completed'])>=2:break
+        await asyncio.sleep(.1)
+       else:raise RuntimeError('second fixture turn did not complete')
+      await asyncio.sleep(5)
+      second_live_image=ROOT/f'ipc-second-live-{TAG}.jpg'
+      capture=subprocess.run(['/usr/bin/import','-display',f':{displays[1]}',
+       '-window','root','-quality','85',str(second_live_image)],
+       env={'DISPLAY':f':{displays[1]}','XAUTHORITY':str(ROOT/'xauth'),
+            'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=10)
+      if capture.returncode:raise RuntimeError('second private live Desktop capture failed')
+      live_visible=subprocess.run(['tesseract',str(second_live_image),'stdout'],capture_output=True,text=True,check=True).stdout
+      second_live_user_text='Second window live update' in live_visible
+      second_live_answer_text='owner preflight answer' in live_visible
+      if not all((second_user_text,second_answer_text,second_live_user_text,second_live_answer_text)):
+       raise RuntimeError('second disposable Desktop did not display both fixture turns')
      print(json.dumps({'ipcSocketPresent':True,'discoveryResultType':discovery.get('resultType'),
        'discoveryError':discovery.get('error'),'ownerFound':discovery.get('resultType')=='success',
        'historyResultType':history.get('resultType') if history else None,
@@ -391,7 +437,11 @@ async def main():
        'snapshotUserTextPresent':'Private fixture conversation' in json.dumps(snapshot),
        'snapshotAnswerTextPresent':'Orbit completed fixture answer' in json.dumps(snapshot),
        'syntheticOwnerFound':True,'appServerAccountIdPresent':bool(workspace.get('chatgptAccountId')),
-       'screenshot':str(image)}),flush=True)
+       'screenshot':str(image),'secondScreenshot':str(second_image) if second_image else None,
+       'secondUserTextPresent':second_user_text,'secondAnswerTextPresent':second_answer_text,
+       'secondLiveScreenshot':str(second_live_image) if second_live_image else None,
+       'secondLiveUserTextPresent':second_live_user_text,
+       'secondLiveAnswerTextPresent':second_live_answer_text}),flush=True)
      return
     model_record=ROOT/f'model-tools-{TAG}.json'
     if not model_record.is_file():raise RuntimeError('fixture model was not called')

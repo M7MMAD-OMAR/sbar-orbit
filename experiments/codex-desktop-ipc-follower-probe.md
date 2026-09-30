@@ -74,14 +74,42 @@ The private screenshot for this run is
 {"ipcSocketPresent":true,"discoveryResultType":"success","ownerFound":true,"historyResultType":"success","snapshotPresent":true,"snapshotUserTextPresent":true,"snapshotAnswerTextPresent":true,"syntheticOwnerFound":true,"appServerAccountIdPresent":false}
 ```
 
-This establishes a functional read path for a synthetic conversation shown
-by a copied Codex Desktop on a separate display. It does not establish access
-to the person's account, current conversations, or other apps. It also does
-not authorize mounting the personal IPC socket in an Orbit session. The
-router accepts arbitrary same-user clients, and its follower API includes
-write methods. A trusted gate needs an explicit account, thread, and method
-scope before any personal IPC route is used. A second loaded disposable
-Desktop window remains the next end-to-end UI measurement.
+The `--dual-window-probe` mode starts a second copied Desktop on another
+private Xvnc display. Each window has its own `CODEX_HOME`, home, runtime,
+user data, and display. The fixture mounts only the fake owner's IPC
+directory into the second window's IPC path and attaches its app-server
+connection to the fake owner. The installed app refuses an attach-only
+window whose `CODEX_HOME` equals the owner's, so this separate home is
+required. The command is:
+
+```sh
+bun run scripts/limited.ts timeout 120s /usr/bin/python3 \
+  experiments/codex-cold-reply-fixture/run-orbit-switch-codex.py \
+  /var/tmp/codex-private-smoke-u . \
+  --dual-window-probe
+```
+
+The second window displayed the saved fixture conversation. A new turn was
+then started through the disposable app-server after both windows were open.
+The second window displayed the new user text `Second window live update`
+and the model response `Orbit owner preflight answer`. The final private
+capture is
+`/var/tmp/codex-private-smoke-u/ipc-second-live-e804a361.jpg`.
+The latest run returned:
+
+```json
+{"ownerFound":true,"historyResultType":"success","snapshotPresent":true,"secondUserTextPresent":true,"secondAnswerTextPresent":true,"secondLiveUserTextPresent":true,"secondLiveAnswerTextPresent":true,"appServerAccountIdPresent":false}
+```
+
+This establishes a functional read and live update path for a synthetic
+conversation in two separate copied Desktop windows. It does not establish
+access to the person's account, current conversations, or other apps. The
+second window had no visible composer in the captured state, so the run does
+not demonstrate sending a turn from that window. It also does not authorize
+mounting the personal IPC socket in an Orbit session. The router accepts
+arbitrary same-user clients, and its follower API includes write methods.
+A trusted gate needs an explicit account, thread, and method scope before
+any personal IPC route is used.
 
 An additional run of the existing fixture without `--ipc-probe` passed owner
 account inspection and cold thread activation, then failed while waiting for
