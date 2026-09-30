@@ -483,6 +483,15 @@ async def main():
          await asyncio.sleep(.1)
         else:raise RuntimeError('attached fixture follow-up was not completed in owner history')
        attached_result['ownerWriteCompleted']=True
+       model_record=ROOT/f'model-tools-{TAG}.json'
+       model_requests=json.loads(model_record.read_text()).get('requests',[])
+       write_tool_count=model_requests[-1].get('toolCount') if len(model_requests)>=3 else None
+       attached_result['writeModelToolCount']=write_tool_count
+       if write_tool_count!=0:
+        raise RuntimeError('attached fixture write exposed model tools: '+str(write_tool_count))
+       if (not attached_result.get('writeTextVisible') or
+           not attached_result.get('writeAnswerVisible') or attached_result.get('writeErrorVisible')):
+        raise RuntimeError('attached fixture write did not remain healthy in its private UI')
      image=ROOT/f'ipc-owner-{TAG}.jpg'
      capture=subprocess.run(['/usr/bin/import','-display',f':{displays[0]}',
        '-window','root','-quality','85',str(image)],

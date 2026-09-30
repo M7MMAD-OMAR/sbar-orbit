@@ -261,20 +261,41 @@ bun run scripts/limited.ts timeout 170s /usr/bin/python3 \
   --attached-ipc-write-probe
 ```
 
-The UI accepted typed text but rejected submission with `denied`. The text
-remained in the composer, and the fake owner's saved history had no completed
-follow-up. The [private capture](/var/tmp/codex-private-smoke-write-v/orbit-client-write-ipcsnapshot.jpg)
-shows the error. An earlier OCR check saw the text in the composer and could
-have mistaken that for a submitted bubble. The fixture now requires a
-completed owner history turn, so this state fails the probe.
+The first run accepted typed text but rejected submission with `denied`. The
+text remained in the composer, and the fake owner's saved history had no
+completed follow-up. An earlier OCR check saw the text in the composer and
+could have mistaken that for a submitted bubble. The fixture now requires a
+completed owner history turn.
 
 The IPC gate audit recorded three denied `ide-context` requests, each with a
 `workspaceRoot` parameter, then a denied `thread-follower-start-turn`
 request. That write request targeted a client and carried `conversationId`
 and `turnStart`; `turnStart` held `request` and `context`. The audit stores
-field names rather than message content. This establishes why the current
-read gate leaves the composer unusable. Forwarding the raw follower request
-would bypass the app-server gate's text-only and tool restrictions, so the
-write method remains denied. A controlled translation or equally strict
-validation of the follower request is still required. The test did not use
-the person's account, socket, files, or window.
+field names rather than message content. This identified the requested write
+route without granting it.
+
+A temporary fixture-only raw IPC forward then completed a fake owner turn,
+but the mock model saw 12 tools and the private renderer displayed a fatal
+error. That forwarding path was removed. It showed that putting
+`allowedTools: []` inside a follower request does not constrain the owner's
+tool inventory at the model boundary.
+
+The current fixture route validates one pinned text input and sends it through
+the existing app-server gate, which rebuilds `turn/start` with
+`allowedTools: []`. The IPC gate returns the bounded turn result to the
+follower and continues forwarding scoped snapshots. The fake owner's saved
+history completed the new turn. The third model request saw zero tools, and
+the [private Orbit capture](/var/tmp/codex-private-smoke-write-v/orbit-client-write-ipcsnapshot.jpg)
+shows the new user message and assistant answer with a working composer. The
+gate recorded one fixture text turn and no raw IPC write forwarded. The
+fixture's raw owner IPC path was hidden from the private mount.
+
+```json
+{"ownerWriteCompleted":true,"writeModelToolCount":0,"writeTextVisible":true,"writeAnswerVisible":true,"writeErrorVisible":false,"mountVisibility":{"ownerIpcVisible":false,"privateIpcVisible":true,"fixtureAppVisible":true},"ipcGateStats":{"fixtureTextTurnsSubmitted":1,"snapshotsForwarded":5,"clientRequestsDenied":3}}
+```
+
+This measures one synthetic text follow-up, not the person's account or full
+Codex tool and approval capability. It does not establish an atomic owner
+generation across the IPC snapshot and app-server write. Broader host socket
+and descriptor isolation remains unresolved before a personal profile can
+use this route. No personal account, socket, file, or window was used.

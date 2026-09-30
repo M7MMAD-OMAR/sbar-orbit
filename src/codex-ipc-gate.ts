@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 const MAX_FRAME = 16 * 1024 * 1024;
 const MAX_BUFFER = MAX_FRAME * 2;
+const MAX_FIXTURE_TEXT = 8192;
 
 type Message = Record<string, unknown>;
 type SocketIdentity = { device: bigint; inode: bigint };
@@ -11,6 +12,29 @@ type SocketIdentity = { device: bigint; inode: bigint };
 function record(value: unknown): Message | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Message : null;
+}
+
+function fixtureTextTurn(message: Message, threadId: string, clientId: string,
+                         ownerClientId: string | null): string | null {
+  const params = record(message.params);
+  const start = record(params?.turnStart);
+  const request = record(start?.request);
+  const context = record(start?.context);
+  const input = request?.input;
+  const item = Array.isArray(input) && input.length === 1 ? record(input[0]) : null;
+  if (message.type !== "request" || message.method !== "thread-follower-start-turn" ||
+      message.version !== 2 || typeof message.requestId !== "string" ||
+      message.requestId.length === 0 || message.requestId.length > 128 ||
+      message.sourceClientId !== clientId || !ownerClientId ||
+      message.targetClientId !== ownerClientId || params?.conversationId !== threadId ||
+      request?.threadId !== threadId || !context || !item || item.type !== "text" ||
+      typeof item.text !== "string" || item.text.length === 0 ||
+      Buffer.byteLength(item.text) > MAX_FIXTURE_TEXT || item.text.includes("\0") ||
+      ["attachments", "commentAttachments", "mcpAppModelContextAttachments", "responseItems"]
+        .some(key => !Array.isArray(context[key]) || (context[key] as unknown[]).length !== 0)) return null;
+  const metadata = record(context.localTurnMetadata);
+  if (metadata && metadata.fileAttachmentCount !== 0) return null;
+  return item.text;
 }
 
 function frame(message: Message): Buffer {
@@ -84,7 +108,8 @@ async function privateDirectory(path: string) {
 
 export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPath: string,
                                               threadId: string,
-                                              auditDenied?: (message: Message) => void) {
+                                              auditDenied?: (message: Message) => void,
+                                              submitFixtureText?: (text: string) => Promise<Message>) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(threadId))
     throw new Error("Codex IPC gate needs one thread ID");
   const owner = await socketIdentity(ownerSocketPath);
@@ -98,7 +123,9 @@ export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPa
   const socketPath = join(directory, "ipc.sock");
   const connections = new Set<Socket>();
   const counts = { connections: 0, followingForwarded: 0, snapshotsForwarded: 0,
+    fixtureTextTurnsSubmitted: 0,
     clientRequestsDenied: 0 };
+  let textTurnUsed = false;
   const server = createServer(downstream => {
     counts.connections += 1;
     connections.add(downstream);
@@ -129,6 +156,8 @@ export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPa
       const after = await socketIdentity(ownerSocketPath);
       if (after.device !== owner.device || after.inode !== owner.inode) throw new Error("Codex IPC owner changed");
       let clientId: string | null = null;
+      let ownerClientId: string | null = null;
+      let pendingTextTurnId: string | null = null;
       let initializePending = false;
       const closeBoth = () => { downstream.destroy(); ownerConnection.destroy(); };
       downstream.on("close", () => { connections.delete(downstream); ownerConnection.destroy(); });
@@ -157,6 +186,30 @@ export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPa
             method, version: 1, params: { conversationId: threadId, hostId: "local",
               following: params.following } }));
           return;
+        }
+        if (submitFixtureText && !textTurnUsed && pendingTextTurnId === null &&
+            clientId !== null && method === "thread-follower-start-turn") {
+          const safeText = fixtureTextTurn(message, threadId, clientId, ownerClientId);
+          if (safeText !== null) {
+            const requestId = message.requestId as string;
+            textTurnUsed = true;
+            pendingTextTurnId = requestId;
+            counts.fixtureTextTurnsSubmitted += 1;
+            void submitFixtureText(safeText).then(result => {
+              if (pendingTextTurnId !== requestId) return;
+              pendingTextTurnId = null;
+              forward(downstream, ownerConnection, frame({ type: "response",
+                requestId, method: "thread-follower-start-turn",
+                resultType: "success", result: { result } }));
+            }).catch(() => {
+              if (pendingTextTurnId !== requestId) return;
+              pendingTextTurnId = null;
+              forward(downstream, ownerConnection, frame({ type: "response",
+                requestId, method: "thread-follower-start-turn",
+                resultType: "error", error: "fixture-turn-failed" }));
+            });
+            return;
+          }
         }
         if (kind === "request" && typeof message.requestId === "string") {
           counts.clientRequestsDenied += 1;
@@ -190,7 +243,12 @@ export async function startCodexScopedIpcGate(privateHome: string, ownerSocketPa
             (method === "thread-stream-state-changed" || method === "thread-stream-following-changed") &&
             params?.conversationId === threadId && params.hostId === "local") {
           if (method === "thread-stream-state-changed" &&
-              record(params.change)?.type === "snapshot") counts.snapshotsForwarded += 1;
+              record(params.change)?.type === "snapshot") {
+            counts.snapshotsForwarded += 1;
+            if (typeof message.sourceClientId === "string" &&
+                message.sourceClientId.length > 0 && message.sourceClientId.length <= 128)
+              ownerClientId = message.sourceClientId;
+          }
           forward(downstream, ownerConnection, content);
         }
       });

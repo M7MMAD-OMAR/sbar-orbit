@@ -85,6 +85,10 @@ test("Codex paginated viewer injection requires a private fixture executable", a
       { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId,
         fixtureIpcSocketPath: join(homedir(), ".codex", "ipc", "ipc.sock") }))
       .rejects.toMatchObject({ code: "UNSUPPORTED", message: expect.stringContaining("disposable owner socket") });
+    await expect(prepareCodexAttachedLaunch(session, display, authorityPath, executable,
+      { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId,
+        fixtureIpcTextTurn: true }))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST", message: expect.stringContaining("scoped gate") });
     authority = await listen(authorityPath, "fixture-authority");
     authorityState = await listen(`${authorityPath}.state`, "");
     await chmod(authorityPath, 0o600);

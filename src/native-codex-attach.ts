@@ -7,10 +7,23 @@ import { OrbitError } from "./errors";
 import type { CodexDisplayEnv } from "./native-codex";
 import { validateStagedCodexCandidate } from "./native-codex-candidate";
 import { seedNativePreferences } from "./native-preferences";
-import { startCodexReadOnlyGate, type PaginatedPageRequest } from "./codex-authority-gate";
+import { startCodexReadOnlyGate, submitFixtureTextThroughGate,
+  type PaginatedPageRequest } from "./codex-authority-gate";
 import { startCodexScopedIpcGate } from "./codex-ipc-gate";
 
 const installedExecutable = "/usr/lib/chatgpt/ChatGPT";
+
+function fixtureIpcShape(value: unknown, depth = 0,
+                         budget = { remaining: 128 }): unknown {
+  if (depth >= 5 || budget.remaining-- <= 0) return "limit";
+  if (Array.isArray(value)) return { length: value.length,
+    items: value.slice(0, 3).map(item => fixtureIpcShape(item, depth + 1, budget)) };
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).slice(0, 32).map(([key, item]) =>
+      [key.slice(0, 96), fixtureIpcShape(item, depth + 1, budget)]));
+  if (typeof value === "string") return { type: "string", bytes: Buffer.byteLength(value) };
+  return typeof value;
+}
 
 export function activeCodexAuthoritySocketPath(): string {
   return process.env.ORBIT_CODEX_AUTHORITY_SOCKET ??
@@ -35,7 +48,7 @@ export type PreparedCodexAttachedLaunch = {
   selectedFiles: [];
   privateHome: string;
   ipcGateStats?: () => { connections: number; followingForwarded: number;
-    snapshotsForwarded: number; clientRequestsDenied: number };
+    snapshotsForwarded: number; fixtureTextTurnsSubmitted: number; clientRequestsDenied: number };
   release: () => Promise<void>;
 };
 
@@ -123,7 +136,8 @@ export async function prepareCodexAttachedLaunch(
     fixturePaginatedPageReader?: (request: PaginatedPageRequest) => Promise<unknown>;
     fixtureTurnThreadId?: string;
     fixtureAllowOrbitTool?: boolean;
-    fixtureIpcSocketPath?: string } = { allowFixture: true },
+    fixtureIpcSocketPath?: string;
+    fixtureIpcTextTurn?: boolean } = { allowFixture: true },
 ): Promise<PreparedCodexAttachedLaunch> {
   const session = resolve(sessionDirectory);
   if (!session.startsWith("/tmp/orbit-native-") || display.runtimeDirectory !== session ||
@@ -133,7 +147,7 @@ export async function prepareCodexAttachedLaunch(
   const fixturePageReader = options.fixturePaginatedPageReader;
   const fixtureTurnThreadId = options.fixtureTurnThreadId;
   if ((fixturePageReader || fixtureTurnThreadId !== undefined || options.fixtureAllowOrbitTool ||
-       options.fixtureIpcSocketPath !== undefined) &&
+       options.fixtureIpcSocketPath !== undefined || options.fixtureIpcTextTurn) &&
       (options.allowFixture !== true || !executable.startsWith(session + sep) ||
       options.candidateManifestSha256 !== undefined))
     throw new OrbitError("UNSUPPORTED", "Codex fixture access needs a private fixture executable");
@@ -144,6 +158,8 @@ export async function prepareCodexAttachedLaunch(
     throw new OrbitError("INVALID_REQUEST", "Codex fixture turn needs one thread and a page reader");
   if (options.fixtureIpcSocketPath !== undefined && !fixtureTurnThreadId)
     throw new OrbitError("INVALID_REQUEST", "Codex fixture IPC gate needs one pinned thread");
+  if (options.fixtureIpcTextTurn && !options.fixtureIpcSocketPath)
+    throw new OrbitError("INVALID_REQUEST", "Codex fixture IPC text turn needs the scoped gate");
   if (options.fixtureIpcSocketPath !== undefined &&
       !/^\/var\/tmp\/codex-private-smoke-[A-Za-z0-9-]+\/owner-codex-orbit-[0-9a-f]{8}\/ipc\/ipc\.sock$/u
         .test(options.fixtureIpcSocketPath))
@@ -195,23 +211,17 @@ export async function prepareCodexAttachedLaunch(
           { encoding: "utf8", mode: 0o600, flag: "a" });
       } } : {}),
     });
+    const fixtureGateSocketPath = gate.socketPath;
     if (options.fixtureIpcSocketPath !== undefined && fixtureTurnThreadId)
       ipcGate = await startCodexScopedIpcGate(privateHome, options.fixtureIpcSocketPath,
         fixtureTurnThreadId, fixtureAudit ? message => {
-          const params = message.params;
-          const fields = params !== null && typeof params === "object" && !Array.isArray(params)
-            ? params as Record<string, unknown> : {};
-          const paramKeys = Object.keys(fields).slice(0, 32);
-          const nestedKeys = Object.fromEntries(paramKeys.map(key => {
-            const value = fields[key];
-            return [key, value !== null && typeof value === "object" && !Array.isArray(value)
-              ? Object.keys(value).slice(0, 32) : []];
-          }));
-          appendFileSync(auditPath, JSON.stringify({ ipcMethod: message.method,
-            requestKeys: Object.keys(message).slice(0, 32), paramKeys, nestedKeys,
-            outcome: "deny" }) + "\n",
+          appendFileSync(auditPath, JSON.stringify({ ipcMethod: typeof message.method === "string"
+            ? message.method.slice(0, 128) : "unknown", shape: fixtureIpcShape(message),
+          outcome: "deny" }) + "\n",
             { encoding: "utf8", mode: 0o600, flag: "a" });
-        } : undefined);
+        } : undefined, options.fixtureIpcTextTurn === true
+          ? text => submitFixtureTextThroughGate(fixtureGateSocketPath, fixtureTurnThreadId, text)
+          : undefined);
     const insideHome = homedir();
     const argv = [
       "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "LANG=C.UTF-8", "XDG_SESSION_TYPE=wayland",

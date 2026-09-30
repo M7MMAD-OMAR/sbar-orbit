@@ -26,6 +26,8 @@ let child: ReturnType<typeof Bun.spawn> | undefined;
 let mountVisibility: Record<string, boolean> | undefined;
 let writeImagePath: string | undefined;
 let writeTextVisible: boolean | undefined;
+let writeAnswerVisible: boolean | undefined;
+let writeErrorVisible: boolean | undefined;
 try {
   const session = privateBackend.directory as string;
   gateAuditSource = join(session, "codex-gate-audit.jsonl");
@@ -65,7 +67,8 @@ try {
     libraryPath: env.LD_LIBRARY_PATH ?? "",
   }, authorityPath, join(app, "ChatGPT"),
   { allowFixture: true, fixturePaginatedPageReader: reader, fixtureTurnThreadId: process.argv[9]!,
-    ...(ipcSnapshotOnly ? { fixtureIpcSocketPath: join(ownerDirectory, "ipc", "ipc.sock") } : {}) });
+    ...(ipcSnapshotOnly ? { fixtureIpcSocketPath: join(ownerDirectory, "ipc", "ipc.sock") } : {}),
+    ...(ipcWriteProbe ? { fixtureIpcTextTurn: true } : {}) });
   await copyFile(process.argv[4]!,
     join(prepared.privateHome, ".config/dconf/user"));
   const policy = {
@@ -199,15 +202,20 @@ pathlib.Path(${JSON.stringify(probeOutput)}).write_text(json.dumps({
         await backend.act({ type: "text", text: "Orbit scoped IPC follow-up" });
         await backend.act({ type: "key", key: "Enter" });
         writeTextVisible = false;
+        writeAnswerVisible = false;
+        writeErrorVisible = false;
         for (let attempt = 0; attempt < 24; attempt++) {
           await Bun.sleep(500);
           const writeFrame = await backend.observe();
           writeImagePath = join(root, `orbit-client-write-${runLabel}.${writeFrame.mimeType === "image/png" ? "png" : "jpg"}`);
           await writeFile(writeImagePath, Buffer.from(writeFrame.image, "base64"));
           const writeOcr = Bun.spawnSync(["tesseract", writeImagePath, "stdout"]);
-          if (writeOcr.exitCode === 0 && new TextDecoder().decode(writeOcr.stdout).includes("Orbit scoped IPC follow-up")) {
-            writeTextVisible = true;
-            break;
+          const writeText = new TextDecoder().decode(writeOcr.stdout);
+          if (/hit a snag|Error submitting message|denied/iu.test(writeText)) writeErrorVisible = true;
+          if (writeOcr.exitCode === 0) {
+            writeTextVisible ||= writeText.includes("scoped IPC follow-up");
+            writeAnswerVisible ||= writeText.includes("Orbit private follow-up answer");
+            if (writeTextVisible && writeAnswerVisible && !writeErrorVisible) break;
           }
         }
       }
@@ -236,7 +244,8 @@ pathlib.Path(${JSON.stringify(probeOutput)}).write_text(json.dumps({
   print({ report: status, imagePath, openedImagePath, desktopAlive: publicAttach ? status.applied === true : child?.exitCode === null,
     privateStateFile: await Bun.file(statePath).exists(),
     privateProjectCount: Object.keys(state["local-projects"] ?? {}).length,
-    privateAuthFile: auth, presence: frame.presence, liveImagePath, writeImagePath, writeTextVisible,
+    privateAuthFile: auth, presence: frame.presence, liveImagePath, writeImagePath,
+    writeTextVisible, writeAnswerVisible, writeErrorVisible,
     mountVisibility,
     ipcGateStats: prepared?.ipcGateStats?.() });
 } finally {

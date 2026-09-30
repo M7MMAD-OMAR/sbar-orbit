@@ -137,3 +137,69 @@ test("Codex IPC gate shares one thread and rejects writes, spoofing, and owner c
     await rm(root, { recursive: true, force: true });
   }
 }, 10000);
+
+test("fixture IPC text turn is rebuilt for one pinned owner and cannot expose tools", async () => {
+  const root = await mkdtemp("/tmp/orbit-ipc-text-test-");
+  const ownerDirectory = join(root, "owner");
+  const privateHome = join(root, "private-home");
+  await mkdir(ownerDirectory, { mode: 0o700 });
+  await mkdir(privateHome, { mode: 0o700 });
+  const ownerPath = join(ownerDirectory, "ipc.sock");
+  let ownerPeer: FramedPeer | undefined;
+  const submitted: string[] = [];
+  let resolveOwner: (() => void) | undefined;
+  const ownerReady = new Promise<void>(resolveReady => { resolveOwner = resolveReady; });
+  const owner = createServer(socket => { ownerPeer = new FramedPeer(socket); resolveOwner?.(); });
+  let gate: Awaited<ReturnType<typeof startCodexScopedIpcGate>> | undefined;
+  let client: Socket | undefined;
+  try {
+    await listen(owner, ownerPath);
+    gate = await startCodexScopedIpcGate(privateHome, ownerPath, THREAD, undefined,
+      async text => { submitted.push(text); return { turn: { id: THREAD, status: "completed" } }; });
+    client = createConnection({ path: gate.socketPath });
+    await new Promise<void>((resolveConnect, rejectConnect) => {
+      client?.once("connect", resolveConnect);
+      client?.once("error", rejectConnect);
+    });
+    await ownerReady;
+    if (!ownerPeer) throw new Error("Fixture owner IPC peer did not connect");
+    const follower = new FramedPeer(client);
+    follower.send({ type: "request", requestId: "init", method: "initialize",
+      params: { clientType: "desktop" } });
+    expect((await ownerPeer?.next()).method).toBe("initialize");
+    ownerPeer?.send({ type: "response", requestId: "init", method: "initialize",
+      resultType: "success", result: { clientId: "follower-client" } });
+    expect((await follower.next()).resultType).toBe("success");
+    ownerPeer?.send({ type: "broadcast", sourceClientId: "owner-client",
+      method: "thread-stream-state-changed", params: { conversationId: THREAD,
+        hostId: "local", change: { type: "snapshot" } } });
+    expect((await follower.next()).method).toBe("thread-stream-state-changed");
+    const request = { type: "request", requestId: "write", sourceClientId: "follower-client",
+      targetClientId: "owner-client", method: "thread-follower-start-turn", version: 2,
+      params: { conversationId: THREAD, turnStart: { request: { threadId: THREAD,
+        input: [{ type: "text", text: "Scoped fixture message" }],
+        allowedTools: [{ namespace: "forged", name: "unsafe" }] },
+      context: { attachments: [], commentAttachments: [], mcpAppModelContextAttachments: [],
+        responseItems: [] } } } };
+    follower.send({ ...request, requestId: "wrong-owner", targetClientId: "other-owner" });
+    expect(await follower.next()).toMatchObject({ requestId: "wrong-owner", resultType: "error",
+      error: "denied" });
+    follower.send({ ...request, requestId: "attachment", params: {
+      ...request.params, turnStart: { ...request.params.turnStart,
+        context: { ...request.params.turnStart.context, attachments: [{ path: "/secret" }] } } } });
+    expect(await follower.next()).toMatchObject({ requestId: "attachment", resultType: "error",
+      error: "denied" });
+    follower.send(request);
+    expect((await follower.next()).resultType).toBe("success");
+    expect(submitted).toEqual(["Scoped fixture message"]);
+    await expect(ownerPeer.next(100)).rejects.toThrow("Timed out");
+    follower.send({ ...request, requestId: "again" });
+    expect(await follower.next()).toMatchObject({ requestId: "again", resultType: "error",
+      error: "denied" });
+  } finally {
+    client?.destroy();
+    await gate?.close();
+    await new Promise<void>(resolveClose => owner.close(() => resolveClose()));
+    await rm(root, { recursive: true, force: true });
+  }
+}, 10000);

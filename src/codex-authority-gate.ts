@@ -615,6 +615,67 @@ class OwnerWebSocket {
   close() { this.socket.destroy(); }
 }
 
+export async function submitFixtureTextThroughGate(socketPath: string, threadId: string,
+                                                    text: string): Promise<Record<string, unknown>> {
+  const info = await lstat(socketPath, { bigint: true });
+  if (!info.isSocket() || info.uid !== BigInt(process.getuid?.() ?? -1) ||
+      (info.mode & 0o077n) !== 0n)
+    throw new Error("Codex fixture gate socket is unavailable");
+  const identity = { device: String(info.dev), inode: String(info.ino) };
+  let pending: { id: string; resolve: (value: RpcMessage) => void;
+    reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> } | undefined;
+  const client = new OwnerWebSocket(socketPath, identity, value => {
+    const message = parseMessage(value);
+    if (message.id !== pending?.id) return;
+    const current = pending;
+    if (!current) return;
+    pending = undefined;
+    clearTimeout(current.timer);
+    current.resolve(message);
+  }, () => {
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Codex fixture gate disconnected"));
+    }
+    pending = undefined;
+  });
+  try {
+    await client.ready;
+    const call = (id: string, method: string, params: unknown) => new Promise<RpcMessage>((resolveCall, rejectCall) => {
+      const timer = setTimeout(() => {
+        pending = undefined;
+        rejectCall(new Error("Codex fixture gate request timed out"));
+      }, 10000);
+      pending = { id, resolve: resolveCall, reject: rejectCall, timer };
+      try { client.send(JSON.stringify({ id, method, params })); }
+      catch (error) {
+        clearTimeout(timer);
+        pending = undefined;
+        rejectCall(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    const initialized = await call("fixture-init", "initialize", {
+      clientInfo: { name: "orbit_scoped_ipc_fixture", title: "Orbit scoped IPC fixture", version: "1" },
+      capabilities: { experimentalApi: true },
+    });
+    if (initialized.error !== undefined) throw new Error("Codex fixture gate initialization failed");
+    client.send(JSON.stringify({ method: "initialized" }));
+    const response = await call("fixture-turn", "turn/start", {
+      threadId, input: [{ type: "text", text }],
+    });
+    if (response.error !== undefined) throw new Error("Codex fixture gate turn was denied");
+    const result = record(response.result);
+    const turn = record(result?.turn);
+    if (typeof turn?.id !== "string" || !UUID.test(turn.id) ||
+        (turn.status !== "inProgress" && turn.status !== "completed"))
+      throw new Error("Codex fixture gate turn response is unavailable");
+    return { turn };
+  } finally {
+    if (pending) clearTimeout(pending.timer);
+    client.close();
+  }
+}
+
 type FixtureTurnScope = { threadId: string; pendingId: string | null; turnId: string | null;
   buffered: RpcMessage[]; count: number };
 type ClientData = { owner?: OwnerWebSocket; queue: string[]; pending: Map<string, PendingRequest>;
