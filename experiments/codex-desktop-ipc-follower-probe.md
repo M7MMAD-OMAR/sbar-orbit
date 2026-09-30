@@ -26,18 +26,15 @@ bun run scripts/limited.ts timeout 100s /usr/bin/python3 \
   --ipc-probe
 ```
 
-The copied owner launched a fake account, created one synthetic saved thread
-through its disposable app-server, and opened its own IPC router. After 30
-seconds, a registered probe client's read-only
-`thread-owner-discovery` returned `no-client-found`. The captured private
-owner window had loaded ChatGPT Work but showed no projects or chats and said
-the fake account lacked Work access. The synthetic thread had been created
-through direct RPC and was not displayed in this owner window. This result
-does not establish that a Desktop actively showing a Codex conversation
-cannot own or share it.
+In the first run, the copied owner used a fake ChatGPT account, created one
+synthetic saved thread through its disposable app-server, and opened its own
+IPC router. After 30 seconds, a registered probe client's
+`thread-owner-discovery` returned `no-client-found`. The private owner window
+had loaded ChatGPT Work but showed no projects or chats because the fake
+account lacked Work access. The synthetic thread was not displayed in this
+owner window.
 
-The private screenshot path is printed by the fixture runner. The measured
-capture for this run is
+The first private capture is
 `/var/tmp/codex-private-smoke-u/ipc-owner-d59c1703.jpg`.
 
 The same router then accepted a second fixture client with an arbitrary
@@ -51,12 +48,46 @@ The measured output was:
 
 This proves that the copied router carries discovery requests and that a
 same-user client can claim a fixture thread without a separate router
-credential. The fake owner did not provide conversation history, authenticate
-an account, or run a model turn. The copied Desktop did not display the
-synthetic Codex conversation in this bounded attempt. A private Orbit client
-must not receive the raw personal IPC socket as an unrestricted mount:
-follower write methods and client
-impersonation need a trusted gate with explicit thread and method scope.
-The next functional measurement needs two loaded disposable Desktop windows
-on one router, with the owner actively displaying a synthetic conversation,
-before any claim about live shared history or edits.
+credential. That fake owner did not provide conversation history.
+
+The follow-up run logged in to the disposable app-server with a fixture-only
+API key. The copied Desktop then displayed its synthetic project and saved
+conversation on private Xvnc. Its window showed the user text
+`Private fixture conversation` and assistant text
+`Orbit completed fixture answer`. A separate IPC client discovered this real
+Desktop owner. The first history request used version 1 with a `hostId`; the
+installed bundle requires version 2 for a follower method carrying `hostId`.
+With version 2, the owner handled the request but could not publish a revision
+because no client was registered as following the thread. Closing the direct
+app-server WebSocket did not change that result.
+
+The fixture probe then sent `thread-stream-following-changed` with
+`following: true` to the discovered owner. The owner published a
+`thread-stream-state-changed` snapshot to the probe, and
+`thread-follower-load-complete-history` completed successfully. The snapshot
+contained both fixture turns. The history request returned a revision, not
+the turns themselves, so the IPC snapshot is the evidence of shared content.
+The private screenshot for this run is
+`/var/tmp/codex-private-smoke-u/ipc-owner-86945f84.jpg`.
+
+```json
+{"ipcSocketPresent":true,"discoveryResultType":"success","ownerFound":true,"historyResultType":"success","snapshotPresent":true,"snapshotUserTextPresent":true,"snapshotAnswerTextPresent":true,"syntheticOwnerFound":true,"appServerAccountIdPresent":false}
+```
+
+This establishes a functional read path for a synthetic conversation shown
+by a copied Codex Desktop on a separate display. It does not establish access
+to the person's account, current conversations, or other apps. It also does
+not authorize mounting the personal IPC socket in an Orbit session. The
+router accepts arbitrary same-user clients, and its follower API includes
+write methods. A trusted gate needs an explicit account, thread, and method
+scope before any personal IPC route is used. A second loaded disposable
+Desktop window remains the next end-to-end UI measurement.
+
+An additional run of the existing fixture without `--ipc-probe` passed owner
+account inspection and cold thread activation, then failed while waiting for
+a second model answer through its attached UI. Its captured private window
+showed the saved thread but had no composer. The fixture's fake ChatGPT
+account had previously lacked Work access. This result leaves that older UI
+write path unverified in the current run; it does not weaken the separate
+read-only IPC snapshot measurement above. The failed capture is
+`/var/tmp/codex-private-smoke-u/orbit-client-after-write-first.jpg`.

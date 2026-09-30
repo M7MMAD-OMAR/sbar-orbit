@@ -24,26 +24,51 @@ def fake_jwt(payload):
   return base64.urlsafe_b64encode(json.dumps(value,separators=(',',':')).encode()).decode().rstrip('=')
  return encoded({'alg':'none','typ':'JWT'})+'.'+encoded(payload)+'.fixture'
 
-async def ipc_owner_discovery(socket_path, thread_id):
+async def ipc_owner_discovery(socket_path, thread_id, load_history=False):
  reader,writer=await asyncio.wait_for(asyncio.open_unix_connection(str(socket_path)),5)
- async def call(request):
-  body=json.dumps(request,separators=(',',':')).encode()
+ broadcasts=[]
+ async def send(message):
+  body=json.dumps(message,separators=(',',':')).encode()
   writer.write(len(body).to_bytes(4,'little')+body)
   await writer.drain()
+ async def call(request):
+  await send(request)
   while True:
    size=int.from_bytes(await asyncio.wait_for(reader.readexactly(4),10),'little')
    if size<1 or size>1024*1024:raise RuntimeError('invalid disposable IPC frame length')
    message=json.loads(await asyncio.wait_for(reader.readexactly(size),10))
    if message.get('type')=='response' and message.get('requestId')==request['requestId']:
     return message
+   if message.get('type')=='broadcast':broadcasts.append(message)
  try:
   initialized=await call({'type':'request','requestId':'orbit-ipc-init','method':'initialize',
                           'version':1,'params':{'clientType':'orbit-fixture-probe'}})
   if initialized.get('resultType')!='success':raise RuntimeError('fixture IPC registration failed')
-  return await call({'type':'request','requestId':'orbit-ipc-discovery',
+  discovery=await call({'type':'request','requestId':'orbit-ipc-discovery',
                      'sourceClientId':initialized.get('result',{}).get('clientId'),
                      'method':'thread-owner-discovery','version':1,
                      'params':{'hostId':'local','conversationId':thread_id}})
+  if not load_history or discovery.get('resultType')!='success':return discovery,None,None
+  owner_id=discovery.get('handledByClientId')
+  if not isinstance(owner_id,str):raise RuntimeError('disposable owner client ID missing')
+  await send({'type':'broadcast','sourceClientId':initialized.get('result',{}).get('clientId'),
+              'targetClientIds':[owner_id],'method':'thread-stream-following-changed',
+              'version':1,'params':{'conversationId':thread_id,'hostId':'local','following':True}})
+  history=await call({'type':'request','requestId':'orbit-ipc-history',
+                      'sourceClientId':initialized.get('result',{}).get('clientId'),
+                      'targetClientId':owner_id,'hostId':'local',
+                      'method':'thread-follower-load-complete-history','version':2,
+                      'params':{'conversationId':thread_id}})
+  snapshot=next((m for m in broadcasts if m.get('method')=='thread-stream-state-changed'
+                 and (m.get('params') or {}).get('change',{}).get('type')=='snapshot'),None)
+  if snapshot is None:
+   try:
+    size=int.from_bytes(await asyncio.wait_for(reader.readexactly(4),2),'little')
+    if size<1 or size>1024*1024:raise RuntimeError('invalid disposable IPC snapshot length')
+    message=json.loads(await asyncio.wait_for(reader.readexactly(size),2))
+    if message.get('method')=='thread-stream-state-changed' and (message.get('params') or {}).get('change',{}).get('type')=='snapshot':snapshot=message
+   except asyncio.TimeoutError:pass
+  return discovery,history,snapshot
  finally:
   writer.close()
   await writer.wait_closed()
@@ -208,7 +233,8 @@ async def main():
  owner_auth={'auth_mode':'chatgpt','tokens':{'id_token':jwt,'access_token':jwt,
               'refresh_token':'fixture-refresh-unusable','account_id':'fixture_selected'},
              'last_refresh':datetime.datetime.now(datetime.timezone.utc).isoformat()}
- auth_path=OWNER/'auth.json';auth_path.write_text(json.dumps(owner_auth));auth_path.chmod(0o600)
+ if not IPC_PROBE:
+  auth_path=OWNER/'auth.json';auth_path.write_text(json.dumps(owner_auth));auth_path.chmod(0o600)
  displays=[i for i in range(170,230) if not Path(f'/tmp/.X11-unix/X{i}').exists() and not Path(f'/tmp/.X{i}-lock').exists()][:1]
  if len(displays)!=1:raise RuntimeError('one free display required')
  for display in displays:subprocess.run(['xauth','-f',str(ROOT/'xauth'),'add',f':{display}','MIT-MAGIC-COOKIE-1',secrets.token_hex(16)],check=True,capture_output=True)
@@ -251,6 +277,7 @@ async def main():
    env=ns(display,role)
    if role==1:
     env.insert(env.index('PATH=/usr/bin:/bin'),'MOCK_API_KEY=fixture-only')
+    if IPC_PROBE:env.insert(env.index('PATH=/usr/bin:/bin'),'OPENAI_API_KEY=fixture-only')
     env.insert(env.index('PATH=/usr/bin:/bin'),f'ORBIT_MODEL_RECORD={ROOT/f"model-tools-{TAG}.json"}')
     if RESTRICT_TOOLS:env.insert(env.index('PATH=/usr/bin:/bin'),'ORBIT_EXPECT_EMPTY_TOOLS=1')
     if ORBIT_TOOL:env.insert(env.index('PATH=/usr/bin:/bin'),'ORBIT_EXPECT_ORBIT_TOOL=1')
@@ -291,6 +318,9 @@ async def main():
    async with websockets.unix_connect(str(APP_SOCKET),uri='ws://localhost/rpc',compression=None) as ws:
     await rpc(ws,1,'initialize',{'clientInfo':{'name':'state_smoke','title':'State smoke','version':'1'},'capabilities':{'experimentalApi':True}})
     await ws.send(json.dumps({'method':'initialized'}))
+    if IPC_PROBE:
+     login=await rpc(ws,10,'account/login/start',{'type':'apiKey','apiKey':'fixture-only'})
+     if login.get('error'):raise RuntimeError('disposable API key login failed')
     thread_params={'cwd':str(PROJECT),'model':'gpt-5.1','modelProvider':'mock','approvalPolicy':'never','sandbox':'read-only'}
     if RESTRICT_TOOLS:thread_params['allowedTools']=[]
     if ORBIT_TOOL or REAL_ORBIT:
@@ -319,18 +349,27 @@ async def main():
     read=await rpc(ws,5,'thread/read',{'threadId':tid,'includeTurns':True})
     if 'Orbit completed fixture answer' not in json.dumps(read):raise RuntimeError('fixture answer not persisted')
     if IPC_PROBE:
+     account=await rpc(ws,6,'account/read',{'refreshToken':False})
+     workspace=(account.get('result') or {}).get('workspaceRouting') or {}
+     await ws.close()
      ipc_path=OWNER/'ipc'/'ipc.sock'
      for _ in range(100):
       if ipc_path.is_socket():break
       await asyncio.sleep(.05)
      if not ipc_path.is_socket():raise RuntimeError('disposable Desktop IPC socket missing')
      await asyncio.sleep(30)
-     discovery=await ipc_owner_discovery(ipc_path,tid)
+     private_click(displays[0],132,299)
+     await asyncio.sleep(5)
+     discovery,history,snapshot=await ipc_owner_discovery(ipc_path,tid,load_history=True)
+     if discovery.get('resultType')!='success':raise RuntimeError('disposable owner discovery failed')
+     if history is None or history.get('resultType')!='success':raise RuntimeError('disposable follower history load failed')
+     if 'Private fixture conversation' not in json.dumps(snapshot) or 'Orbit completed fixture answer' not in json.dumps(snapshot):
+      raise RuntimeError('disposable follower snapshot lacked fixture turns')
      ready=asyncio.Event()
      fake_owner=asyncio.create_task(ipc_fixture_owner(ipc_path,tid,ready))
      try:
       await asyncio.wait_for(ready.wait(),5)
-      synthetic=await ipc_owner_discovery(ipc_path,tid)
+      synthetic,_,_=await ipc_owner_discovery(ipc_path,tid)
      finally:
       fake_owner.cancel()
       await fake_owner
@@ -344,7 +383,14 @@ async def main():
      if capture.returncode:raise RuntimeError('private IPC fixture capture failed')
      print(json.dumps({'ipcSocketPresent':True,'discoveryResultType':discovery.get('resultType'),
        'discoveryError':discovery.get('error'),'ownerFound':discovery.get('resultType')=='success',
-       'syntheticOwnerFound':True,
+       'historyResultType':history.get('resultType') if history else None,
+       'historyError':history.get('error') if history else None,
+       'historyUserTextPresent':'Private fixture conversation' in json.dumps(history),
+       'historyAnswerTextPresent':'Orbit completed fixture answer' in json.dumps(history),
+       'snapshotPresent':snapshot is not None,
+       'snapshotUserTextPresent':'Private fixture conversation' in json.dumps(snapshot),
+       'snapshotAnswerTextPresent':'Orbit completed fixture answer' in json.dumps(snapshot),
+       'syntheticOwnerFound':True,'appServerAccountIdPresent':bool(workspace.get('chatgptAccountId')),
        'screenshot':str(image)}),flush=True)
      return
     model_record=ROOT/f'model-tools-{TAG}.json'
