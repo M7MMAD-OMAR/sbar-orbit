@@ -17,6 +17,10 @@ const tls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS === "1";
 const trustFixture = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_UNTRUSTED !== "1";
 const assertTls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT === "1";
 const accountClone = process.env.ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE === "1";
+const emptySecrets = process.env.ORBIT_NEXTCLOUD_EMPTY_SECRETS === "1";
+const assertSecrets = process.env.ORBIT_NEXTCLOUD_SECRET_ASSERT === "1";
+if (emptySecrets && !accountClone) throw new Error("Empty secret service requires the offline account-copy arm");
+if (assertSecrets && !accountClone) throw new Error("Secret-service assertions require the offline account-copy arm");
 if (accountClone && (network || tcp || tls || control)) throw new Error("Account copy requires the offline brokered arm");
 if (tcp && !network) throw new Error("TCP mode requires the owned network fixture");
 if (tls && !network) throw new Error("TLS mode requires the owned network fixture");
@@ -25,7 +29,7 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
@@ -40,6 +44,8 @@ async function nextcloudProcesses(): Promise<number[]> {
 }
 const originalProcesses = await nextcloudProcesses();
 let client: ReturnType<typeof Bun.spawn> | undefined;
+let secretService: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
+const secretSummaryPath = join(root, "secret-service-summary.json");
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
@@ -87,6 +93,15 @@ try {
     throw new Error("Missing owned private application environment");
   if (privateConfig && !await privateNextcloudSourceUnchanged(sourceConfig, privateConfig))
     throw new Error("Original Nextcloud config changed before the private launch");
+  if (emptySecrets) {
+    secretService = Bun.spawn(["/usr/bin/python3", resolve("experiments/nextcloud-empty-secret-service.py"), secretSummaryPath],
+      { env, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    const reader = secretService.stdout.getReader();
+    const ready = await Promise.race([reader.read(), Bun.sleep(3000).then(() => null)]);
+    if (!ready || new TextDecoder().decode(ready.value).trim() !== '{"ready": true, "items": 0}')
+      throw new Error("Owned empty secret service did not announce readiness");
+    reader.releaseLock();
+  }
   const app = ["/usr/bin/nextcloud", "--confdir", config, "--logfile", applicationLogPath, "--logflush"];
   const launched = Bun.spawn(control ? app : [binary, join(runtime, display), "--bus-credentials", join(runtime, "bus"), ...app],
     { env, stdout: "pipe", stderr: "pipe" });
@@ -164,12 +179,15 @@ try {
     originalConfigUnchanged: await privateNextcloudSourceUnchanged(sourceConfig, privateConfig),
     accountRestoreLogPatternMatched: /(?:Restoring|Loading|Loaded) account/i.test(applicationLog),
     credentialFailureObserved: /(?:credentials|password|keychain|secret).*(?:error|fail|not found|not available|could not)|(?:error|fail).*(?:credentials|password|keychain|secret)/i.test(applicationLog),
+    secretServiceMissing: applicationLog.includes("The name org.freedesktop.secrets was not provided"),
+    keychainEntryNotFound: applicationLog.includes("Entry not found"),
     folderSetupObserved: applicationLog.includes("Setup folders from settings file"),
     folderSyncScheduled: /Schedule folder .* to sync|sync of .* started/i.test(applicationLog),
     networkConnectDenied: /broker_denied syscall=42 .*domain=(?:2|10) /.test(errors) } : null;
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/nextcloud",
     transport: control ? "direct-control" : "brokered", software, network, tcp, tls, trustFixture: tls && trustFixture,
     visible, title: accountClone ? "not retained" : title, exit, scopedStop, broker, accountClone, cloneSummary,
+    emptySecretService: emptySecrets ? await Bun.file(secretSummaryPath).json() : null,
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
     certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
@@ -185,6 +203,13 @@ try {
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
   if (cloneSummary && (!cloneSummary.originalConfigUnchanged || cloneSummary.folderSyncScheduled ||
       !report.originalProcessesStillPresent)) throw new Error("Nextcloud account copy isolation check failed");
+  if (assertSecrets) {
+    const summary = report.emptySecretService as { searches: number; secretsReturned: number } | null;
+    if (!visible || !cloneSummary || (emptySecrets ?
+      secretService?.exitCode !== null || cloneSummary.secretServiceMissing || !cloneSummary.keychainEntryNotFound ||
+        !summary || summary.searches < 1 || summary.secretsReturned !== 0 :
+      !cloneSummary.secretServiceMissing)) throw new Error("Nextcloud secret-service control failed");
+  }
   if (assertTls) {
     const reachable = requests.some(request => request.path === "/status.php") &&
       requests.some(request => request.method === "POST" && request.path === "/index.php/login/v2") &&
@@ -194,6 +219,11 @@ try {
   }
 } finally {
   if (client && client.exitCode === null) { client.kill("SIGTERM"); await client.exited; }
+  if (secretService) {
+    secretService.stdin?.end();
+    if (secretService.exitCode === null) secretService.kill("SIGTERM");
+    await secretService.exited;
+  }
   await sessions.close();
   fixture?.stop(true);
   await rm(root, { recursive: true, force: true });

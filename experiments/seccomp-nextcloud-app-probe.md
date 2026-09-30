@@ -239,6 +239,49 @@ The parser does not establish every QSettings encoding, old client schema,
 adversarial path mutation, filesystem-access boundary or concurrent sync policy.
 It is an experimental preparation step for the observed current configuration.
 
+## Empty private Secret Service control
+
+The installed package is `nextcloud-client-34.0.3-1.fc44.x86_64`. A repeated
+offline account-copy run matched the exact diagnostic `The name
+org.freedesktop.secrets was not provided` four times. The earlier broad
+credential-failure pattern alone did not establish this cause.
+
+The new [empty service](nextcloud-empty-secret-service.py) owns
+`org.freedesktop.secrets` on the existing owned Orbit bus. It neither imports
+libsecret nor connects to the original session bus. It contains zero items,
+returns empty search results, rejects encrypted transfer and supports the plain
+fallback. It announces readiness only after synchronously acquiring the name.
+It exits on its parent pipe closing or a scoped signal. Summary data contains
+counts and allowlisted public attribute names only, never attribute values.
+Its temporary summary is deleted with the probe directory.
+
+```sh
+# Missing-service negative control.
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+# Empty-service control. No real keyring or credential is granted.
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_EMPTY_SECRETS=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+```
+
+The measured empty-service run rendered the client, closed normally with exit 0
+and no broker failure, and received eighteen searches with `server`, `type` and
+`user` fields. There were two OpenSession calls: one encrypted attempt rejected
+and one plain fallback. No secret was returned. The original config remained
+unchanged, the original client stayed present and no sync scheduling pattern
+appeared. The missing-service diagnostic disappeared and `Entry not found`
+appeared instead. A blocked IPv4/IPv6 connect diagnostic also appeared; zero
+TCP connections were registered. This shows the installed client's private
+bus lookup path works with the protocol control, not that authentication or
+remote access works. It does not establish the account's exact requested
+attribute values or which original keyring entry would match them.
+Both assertion controls passed against the installed application. The negative
+arm required a scoped stop with application exit 128; the empty-service arm
+closed normally with exit 0. Type checking and `git diff --check` passed.
+
+[Nextcloud's credential loading source at v34.0.3](https://github.com/nextcloud/desktop/blob/v34.0.3/src/libsync/creds/httpcredentials.cpp)
+reads client certificate and key entries before the account password, and can
+retry legacy key locations when an entry is missing. Therefore eighteen search
+calls do not imply eighteen credentials or eighteen accounts.
+
 ## Limits
 
 This route is disabled by default and exists only in the experimental wrapper.
