@@ -19,6 +19,8 @@ const assertTls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT === "1";
 const accountClone = process.env.ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE === "1";
 const emptySecrets = process.env.ORBIT_NEXTCLOUD_EMPTY_SECRETS === "1";
 const oneSecret = process.env.ORBIT_NEXTCLOUD_ONE_SECRET === "1";
+const accountTunnel = process.env.ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL === "1";
+if (accountTunnel && !oneSecret) throw new Error("Account tunnel requires the one-credential account-copy arm");
 const assertSecrets = process.env.ORBIT_NEXTCLOUD_SECRET_ASSERT === "1";
 if (emptySecrets && !accountClone) throw new Error("Empty secret service requires the offline account-copy arm");
 if (oneSecret && (!accountClone || emptySecrets)) throw new Error("One credential requires its own offline account-copy arm");
@@ -31,7 +33,7 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${emptySecrets ? "empty-secrets-" : ""}${oneSecret ? "one-secret-" : ""}${accountTunnel ? "tunnel-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
 const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
@@ -47,7 +49,9 @@ async function nextcloudProcesses(): Promise<number[]> {
 const originalProcesses = await nextcloudProcesses();
 let client: ReturnType<typeof Bun.spawn> | undefined;
 let secretService: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
+let tunnel: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
 const secretSummaryPath = join(root, "secret-service-summary.json");
+const tunnelSummaryPath = join(root, "tunnel-summary.json");
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
@@ -95,6 +99,21 @@ try {
     throw new Error("Missing owned private application environment");
   if (privateConfig && !await privateNextcloudSourceUnchanged(sourceConfig, privateConfig))
     throw new Error("Original Nextcloud config changed before the private launch");
+  if (accountTunnel) {
+    tunnel = Bun.spawn(["/usr/bin/python3", resolve("experiments/nextcloud-account-tunnel.py"),
+      join(config, "nextcloud.cfg"), tunnelSummaryPath], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    const reader = tunnel.stdout.getReader();
+    const ready = await Promise.race([reader.read(), Bun.sleep(6000).then(() => null)]);
+    if (!ready?.value) throw new Error("Account tunnel did not announce readiness");
+    const announced = JSON.parse(new TextDecoder().decode(ready.value)) as { ready: boolean; port: number };
+    reader.releaseLock();
+    if (!announced.ready || !Number.isInteger(announced.port) || announced.port < 1 || announced.port > 65535)
+      throw new Error("Invalid account tunnel listener");
+    env.ORBIT_PRIVATE_BROKER_TCP_PORT = String(announced.port);
+    env.http_proxy = `http://127.0.0.1:${announced.port}`;
+    env.https_proxy = env.http_proxy;
+    env.no_proxy = "";
+  }
   if (emptySecrets || oneSecret) {
     secretService = Bun.spawn(oneSecret ? ["/usr/bin/python3", resolve("experiments/nextcloud-one-secret-service.py"),
       env.DBUS_SESSION_BUS_ADDRESS, join(config, "nextcloud.cfg"), secretSummaryPath] :
@@ -128,7 +147,7 @@ try {
         const temporaryFrame = join(root, "private-account-frame.jpg"), acknowledged = join(root, "preview-read");
         await writeFile(temporaryFrame, pixels, { mode: 0o600 });
         console.log(JSON.stringify({ temporaryPrivateFrame: temporaryFrame, acknowledgePath: acknowledged }));
-        for (let attempt = 0; attempt < 100 && !await Bun.file(acknowledged).exists(); attempt++) await Bun.sleep(100);
+        for (let attempt = 0; attempt < 300 && !await Bun.file(acknowledged).exists(); attempt++) await Bun.sleep(100);
       }
     } else {
       startupFrameSha256 = createHash("sha256").update(pixels).digest("hex");
@@ -185,6 +204,8 @@ try {
     credentialFailureObserved: /(?:credentials|password|keychain|secret).*(?:error|fail|not found|not available|could not)|(?:error|fail).*(?:credentials|password|keychain|secret)/i.test(applicationLog),
     secretServiceMissing: applicationLog.includes("The name org.freedesktop.secrets was not provided"),
     keychainEntryNotFound: applicationLog.includes("Entry not found"),
+    accountConnected: /AccountState state change:.*->\s*"Connected"/.test(applicationLog),
+    proxyHttpObserved: applicationLog.includes("HttpProxy"),
     folderSetupObserved: applicationLog.includes("Setup folders from settings file"),
     folderSyncScheduled: /Schedule folder .* to sync|sync of .* started/i.test(applicationLog),
     networkConnectDenied: /broker_denied syscall=42 .*domain=(?:2|10) /.test(errors) } : null;
@@ -193,10 +214,12 @@ try {
     visible, title: accountClone ? "not retained" : title, exit, scopedStop, broker, accountClone, cloneSummary,
     emptySecretService: emptySecrets ? await Bun.file(secretSummaryPath).json() : null,
     oneSecretService: oneSecret ? await Bun.file(secretSummaryPath).json() : null,
+    accountTunnel: accountTunnel ? await Bun.file(tunnelSummaryPath).json() : null,
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
     certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
-    limits: [accountClone ? "Original config copied with sync folders removed; no native authentication or file sync was proved." :
+    limits: [accountTunnel && cloneSummary?.accountConnected ? "Account connected through a matching-CONNECT opaque TLS tunnel; no file sync was proved." :
+      accountClone ? "Original config copied with sync folders removed; no native authentication or file sync was proved." :
       "Disposable home and configuration only; existing native account state was not copied or measured.",
       "Experimental launch outside the production session action.",
       oneSecret ? "One unlocked account keyring item read and held in service memory; no personal sync-folder contents read." :
@@ -212,7 +235,7 @@ try {
   if (assertSecrets) {
     const summary = report.emptySecretService as { searches: number; secretsReturned: number } | null;
     const selected = report.oneSecretService as { originalItemsRead: number; privateItems: number; secretsReturned: number } | null;
-    if (!visible || !cloneSummary || (oneSecret ? secretService?.exitCode !== null || cloneSummary.secretServiceMissing ||
+    if (!visible || !cloneSummary || (accountTunnel && !cloneSummary.accountConnected) || (oneSecret ? secretService?.exitCode !== null || cloneSummary.secretServiceMissing ||
       !selected || selected.originalItemsRead !== 1 || selected.privateItems !== 1 || selected.secretsReturned < 1 : emptySecrets ?
       secretService?.exitCode !== null || cloneSummary.secretServiceMissing || !cloneSummary.keychainEntryNotFound ||
         !summary || summary.searches < 1 || summary.secretsReturned !== 0 :
@@ -231,6 +254,11 @@ try {
     secretService.stdin?.end();
     if (secretService.exitCode === null) secretService.kill("SIGTERM");
     await secretService.exited;
+  }
+  if (tunnel) {
+    tunnel.stdin.end();
+    if (tunnel.exitCode === null) tunnel.kill("SIGTERM");
+    await tunnel.exited;
   }
   await sessions.close();
   fixture?.stop(true);

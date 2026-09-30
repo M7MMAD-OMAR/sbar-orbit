@@ -6,8 +6,9 @@ discover a disposable loopback fixture and request the login-flow endpoint.
 A later offline arm copied one existing account configuration without its sync
 folders and visibly restored the cached account identity. A subsequent private
 service delivered one existing unlocked account credential to the client.
-Native authentication, sync and conversations remain unproved. This is not
-current-account parity or production integration.
+An exact-CONNECT tunnel subsequently let the client authenticate and display
+existing account activities. Sync and conversations remain unproved. This is
+not full current-account parity or production integration.
 
 ## Setup and independent control
 
@@ -338,6 +339,75 @@ This remains an experiment. The adapter is not integrated into production
 session launch, does not establish all QSettings schemas or path-race defenses,
 and does not prove host-keyring immutability against other processes, public
 network authority, account authentication, conversations, sync or devices.
+
+## Real account connection through an opaque tunnel
+
+The opt-in [account tunnel](nextcloud-account-tunnel.py) reads the disposable
+copy through a bounded no-follow handle, resolves its one HTTPS account hostname
+once on the trusted host and pins one IPv4 address for the run. It binds an
+ephemeral loopback port and accepts only a literal CONNECT request for that
+account hostname and port. Other authorities, other ports and non-CONNECT
+requests receive HTTP 403. After CONNECT it forwards opaque bytes without TLS
+termination, certificate substitution, plaintext HTTP inspection or credential
+logging. The application performs its ordinary server TLS validation.
+
+The copied account's existing proxy fields are changed only in the disposable
+file, after checking its open-handle identity before writing. The installed
+client initially ignored that proxy during validation: three runs showed zero
+tunnels and an Offline screen. The private log said `No system proxy set by OS`.
+[ConnectionValidator at v34.0.3](https://github.com/nextcloud/desktop/blob/v34.0.3/src/gui/connectionvalidator.cpp)
+looks up the system proxy when the global configuration uses its default, even
+with an account proxy configured. Setting `http_proxy` and `https_proxy` to the
+owned loopback listener in the private application environment completed that
+path. Host proxy settings and original account config were not changed.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_ONE_SECRET=1 ORBIT_NEXTCLOUD_ACCOUNT_TUNNEL=1 ORBIT_NEXTCLOUD_SECRET_ASSERT=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+bun run scripts/limited.ts /usr/bin/python3 experiments/nextcloud-account-tunnel.test.py
+```
+
+The first successful native run registered sixteen private TCP connection
+attempts, accepted eight tunnels and forwarded 34,198 client bytes and 137,941
+server bytes in its report snapshot. The installed client logged its transition
+to Connected. A second run was visually inspected on the owned display: the
+Activities screen listed existing account activities and stated that no
+synchronisation was configured. Its temporary frame was removed during cleanup,
+and absence was checked afterward. That preview report saw five accepted tunnels
+and four aggregate I/O failures, which include closure and timeout paths and
+are not classified upstream service failures. The Connected assertion passed.
+No folder sync scheduling pattern appeared. Each run read one original keyring
+item, delivered it once, kept the original config unchanged and kept the original
+Nextcloud process present. Those two successful runs needed a scoped stop, exit
+128, with no broker failure. A final run after the bounded no-follow config
+preparation change closed normally with exit 0: fourteen TCP attempts, seven
+accepted tunnels, no aggregate I/O failure, and the Connected assertion passed.
+
+The Connected evidence is stronger than a visible account name or successful
+TCP handshake: the pinned v34.0.3 validator checks an authenticated WebDAV
+PROPFIND before reporting Connected. The visually loaded activity history adds
+direct application evidence of authenticated remote reading. The tunnel itself
+cannot classify HTTP requests or prove remote account immutability because it
+does not decrypt TLS. No file sync, activity mutation, native Talk conversation
+or device operation was measured in this arm.
+
+The live disposable tunnel control passed: selected authority received HTTP 200
+and echoed a binary fixture exactly; a different host, a different port and an
+ordinary GET were denied with HTTP 403. Opaque unrelated config bytes survived
+proxy preparation. These controls have not been run against a tunnel without
+its authority check, so regression-detection is not claimed. Type checking
+passed. Evidence reports contain no account identifiers or raw application logs
+and live in `output/seccomp-nextcloud-account-clone-one-secret-tunnel-2026-09-30/`.
+
+The tunnel bounds headers to 8 KiB, connection/header waits to five seconds,
+each accepted session to forty-five seconds, admission to sixteen concurrent
+handlers and accepted tunnels to thirty-two. Header-reading tasks exist before
+the admission check; a total inbound-task bound is not established. The listener
+is scoped to this run. CONNECT
+authority matching and a pinned address do not enforce TLS SNI or distinguish
+other virtual hosts on the same address. Payloads are not filtered; this is
+functional evidence for the installed client, not a complete network sandbox.
+Multiple DNS addresses, IPv6, redirects to a different authority, all failure
+paths and production integration remain unmeasured.
 
 ## Limits
 
