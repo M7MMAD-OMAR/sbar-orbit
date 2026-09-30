@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { preparePrivateNextcloudConfig, privateNextcloudSourceUnchanged, type PrivateNextcloudConfig } from "./nextcloud-private-config";
 import { Sessions } from "../src/session";
 import { FedoraBackend } from "../src/fedora";
 import { requireResourceBudget } from "../src/resource-budget";
@@ -14,6 +16,8 @@ const tcp = process.env.ORBIT_NEXTCLOUD_BROKER_TCP === "1";
 const tls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS === "1";
 const trustFixture = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_UNTRUSTED !== "1";
 const assertTls = process.env.ORBIT_NEXTCLOUD_BROKER_TLS_ASSERT === "1";
+const accountClone = process.env.ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE === "1";
+if (accountClone && (network || tcp || tls || control)) throw new Error("Account copy requires the offline brokered arm");
 if (tcp && !network) throw new Error("TCP mode requires the owned network fixture");
 if (tls && !network) throw new Error("TLS mode requires the owned network fixture");
 if (assertTls && (!tls || (!control && !tcp))) throw new Error("TLS assertions require TLS and a reachable direct or TCP arm");
@@ -21,9 +25,12 @@ const requests: { method: string; path: string; encrypted: boolean }[] = [];
 let fixture: ReturnType<typeof Bun.serve> | undefined;
 const root = await mkdtemp("/var/tmp/orbit-nextcloud-broker-");
 const sessions = new Sessions(join(root, "workspace"));
-const output = resolve(`output/seccomp-nextcloud-${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
+const output = resolve(`output/seccomp-nextcloud-${accountClone ? "account-clone-" : ""}${network ? "network-" : ""}${tls ? `tls-${trustFixture ? "" : "untrusted-"}` : ""}${tcp ? "tcp-" : ""}${software ? "software-" : ""}${control ? "control-" : ""}` + new Date().toISOString().slice(0, 10));
 const binary = join(root, "broker"), home = join(root, "home"), config = join(root, "nextcloud-config");
 const certificateDirectory = join(root, "certificates"), certificate = join(certificateDirectory, "fixture.pem"), key = join(root, "fixture.key");
+const sourceConfig = join(homedir(), ".config", "Nextcloud", "nextcloud.cfg");
+const applicationLogPath = accountClone ? join(root, "application.log") : join(output, "application.log");
+let privateConfig: PrivateNextcloudConfig | undefined;
 async function nextcloudProcesses(): Promise<number[]> {
   const processList = Bun.spawn(["pgrep", "-x", "nextcloud"], { stdout: "pipe", stderr: "pipe" });
   const text = await new Response(processList.stdout).text();
@@ -36,6 +43,7 @@ let client: ReturnType<typeof Bun.spawn> | undefined;
 try {
   await mkdir(output, { recursive: true, mode: 0o700 });
   await mkdir(home, { mode: 0o700 }); await mkdir(config, { mode: 0o700 });
+  if (accountClone) privateConfig = await preparePrivateNextcloudConfig(sourceConfig, join(config, "nextcloud.cfg"));
   if (tls) {
     await mkdir(certificateDirectory, { mode: 0o700 });
     const generate = Bun.spawn(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-noenc", "-days", "1",
@@ -77,7 +85,9 @@ try {
       env.DBUS_SESSION_BUS_ADDRESS !== `unix:path=${join(runtime, "bus")}` ||
       !env.XDG_CONFIG_HOME?.startsWith(runtime + "/") || !env.XDG_DATA_HOME?.startsWith(runtime + "/"))
     throw new Error("Missing owned private application environment");
-  const app = ["/usr/bin/nextcloud", "--confdir", config, "--logfile", join(output, "application.log"), "--logflush"];
+  if (privateConfig && !await privateNextcloudSourceUnchanged(sourceConfig, privateConfig))
+    throw new Error("Original Nextcloud config changed before the private launch");
+  const app = ["/usr/bin/nextcloud", "--confdir", config, "--logfile", applicationLogPath, "--logflush"];
   const launched = Bun.spawn(control ? app : [binary, join(runtime, display), "--bus-credentials", join(runtime, "bus"), ...app],
     { env, stdout: "pipe", stderr: "pipe" });
   client = launched;
@@ -94,8 +104,17 @@ try {
     await Bun.sleep(8000);
     const frame = await backend.observe();
     const pixels = Buffer.from(frame.image, "base64");
-    startupFrameSha256 = createHash("sha256").update(pixels).digest("hex");
-    await writeFile(join(output, "nextcloud.jpg"), pixels, { mode: 0o600 });
+    if (accountClone) {
+      if (process.env.ORBIT_NEXTCLOUD_CLONE_PREVIEW === "1") {
+        const temporaryFrame = join(root, "private-account-frame.jpg"), acknowledged = join(root, "preview-read");
+        await writeFile(temporaryFrame, pixels, { mode: 0o600 });
+        console.log(JSON.stringify({ temporaryPrivateFrame: temporaryFrame, acknowledgePath: acknowledged }));
+        for (let attempt = 0; attempt < 100 && !await Bun.file(acknowledged).exists(); attempt++) await Bun.sleep(100);
+      }
+    } else {
+      startupFrameSha256 = createHash("sha256").update(pixels).digest("hex");
+      await writeFile(join(output, "nextcloud.jpg"), pixels, { mode: 0o600 });
+    }
     if (fixture) {
       // The observed setup frame locates the empty server field and Log in.
       await backend.control({ type: "click", x: 400, y: 135 });
@@ -134,25 +153,38 @@ try {
   for (let attempt = 0; attempt < 20 && launched.exitCode === null; attempt++) await Bun.sleep(100);
   if (launched.exitCode === null) { scopedStop = true; launched.kill("SIGTERM"); }
   const exit = await launched.exited, text = await stdout, errors = await stderr;
-  await writeFile(join(output, "stderr.txt"), errors, { mode: 0o600 });
+  if (!accountClone) await writeFile(join(output, "stderr.txt"), errors, { mode: 0o600 });
   const lastLine = text.trim().split("\n").at(-1);
   const broker: unknown = control || !lastLine ? null : JSON.parse(lastLine);
   const finalProcesses = await nextcloudProcesses();
-  const applicationLog = tls ? await readFile(join(output, "application.log"), "utf8") : "";
+  const applicationLog = tls || accountClone ? await readFile(applicationLogPath, "utf8") : "";
   const certificateRejectionObserved = tls && applicationLog.includes("The certificate is self-signed, and untrusted");
+  const cloneSummary = privateConfig ? { accountsCopied: privateConfig.accounts,
+    folderSettingsRemoved: privateConfig.removedFolderSettings, accountSettingsRetained: privateConfig.keptAccountSettings,
+    originalConfigUnchanged: await privateNextcloudSourceUnchanged(sourceConfig, privateConfig),
+    accountRestoreLogPatternMatched: /(?:Restoring|Loading|Loaded) account/i.test(applicationLog),
+    credentialFailureObserved: /(?:credentials|password|keychain|secret).*(?:error|fail|not found|not available|could not)|(?:error|fail).*(?:credentials|password|keychain|secret)/i.test(applicationLog),
+    folderSetupObserved: applicationLog.includes("Setup folders from settings file"),
+    folderSyncScheduled: /Schedule folder .* to sync|sync of .* started/i.test(applicationLog),
+    networkConnectDenied: /broker_denied syscall=42 .*domain=(?:2|10) /.test(errors) } : null;
   const report = { date: new Date().toISOString().slice(0, 10), application: "Installed /usr/bin/nextcloud",
     transport: control ? "direct-control" : "brokered", software, network, tcp, tls, trustFixture: tls && trustFixture,
-    visible, title, exit, scopedStop, broker,
+    visible, title: accountClone ? "not retained" : title, exit, scopedStop, broker, accountClone, cloneSummary,
     startupFrameSha256, fixtureRequests: requests, discoveryObserved: requests.some(request => request.path === "/status.php"),
     certificateRejectionObserved,
     originalProcessCount: originalProcesses.length, originalProcessesStillPresent: originalProcesses.every(pid => finalProcesses.includes(pid)),
-    limits: ["Disposable home and configuration only; existing native account state was not copied or measured.",
-      "Experimental launch outside the production session action.", "No personal sync folders or credentials were read.",
+    limits: [accountClone ? "Original config copied with sync folders removed; no native authentication or file sync was proved." :
+      "Disposable home and configuration only; existing native account state was not copied or measured.",
+      "Experimental launch outside the production session action.",
+      accountClone ? "The harness did not read original keyring items or personal sync-folder contents." :
+        "No personal sync folders or credentials were read.",
       "Window presence alone does not prove functional setup or networking.",
       ...(tls ? ["TLS fixture uses a generated self-signed certificate; the trusted arm accepts that certificate in disposable app state only.",
         "No public CA, remote service, TLS version or mutual TLS was measured."] : [])] };
   await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   console.log(JSON.stringify({ ...report, artifactDirectory: output }, null, 2));
+  if (cloneSummary && (!cloneSummary.originalConfigUnchanged || cloneSummary.folderSyncScheduled ||
+      !report.originalProcessesStillPresent)) throw new Error("Nextcloud account copy isolation check failed");
   if (assertTls) {
     const reachable = requests.some(request => request.path === "/status.php") &&
       requests.some(request => request.method === "POST" && request.path === "/index.php/login/v2") &&

@@ -3,8 +3,10 @@
 Status on 30 September 2026: the installed Qt Nextcloud client rendered its
 setup UI on the owned Orbit display. A new opt-in copied TCP route let it
 discover a disposable loopback fixture and request the login-flow endpoint.
-No existing native account, credential, sync folder or conversation was copied
-or measured. This is not current-account parity or production integration.
+A later offline arm copied one existing account configuration without its sync
+folders and visibly restored the cached account identity. Credential retrieval,
+native authentication, sync and conversations remain unproved. This is not
+current-account parity or production integration.
 
 ## Setup and independent control
 
@@ -173,6 +175,69 @@ the certificate dialog frame before accepting the fixture. These files contain
 test state only. Current-account authentication, production CA chains and a
 remote real service remain unmeasured.
 Type checking and `git diff --check` passed after the TLS harness changes.
+
+## Existing account configuration, offline
+
+The [private configuration helper](nextcloud-private-config.ts) reads the
+original owned regular configuration through a no-follow handle, with a hard
+one-MiB read cap and change checks. It creates a separate mode-0600 destination
+exclusively inside the probe's private configuration directory. It preserves
+opaque account settings as exact lines, removing settings and grouped sections
+under `Folders`, `Multifolders` and `FoldersWithPlaceholders`.
+[Upstream folder setup](https://github.com/nextcloud/desktop/blob/master/src/gui/folderman.cpp)
+loads those three groups for each account. The helper does not decode credential
+values, select keyring items or read personal sync-folder contents. It rejects
+source symlinks, overwriting a destination and a source without retained account
+settings. Source identity and a private content digest are checked again before
+launch and after the application stops; the digest and account values are not
+included in the saved report.
+
+The account-copy arm requires the experimental broker and disables its network
+fixture, TCP route and direct-control launch. It keeps the isolated home,
+private bus and private Wayland display. It does not grant the original secret
+service or desktop bus to the cloned client. Raw application logs and the
+copied config remain in the disposable directory and are deleted during scoped
+cleanup. The report omits the window title, frame hash, account names and
+addresses. Optional preview writes a mode-0600 frame only inside that temporary
+directory and waits briefly for inspection; the frame is removed with the
+directory and no account image is saved in `output/`.
+
+```sh
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+# Optional brief private frame inspection, never a persistent account artifact.
+ORBIT_NEXTCLOUD_BROKER_PROBE=1 ORBIT_NEXTCLOUD_BROKER_ACCOUNT_CLONE=1 ORBIT_NEXTCLOUD_CLONE_PREVIEW=1 bun run scripts/limited.ts bun run experiments/seccomp-nextcloud-app-probe.ts
+bun run scripts/limited.ts bun test experiments/nextcloud-private-config.test.ts
+```
+
+On this workstation the copy retained one account's 21 settings and removed
+seven folder settings. A temporary frame was visually inspected: Nextcloud's
+Activities screen showed the original cached account identity and service,
+with the explicit Offline label and no loaded activities. This proves cached
+identity restoration, not authenticated remote access. The temporary frame's
+absence was checked after cleanup. A later run without preview closed normally
+with application exit 0, no scoped stop and no broker failure. All runs kept
+the original Nextcloud PID present and the original config's content and inode
+unchanged. No sync scheduling pattern appeared in the clone's log.
+
+The sanitized log summary matched a credential-failure pattern. It did not
+match the narrow account-restore log pattern, despite the earlier visual
+confirmation; that field is named `accountRestoreLogPatternMatched` and is not
+an account-presence verdict. No IPv4/IPv6 connect denial pattern appeared and
+the TCP registration count was zero. These do not prove why the client stayed
+offline: exact keychain failure classification, resolver behavior and a real
+account connection remain unmeasured. The original secret store is outside
+this arm's authority.
+
+The helper tests initially found an account-counting error: the top-level
+Accounts version setting was counted as an account. After requiring an actual
+account child key, the same tests passed: three tests and eighteen assertions.
+They cover flat and grouped folder forms, exact opaque value retention,
+unchanged source bytes, detecting a later source change, source-symlink rejection
+and refusing to overwrite a prepared copy. Type checking passed. Reports with
+counts and booleans only are in `output/seccomp-nextcloud-account-clone-2026-09-30/`.
+The parser does not establish every QSettings encoding, old client schema,
+adversarial path mutation, filesystem-access boundary or concurrent sync policy.
+It is an experimental preparation step for the observed current configuration.
 
 ## Limits
 
