@@ -2,6 +2,22 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.2.0 (1 October 2026)
+
+Checkpoint release of the application integration work since 0.1.1. Includes
+browser navigation, font capture and upload corrections, expanded private
+keyboard input, native profile and credential admission checks, and explicit
+experimental Codex authority gates. Full current-application, account,
+conversation, file permission and device parity remains incomplete.
+
+Private PID namespace and seccomp broker probes remain research in the source
+archive, outside production application launch and the registry package.
+The Nextcloud namespace investigation is saved at a stopped checkpoint;
+its latest native synchronization attempt is not a pass.
+
+[Release notes](docs/release-0.2.0.md). Fresh release verification and archive
+checksums are recorded with the published release.
+
 ## 0.1.1 (22 September 2026)
 
 Published to the npm registry as `latest` and to
