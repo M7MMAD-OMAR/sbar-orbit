@@ -43,6 +43,12 @@ static const char *selected_stream_path = SELECTED_PATH;
 // Optional second pinned stream endpoint for the owned-display experiment.
 static const char *additional_stream_path;
 static int additional_stream_handle = -1;
+static int private_bus_credentials;
+static uint64_t private_bus_cookies[32];
+static unsigned char private_bus_handshakes[32];
+static size_t private_bus_cookie_count;
+static size_t forwarded_bus_credentials;
+static size_t forwarded_bus_data;
 static volatile sig_atomic_t broker_sigpipe_count;
 
 static void record_sigpipe(int signal_number) {
@@ -500,6 +506,32 @@ static int approved_socket(int fd) {
   return 0;
 }
 
+static int private_bus_credential_slot(int fd, pid_t tid, struct ucred *credentials) {
+  uint64_t cookie;
+  if (!private_bus_credentials || !socket_cookie(fd, &cookie)) return -1;
+  size_t slot = 0;
+  for (; slot < private_bus_cookie_count; slot++) if (private_bus_cookies[slot] == cookie) break;
+  if (slot == private_bus_cookie_count || private_bus_handshakes[slot]) return -1;
+  char path[64], line[256];
+  snprintf(path, sizeof(path), "/proc/%d/status", tid);
+  FILE *status = fopen(path, "r");
+  if (!status) return -1;
+  unsigned int tgid = 0, uid = (unsigned int)-1, gid = (unsigned int)-1;
+  while (fgets(line, sizeof(line), status)) {
+    if (!strncmp(line, "Tgid:", 5)) sscanf(line + 5, "%u", &tgid);
+    if (!strncmp(line, "Uid:", 4)) sscanf(line + 4, "%u", &uid);
+    if (!strncmp(line, "Gid:", 4)) sscanf(line + 4, "%u", &gid);
+  }
+  fclose(status);
+  if (!tgid || credentials->pid <= 0 || (unsigned int)credentials->pid != tgid ||
+      credentials->uid != uid || credentials->gid != gid || uid != getuid() || gid != getgid()) return -1;
+  // Explicit experiment semantics: the private bus sees the connecting broker,
+  // not the application's PID. Never claim transparent process identity.
+  credentials->pid = getpid();
+  credentials->uid = getuid(); credentials->gid = getgid();
+  return (int)slot;
+}
+
 static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *request,
                                 struct seccomp_notif_resp *response) {
   struct msghdr source = {0};
@@ -509,6 +541,7 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
   int rights[4] = {-1, -1, -1, -1};
   size_t rights_count = 0, total = 0;
   int duplicate = -1;
+  int credential_slot = -1;
   const uint64_t allowed_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
   if ((request->data.args[2] & ~allowed_flags) ||
       !copy_child(request->pid, &source, request->data.args[1], sizeof(source)) ||
@@ -532,28 +565,47 @@ static void send_connected_copy(int listener, int pidfd, struct seccomp_notif *r
     if (!copy_child(request->pid, control.bytes, (uintptr_t)source.msg_control, source.msg_controllen)) goto done;
     copied.msg_control = control.bytes; copied.msg_controllen = source.msg_controllen;
     struct cmsghdr *item = CMSG_FIRSTHDR(&copied);
-    if (!item || item->cmsg_level != SOL_SOCKET || item->cmsg_type != SCM_RIGHTS ||
-        item->cmsg_len < CMSG_LEN(sizeof(int)) || item->cmsg_len > source.msg_controllen ||
-        (item->cmsg_len - CMSG_LEN(0)) % sizeof(int)) goto done;
-    size_t count = (item->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-    if (count > 4 || (source.msg_controllen != CMSG_LEN(count * sizeof(int)) &&
-        source.msg_controllen != CMSG_SPACE(count * sizeof(int))) || CMSG_NXTHDR(&copied, item)) goto done;
-    int original[4];
-    memcpy(original, CMSG_DATA(item), count * sizeof(int));
-    for (size_t i = 0; i < count; i++) {
-      int passed = syscall(__NR_pidfd_getfd, pidfd, original[i], 0);
-      if (passed < 0) goto done;
-      rights[rights_count++] = passed;
-      struct stat info;
-      // Regular files (including memfd) and pipes only. Socket and device rights
-      // need a separate policy before this route can be used by real apps.
-      if (fstat(passed, &info) || (!S_ISREG(info.st_mode) && !S_ISFIFO(info.st_mode))) goto done;
+    if (!item || item->cmsg_level != SOL_SOCKET || item->cmsg_len < CMSG_LEN(0) ||
+        item->cmsg_len > source.msg_controllen || CMSG_NXTHDR(&copied, item)) goto done;
+    if (item->cmsg_type == SCM_CREDENTIALS) {
+      if (total != 1 || payload[0] != '\0' || item->cmsg_len != CMSG_LEN(sizeof(struct ucred)) ||
+          (source.msg_controllen != CMSG_LEN(sizeof(struct ucred)) &&
+           source.msg_controllen != CMSG_SPACE(sizeof(struct ucred)))) goto done;
+      struct ucred credentials;
+      memcpy(&credentials, CMSG_DATA(item), sizeof(credentials));
+      credential_slot = private_bus_credential_slot(duplicate, request->pid, &credentials);
+      if (credential_slot < 0) goto done;
+      memcpy(CMSG_DATA(item), &credentials, sizeof(credentials));
+    } else {
+      if (item->cmsg_type != SCM_RIGHTS ||
+          item->cmsg_len < CMSG_LEN(sizeof(int)) || item->cmsg_len > source.msg_controllen ||
+          (item->cmsg_len - CMSG_LEN(0)) % sizeof(int)) goto done;
+      size_t count = (item->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+      if (count > 4 || (source.msg_controllen != CMSG_LEN(count * sizeof(int)) &&
+          source.msg_controllen != CMSG_SPACE(count * sizeof(int))) || CMSG_NXTHDR(&copied, item)) goto done;
+      int original[4];
+      memcpy(original, CMSG_DATA(item), count * sizeof(int));
+      for (size_t i = 0; i < count; i++) {
+        int passed = syscall(__NR_pidfd_getfd, pidfd, original[i], 0);
+        if (passed < 0) goto done;
+        rights[rights_count++] = passed;
+        struct stat info;
+        // Regular files (including memfd) and pipes only. Socket and device rights
+        // need a separate policy before this route can be used by real apps.
+        if (fstat(passed, &info) || (!S_ISREG(info.st_mode) && !S_ISFIFO(info.st_mode))) goto done;
+      }
+      memcpy(CMSG_DATA(item), rights, count * sizeof(int));
     }
-    memcpy(CMSG_DATA(item), rights, count * sizeof(int));
   }
   if (ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request->id)) goto done;
   ssize_t sent = sendmsg(duplicate, &copied, (int)request->data.args[2] | MSG_NOSIGNAL);
-  if (sent >= 0) { response->error = 0; response->val = sent; }
+  if (sent >= 0) {
+    response->error = 0; response->val = sent;
+    if (credential_slot >= 0 && sent == 1) {
+      private_bus_handshakes[credential_slot] = 1;
+      forwarded_bus_credentials++;
+    }
+  }
   else response->error = -errno;
 done:
   for (size_t i = 0; i < rights_count; i++) close(rights[i]);
@@ -569,6 +621,26 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
   int live = pidfd >= 0 && ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0;
   if (live && broker_connected && request.data.nr == __NR_sendmsg)
     send_connected_copy(listener, pidfd, &request, &response);
+  if (live && private_bus_credentials && request.data.nr == __NR_sendto &&
+      !request.data.args[4] && !request.data.args[5] && request.data.args[2] > 0 &&
+      request.data.args[2] <= 4096 && !(request.data.args[3] & ~(uint64_t)(MSG_DONTWAIT | MSG_NOSIGNAL))) {
+    int duplicate = syscall(__NR_pidfd_getfd, pidfd, (int)request.data.args[0], 0);
+    uint64_t cookie;
+    if (duplicate >= 0 && unix_socket_type(duplicate, SOCK_STREAM) && socket_cookie(duplicate, &cookie)) {
+      for (size_t slot = 0; slot < private_bus_cookie_count; slot++) {
+        if (cookie != private_bus_cookies[slot] || !private_bus_handshakes[slot]) continue;
+        char payload[4096];
+        if (copy_child(request.pid, payload, request.data.args[1], request.data.args[2]) &&
+            ioctl(listener, SECCOMP_IOCTL_NOTIF_ID_VALID, &request.id) == 0) {
+          ssize_t sent = send(duplicate, payload, request.data.args[2], (int)request.data.args[3] | MSG_NOSIGNAL);
+          if (sent >= 0) { response.error = 0; response.val = sent; forwarded_bus_data++; }
+          else response.error = -errno;
+        }
+        break;
+      }
+    }
+    if (duplicate >= 0) close(duplicate);
+  }
   if (broker_datagram && request.data.nr == __NR_sendto &&
       live &&
       request.data.args[2] > 0 && request.data.args[2] <= 4096 &&
@@ -637,8 +709,11 @@ static int handle_one(int listener, int selected_handle, int selected_dgram_hand
               response.error = 0;
               if (broker_connected) {
                 uint64_t cookie;
-                if (approved_cookie_count < 32 && socket_cookie(duplicate, &cookie))
+                if (approved_cookie_count < 32 && socket_cookie(duplicate, &cookie)) {
                   approved_cookies[approved_cookie_count++] = cookie;
+                  if (private_bus_credentials && pinned_handle == additional_stream_handle && private_bus_cookie_count < 32)
+                    private_bus_cookies[private_bus_cookie_count++] = cookie;
+                }
                 else response.error = -ENOSPC;
               }
             } else {

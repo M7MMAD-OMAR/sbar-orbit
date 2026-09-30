@@ -27,7 +27,8 @@ int main(int argc, char **argv) {
   struct stat identity;
   if (selected < 0 || fstat(selected, &identity) || !S_ISSOCK(identity.st_mode) || identity.st_uid != getuid()) return 2;
   int command = 2;
-  if (!strcmp(argv[2], "--bus")) {
+  if (!strcmp(argv[2], "--bus") || !strcmp(argv[2], "--bus-credentials")) {
+    private_bus_credentials = !strcmp(argv[2], "--bus-credentials");
     char bus_path[PATH_MAX];
     if (argc < 6 || snprintf(bus_path, sizeof(bus_path), "%s/bus", directory) >= (int)sizeof(bus_path) ||
         strcmp(argv[3], bus_path) || !realpath(argv[3], canonical) || strcmp(argv[3], canonical)) return 2;
@@ -56,6 +57,7 @@ int main(int argc, char **argv) {
         read(channel[1], &acknowledged, sizeof(acknowledged)) != sizeof(acknowledged) || !acknowledged) _exit(125);
     close(listener);
     close(channel[1]);
+    if (install_strict_send_filter(0, 1, -1)) _exit(125);
     execv(argv[command], &argv[command]);
     _exit(127);
   }
@@ -92,7 +94,7 @@ int main(int argc, char **argv) {
   close(selected);
   if (additional_stream_handle >= 0) close(additional_stream_handle);
   int application_exit = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-  printf("{\"approvedConnections\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
-         approved_cookie_count, application_exit, failed, (int)stopping);
+  printf("{\"approvedConnections\":%zu,\"forwardedBusCredentials\":%zu,\"forwardedBusData\":%zu,\"applicationExit\":%d,\"brokerFailure\":%d,\"stopped\":%d}\n",
+         approved_cookie_count, forwarded_bus_credentials, forwarded_bus_data, application_exit, failed, (int)stopping);
   return failed ? 1 : application_exit;
 }

@@ -136,17 +136,96 @@ displayed the PNG and accepted text, and exited 0. Thus the private bus itself
 was operational; admitting its socket did not establish brokered D-Bus support.
 
 Artifacts are in `output/seccomp-wayland-app-gtk4-bus-2026-09-30/` and
-`output/seccomp-wayland-app-gtk4-bus-control-2026-09-30/`. The transport currently
-admits only `SCM_RIGHTS` ancillary messages, so it rejects explicit
+`output/seccomp-wayland-app-gtk4-bus-control-2026-09-30/`. At that stage the transport
+admitted only `SCM_RIGHTS` ancillary messages, so it rejected explicit
 `SCM_CREDENTIALS`. [Linux's UNIX socket documentation](https://man7.org/linux/man-pages/man7/unix.7.html)
 also distinguishes connection peer credentials from message credentials and
 describes kernel restrictions on sending another PID. A future implementation
 must resolve these semantics before claiming application or service identity
-parity. No credential rewrite or extra ancillary policy was added here.
+parity. That first bus stage added no credential rewrite or extra ancillary policy.
 After the handoff change, the no-bus GTK3 arm still displayed and accepted the
 exact keyboard text, exited 0, and denied the blocked endpoint. The synthetic
 `broker-disconnect` arm also exited 0 with its original stream, rights, thread,
 FD reuse, nested-path and disconnect controls intact. Type checking passed.
+
+## Explicit private bus credential mode
+
+An additional opt-in, `ORBIT_WAYLAND_BROKER_BUS_CREDENTIALS=1`, admits one
+bounded initial credential message per approved private bus socket. It requires
+the bus flag above. This is an experiment with broker identity, not transparent
+application identity and not an account/keyring bus policy.
+
+The broker records the bus socket's `SO_COOKIE` separately from compositor
+cookies. It copies and validates a single `SCM_CREDENTIALS` item with exactly
+one NUL payload byte. The supplied PID must match the notifying thread's TGID
+from `/proc/<tid>/status`, and the supplied real UID/GID must match that task and
+the broker's real UID/GID. The broker emits its own kernel-valid credentials;
+the server already sees its PID as the connection peer. A successful initial
+message consumes that cookie's credential allowance. No mutable inspected
+message is continued in the application.
+
+The next measured failure was plain authentication data: GIO uses `send`, which
+enters the intercepted `sendto` syscall with a null destination. The opt-in now
+copies that route only for approved private bus cookies after their initial
+credential message, with a maximum 4096 bytes and only `MSG_DONTWAIT` and
+`MSG_NOSIGNAL`. Other destinations and socket pairs stay denied. Both routes
+still execute in the broker and add `MSG_NOSIGNAL`; full client signal semantics
+remain unproved.
+
+```sh
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 ORBIT_WAYLAND_BROKER_BUS=1 ORBIT_WAYLAND_BROKER_BUS_CREDENTIALS=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+ORBIT_WAYLAND_BROKER_PROBE=1 ORBIT_WAYLAND_BROKER_GTK4=1 ORBIT_WAYLAND_BROKER_BUS=1 ORBIT_WAYLAND_BROKER_BUS_CREDENTIALS=1 ORBIT_WAYLAND_BROKER_CONTROL=1 bun run scripts/limited.ts bun run experiments/seccomp-wayland-app-probe.ts
+```
+
+The new credential controls were run before implementing either route. The
+valid credential case and GIO authentication both failed with EACCES. After the
+credential route alone, the valid case sent one byte, but GIO failed at sending
+data. Those reports are retained as `before-credential-route.json` and
+`before-bus-data-route.json` in
+`output/seccomp-wayland-app-gtk4-bus-credentials-2026-09-30/`.
+
+With both routes, GIO connected and completed `GetId` and
+`GetConnectionCredentials`. Its UID matched the application, its PID did not
+match the application, and its PID matched the parent broker. The direct
+control connected to its own private bus and reported the application's UID
+and PID, with no parent-PID match. Only these comparisons are retained, not raw
+credentials or bus IDs. Both arms displayed the PNG, accepted the exact text,
+and exited 0. A measured brokered run reported 12 approved connections, three
+credential forwards and ten data forwards, with no broker failure.
+
+The broker denied wrong PID, UID, GID, non-NUL initial payload, repeated
+credentials, oversized plain data, compositor credential and plain messages,
+and unapproved socket-pair plain data with EACCES. The valid initial credential
+message sent one byte. The direct control's kernel rejected wrong PID/UID/GID
+with EPERM, while it accepted the non-NUL, repeat, oversized, compositor and
+socket-pair payload controls. The blocked external disposable server still
+received zero brokered connections and one direct connection.
+
+The experiment is deliberately restricted to the disposable private bus. These
+measurements do not authorize applying credential rewriting to the person's
+services. Process-based authorization, credential transitions, namespace PID
+mapping, every D-Bus operation and large D-Bus messages remain unmeasured.
+
+### Strict barrier regression
+
+Review found that replacing the listener handoff had also removed the second
+strict filter from the real-client launcher. It is restored with the invalid
+FD sentinel `-1`, so no valid application FD is reserved. The strict filter
+denies `sendmmsg` and the listed io_uring entry points, while the listener
+continues to broker selected `sendmsg` calls.
+
+A disposable regression compiled the same current launcher twice, removing
+only that strict-filter installation line in the unfixed control. Its client
+called x86-64 `sendmmsg` on a valid owned socket pair with zero messages. The
+unfixed control returned 0; the restored filter returned -1/EACCES. Both
+launchers exited 0, with no broker failures. This establishes that the check
+detects the missing barrier. A zero-message call is not evidence of a payload
+escape, and io_uring bypass resistance is not established by this measurement.
+The original synthetic `broker-disconnect` arm was rerun after these changes
+and exited 0 with two connected messages, two rights, no unexpected bytes,
+zero blocked accepts and no broker SIGPIPE. The no-bus GTK3 arm also still
+displayed and accepted the exact text, exited 0, and reported zero credential
+and bus-data forwards. Type checking and `git diff --check` passed.
 
 ## Limits
 
