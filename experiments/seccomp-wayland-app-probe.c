@@ -9,7 +9,38 @@
 static volatile sig_atomic_t stopping;
 static void stop_probe(int signal_number) { (void)signal_number; stopping = 1; }
 
+static int safe_standard_descriptor(int fd, dev_t null_device) {
+  struct stat info;
+  if (fstat(fd, &info)) return 0;
+  if (S_ISREG(info.st_mode) || S_ISFIFO(info.st_mode) ||
+      (S_ISCHR(info.st_mode) && info.st_rdev == null_device)) return 1;
+  // Bun/Node may implement stdio pipes with socketpair. Admit only anonymous
+  // UNIX streams whose peer credentials identify our immediate launcher.
+  struct sockaddr_un local = {0}, remote = {0};
+  struct ucred peer = {0};
+  int domain = 0, type = 0;
+  socklen_t domain_length = sizeof(domain), type_length = sizeof(type), peer_length = sizeof(peer);
+  socklen_t local_length = sizeof(local), remote_length = sizeof(remote);
+  return S_ISSOCK(info.st_mode) &&
+    !getsockopt(fd, SOL_SOCKET, SO_DOMAIN, &domain, &domain_length) && domain == AF_UNIX &&
+    !getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_length) && type == SOCK_STREAM &&
+    !getsockname(fd, (struct sockaddr *)&local, &local_length) && local_length == sizeof(sa_family_t) &&
+    !getpeername(fd, (struct sockaddr *)&remote, &remote_length) && remote_length == sizeof(sa_family_t) &&
+    !getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_length) && peer_length == sizeof(peer) &&
+    peer.pid == getppid() && peer.uid == getuid() && peer.gid == getgid();
+}
+
 int main(int argc, char **argv) {
+  // Standard descriptors are caller-supplied authority too. A socket or a
+  // terminal here bypasses every connect notification, or writes to a display.
+  struct stat null_device;
+  if (stat("/dev/null", &null_device) || !S_ISCHR(null_device.st_mode)) return 2;
+  for (int fd = 0; fd < 3; fd++) {
+    if (!safe_standard_descriptor(fd, null_device.st_rdev)) return 2;
+  }
+  // Drop inherited authority in the broker as well as the eventual application.
+  // Do this before opening any of our own pinned socket or handoff descriptors.
+  if (syscall(__NR_close_range, 3u, ~0u, 0)) return 2;
   broker_metadata_audit = getenv("ORBIT_PRIVATE_BROKER_AUDIT") &&
     !strcmp(getenv("ORBIT_PRIVATE_BROKER_AUDIT"), "1");
   private_loopback_netlink = getenv("ORBIT_PRIVATE_BROKER_LOOPBACK") &&
@@ -77,7 +108,7 @@ int main(int argc, char **argv) {
     close(listener);
     close(channel[1]);
     if (install_strict_send_filter(0, 1, -1)) _exit(125);
-    if (private_socket_pairs && syscall(__NR_close_range, 3u, ~0u, 0)) _exit(125);
+    if (syscall(__NR_close_range, 3u, ~0u, 0)) _exit(125);
     execv(argv[command], &argv[command]);
     _exit(127);
   }

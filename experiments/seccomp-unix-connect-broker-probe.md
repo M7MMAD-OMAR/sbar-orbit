@@ -314,3 +314,15 @@ after inspecting mutable arguments. The
 documents that a duplicated socket descriptor refers to the same underlying
 socket object. This prototype uses that property to avoid resuming an
 untrusted `connect(2)` pointer after a policy check.
+
+## Experimental launcher inheritance, 30 September 2026
+
+The real-application experimental launcher now drops descriptors above 2 in
+both broker and target, regardless of private pair support, and validates
+standard IO before opening its own endpoints. The new controls reproduced
+foreign connected-socket and generated-terminal inheritance before the change,
+then rejected them after it. Pair and TCP controls and installed Loupe rendering
+passed. This closes the tested startup inheritance routes only. Later accepted
+or received descriptors, file/device/process authority and non-atomic pair
+injection remain outside that result. See
+[inherited descriptor evidence](seccomp-inherited-fd-controls.md).
