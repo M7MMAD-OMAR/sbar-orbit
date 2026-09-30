@@ -246,7 +246,7 @@ export class Sessions {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        return requested === "fedora" ? await FedoraBackend.create(surface)
+        return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins)
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
       this.creationTail = start.catch(() => {});

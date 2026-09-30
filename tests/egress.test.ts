@@ -255,7 +255,7 @@ test("public web lease routes two HTTP hosts on one proxy connection without cro
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
   let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
   try {
-    lease = await openPublicWebLease({ parentDirectory: root,
+    lease = await openPublicWebLease({ parentDirectory: root, origins: ["http://a.example", "http://b.example"],
       resolveHost: async host => { resolved.push(host); return host === "a.example" ? ["8.8.8.8"] : ["1.1.1.1"]; },
       routeForTest: (address, port) => {
         dialed.push(`${address}:${port}`);
@@ -307,7 +307,7 @@ test("public web CONNECT keeps a delayed response stream open", async () => {
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
   let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
   try {
-    lease = await openPublicWebLease({ parentDirectory: root,
+    lease = await openPublicWebLease({ parentDirectory: root, origins: ["https://public.example"],
       resolveHost: async () => ["8.8.8.8"],
       routeForTest: (address, port) => {
         expect(address).toBe("8.8.8.8");
@@ -337,13 +337,41 @@ test("public web CONNECT keeps a delayed response stream open", async () => {
   }
 });
 
+test("public web refuses an origin outside the session policy before DNS", async () => {
+  const root = await fixtureRoot("orbit-public-web-origin-");
+  let resolved = 0;
+  let origins = ["https://allowed.example"];
+  let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
+  try {
+    lease = await openPublicWebLease({ parentDirectory: root, origins: () => origins,
+      resolveHost: async () => { resolved++; return ["8.8.8.8"]; },
+    });
+    const blocked = await throughProxy(lease.socketPath,
+      "CONNECT blocked.example:443 HTTP/1.1\r\nHost: blocked.example:443\r\n\r\n");
+    expect(blocked.reply).toContain("403 Forbidden");
+    const blockedPort = await throughProxy(lease.socketPath,
+      "CONNECT allowed.example:8443 HTTP/1.1\r\nHost: allowed.example:8443\r\n\r\n");
+    expect(blockedPort.reply).toContain("403 Forbidden");
+    const blockedPlain = await throughProxy(lease.socketPath,
+      "GET http://blocked.example/ HTTP/1.1\r\nHost: blocked.example\r\n\r\n");
+    expect(blockedPlain.reply).toContain("403 Forbidden");
+    expect(resolved).toBe(0);
+    origins = [];
+    const narrowed = await throughProxy(lease.socketPath,
+      "CONNECT allowed.example:443 HTTP/1.1\r\nHost: allowed.example:443\r\n\r\n");
+    expect(narrowed.reply).toContain("403 Forbidden");
+    expect(resolved).toBe(0);
+    expect(lease.refused()).toEqual(["blocked.example:443", "allowed.example:8443", "blocked.example", "allowed.example:443"]);
+  } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("public web lease refuses local, private, reserved and host interface destinations", async () => {
   const root = await fixtureRoot("orbit-public-web-private-");
   const loopback = [127, 0, 0, 1].join(".");
   let answer = loopback, dialed = 0;
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
   try {
-    lease = await openPublicWebLease({ parentDirectory: root,
+    lease = await openPublicWebLease({ parentDirectory: root, origins: ["https://public.example"],
       resolveHost: async () => [answer],
       routeForTest: (address, port) => { dialed++; return { address, port }; },
     });
@@ -397,6 +425,7 @@ test("public web lease owns only its generated directory and closes an active CO
   let client: Awaited<ReturnType<typeof connect<undefined>>> | undefined;
   try {
     lease = await openPublicWebLease({ parentDirectory: join(root, "existing-link"),
+      origins: ["https://public.example:8443"],
       resolveHost: async () => ["8.8.8.8"],
       routeForTest: (address, port) => {
         expect(address).toBe("8.8.8.8");

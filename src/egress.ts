@@ -173,8 +173,8 @@ async function publicCandidates(hostname: string, resolveHost: (hostname: string
  * A public web route for a native browser whose own network namespace has no external interface.
  * Its only host connection is this Unix socket. HTTP requests are parsed individually, including
  * persistent connections and request bodies; CONNECT remains a blind tunnel at host:port resolution.
- * This is not an HTTPS origin filter. It accepts any public destination and cannot inspect the
- * encrypted request inside CONNECT. CONNECT accepts any valid TCP port at a public address.
+ * This is an authority filter for HTTPS and an origin filter for plain HTTP. CONNECT cannot inspect
+ * the encrypted request inside its tunnel or prove its TLS peer identity.
  */
 export type PublicWebLease = {
   socketPath: string;
@@ -185,12 +185,21 @@ export type PublicWebLease = {
 export type PublicWebLeaseRequest = {
   /** An existing private directory. The lease creates and owns a fresh child within it. */
   parentDirectory: string;
+  /** The exact origins admitted by the session policy. */
+  origins: string[] | (() => string[]);
   resolveHost?: (hostname: string) => Promise<string[]>;
   /** Fixture seam. Production leaves the checked numeric address and port unchanged. */
   routeForTest?: (checkedAddress: string, port: number) => { address: string; port: number };
 };
 
 export async function openPublicWebLease(request: PublicWebLeaseRequest): Promise<PublicWebLease> {
+  const permitted = () => {
+    const origins = new Set((typeof request.origins === "function" ? request.origins() : request.origins)
+      .map(origin => new URL(origin).origin));
+    return { origins, authorities: new Set(leasedAuthorities([...origins])) };
+  };
+  if (!permitted().authorities.size)
+    throw new OrbitError("INVALID_REQUEST", "Zen public web needs at least one bounded origin");
   const parent = await realpath(request.parentDirectory);
   const directory = await mkdtemp(join(parent, "public-web-"));
   const socketPath = join(directory, "lease.sock");
@@ -215,7 +224,8 @@ export async function openPublicWebLease(request: PublicWebLeaseRequest): Promis
       let url: URL;
       try { url = new URL(incoming.url ?? ""); }
       catch { url = new URL("about:blank"); }
-      if (url.protocol !== "http:" || url.username || url.password || !matchingRequestHost(incoming, url)) {
+      if (url.protocol !== "http:" || url.username || url.password || !matchingRequestHost(incoming, url) ||
+          !permitted().origins.has(url.origin)) {
         refuse(url.host || "(unparseable)");
         outgoing.writeHead(403, { "Content-Length": "0", Connection: "close" });
         outgoing.end();
@@ -276,7 +286,7 @@ export async function openPublicWebLease(request: PublicWebLeaseRequest): Promis
       const match = /^(?:\[[^\]]+\]|[^:/?#@\s]+):([0-9]+)$/.exec(authority);
       const port = Number(match?.[1] ?? 0);
       if (!match || port < 1 || port > 65535 || url.username || url.password || url.pathname !== "/" ||
-          !matchingRequestHost(incoming, url)) {
+          !matchingRequestHost(incoming, url) || !permitted().authorities.has(`${url.hostname}:${port}`)) {
         refuse(authority);
         client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;

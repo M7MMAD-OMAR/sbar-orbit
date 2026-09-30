@@ -154,7 +154,10 @@ export async function prepareZenLaunch(
   sessionDirectory: string, waylandSocket: string, libraryDirectory: string, location: ZenLocation = {},
   network: ZenNetwork = "offline",
   sharedFiles: string[] = [],
+  origins: () => string[] = () => [],
 ): Promise<PreparedZenLaunch> {
+  if (network === "public-web" && !origins().length)
+    throw new OrbitError("INVALID_REQUEST", "Zen public web needs at least one bounded origin");
   const session = await realpath(sessionDirectory);
   const socket = await realpath(waylandSocket);
   const socketEntry = await lstat(socket);
@@ -183,7 +186,7 @@ export async function prepareZenLaunch(
         throw new OrbitError("UNSUPPORTED", "Zen public web mode needs socat");
       await writePrivateProxyPreferences(snapshot.directory);
       await quietZenSync(snapshot.directory, installation.profile);
-      lease = await openPublicWebLease({ parentDirectory: session, ...location.leaseProbe });
+      lease = await openPublicWebLease({ parentDirectory: session, origins, ...location.leaseProbe });
       await writeFile(join(privateDirectory, "runtime", "lease.sock"), "", { mode: 0o600 });
     }
     const profileInside = `/orbit/zen/${basename(snapshot.directory)}`;

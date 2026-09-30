@@ -164,11 +164,11 @@ export class FedoraBackend {
   renderer: { asked: NativeRenderer["renderer"]; bound: string; device?: string; driver?: string } = { asked: "pixman", bound: "pixman" };
   private constructor(private directory: string, private env: NodeJS.ProcessEnv, private compositor: ChildProcessWithoutNullStreams,
     private size: Viewport, readonly preferenceSnapshot: NativePreferenceSnapshot, private audioSockets: string[],
-    private hostRuntime: string | undefined) {
+    private hostRuntime: string | undefined, private origins: () => string[] | "any") {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
-  static async create(size: Viewport = defaultViewport) {
+  static async create(size: Viewport = defaultViewport, origins: () => string[] | "any" = () => "any") {
   await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Fedora backend requires Linux");
     // Resolved per session rather than at import, because the runtime is shared between versions now
@@ -237,7 +237,7 @@ export class FedoraBackend {
     // close, not exit: the pipes can still hold output after the process is gone.
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
-    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets, hostRuntime);
+    const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets, hostRuntime, origins);
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -445,7 +445,8 @@ export class FedoraBackend {
                 libraryPath: this.env.LD_LIBRARY_PATH ?? "",
               })
           : await this.prepareZen(this.directory, join(this.directory, this.waylandDisplay),
-            this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles);
+            this.env.LD_LIBRARY_PATH ?? "", {}, action.network ?? "offline", action.sharedFiles,
+            () => { const current = this.origins(); return current === "any" ? [] : current; });
       let cleanupManaged = false;
       try {
       const keyring = "snapshot" in prepared && prepared.snapshot.accountState === "copied";

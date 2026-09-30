@@ -92,7 +92,7 @@ test("Zen public web mode mounts only its lease socket and writes proxy preferen
     await writeFile(outside, "outside stays unchanged\n");
     await symlink(outside, join(f.profile, "user.js"));
     prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
-      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web", [], () => ["https://example.com"]);
     expect(prepared.zenSnapshot.network).toBe("public-web");
     const proxyMount = prepared.argv.indexOf("/orbit/zen/runtime/lease.sock");
     expect(proxyMount).toBeGreaterThan(0);
@@ -126,6 +126,19 @@ test("Zen public web mode mounts only its lease socket and writes proxy preferen
   }
 });
 
+test("Zen public web refuses a policy without named origins before copying a profile", async () => {
+  const f = await fixture();
+  try {
+    await expect(prepareZenLaunch(f.session, f.wayland, f.libraries,
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web"))
+      .rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    expect(await readdir(f.session)).toEqual(["wayland-0"]);
+  } finally {
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("Zen public web mode removes only the copied Mozilla account and overrides Sync after proxy prefs", async () => {
   const f = await fixture();
   let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
@@ -135,7 +148,7 @@ test("Zen public web mode removes only the copied Mozilla account and overrides 
     await writeFile(join(f.profile, "signedInUser.json"), sourceAccount);
     await writeFile(join(f.profile, "user.js"), sourcePrefs);
     prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
-      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web", [], () => ["https://example.com"]);
 
     const cloneDirectory = prepared.argv[prepared.argv.indexOf("/orbit/zen") - 1]!;
     const profileInside = prepared.argv.at(-1)!;
@@ -160,7 +173,7 @@ test("Zen public web preparation removes the lease and clone when copied prefere
   try {
     await writeFile(join(f.profile, "user.js"), "x".repeat(1024 * 1024 + 1));
     await expect(prepareZenLaunch(f.session, f.wayland, f.libraries,
-      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web"))
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web", [], () => ["https://example.com"]))
       .rejects.toMatchObject({ code: "UNSUPPORTED" });
     expect(await readdir(f.session)).toEqual(["wayland-0"]);
   } finally {
@@ -174,7 +187,7 @@ test("Zen launch preflight failure closes the public web lease and removes the c
   let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
   try {
     prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries,
-      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web");
+      { home: f.home, deploymentFiles: f.deploymentFiles }, "public-web", [], () => ["https://example.com"]);
     const backend = Object.assign(Object.create(FedoraBackend.prototype), {
       parseAction: parseNativeAction, closed: false, children: [], zenLaunchReserved: false,
       directory: f.session, waylandDisplay: "wayland-0", env: { LD_LIBRARY_PATH: f.libraries },
