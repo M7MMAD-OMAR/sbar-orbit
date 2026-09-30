@@ -30,3 +30,28 @@ application can reach the user's audio service and see video paths, not that
 capture permission or media operation succeeded. Recording, playback, camera
 streaming, portal grants and behavior in the user's account applications remain
 not measured.
+
+## Read-only camera capability query
+
+The optional mode opens each video node with `O_RDWR | O_NONBLOCK`, issues only
+`VIDIOC_QUERYCAP`, and closes it immediately. It never requests buffers or
+starts a stream. The ioctl number, structure size and capability offsets come
+from the installed `/usr/include/linux/videodev2.h`, whose capability structure
+is 104 bytes. Device names, serial identifiers and bus details are discarded.
+
+```sh
+ORBIT_DEVICE_INVENTORY=1 ORBIT_CAMERA_QUERY=1 bun run scripts/limited.ts bun run experiments/private-device-inventory.ts
+```
+
+On 30 September 2026 the private application opened and queried both nodes
+successfully. One reported video capture capability; the other reported
+metadata capture capability. Both reported streaming support. The private
+window and aggregate results were captured in
+`output/private-device-query-2026-09-30/`. This corrects the ambiguity of the
+earlier node count: it is not evidence of two physical cameras.
+
+These are actual successful device opens and kernel queries from the normally
+launched private application. They establish that its process has access to the
+video nodes on this workstation. Actual frame capture, browser permission
+prompts, media application behavior and account-specific device choices remain
+not measured. The session was closed after capture, and type checking passed.
