@@ -1,5 +1,5 @@
 import { linuxOnlySuite } from "./platform-support";
-import { expect } from "bun:test";
+import { expect, test as bunTest } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -129,7 +129,7 @@ test("Codex paginated viewer injection requires a private fixture executable", a
   }
 });
 
-(enabled ? test : test.skip)("Codex attach mounts only session gate sockets into a fresh private home", async () => {
+bunTest.if(enabled)("Codex attach mounts only session gate sockets into a fresh private home", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
   const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
   const authorityPath = join(socketDirectory, "authority.sock");
@@ -224,7 +224,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({
   }
 }, 15000);
 
-(enabled ? test : test.skip)("Codex attach rejects permissive and linked authority sockets", async () => {
+bunTest.if(enabled)("Codex attach rejects permissive and linked authority sockets", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-attach-test-");
   const socketDirectory = await mkdtemp(join(runtime, "orbit-codex-attach-test-"));
   const authorityPath = join(socketDirectory, "authority.sock");

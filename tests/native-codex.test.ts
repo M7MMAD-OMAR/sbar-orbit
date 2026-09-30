@@ -170,7 +170,7 @@ const runtime = process.env.XDG_RUNTIME_DIR;
 const mountEnabled = process.platform === "linux" && runtime === `/run/user/${process.getuid?.()}` &&
   homedir().startsWith("/home/") && homedir().split("/").length === 3 && !!Bun.which("bwrap");
 
-(mountEnabled ? test : test.skip)("Codex private mount hides the original home and maps the snapshot", async () => {
+schemaTest.if(mountEnabled)("Codex private mount hides the original home and maps the snapshot", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-test-");
   const privateHome = join(session, "snapshot", "home");
   const socketPath = join(session, "private.sock");
@@ -213,7 +213,7 @@ pathlib.Path(${JSON.stringify(output)}).write_text(json.dumps({"marker":(home/"m
   }
 }, 15000);
 
-(mountEnabled ? test : test.skip)("Codex private project grant writes only the selected host directory", async () => {
+schemaTest.if(mountEnabled)("Codex private project grant writes only the selected host directory", async () => {
   const session = await mkdtemp("/tmp/orbit-native-codex-test-");
   const storage = join(homedir(), ".cache", "sbar-orbit", "codex-private");
   await mkdir(storage, { recursive: true, mode: 0o700 });

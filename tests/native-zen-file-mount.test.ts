@@ -1,5 +1,5 @@
 import { linuxOnlySuite } from "./platform-support";
-import { expect } from "bun:test";
+import { expect, test as bunTest } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='orbit-zen-files-') as root:
   expect(result).toBe("8");
 });
 
-test.if(namespaces)("Zen exact file mount writes one selected host inode and hides its sibling", () => {
+bunTest.if(namespaces)("Zen exact file mount writes one selected host inode and hides its sibling", () => {
   const result = python(`
 import os, pathlib, subprocess, sys, tempfile
 sys.path.insert(0, sys.argv[1])
@@ -88,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix='orbit-zen-files-') as root:
   expect(result).toBe("0 False after secret /orbit/shared/1/shared.txt");
 });
 
-(process.platform === "linux" && existsSync("/usr/bin/bwrap") ? test : test.skip)(
+bunTest.if(namespaces)(
   "Zen supervisor leases and mounts one disposable host file", () => {
     const result = python(`
 import json, os, pathlib, subprocess, sys, tempfile, time
