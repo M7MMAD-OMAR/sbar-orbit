@@ -490,7 +490,7 @@ index 0000000..72ee89d
 +    }
 +}
 diff --git a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
-index 3f6fcbf..ddc72ff 100644
+index 3f6fcbf..24a74b9 100644
 --- a/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
 +++ b/codex-rs/thread-store/src/local/thread_history_materialization_tests.rs
 @@ -44,11 +44,13 @@ use super::super::LocalThreadStore;
@@ -518,7 +518,7 @@ index 3f6fcbf..ddc72ff 100644
  
  #[tokio::test]
  async fn paginated_history_without_state_db_does_not_initialize_sqlite() {
-@@ -433,6 +437,184 @@ WHERE thread_id = ?
+@@ -433,6 +437,203 @@ WHERE thread_id = ?
      assert_eq!(projection_state, (rollout_len, 5));
  }
  
@@ -698,11 +698,43 @@ index 3f6fcbf..ddc72ff 100644
 +    pending.await.expect("archive after release");
 +    assert_eq!(pinned.page(None, 3).expect("old archived generation page").turns.len(), 3);
 +    assert!(store.open_owner_snapshot_prototype(thread_id).await.is_err());
++
++    let held = store
++        .owner_snapshot_barrier
++        .lock()
++        .await
++        .expect("hold barrier across unarchive");
++    let pending = store.unarchive_thread(ArchiveThreadParams { thread_id });
++    tokio::pin!(pending);
++    assert!(tokio::time::timeout(Duration::from_millis(50), &mut pending)
++        .await
++        .is_err());
++    drop(held);
++    pending.await.expect("unarchive after release");
++    let restored = store
++        .open_owner_snapshot_prototype(thread_id)
++        .await
++        .expect("open generation after unarchive");
++    assert_eq!(restored.page(None, 3).expect("restored page").turns.len(), 3);
++    assert_eq!(pinned.page(None, 3).expect("frozen archived page").turns.len(), 3);
 +}
 +
  #[tokio::test]
  async fn paginated_realtime_items_materialize_separately_in_rollout_order() {
      let home = TempDir::new().expect("temp dir");
+diff --git a/codex-rs/thread-store/src/local/unarchive_thread.rs b/codex-rs/thread-store/src/local/unarchive_thread.rs
+index 017d18a..0d72048 100644
+--- a/codex-rs/thread-store/src/local/unarchive_thread.rs
++++ b/codex-rs/thread-store/src/local/unarchive_thread.rs
+@@ -24,6 +24,8 @@ pub(super) async fn unarchive_thread(
+     // Archive, delete, and revert use the same cross-process lock while moving or selecting
+     // rollout files. Unarchive must participate before it moves those files back.
+     let _writer_lock = store.acquire_writer_lock(thread_id)?;
++    #[cfg(test)]
++    let _owner_snapshot_guard = store.owner_snapshot_barrier.lock().await?;
+     let state_db_ctx = store.state_db().await;
+     let selected_archived_path =
+         thread_rollout_resolver::resolve_current_including_archived(store, thread_id)
 diff --git a/codex-rs/thread-store/src/local/update_thread_metadata.rs b/codex-rs/thread-store/src/local/update_thread_metadata.rs
 index 6caf5b2..8023f71 100644
 --- a/codex-rs/thread-store/src/local/update_thread_metadata.rs

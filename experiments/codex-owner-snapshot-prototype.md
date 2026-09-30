@@ -1,6 +1,6 @@
 # Test-only owner snapshot prototype
 
-Status on 29 September 2026: limited source experiment, not a personal or
+Status on 30 September 2026: limited source experiment, not a personal or
 production attachment. The exact Codex base is
 `4607249e430dac1c961df4dc615beae88e33cec8`. The isolated source branch
 `agents/codex-owner-snapshot-proto` at
@@ -35,9 +35,19 @@ captured generation remained pageable and a new active snapshot was rejected.
 The seven archive and unarchive tests also passed. This covers one synthetic
 archive path, not unarchive or all archive descendants.
 
+The branch then advanced to
+`c9889573a4274b8f5d3e2534c7e0e5bfdee96eb4`. Unarchiving the same
+synthetic thread now takes the test snapshot barrier after its writer lock and
+before moving rollout files. Before the change, the focused test exited `101`:
+the unarchive completed while the barrier was held. After the change, it
+passed with exit `0`. The previously captured generation remained pageable,
+and a new active snapshot opened after unarchive. Three focused unarchive
+tests also passed. This covers one synthetic unarchive path, not every
+descendant or concurrent process.
+
 The latest [source patch](codex-owner-snapshot-prototype.patch) against the
-exact tag at `7f7833f90b821c25ec76827b047bf51232c0d82a` has SHA-256
-`6bfe9982908336d49badf7e746688e9a9e77700e341720a3b59a5ec69fc36e44`.
+exact tag at `c9889573a4274b8f5d3e2534c7e0e5bfdee96eb4` has SHA-256
+`d60701a1f8e0aaf406d474ef5399d77da4315868512202d023f9f264bac42208`.
 Forward application was checked against an archived clean exact tag tree, and
 reverse application was checked against the isolated committed source.
 
@@ -50,8 +60,8 @@ Snapshot open takes the same barrier, pins the state and history SQLite reads,
 retains one complete verified rollout prefix and materializes bounded turn and
 item rows. Cursor pages use the captured generation.
 
-The focused test passed after each earlier extension and after the archive
-extension. It verified that the third append waits
+The focused test passed after each earlier extension and after the archive and
+unarchive extensions. It verified that the third append waits
 while snapshot open holds the barrier, the old generation's second page still
 shows only turn two, a new generation includes turn three, a cursor cannot be
 used with the wrong generation, and the new rollout prefix extends the old
@@ -71,7 +81,7 @@ state row. The fixture was corrected with the existing rollout reconciliation
 path before the passing runs. This prototype has no production app-server
 API. Metadata changes beyond the tested title and section move, unarchive,
 revert, fork, deletion, compression and other writers bypass its barrier.
-Archive participates only for the tested path. Cross-process unpatched writers
-still bypass it. Crash recovery, restart, cross-process proof and resource
+Archive and unarchive participate only for the tested paths. Cross-process
+unpatched writers still bypass it. Crash recovery, restart, cross-process proof and resource
 limits are not measured. It cannot justify enabling the public or personal
 Codex route.
