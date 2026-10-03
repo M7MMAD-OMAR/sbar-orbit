@@ -207,3 +207,64 @@ Current controller source binding:
 - `ghost.py`: `f83449c4af3d1fad5fdbe35ee1d989c3ba71054c543dc5a7f166462d6b7fd4e3`
 - `control_task.py`: `263c1099a2cdf68799e0bf5742aab9c4b0523dd25a386624fa99ba6b9f5caae1`
 - `cli_control_task.py`: `c3f2eb2ee59e9f7bc8b18daa8936fb1d95707b9b7d34b4fdd41d9aafdfc51a84`
+
+## Shared raw-input API integration
+
+The shared ghost.hypr helper and GTK/Qt/Writer/canvas worker commands now route
+native requests through protected/full decisions and synchronized intent/outcome
+records. The transport primitive is separate to prevent recursive journaling.
+Compositor IPC has a finite timeout and closes its socket on success or failure.
+The native shared-API regression failed on the original helper because protected
+input succeeded without approval. Corrected shared-API input passed protected denial, exact approval, replay
+refusal, full-mode input, native error recording and prevention of input when
+journal storage was unavailable. B1, B2, B3, B4 and B12 passed.
+Direct compositor IPC remains an experimental escape surface, not a supported
+security boundary. Observer-side accessibility reads and direct imported actions
+still need complete audit coverage before universal logging is claimed.
+Previous worker and controller source-bound evidence is stale after these edits.
+
+Two concurrent native GTK3 clipboard clients passed after shared raw integration,
+with 0.818 seconds of lifetime overlap. All 12 native action requests had matched
+successful outcome records and no unresolved intent. B1, B2, B3, B4 and B12
+passed while all 171 stand-in characters arrived. This proves these workers,
+not the complete toolkit or owner-session acceptance.
+
+Qt/Writer pair: an initial run failed B12 because five kioworker helpers remained
+alive. The shell wait also did not prove each worker exit, so that report is
+retained as failed evidence. A dedicated pair driver now verifies both return
+codes, reads matched successful native journal outcomes and reaps new private-lab
+job helpers using process identities. The corrected pair passed B1, B2, B3, B4
+and B12, with 11 Qt requests, 89 Writer requests and 0.799 seconds of overlapping
+native request intervals. Five private kioworkers were reaped. No process
+exclusion was added to the harness. Writer still uses measured 16-character
+chunks; a general bulk-input fix remains pending.
+
+Fresh GTK4 launch, raw multiline input, selection, deselection and scrolling also
+passed with the shared controlled API. B1, B2, B3, B4 and B12 passed. The job
+pair cleanup is valid only for its exclusive private lab; production owner-session
+process leases remain incomplete. Current project gates are pending.
+
+Current B8 regression: two fresh raw GTK3 DrawingArea canvases, with no editable
+text accessibility path, received distinct known text, one click and one scroll
+per client. Both workers succeeded with 0.367 seconds of lifetime overlap.
+All 12 native requests had matched successful journal outcomes. B1, B2, B3, B4
+and B12 passed while all 171 stand-in characters arrived. This proves the canvas
+fixtures, not a universal raw-input toolkit claim.
+
+Final shared-raw project gates passed: typecheck, complete bounded suite 572
+passed, 45 skipped, zero failed, 3734 assertions across 130 files. Native and
+platform skips do not close their coverage rows. The private lab mode was reset
+to protected after owner-side full-mode test setup. No owner-session activation
+or release acceptance is claimed.
+
+Current shared-raw source binding:
+- `ghost.py`: `f6041274b9302aa2149a9fb3b9cbff18027b6efac99c7d31a90758b205c2b7c2`
+- `action_control.py`: `e2afb76247dff996a31d720833d603ef123dee95a00c5aeabd7906b37271a26b`
+- `raw_task.py`: `00ea37a66cfe2a11367fbd81ffb4cf43105de3435505f2556ef7a85b3539a423`
+- `native_text_task.py`: `055fa5e32e9887f43b4a42a4b41782e838e99d7f3528541ed538abeba57413e8`
+- `qt_task.py`: `a8c4954c61f38274de73bef3809a3eca33f3a455140b24d241c1e7e16a36964f`
+- `writer_task.py`: `dd72ca69f09c71922b8b5d4ba40135184dd86b5164118673040d3376af3e1e62`
+- `clipboard_task.py`: `60bcdc15bd320395d00b431fc1b316d7a0133e6beb3f64c9e586cc125cfea742`
+- `two_clipboards.py`: `b9a304bc9f0dfebd05709eb639d313a68a1027b8e506ddde30ce1da6389f4afe`
+- `two_toolkit_tasks.py`: `cdc0960061c2347b51a250353ca6c762fd6afd6b22ae4ac0cf5855c0fffb22ce`
+- `two_canvas_tasks.py`: `023048717389451a179a5f442258f35567d26c2c83222871c638e545ced8344c`

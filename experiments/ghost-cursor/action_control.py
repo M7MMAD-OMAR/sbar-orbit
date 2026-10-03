@@ -177,13 +177,13 @@ def cli_request(argv):
 
 
 def dispatch_native(request):
-    from ghost import hypr
+    from ghost import _hypr
     parts = request.split()
     commands = {"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", "ghost-move", "ghost-scroll",
                 "ghost-cursor", "ghost-hide-cursor", "ghost-release", "ghost-state"}
     if not parts or parts[0] not in commands:
         raise ControlError("Unknown native action; mode changes use the owner settings entry point")
-    response = hypr(request).strip()
+    response = _hypr(request).strip()
     if response == "ok":
         return response
     if parts[0] in ("ghost-type", "ghost-texthex") and re.fullmatch(r"ok \d+ keys", response):
@@ -197,6 +197,14 @@ def dispatch_native(request):
             if isinstance(state, dict) and all(isinstance(state.get(key), bool) for key in ("suspended", "render_unfocused")):
                 return response
     raise ControlError(response)
+
+
+def controlled_native(request):
+    from lab import guard
+    guard(os.environ)
+    directory = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
+    with ActionControl(directory) as control:
+        return control.execute(request, lambda: dispatch_native(request))
 
 
 def main():

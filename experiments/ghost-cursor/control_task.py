@@ -4,9 +4,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 from action_control import ActionControl, ControlError, dispatch_native
+from ghost import hypr
 from lab import guard
 from process_scope import identity, terminate
 
@@ -49,6 +51,8 @@ try:
     with ActionControl(directory) as control:
         control.configure(mode="protected")
         def action(request):
+            if "--shared-api" in sys.argv[1:]:
+                return hypr(request)
             return control.execute(request, lambda: dispatch_native(request))
         request = f"ghost-texthex {address} " + "Controlled native text".encode().hex()
         wait_text("")
@@ -100,6 +104,7 @@ try:
         action(f"ghost-release {address}")
         control.configure(mode="protected")
         print(json.dumps({"task": "controlled-native-input", "pass": True,
+                          "shared_api": "--shared-api" in sys.argv[1:],
                           "protected_denial": True, "approval_once": True,
                           "full_input": True, "failure_logged": True,
                           "journal_failure_prevented_input": True,

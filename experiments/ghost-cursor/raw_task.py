@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+from ghost import hypr
 from lab import guard
 import os
 
@@ -16,11 +17,7 @@ assert message
 
 
 def command(name, *args):
-    p = subprocess.run(["hyprctl", name, address, *map(str, args)],
-                       text=True, capture_output=True, check=True)
-    answer = p.stdout.strip()
-    if not answer.startswith("ok"):
-        raise SystemExit(f"{name} refused: {answer}")
+    return hypr(" ".join([name, address, *map(str, args)]))
 
 
 before = json.loads(Path(events).read_text().splitlines()[-1])

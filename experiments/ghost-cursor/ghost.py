@@ -34,14 +34,24 @@ INTERESTING = {"push button", "button", "toggle button", "check box", "radio but
                "label", "static", "status bar", "scroll bar", "menu", "tool bar item", "icon", "image", "section"}
 
 
+def _hypr(cmd):
+    from lab import guard
+    guard(os.environ)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(3)
+        connection.connect(f"{os.environ['XDG_RUNTIME_DIR']}/hypr/{os.environ['HYPRLAND_INSTANCE_SIGNATURE']}/.socket.sock")
+        connection.sendall(cmd.encode())
+        out = b""
+        while chunk := connection.recv(65536):
+            out += chunk
+        return out.decode()
+
+
 def hypr(cmd):
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(f"{os.environ['XDG_RUNTIME_DIR']}/hypr/{os.environ['HYPRLAND_INSTANCE_SIGNATURE']}/.socket.sock")
-    s.sendall(cmd.encode())
-    out = b""
-    while chunk := s.recv(65536):
-        out += chunk
-    return out.decode()
+    if cmd.split() and cmd.split()[0].startswith("ghost-"):
+        from action_control import controlled_native
+        return controlled_native(cmd)
+    return _hypr(cmd)
 
 
 def clients():

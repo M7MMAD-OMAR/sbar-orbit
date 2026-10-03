@@ -2,7 +2,7 @@
 
 This private-lab controller supplies two modes and a synchronized local journal.
 It is a foundation for owner settings and the native backend. It does not yet
-cover direct plugin IPC or imported helper calls, and it is not an OS
+cover direct plugin IPC or remaining imported accessibility actions, and it is not an OS
 security boundary against arbitrary code using the same account.
 
 Run commands inside a lab through `lab.py run LAB -- /usr/bin/python3 SCRIPT`.
@@ -59,8 +59,30 @@ nonzero exits are errors. Output formats stay compatible with the native drivers
 
 A CLI target must have mapped windows only in the agent workspace. Accessibility
 refs must resolve to that target PID. An approval for an action outside this
-scope does not remove the scope checks. Imports and direct plugin IPC still need
-controller integration. Bounded tests that use the existing full-mode native
+scope does not remove the scope checks. Shared native requests through `ghost.hypr` now use the controller. The Qt,
+GTK, Writer and canvas workers use that helper. Direct plugin IPC, low-level
+supervisor transport and imported accessibility actions remain outside this
+cooperative API. Bounded tests that use the existing full-mode native
 drivers must explicitly select full mode in the private lab as an owner test
 setup step. The real protected-mode regression is `cli_control_task.py`, run
 through `harness.py` inside the lab.
+
+The shared native regression uses `control_task.py --shared-api`. It first failed
+on the unwrapped helper because unapproved protected input succeeded. The
+corrected helper passes denial, one-use approval, full input, error outcomes and
+refusal when journal storage is unavailable. `two_clipboards.py` verifies all
+12 copy/paste worker requests against matched successful outcome records.
+
+`two_toolkit_tasks.py QT_PID WRITER_PID` verifies both worker exits, overlapping
+native request intervals and private helper cleanup. It assumes an exclusive
+private lab job. Its whole-lab process census is test-job cleanup and must not be
+used as a production owner-session cleanup mechanism. No harness process
+allowlist or success-after-repair rule was added. Writer uses 16-character paced
+chunks because general bulk typing remains unresolved.
+
+`two_canvas_tasks.py` launches two fresh raw canvases, measures their independent
+text/click/wheel results through `two_tasks.py`, verifies all 12 native journal
+outcomes and reaps both process identities. Run it through the lab harness with
+full mode selected as an owner-side test setup. The DrawingArea fixture has no
+editable accessibility path, so this checks raw input rather than editable-text
+method substitution.

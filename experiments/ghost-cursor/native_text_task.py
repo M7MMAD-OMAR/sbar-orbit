@@ -8,7 +8,7 @@ import sys
 import time
 
 from lab import guard
-from ghost import Atspi, ref, window_for
+from ghost import hypr, Atspi, ref, window_for
 
 guard(os.environ)
 pid, element = int(sys.argv[1]), sys.argv[2]
@@ -19,10 +19,7 @@ assert widget.get_text_iface() and widget.get_component_iface()
 
 
 def command(name, *args):
-    answer = subprocess.run(["hyprctl", name, address, *map(str, args)],
-                            check=True, capture_output=True, text=True).stdout.strip()
-    if not answer.startswith("ok"):
-        raise RuntimeError(f"{name}: {answer}")
+    return hypr(" ".join([name, address, *map(str, args)]))
 
 
 def text():

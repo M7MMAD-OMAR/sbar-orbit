@@ -50,7 +50,8 @@ try:
     command("ghost-key", "ctrl+v")
     wait_text(message)
     command("ghost-release")
-    print(json.dumps({"task": "native-background-copy-paste", "pass": True, "text": message}))
+    print(json.dumps({"task": "native-background-copy-paste", "pass": True, "text": message,
+                      "address": address}))
 finally:
     if owned:
         terminate({owned})

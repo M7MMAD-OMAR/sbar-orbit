@@ -10,7 +10,7 @@ from pathlib import Path
 import uno
 
 from lab import guard
-from ghost import app, window_for, Atspi
+from ghost import hypr, app, window_for, Atspi
 
 guard(os.environ)
 pid = int(sys.argv[1])
@@ -46,9 +46,7 @@ def find(role, name=None):
 
 
 def command(name, *args):
-    result = subprocess.run(["hyprctl", name, address, *map(str, args)],
-                            text=True, capture_output=True, check=True).stdout.strip()
-    assert result.startswith("ok"), result
+    return hypr(" ".join([name, address, *map(str, args)]))
 
 
 def click(element):
