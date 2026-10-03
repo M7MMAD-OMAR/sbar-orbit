@@ -830,3 +830,105 @@ Publication gates for the cost probe: typecheck passed; full bounded suite
 583 passed, 45 skipped, zero failed and 3771 assertions across 135 files.
 Publication audit checked 812 files with no findings; staged Gitleaks found
 no leaks. Native skips do not close missing coverage or owner acceptance.
+
+## Cursor localized redraw experiment
+
+Reviewed 4 October 2026, against installed Hyprland 0.56.2 commit
+`efb50993780079460b0cbed1363e2166a2de1d9f`:
+[upstream renderer source](https://raw.githubusercontent.com/hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f/src/render/Renderer.cpp).
+The native damageBox API takes global logical geometry, then translates and
+scales it per monitor. damageMonitor invalidates the entire monitor. Use the
+same cursor geometry for rendering and damage, retain its previous global box,
+and repaint old/new bounds on movement, hide, removal and unload. Window moves
+need the retained old box too. This was tested as a rendering-only candidate,
+without changing input dispatch or authorization. The candidate is retained in
+`localized-cursor-damage.patch`; the active plugin source keeps the previous
+full-monitor redraw implementation because the candidate did not establish a
+CPU improvement. Screenshots can trigger full redraw, so capture equality alone
+does not establish correct partial repaint under every display/backend.
+
+
+The two-request candidate measured 0.28 and 0.33 combined compositor CPU seconds
+per six-second moving sample, compared with baseline-before 0.23 and 0.22. A
+single bounding-request candidate measured 0.23 and 0.25. These short nested
+software-renderer measurements do not establish reduced CPU cost; the change
+was not adopted. A fresh baseline-after run measured 0.26 and 0.23, confirming that the candidate
+did not establish a reduction beyond the observed variation. Both current
+and candidate builds use the same prototype build configuration. The cost
+probe accepts an explicit build-source snapshot only when its hash matches the
+loaded binary's sidecar. This allows a comparison against earlier source
+without attributing it to the current tree. Switching libraries in one process
+left multiple resident mappings; the strict probe rejected that ambiguous
+binding, and subsequent comparisons used separate fresh compositors.
+
+The new visual probe checks each cursor footprint independently and rejects
+pixels outside the expected footprints. Three pure tests compile only the exact
+pixel-verifier AST definition, without importing GUI/runtime modules. The old
+verifier failed the missing-second-cursor case; corrected source passed all
+three. Initial visual tests had weaker pair validation and repeated the same
+window position at the second scale. Final source resets positions per scale
+and requires an actual geometry change before accepting window-motion evidence.
+The retained active-source visual run passed all 13 checks and cleanup; the
+one-request candidate
+passed 13 capture checks at scales 1 and 1.5, including simultaneous distinct
+footprints, old-position clearing, hide, genuine edge/window movement, reshown
+cursor and unload/config-reload clean pixels. These are delayed captures, not
+first-frame latency or every partial-repaint guarantee.
+
+[Installed upstream plugin lifecycle](https://raw.githubusercontent.com/hyprwm/Hyprland/efb50993780079460b0cbed1363e2166a2de1d9f/src/plugins/PluginSystem.cpp),
+reviewed 4 October 2026, schedules a configuration reload after load/unload.
+The real private unload changed the test monitor scale from 1.5 to configured
+1. Initial comparison against a 1.5 image failed and was retained. The corrected
+probe compares the natural post-reload image against its previously captured
+matching-scale clean baseline, before any explicit monitor reset. No active
+plugin remained afterwards. This does not isolate PLUGIN_EXIT damage from the
+upstream full config reload, and does not prove owner-session noninterference
+on unload. Owner state preservation around plugin lifecycle is still open.
+An initial native-input run lacked a virtual pointer device and failed with
+"target has no pointer resource"; its failed report remains private. The corrected
+retained-source run included an explicit lab virtual-pointer device and passed
+all 20 native outcomes, B1, B2, B3, B4 and B12, exact app-scope cleanup and
+2.191 seconds of native input overlap.
+
+The final retained-source visible recording has 43 encoded frames,
+2.314 seconds of native input overlap, exact continued simulated-person
+typing and one simulated pointer position. Pixel and frame-duration equality
+were verified. Original PNG bytes total 3,714,145; lossless APNG
+is 1,462,494 bytes. Originals stay private. Both actual cursor
+overlays were inspected in the resulting frame. Recording overhead is not
+production performance evidence. APNG SHA-256: `861564517946f9a1014b0323e11b628309a2b996961bbd382bb4599fcdc585a2`.
+
+Final source/evidence bindings:
+- `cursor_cost_probe.py`: `334503cadcbb62f79dd82c12bd964947c062bd53ce7ccee49692d568655fe668`
+- `cursor_damage_probe.py`: `868649c1f171aaa7a6150c396dead12c400bba7d463c570187cb5d73a90730ea`
+- `cursor_pixels_test.py`: `c3fb298b11ab215798a0c6880e1c320cbd888ede9021c03d7b5fbde4b1112a86`
+- `localized-cursor-damage.patch`: `92e73a1c25d587eafe15891a1c4463c6bf63a2c2cdc61cb86676c14868b10b90`
+- `plugin/ghostinput.cpp`: `3ebaa36827ca7ee559fb7b3715e58545deb81add231442bfc3e0f21d8beb82ce`
+
+Owner integration, full appearance parity, universal audit coverage, complete
+toolkit/clipboard coverage, cursor identity/reference comparison and whole-system
+performance remain incomplete or not measured. No release acceptance is claimed.
+
+Pure pixel-verifier check, without GUI/runtime imports:
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/ghost-cursor/cursor_pixels_test.py
+```
+
+All temporary labs were stopped after evidence preservation. This is research
+publication and scoped test evidence, not owner-session release acceptance.
+
+The candidate patch uses zero context to avoid whitespace-only context records
+in the published text artifact. Its preimage is the retained plugin source
+SHA-256 above. Validate it without applying it:
+
+```sh
+git apply --unidiff-zero --check experiments/ghost-cursor/localized-cursor-damage.patch
+```
+
+Applying this research candidate is not owner-session release acceptance.
+
+Publication gates: typecheck and three pure pixel tests passed. Complete bounded
+suite passed with 583 passed, 45 skipped, zero failed and 3771 assertions across
+135 files. Publication audit checked 815 files with no findings; staged Gitleaks
+found no leaks. Skips do not establish missing native coverage.

@@ -46,11 +46,14 @@ def main():
     guard(os.environ)
     require_budget()
     root = Path(__file__).resolve().parent
+    if len(sys.argv) not in (1, 2):
+        raise RuntimeError("Provide an optional exact plugin build source snapshot")
+    plugin_source = Path(sys.argv[1]) if len(sys.argv) == 2 else root / "plugin/ghostinput.cpp"
     lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     report = {"scope": "private nested renderer only", "pass": False,
               "whole_system_performance": "not measured", "samples": [],
               "probe_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-              "plugin_source_sha256": hashlib.sha256((root / "plugin/ghostinput.cpp").read_bytes()).hexdigest()}
+              "plugin_source_sha256": hashlib.sha256(plugin_source.read_bytes()).hexdigest()}
     actors, windows, person = [], [], None
     cursor_addresses = set()
     shown = False

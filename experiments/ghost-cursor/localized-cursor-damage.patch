@@ -1,0 +1,69 @@
+diff --git a/experiments/ghost-cursor/plugin/ghostinput.cpp b/experiments/ghost-cursor/plugin/ghostinput.cpp
+index 1f2e5cf..427259b 100644
+--- a/experiments/ghost-cursor/plugin/ghostinput.cpp
++++ b/experiments/ghost-cursor/plugin/ghostinput.cpp
+@@ -33,0 +34 @@
++#include <optional>
+@@ -56,0 +58 @@ struct SCursor {
++    std::optional<CBox> lastBox;
+@@ -207,0 +210,25 @@ static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_
++static std::optional<CBox> cursorBox(const SCursor& cursor) {
++    auto window = cursor.window.lock();
++    if (!window)
++        return std::nullopt;
++    auto surface = window->surfaceLogicalBox();
++    if (!surface)
++        return std::nullopt;
++    return CBox{surface->x + cursor.local.x - 4, surface->y + cursor.local.y - 3, 30, 36};
++}
++
++static void damageCursor(SCursor& cursor) {
++    auto box = cursorBox(cursor);
++    if (cursor.lastBox && box) {
++        const double left = std::min(cursor.lastBox->x, box->x);
++        const double top = std::min(cursor.lastBox->y, box->y);
++        const double right = std::max(cursor.lastBox->x + cursor.lastBox->w, box->x + box->w);
++        const double bottom = std::max(cursor.lastBox->y + cursor.lastBox->h, box->y + box->h);
++        g_pHyprRenderer->damageBox(CBox{left, top, right - left, bottom - top});
++    } else if (box)
++        g_pHyprRenderer->damageBox(*box);
++    else if (cursor.lastBox)
++        g_pHyprRenderer->damageBox(*cursor.lastBox);
++    cursor.lastBox = box;
++}
++
+@@ -217,0 +245,2 @@ static void drawCursors(eRenderStage stage) {
++            if (it->second.lastBox)
++                g_pHyprRenderer->damageBox(*it->second.lastBox);
+@@ -225 +254 @@ static void drawCursors(eRenderStage stage) {
+-        auto box = w->surfaceLogicalBox();
++        auto box = cursorBox(it->second);
+@@ -230 +259,5 @@ static void drawCursors(eRenderStage stage) {
+-        const Vector2D pos = (Vector2D{box->x, box->y} + it->second.local - mon->m_position) * mon->m_scale;
++        const auto& previous = it->second.lastBox;
++        if (!previous || previous->x != box->x || previous->y != box->y) {
++            // Window motion may occur without another pointer command.
++            damageCursor(it->second);
++        }
+@@ -265 +298 @@ static void drawCursors(eRenderStage stage) {
+-        data.box = CBox{pos.x - 4 * mon->m_scale, pos.y - 3 * mon->m_scale, 30 * mon->m_scale, 36 * mon->m_scale};
++        data.box = box->copy().translate(-mon->m_position).scale(mon->m_scale);
+@@ -508,2 +541,5 @@ static std::string pointerCmd(std::string req, int kind) {
+-    cursors[address] = {t.window, local};
+-    g_pHyprRenderer->damageMonitor(t.window->m_monitor.lock());
++    auto& cursor = cursors[address];
++    // Retain the old footprint so one damage request covers both positions.
++    cursor.window = t.window;
++    cursor.local = local;
++    damageCursor(cursor);
+@@ -671,2 +707 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+-        if (auto w = it->second.window.lock())
+-            g_pHyprRenderer->damageMonitor(w->m_monitor.lock());
++        damageCursor(it->second);
+@@ -716,4 +751,2 @@ APICALL EXPORT void PLUGIN_EXIT() {
+-    for (const auto& [address, cursor] : cursors) {
+-        if (auto w = cursor.window.lock())
+-            g_pHyprRenderer->damageMonitor(w->m_monitor.lock());
+-    }
++    for (auto& [address, cursor] : cursors)
++        damageCursor(cursor);
