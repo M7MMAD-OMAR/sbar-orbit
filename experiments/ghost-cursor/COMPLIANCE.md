@@ -108,7 +108,7 @@ as experimental source without being presented as a completed product release.
 ## Source binding
 
 - `plugin/ghostinput.cpp`: `3ebaa36827ca7ee559fb7b3715e58545deb81add231442bfc3e0f21d8beb82ce`
-- `ghost.py`: `4d2bb02cb92ec3bbe4021c1cfd788b532b6ad05ac817efa782a5c4a48aebb840`
+- `ghost.py`: `f83449c4af3d1fad5fdbe35ee1d989c3ba71054c543dc5a7f166462d6b7fd4e3`
 - `harness.py`: `cd3ecefa7ba1477cad380d7b8a7d0e446aa43c2ec3aa7c9acb84a3c00cd868c0`
 - `process_scope.py`: `6e2282149954a64741cb62f7b7fa8962808955a86ba51872301731ddc3e48afa`
 - `agent_launch.py`: `93d2cec4df05d3858e6b91a7856e3ab6d5d6c3f611ce6339cef8680c3ae0faa4`
@@ -121,7 +121,7 @@ The next controller stores mode and one-use approvals outside action requests,
 with a private durable journal. Journal synchronization runs in the requesting
 process, never in the compositor rendering thread. The first implementation
 covers calls made through this controller only. Direct experimental Hyprland
-IPC and accessibility paths still require integration before all-action coverage
+IPC and imported accessibility helpers still require integration before all-action coverage
 can be claimed. Same-user files are configuration, not a security boundary
 against arbitrary code running with the owner's account. No live-seat use is
 authorized by the controller's existence.
@@ -131,7 +131,7 @@ refusal, full-mode input, error recording and refusal when its journal path was
 unwritable. B1, B2, B3, B4 and B12 passed with all 171 stand-in characters.
 The initial run failed because the successful text response includes a key
 count; that protocol parsing error was corrected and the failure is retained.
-Five behavioral checks passed, including eight concurrent actors and journal
+The earlier five behavioral checks passed, including eight concurrent actors and journal
 reopen. Deliberately bypassing approval made the protected-mode test fail.
 An interrupted begin remains unresolved when inspecting the ledger, never a
 reported success. Hardware power-loss behavior remains not measured.
@@ -153,3 +153,57 @@ controlled p95 at 1.773 ms. This measures journaling around hidden-window state
 queries only. It is not a comparison with the old desktop runtime or a typing,
 rendering, memory or owner-session benchmark. The earlier tmpfs measurement is
 retained with its storage limit and is not used as disk-journal evidence.
+
+## CLI controller integration
+
+The native CLI now routes every command through synchronized intent and outcome
+records, including launch, accessibility edits, reads and captures. Protected
+mode requires the canonical `ghost-cli` JSON argument request. Zero-exit legacy
+commands become success outcomes; nonzero exits become error outcomes.
+
+The real GTK3 CLI regression failed before this integration because an
+unapproved protected launch succeeded. It now passes protected launch refusal,
+approved launch and edit, replay refusal, full-mode text readback, invalid-ref
+error recording, refusal of a stand-in outside the agent workspace and refusal
+to launch when journal storage is unavailable. B1, B2, B3, B4 and B12 passed,
+with all 171 stand-in characters intact. Reports remain local.
+
+Accessible app lookup and window capture now require mapped windows belonging
+to the agent workspace, with no other mapped window of that PID outside it.
+Refs additionally require the resolved accessible element's PID to match the
+requested process. Cross-process client relationships remain a coverage limit.
+Direct experimental IPC and imported helper calls are not yet universally
+controlled. The CLI integration does not establish complete all-action coverage.
+Current project gates passed after these source edits: typecheck and the full
+bounded suite, 572 passed, 45 skipped, zero failed, 3733 assertions across
+130 files. Skips remain explicit native/platform coverage limits.
+
+Controller concurrency correction: the original lock covered operation execution
+and blocked a second actor behind a long action. The new sixth behavioral check
+failed on that source. After shortening the lock to intent/approval and outcome
+writes, all six checks passed and the short actor completed while the long actor
+was still active. Configuration changes affect later requests; they do not
+retroactively cancel an operation whose intent was already approved.
+Earlier controller latency evidence is stale after this lock-scope edit; current
+latency and persistent-storage verification are pending. Unresolved inspection
+includes in-flight intent until its outcome arrives and must not be read as a
+completed result.
+
+Current private regression after shortening the lock passed controlled CLI launch
+and accessibility again. Two concurrent GTK3 clipboard workers with controlled
+launches passed B1, B2, B3, B4 and B12, with a 0.813-second process lifetime
+overlap. Their direct raw test-helper input is still outside controller coverage.
+All six controller behavior checks also passed on persistent btrfs storage.
+
+Fresh GTK4 launch, CLI accessibility snapshot and target/ref ownership checks
+also passed with the current source. Multiline text, selection, deselection and
+scrolling passed B1, B2, B3, B4 and B12. Direct raw input in this measurement
+remains test-helper input, so this is toolkit regression evidence rather than
+universal controller coverage.
+
+Current controller source binding:
+- `action_control.py`: `08d448aca25846f7fc7742efe32613bc8eb742eb074656e8dab64d4c7b0a48a1`
+- `action_control_test.py`: `a609bc9e296df174479f41b1e1895352304394ef5c089824ed3c4b575ca8086d`
+- `ghost.py`: `f83449c4af3d1fad5fdbe35ee1d989c3ba71054c543dc5a7f166462d6b7fd4e3`
+- `control_task.py`: `263c1099a2cdf68799e0bf5742aab9c4b0523dd25a386624fa99ba6b9f5caae1`
+- `cli_control_task.py`: `c3f2eb2ee59e9f7bc8b18daa8936fb1d95707b9b7d34b4fdd41d9aafdfc51a84`

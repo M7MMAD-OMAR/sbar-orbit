@@ -8,6 +8,6 @@ test.skipIf(process.platform !== "linux")("native action modes require one-use a
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 5 tests");
+  expect(stderr).toContain("Ran 6 tests");
   expect(stderr).toContain("OK");
 }, 15_000);

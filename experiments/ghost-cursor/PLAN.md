@@ -17,6 +17,8 @@ Development uses a private lab and does not send input to the owner's seat.
 - Failed launches clean up their owned processes and temporary markers.
 - Concurrent native GTK3 clients preserve distinct clipboard text.
 - Viewer fullscreen and independent command/polling error recovery are tested.
+- CLI launch and accessibility now use the controller, with real protected
+  denial, approval, readback and journal-failure evidence.
 - Native controller decisions and durable intent/outcome records are measured
   on a real GTK3 target, including failure before input when the journal fails.
 
@@ -26,8 +28,9 @@ Development uses a private lab and does not send input to the owner's seat.
 - Implement owner-session integration and owner theme inheritance.
 - Integrate the tested protected/full controller into every agent entry point
   and the owner settings UI.
-- Extend the tested synchronized journal to launch, accessibility and all raw
-  input paths. Direct experimental IPC currently bypasses the controller.
+- Extend the synchronized journal to direct raw input and imported helpers.
+  CLI launch and accessibility are now controlled; direct experimental IPC
+  currently bypasses the controller.
 - Compare total CPU, memory and latency with the previous runtime.
 - Prepare the final owner-session acceptance required by BAR.md.
 - Finish project gates and record exact source-bound acceptance evidence.

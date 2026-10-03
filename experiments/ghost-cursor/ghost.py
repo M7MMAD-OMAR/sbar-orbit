@@ -53,6 +53,7 @@ def agent_windows():
 
 
 def app(pid):
+    window_for(pid)
     d = Atspi.get_desktop(0)
     for i in range(d.get_child_count()):
         a = d.get_child_at_index(i)
@@ -136,7 +137,10 @@ def ref(pid, r):
     refs = json.loads((STATE / f"{pid}.json").read_text())
     if r not in refs:
         sys.exit(f"ghost: unknown ref {r}, take a new snapshot")
-    return path_of(app(pid), refs[r])
+    element = path_of(app(pid), refs[r])
+    if element.get_process_id() != pid:
+        sys.exit("ghost: element does not belong to the target process")
+    return element
 
 
 PRIMARY = ["click", "press", "activate", "toggle", "jump", "open", "default.activate", "select"]
@@ -153,10 +157,12 @@ def press(a):
 
 
 def window_for(pid):
-    for c in clients():
-        if c["pid"] == pid:
-            return c
-    sys.exit(f"ghost: no window for pid {pid}")
+    windows = [c for c in clients() if c["pid"] == pid and c.get("mapped", False)]
+    if not windows:
+        sys.exit(f"ghost: no mapped window for pid {pid}")
+    if any(c["workspace"]["name"] != SPACE for c in windows):
+        sys.exit("ghost: target process also owns non-agent windows")
+    return windows[0]
 
 
 def main():
@@ -287,5 +293,24 @@ def main():
         sys.exit(__doc__)
 
 
+def controlled_main():
+    from action_control import ActionControl, ControlError, cli_request
+    from lab import guard
+    guard(os.environ)
+    def operation():
+        try:
+            main()
+        except SystemExit as error:
+            if error.code is not None and error.code != 0:
+                raise ControlError(str(error.code)) from error
+        return {"exit": 0}
+    directory = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
+    with ActionControl(directory) as control:
+        control.execute(cli_request(sys.argv[1:]), operation)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        controlled_main()
+    except Exception as error:
+        sys.exit(f"ghost: {error}")

@@ -129,11 +129,19 @@ class ActionControl:
             if settings["mode"] == "protected":
                 settings["approval"] = None
                 self._replace_settings(settings)
+        finally:
+            os.close(lock)
+        try:
+            result = operation()
+        except BaseException as error:
+            lock = self._lock()
             try:
-                result = operation()
-            except BaseException as error:
                 self._record({"id": action_id, "phase": "finish", "outcome": "error", "error": str(error)})
-                raise
+            finally:
+                os.close(lock)
+            raise
+        lock = self._lock()
+        try:
             self._record({"id": action_id, "phase": "finish", "outcome": "success", "result": result})
             return result
         finally:
@@ -162,6 +170,10 @@ class ActionControl:
             return {"settings": self._settings(), "events": records, "unresolved": sorted(pending)}
         finally:
             os.close(lock)
+
+
+def cli_request(argv):
+    return "ghost-cli " + json.dumps(argv, separators=(",", ":"), ensure_ascii=True)
 
 
 def dispatch_native(request):
@@ -197,9 +209,14 @@ def main():
     approval = sub.add_parser("approve", help="Approve one exact request")
     approval.add_argument("request")
     sub.add_parser("status")
+    cli = sub.add_parser("cli-request", help="Print the exact approval request for ghost.py arguments")
+    cli.add_argument("argv", nargs=argparse.REMAINDER)
     action = sub.add_parser("act")
     action.add_argument("request")
     args = parser.parse_args()
+    if args.command == "cli-request":
+        print(cli_request(args.argv[1:] if args.argv[:1] == ["--"] else args.argv))
+        return 0
     directory = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
     with ActionControl(directory) as control:
         if args.command == "mode":

@@ -36,12 +36,16 @@ def wait_text(expected):
 
 
 try:
+    directory = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
+    # Fixture setup is an owner-side test step. Actual decisions below run in
+    # protected mode before switching to the explicitly tested full mode.
+    with ActionControl(directory) as setup:
+        setup.configure(mode="full")
     window = json.loads(subprocess.check_output([
         "/usr/bin/python3", str(root / "ghost.py"), "launch", "--raw", "--",
         "/usr/bin/python3", str(root / "clipboard_fixture.py"), str(events), ""], text=True, timeout=25))
     owned = identity(window["pid"])
     address = window["address"]
-    directory = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
     with ActionControl(directory) as control:
         control.configure(mode="protected")
         def action(request):

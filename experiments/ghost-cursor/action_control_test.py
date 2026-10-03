@@ -15,6 +15,16 @@ def concurrent_action(directory, index):
         control.execute(f"actor {index}", lambda: {"actor": index})
 
 
+def long_action(directory, entered, release):
+    with ActionControl(directory) as control:
+        def operation():
+            entered.set()
+            if not release.wait(timeout=5):
+                raise RuntimeError("Long actor was not released")
+            return "finished"
+        control.execute("long actor", operation)
+
+
 class ControlTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="orbit-control-test-")
@@ -108,6 +118,29 @@ class ControlTests(unittest.TestCase):
         begins = [e for e in report["events"] if e["phase"] == "begin" and e["kind"] == "action"]
         self.assertEqual(len({e["id"] for e in begins}), 8)
         self.assertEqual(report["unresolved"], [])
+
+    def test_long_action_does_not_block_another_actor(self):
+        self.control.configure(mode="full")
+        entered, release = multiprocessing.Event(), multiprocessing.Event()
+        long = multiprocessing.Process(target=long_action, args=(self.directory, entered, release))
+        short = multiprocessing.Process(target=concurrent_action, args=(self.directory, 99))
+        try:
+            long.start()
+            self.assertTrue(entered.wait(timeout=3))
+            short.start()
+            short.join(timeout=1)
+            self.assertEqual(short.exitcode, 0, "The short actor waited for the long action")
+            self.assertTrue(long.is_alive())
+        finally:
+            release.set()
+            for worker in (long, short):
+                if worker.pid is not None:
+                    worker.join(timeout=5)
+                    if worker.is_alive():
+                        worker.terminate()
+                        worker.join(timeout=5)
+        self.assertEqual(long.exitcode, 0)
+        self.assertEqual(self.control.inspect()["unresolved"], [])
 
 
 if __name__ == "__main__":
