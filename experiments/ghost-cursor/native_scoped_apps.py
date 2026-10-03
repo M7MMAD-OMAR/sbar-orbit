@@ -22,6 +22,8 @@ from lab import guard
 from native_lease_probe import cleanup_units
 
 guard(os.environ)
+if len(sys.argv) not in (1, 2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in ("default", "prefer-dark", "prefer-light")):
+    raise RuntimeError("Provide optional appearance config and validated color-scheme enum")
 here = Path(__file__).resolve().parent
 lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
 baseline = {window["pid"] for window in clients()}
@@ -48,10 +50,12 @@ try:
             with open(temporary, "w", opener=lambda path, flags: os.open(path, flags, 0o600)) as report:
                 json.dump({"units": units}, report)
             os.replace(temporary, unit_report)
-        if len(sys.argv) == 2:
+        if len(sys.argv) >= 2:
             staged = subprocess.run(["bun", str(here / "native_appearance_stage.ts"), sys.argv[1], str(work)],
                                     capture_output=True, text=True, timeout=5, check=True)
             shutil.move(json.loads(staged.stdout)["directory"], work / "config")
+        if name == "gtk4" and len(sys.argv) == 3:
+            (work / "color-scheme.json").write_text(json.dumps({"color_scheme": sys.argv[2]}))
         launched = subprocess.run(["/usr/bin/python3", str(here / "ghost.py"), "launch", "--raw", "--",
                                    "/usr/bin/python3", str(here / "native_scope_launch.py"), str(work), unit, "--", *command],
                                   capture_output=True, text=True, timeout=20, check=True)
@@ -121,6 +125,8 @@ try:
         subprocess.run(["grim", "-T", worker["window"]["stableId"], str(here / "evidence" / f"native-scoped-{worker['name']}.png")],
                        env=worker["env"], capture_output=True, timeout=5, check=True)
         results.append({"name": worker["name"], "task": summary, "native_actions": len(begins), "interval": interval, "private_tree": "pass", "scope_membership": "pass", "bus_peers": "pass", "activated_profile": "pass", "diagnostics": error.decode()})
+        if (Path(worker["env"]["HOME"]).parent / "color-scheme-report.json").exists():
+            results[-1]["appearance_settings"] = json.loads((Path(worker["env"]["HOME"]).parent / "color-scheme-report.json").read_text())
     if os.environ.get("ORBIT_NATIVE_DEMO_LAYOUT") == "1":
         time.sleep(1)
 except BaseException as error:
@@ -154,6 +160,8 @@ for worker in workers:
 overlap = (min(result["interval"][1] for result in results) - max(result["interval"][0] for result in results)) / 1e9
 assert overlap > 0, "Workers did not overlap native input intervals"
 for profile in profiles:
+    if (profile / "color-scheme-report.json").exists():
+        shutil.copyfile(profile / "color-scheme-report.json", here / "evidence" / f"{profile.name}-color-scheme.json")
     shutil.copyfile(profile / "activation.json", here / "evidence" / f"{profile.name}-activation.json")
     shutil.copyfile(profile / "launcher.log", here / "evidence" / f"{profile.name}-launcher.log")
     shutil.rmtree(profile)

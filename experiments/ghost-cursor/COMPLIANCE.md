@@ -719,3 +719,59 @@ found no leaks. This is experimental publication, not full owner-session accepta
 - `native_scoped_cursor_demo.py`: `d06b8cf78841352c612ce3ead095f305350a15d4b5eb4b4691dbd9846cf90b81`
 - `native_cursor_cleanup_test.py`: `e071a57f37c447853364a70ae18513fdfd43cd574758b9f8ca67850b3d39397b`
 - `tests/native-cursor-cleanup.test.ts`: `1386f3377eea681514a6db31fe6293f1cf1613959b0f3ced8e8491103250486b`
+
+## Native GTK color-scheme delivery
+
+Scope: convey the owner's named color-scheme preference to the private GTK4
+application through installed GSettings/dconf and XDG Settings portal services.
+No owner settings are written and no complete dconf database is copied.
+Sources reviewed 4 October 2026:
+- [XDG Settings API](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Settings.html):
+  color-scheme is a read-only unsigned value, 0 no preference, 1 dark, 2 light.
+- [Portal selection configuration](https://flatpak.github.io/xdg-desktop-portal/docs/configuration-file.html):
+  private portals.conf can select installed backends by interface.
+- [Installed libadwaita 1.9.4 GSettings implementation](https://raw.githubusercontent.com/GNOME/libadwaita/1.9.4/src/adw-settings-impl-gsettings.c):
+  color-scheme direct fallback requires portals to be disabled. Normal apps
+  use the portal preference; copying GTK settings alone does not establish it.
+- [libadwaita style manager](https://gnome.pages.gitlab.gnome.org/libadwaita/doc/main/property.StyleManager.color-scheme.html):
+  effective appearance combines the application's preference with system
+  preference. App-forced styles may legitimately differ.
+Installed versions: libadwaita 1.9.4, GTK 4.22.5, GLib 2.88.3, dconf 0.49.0.
+The owner's targeted read returns prefer-dark. Stage only that validated enum
+into the fresh private profile. Existing private activation already starts
+xdg-desktop-portal and its GTK backend; this change uses those installed
+services and retains warnings and unmeasured performance as explicit limits.
+Three real private runs passed default, prefer-dark and prefer-light. Separate
+GSettings reads matched each enum, and the installed Settings portal returned
+0, 1 and 2 respectively. Writer, dconf, portal and GTK backend identities were
+inside the exact application scope. Each run passed B1, B2, B3, B4 and B12,
+20 native outcomes and scope cleanup. The owner preference remained prefer-dark.
+GTK4 dark compositor pixels were inspected. An initial relative harness path
+failed before application launch and was retained; corrected absolute paths
+were used for the actual measurements.
+
+Four pure tests reject invalid plans, links and foreign profiles before writes.
+The reconstructed missing directory validation failed the owner-like symlink
+trap test; corrected source passed all four. These tests never touch a desktop.
+The updated visible recording has 44 encoded frames and 2.285 seconds of native
+input overlap, exact stand-in typing and one simulated pointer position. All
+decoded pixels and durations were verified. Raw PNGs total 3,792,935 bytes;
+APNG is 1,551,167 bytes. Originals remain private. APNG SHA-256:
+`4b8c262dcd2f1b75ba82e3fc9dfe83c8f23454c37e31a122073b0896097c7936`.
+Both GTK4 and Qt are dark in this private recording. Portal diagnostics remain
+in private evidence. Recording overhead and whole-system performance are not
+measured. Full theme/CSS/font parity and owner-session acceptance remain
+incomplete. This is experimental publication, not release acceptance.
+
+Current source bindings for color-scheme evidence:
+- `native_color_scheme.py`: `98d43cb4b3add49a414d2cf6ad615a3860bf84dacacd8831c0a54fc9f6749f2e`
+- `native_color_scheme_test.py`: `e94c73889f8c866b1a22049cfa9d78d2e403ea9e59b91872c4a799e0902c53b0`
+- `native_scope_launch.py`: `6e2b15795a372ad4a242917a93ef8c64122a4144860f9e899da202d965c5f61e`
+- `native_scoped_apps.py`: `69c8ec3dd49d272564de519f69a37274cb4f5e3d4560d5c8aa2ac3c8944ae263`
+- `native_scoped_cursor_demo.py`: `36af0b915ced2793314c8400cfe1a99230d67f0ebc9b071b86ddcacd860e71b8`
+
+Final publication checks: typecheck passed; complete bounded suite passed with
+583 passed, 45 skipped, zero failed and 3770 assertions across 135 files.
+Native opt-in skips do not establish missing coverage. Publication audit checked
+811 files with no findings; staged Gitleaks found no leaks. The private lab was
+stopped after evidence preservation.

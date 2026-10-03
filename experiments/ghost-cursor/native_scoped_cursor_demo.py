@@ -24,8 +24,8 @@ from src.native.lease import manager_environment
 
 def main():
     guard(os.environ)
-    if len(sys.argv) != 2:
-        raise RuntimeError("Provide the appearance source configuration directory")
+    if len(sys.argv) not in (2, 3) or (len(sys.argv) == 3 and sys.argv[2] not in ("default", "prefer-dark", "prefer-light")):
+        raise RuntimeError("Provide appearance config and optional validated color-scheme enum")
     here = Path(__file__).resolve().parent
     evidence = here / "evidence"
     frames, errors = [], []
@@ -74,7 +74,7 @@ def main():
         recorder.start()
         pointer.start()
         typist = subprocess.Popen(["wtype", "-d", "15", typed])
-        actor = subprocess.Popen(["/usr/bin/python3", str(here / "native_scoped_apps.py"), sys.argv[1]],
+        actor = subprocess.Popen(["/usr/bin/python3", str(here / "native_scoped_apps.py"), *sys.argv[1:]],
                                  env=dict(os.environ, ORBIT_NATIVE_DEMO_LAYOUT="1",
                                           ORBIT_NATIVE_DEMO_UNITS_FILE=str(unit_report)),
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)

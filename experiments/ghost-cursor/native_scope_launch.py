@@ -100,6 +100,12 @@ def main():
         raise RuntimeError("Activated service inherited another session bus")
     if not lease.contains(tuple(activation["process"])):
         raise RuntimeError("Activated service escaped its scope")
+    if (work / "color-scheme.json").is_file():
+        environment["GSETTINGS_BACKEND"] = "dconf"
+        settings = subprocess.run(["/usr/bin/python3", str(Path(__file__).with_name("native_color_scheme.py")),
+                                  str(work), unit], env=environment, capture_output=True, text=True, timeout=10)
+        sys.stderr.write(settings.stderr)
+        settings.check_returncode()
     registry_env = dict(environment, DBUS_SESSION_BUS_ADDRESS=environment["AT_SPI_BUS_ADDRESS"])
     subprocess.Popen(["/usr/libexec/at-spi2-registryd"], env=registry_env)
     deadline = time.monotonic() + 3
