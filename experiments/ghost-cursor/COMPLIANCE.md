@@ -488,3 +488,68 @@ over 797 files with no findings, and staged Gitleaks found no leaks. Native
 opt-in skips do not close unmeasured coverage. Owner-session activation,
 universal audit coverage, CSS/assets/portal integration, complete native
 toolkit matrix and comparative performance remain incomplete.
+
+## Native process unit identity
+
+Scope: identify a generated native process unit by its systemd invocation,
+exact budget-contained cgroup directory identity and member kernel process
+identities. This does not enroll a process for input, launch owner applications,
+modify the compositor, or authorize cleanup of an owner session.
+Sources reviewed 3 October 2026:
+- [systemd-run source manual](https://github.com/systemd/systemd/blob/main/man/systemd-run.xml):
+  transient user service units and explicit slice selection. Installed systemd
+  is 259.9 on Fedora 44. The rendered freedesktop manual returned HTTP 403;
+  the upstream source manual was used instead.
+- [systemd resource control](https://github.com/systemd/systemd/blob/main/man/systemd.resource-control.xml):
+  cgroup membership and slice hierarchy. Shared Orbit budget enforcement remains
+  mandatory. An agent unit cannot adopt the whole lab or shared slice.
+- [D-Bus dbus-run-session](https://dbus.freedesktop.org/doc/dbus-run-session.1.html):
+  private session bus for one command. The probe will verify distinct buses,
+  not infer isolation from the launch command alone.
+This is cooperative same-user ownership, not a malicious same-user security
+boundary. The read-only `src/native/lease.py` inspector requires a generated unit name,
+an active valid InvocationID, the exact direct child of the caller's enforced
+shared-budget slice, a canonical cgroup directory dev/inode, and PID with
+kernel start time. It refuses the shared slice and sibling units. Membership
+is a current snapshot, not retained pidfd authority or complete future-child
+tracking. Batch member reads query the manager before and after the census;
+they do not spawn a manager query per PID. Production callback cost is not
+measured. No process environment is read and no process is killed by this API.
+A caller inside its own unit is a legitimate member; the probe refusal covers
+an outside caller, not unconditional self-exclusion.
+
+Eight synthetic tests passed: changed invocation/directory, foreign cgroups,
+path boundary, PID start time, malformed identities, restart during check,
+legitimate same-unit caller, invalid names, and cleanup after stop failure.
+Several cases share a test method. The two-unit lab probe passed with a distinct
+private D-Bus socket for each worker. Each bus peer's actual kernel identity
+belonged to its own lease. A child that cleared its entire environment and
+called setsid remained identifiable by its cgroup. Each worker refused the
+other's processes and an outside caller. Stopping one created unit killed its
+root and detached child while the sibling stayed live; final cleanup left no
+worker roots or detached children, and no generated units remained active.
+No GUI application or compositor plugin was launched by this probe.
+
+The first-stop-failure regression failed on a reconstructed old cleanup loop
+before passing on the corrected implementation. Its first diagnostic run
+failed an import setup, which is retained separately and is not regression
+evidence. A separate live probe injected a timeout immediately after successful
+unit creation: the error remained visible, and the exact created unit was
+cleaned despite the incomplete launch response. Generated units are tracked
+before the request. Cleanup attempts every tracked unit and preserves original
+and cleanup failures together. Workers publish reports by atomic rename to
+avoid a partial JSON startup race. Their 15-second RuntimeMaxSec is a fallback,
+not the cleanup measurement. Raw reports and reconstructed fixtures stay ignored.
+
+Current source binding:
+- `src/native/lease.py`: `1b23cbd2c8df5a329e6f5e0d20fd52b0b6703f71a7aa2b57ef526092a032c9fb`
+- `native_lease_probe.py`: `65d28c6b131292de1847906a080e2a3a4c3de2822afbc5c342532b43a549207d`
+- `native_lease_test.py`: `2e584ec3945076d304f6cef793ea745781072f2f3b20f9a9cdc202de73a4c799`
+- `tests/native-lease.test.ts`: `66ee9e125d343a666f1223d5a5e733549a9a2f5fe0ab818e0f50d3642ecf3d5f`
+
+Typecheck and complete bounded suite passed: 581 passed, 45 skipped, zero
+failed, 3764 assertions across 133 files. Native opt-in skips do not close
+unmeasured coverage. Public audit passed over 801 files with no findings;
+staged Gitleaks found no leaks. Owner input,
+production plugin registration, real application/private accessibility bus
+integration, full appearance parity and comparative performance remain pending.
