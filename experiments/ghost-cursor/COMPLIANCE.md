@@ -268,3 +268,52 @@ Current shared-raw source binding:
 - `two_clipboards.py`: `b9a304bc9f0dfebd05709eb639d313a68a1027b8e506ddde30ce1da6389f4afe`
 - `two_toolkit_tasks.py`: `cdc0960061c2347b51a250353ca6c762fd6afd6b22ae4ac0cf5855c0fffb22ce`
 - `two_canvas_tasks.py`: `023048717389451a179a5f442258f35567d26c2c83222871c638e545ced8344c`
+
+## Native settings preview
+
+Scope: owner-side GTK4 settings window in the private lab, English prototype.
+Sources: owner protected/full settings request;
+[Gtk.ApplicationWindow](https://docs.gtk.org/gtk4/class.ApplicationWindow.html)
+and [GLib.idle_add](https://docs.gtk.org/glib/func.idle_add.html) official API
+documentation, reviewed 3 October 2026.
+The UI must show the applied mode, exact one-use approval, recent journal
+outcomes and errors. Disk work must run outside the GTK main thread; refresh
+is on demand with no polling service. Normal GTK widgets inherit the lab theme.
+No actual owner display integration or owner theme match is claimed.
+Same-user cooperative policy remains the controller limit.
+
+Native probe passed against these sources: mode roundtrip, exact one-use
+approval, replay refusal, visible journal parse error with disabled write
+controls, recovery, close while storage is locked and agent-targeting refusal. The probe uses a temporary
+controller state directory and private lab keyboard navigation, not owner input.
+Initial probe failures are retained locally: GTK4 labels exposed clipboard
+actions and radio controls exposed no Action method. The corrected probe uses
+button actions and normal keyboard navigation, then checks checked state and
+persisted controller behavior. An initial fixture cleanup argument was wrong;
+that process was explicitly reaped and subsequent runs reaped the UI normally.
+Review found two UI defects: JSON-valid incomplete records escaped the visible
+error path, and a running worker could keep the process alive after close while
+waiting for a lock. Both regressions failed against a locally reconstructed
+pre-fix UI snapshot, then passed on the corrected source. Display fields are
+validated before settings writes, and render failures also disable write
+controls. UI lock waits have a three-second deadline and a close cancellation
+event. A transaction already holding the lock may finish; closing cancels waits,
+not an in-progress atomic storage write. An out-of-range timestamp is also
+rejected visibly before writes. The base action controller is unchanged.
+
+The final private screenshot was inspected: readable controls and activity,
+without clipped text at 1920 by 1200. Other sizes, complete screen-reader
+behavior, localized UI and actual owner theme matching are not measured.
+The lab logged missing Settings/Inhibit portal interfaces and an AT-SPI cache
+warning. These are retained, not suppressed. The lab disables portal use and
+does not establish production portal integration. Native UI acceptance remains
+limited to the explicit interaction and error checks above.
+
+Final typecheck and complete bounded project suite passed: 572 passed, 45
+skipped, zero failed, 3733 assertions across 130 files. Opt-in and platform
+skips retain their original scope and do not establish native release coverage.
+Public publication audit passed over 786 files with no findings; staged
+Gitleaks found no leaks. Raw private probe logs and reconstructed pre-fix
+sources remain excluded. Source binding:
+- `native_settings.py`: `f6accd9fd31626d649fed6cffce1f3b31b849e8b59fdb3a1a5d6c636b339d41c`
+- `native_settings_probe.py`: `685f155bebca33daaaca4dc9496d4e1119d220f678a337b764855452334c9b6b`

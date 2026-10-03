@@ -86,3 +86,31 @@ outcomes and reaps both process identities. Run it through the lab harness with
 full mode selected as an owner-side test setup. The DrawingArea fixture has no
 editable accessibility path, so this checks raw input rather than editable-text
 method substitution.
+
+## Native owner settings preview
+
+Run `native_settings.py` as an owner-side command inside the private lab. It opens
+a normal GTK4 window outside the agent workspace. Choose Protected or Full
+access, then Apply mode. Refresh reads the current settings and recent activity
+on demand. There is no polling timer or persistent service. Storage operations
+run in a single worker thread, outside the GTK main thread.
+
+The most recent denied request can be approved exactly once. The UI shows its
+readable command or decoded text and retains the original request for approval.
+A consumed approval is not rearmed by Refresh. Failed journal reads disable
+mode changes and approvals, show the error and allow Refresh after storage is
+repaired. This preview inherits the private lab's GTK theme; actual owner-theme
+matching and owner-display integration are not measured.
+Lock waits stop when the window closes and otherwise time out after three
+seconds with a visible storage-busy error. An atomic write that has already
+acquired the lock may finish; closing does not roll it back.
+
+Run `native_settings_probe.py` inside the private lab for the native acceptance
+check. It uses a temporary state directory, AT-SPI button activation and private
+lab keyboard navigation for GTK4 radio choices. It checks mode roundtrip,
+one-use approval, replay denial, visible journal error, recovery and refusal of
+the settings window by the agent targeting API. It also checks JSON-valid
+damaged records, an out-of-range timestamp and process exit while the journal
+lock is held. The probe changes only its
+temporary controller settings. It is an owner fixture, not an agent action API.
+It does not establish a complete screen-reader or localization acceptance.
