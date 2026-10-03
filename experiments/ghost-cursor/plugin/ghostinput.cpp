@@ -20,6 +20,9 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
+#include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
+#include <hyprland/src/desktop/rule/Engine.hpp>
+#include <hyprland/src/managers/TokenManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/protocols/core/Seat.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
@@ -159,6 +162,38 @@ static wl_protocol_logger* selectionLogger = nullptr;
 static std::string selectionDiagnostic;
 static std::map<pid_t, int> registeredProcesses;
 static std::map<pid_t, std::unique_ptr<ScopedProcess>> scopedProcesses;
+static std::map<pid_t, SP<Desktop::Rule::CWindowRule>> launchRules;
+static CHyprSignalListener configReloadListener;
+
+static void pruneLaunchRules() {
+    for (auto it = launchRules.begin(); it != launchRules.end();) {
+        const auto process = scopedProcesses.find(it->first);
+        if (process == scopedProcesses.end() || !process->second->valid()) {
+            Desktop::Rule::ruleEngine()->unregisterRule(it->second);
+            it = launchRules.erase(it);
+        } else
+            ++it;
+    }
+}
+
+static std::pair<SP<Desktop::Rule::CWindowRule>, std::string> prepareLaunchRule() {
+    using namespace Desktop::Rule;
+    const auto token = g_pTokenManager->getRandomUUID();
+    if (!std::regex_match(token, std::regex{"[0-9a-fA-F-]{36}"}))
+        throw std::runtime_error("cannot create native launch identity");
+    auto rule = makeShared<CWindowRule>("orbit_native_" + token);
+    // Token-only matching has no numeric PID fallback and survives PID reuse.
+    rule->registerMatch(RULE_PROP_EXEC_TOKEN, "^" + token + "$");
+    for (const auto& [effect, value] : std::vector<std::pair<eWindowRuleEffect, std::string>>{
+             {WINDOW_RULE_EFFECT_WORKSPACE, "special:ghost silent"},
+             {WINDOW_RULE_EFFECT_NOINITIALFOCUS, "1"},
+             {WINDOW_RULE_EFFECT_FOCUS_ON_ACTIVATE, "0"},
+             {WINDOW_RULE_EFFECT_RENDER_UNFOCUSED, "1"}}) {
+        if (auto result = rule->addEffect(effect, value); !result)
+            throw std::runtime_error("cannot prepare native launch rule: " + result.error());
+    }
+    return {rule, token};
+}
 
 static void pruneScopedProcesses() {
     for (auto it = scopedProcesses.begin(); it != scopedProcesses.end();)
@@ -664,12 +699,19 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (!(in >> command >> pid >> unit) || (in >> extra))
                 return std::string{"invalid scoped process"};
             pruneScopedProcesses();
+            pruneLaunchRules();
             if (!scopedProcesses.contains(pid) && scopedProcesses.size() >= 64)
                 return std::string{"native process registration limit reached"};
             try {
                 auto identity = std::make_unique<ScopedProcess>(pid, unit);
+                auto [rule, token] = prepareLaunchRule();
+                SP<Desktop::Rule::IRule> baseRule = rule;
+                Desktop::Rule::ruleEngine()->registerRule(std::move(baseRule));
+                if (auto existing = launchRules.find(pid); existing != launchRules.end())
+                    Desktop::Rule::ruleEngine()->unregisterRule(existing->second);
+                launchRules[pid] = std::move(rule);
                 scopedProcesses[pid] = std::move(identity);
-                return std::string{"ok"};
+                return "ok " + token;
             } catch (const std::exception& error) {
                 return std::string{error.what()};
             }
@@ -780,6 +822,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         return std::string{"ok"};
     }});
     renderListener = Event::bus()->m_events.render.stage.listen(drawCursors);
+    configReloadListener = Event::bus()->m_events.config.reloaded.listen([] {
+        pruneLaunchRules();
+        for (const auto& [pid, rule] : launchRules) {
+            const auto active = std::ranges::any_of(Desktop::Rule::ruleEngine()->rules(),
+                [&rule](const auto& current) { return current.get() == rule.get(); });
+            if (!active) {
+                SP<Desktop::Rule::IRule> baseRule = rule;
+                Desktop::Rule::ruleEngine()->registerRule(std::move(baseRule));
+            }
+        }
+    });
     selectionLogger = wl_display_add_protocol_logger(g_pCompositor->m_wlDisplay, selectionRequest, nullptr);
     if (!selectionLogger)
         throw std::runtime_error("[ghostinput] cannot install selection request observer");
@@ -787,6 +840,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    configReloadListener.reset();
+    for (const auto& [pid, rule] : launchRules)
+        Desktop::Rule::ruleEngine()->unregisterRule(rule);
+    launchRules.clear();
     if (selectionLogger) {
         wl_protocol_logger_destroy(selectionLogger);
         selectionLogger = nullptr;

@@ -4,6 +4,7 @@ import os
 import json
 import socket
 import sys
+import re
 from pathlib import Path
 from lab import guard
 from process_scope import identity
@@ -32,7 +33,14 @@ if register:
         result = b""
         while data := connection.recv(4096):
             result += data
-    assert result.decode().strip() == "ok", result.decode()
+    reply = result.decode().strip()
+    if lease:
+        match = re.fullmatch(r"ok ([0-9a-fA-F-]{36})", reply)
+        assert match, reply
+        os.environ["HL_EXEC_RULE_TOKEN"] = match[1]
+        os.environ.pop("HL_INITIAL_WORKSPACE_TOKEN", None)
+    else:
+        assert reply == "ok", reply
     if lease:
         assert lease.contains(identity(os.getpid())), "Native lease changed during registration"
 os.execvpe(sys.argv[separator + 1], sys.argv[separator + 1:], os.environ)

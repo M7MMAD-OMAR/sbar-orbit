@@ -65,9 +65,11 @@ timed out; its cause is not established by that result. At the capacity failure,
 the shared slice held 1533 tasks, including 1369 in the existing managed broker
 service and 149 in the test scope. A read-only broker status query confirmed
 other projects' sessions were running. They were left intact. This failed run is
-retained privately and prevents committing or publishing this change until the
-full required gate passes. No retry, resource-limit increase or test exclusion
-was used to replace the failed result.
+retained privately and prevented publication at that point. After the owner
+explicitly approved stopping five unrelated project sessions, the successor
+pre-map revision passed the full suite. See [pre-map evidence](PRE-MAP-PLACEMENT.md)
+for the exact revision and current checks. The earlier failure remains evidence;
+no resource-limit increase or test exclusion was used to replace it.
 
 ## Limits and remaining acceptance
 
