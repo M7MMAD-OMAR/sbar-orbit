@@ -217,12 +217,13 @@ def main():
             for _ in range(150):
                 new = [c for c in agent_windows() if c["address"] not in before]
                 if launch_pid_file:
-                    launch_pid = Path(launch_pid_file).read_text().strip()
+                    from process_scope import launch_identity, processes
+                    root_identity = launch_identity(launch_pid_file)
                     if raw:
-                        new = [c for c in new if launch_pid.isdigit() and c["pid"] == int(launch_pid)]
+                        owned = processes(launch_id, root_identity)
+                        new = [c for c in new if root_identity in owned and c["pid"] == root_identity[0]]
                     else:
-                        from process_scope import processes
-                        owned_pids = {pid for pid, started in processes(launch_id)}
+                        owned_pids = {pid for pid, started in processes(launch_id, root_identity)}
                         new = [c for c in new if c["pid"] in owned_pids]
                 if new:
                     launched = True
@@ -234,8 +235,8 @@ def main():
         finally:
             if launch_pid_file:
                 if not launched:
-                    from process_scope import processes, terminate
-                    terminate(processes(launch_id))
+                    from process_scope import launch_identity, processes, terminate
+                    terminate(processes(launch_id, launch_identity(launch_pid_file)))
                 Path(launch_pid_file).unlink(missing_ok=True)
                 Path(envfile).unlink(missing_ok=True)
     if cmd == "windows":

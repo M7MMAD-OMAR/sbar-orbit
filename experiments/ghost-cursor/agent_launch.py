@@ -1,10 +1,12 @@
 #!/usr/bin/python3
 """Claim a raw agent process in the private lab before exec creates a client."""
 import os
+import json
 import socket
 import sys
 from pathlib import Path
 from lab import guard
+from process_scope import identity
 
 guard(os.environ)
 os.setpgid(0, 0)
@@ -13,7 +15,7 @@ separator = 3 if register else 2
 assert sys.argv[separator] == "--" and len(sys.argv) > separator + 1
 pidfile = Path(sys.argv[1])
 assert pidfile.parent.resolve() == Path(os.environ["XDG_RUNTIME_DIR"]).parent.resolve()
-pidfile.write_text(str(os.getpid()))
+pidfile.write_text(json.dumps(identity(os.getpid())))
 if register:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(5)

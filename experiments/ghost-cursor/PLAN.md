@@ -25,10 +25,19 @@ Development uses a private lab and does not send input to the owner's seat.
   denial, approval, readback and journal-failure evidence.
 - Native controller decisions and durable intent/outcome records are measured
   on a real GTK3 target, including failure before input when the journal fails.
+- Native GTK4 owner settings preview is measured in the lab, including one-use
+  approval, damaged journal refusal and closing while storage is locked.
+- Chromium 153 on Wayland passes native state, press, English/Arabic text,
+  selection and scroll with matched action outcomes and background pixels.
+- Launch ownership now retains the root PID and start time when an application's
+  launch environment tag is not observable. Failed untagged-root launch cleanup
+  is measured, without widening the private-lab process scope.
 
 ## Remaining acceptance work
 
-- Complete the current-build toolkit, clipboard and cursor regression matrix.
+- Complete the current-build toolkit, clipboard and cursor regression matrix,
+  including Firefox and XWayland. Chromium fixture evidence is not a universal
+  browser/toolkit guarantee.
 - Implement owner-session integration and owner theme inheritance.
 - Integrate the tested protected/full controller into every agent entry point
   and the owner settings UI.

@@ -257,7 +257,7 @@ platform skips do not close their coverage rows. The private lab mode was reset
 to protected after owner-side full-mode test setup. No owner-session activation
 or release acceptance is claimed.
 
-Current shared-raw source binding:
+Shared-raw publication source binding at df3bc11, historical after launch edits:
 - `ghost.py`: `f6041274b9302aa2149a9fb3b9cbff18027b6efac99c7d31a90758b205c2b7c2`
 - `action_control.py`: `e2afb76247dff996a31d720833d603ef123dee95a00c5aeabd7906b37271a26b`
 - `raw_task.py`: `00ea37a66cfe2a11367fbd81ffb4cf43105de3435505f2556ef7a85b3539a423`
@@ -317,3 +317,65 @@ Gitleaks found no leaks. Raw private probe logs and reconstructed pre-fix
 sources remain excluded. Source binding:
 - `native_settings.py`: `f6accd9fd31626d649fed6cffce1f3b31b849e8b59fdb3a1a5d6c636b339d41c`
 - `native_settings_probe.py`: `685f155bebca33daaaca4dc9496d4e1119d220f678a337b764855452334c9b6b`
+
+## Native Chromium toolkit check
+
+Source: BAR.md B5, B6 and B7 task matrix. Scope: installed Chromium 153 on
+Wayland, fresh private-lab profile and offline local fixture. No owner profile,
+account, screen or input is used. A browser toolkit check does not substitute
+for the required owner-session native application integration.
+Required evidence: controlled launch, accessibility state, native press/text/
+selection/scroll, fresh background pixels, matched native journal outcomes,
+private process cleanup and B1, B2, B3, B4, B12 harness isolation.
+The original launcher failed on a mapped Chromium window because the launch
+environment tag was not observable. Root PID plus kernel start time now
+complements that tag, only inside an already-proven private lab scope.
+Two identity checks passed, including rejection of a reused PID's different
+start time and malformed/PID-only markers. A no-window process with its tag
+removed survived failed launch cleanup on the f52ef6b source snapshot. The
+same regression passed after correction, with no leftover process or marker
+and a durable error outcome. B1, B2, B3, B4 and B12 passed on the fixed run.
+The failed snapshot run is retained and its process was reaped by the fixture.
+Ownership of every untagged descendant and production process leases remains
+incomplete. No process-scope allowlist was added.
+
+Current Chromium fixture passed accessibility initial/final text, one native
+button press, 927 English/Arabic characters, full selection, caret reset and
+wheel scrolling. All eight native requests had successful journal outcomes.
+B1, B2, B3, B4 and B12 passed, including launch while the stand-in typed and
+complete private-job process cleanup. Initial-vs-final pixels changed, and a
+strict wheel-frame check observed changed text-row pixels and a post-scroll
+rendered stamp in 0.311 seconds, across three captures. The stable pre-wheel
+baseline and stamp exclude deselection repaint and caret/arrow changes.
+This observation interval is not a general latency or performance result.
+
+Initial task failures are retained: accessibility method/name selection errors,
+observer text lag, an overly strict zero-scroll expectation, and unchanged
+immediate wheel pixels. Fixture reports now coalesce event-triggered updates
+and retain a sequence number. The wheel check waits only within a strict
+two-second deadline and still fails if fresh pixels never arrive. These are
+measurement corrections, not a claimed general bulk-input backend repair.
+Earlier weak initial-vs-final images do not establish wheel-frame freshness.
+The new root marker also passed the two-canvas raw launch regression: distinct
+text, click/wheel, twelve successful native outcomes, 0.366 seconds of overlap,
+and B1, B2, B3, B4, B12. Other older launch-bound native results are historical
+after the ghost.py and launcher changes; they are not current-source evidence.
+
+Firefox is absent from the current PATH and is not measured. XWayland,
+Chromium clipboard edge cases, complete owner integration, theme inheritance,
+whole-system comparison and final owner acceptance remain incomplete.
+Final typecheck and complete bounded project suite passed: 572 passed, 45
+skipped, zero failed, 3733 assertions across 130 files. Native/platform skips
+remain opt-in and do not close unmeasured coverage. Public audit passed over
+790 files with no findings; staged Gitleaks found no leaks. Private reports,
+diagnostic frames and old-source snapshots remain excluded. The private lab
+was returned to protected mode after each fixture.
+
+Current source binding:
+- `ghost.py`: `9c3aadf393291f1e53db81143d33739d7f19b5a3c872a8dfe5cb84e544505ae5`
+- `agent_launch.py`: `d0fa2ddd20b827caeea7bb133c130c7adcde3e5374ffe7df4a707f6d422ca0dc`
+- `process_scope.py`: `c598c523e85301f34c65f0997f00f56c65b17a356bd720b8fcc83d99f7eeba6f`
+- `browser_task.py`: `f00f1bc8753130eb46b0372231355d27afa061d78011e9299838517a0c28072d`
+- `browser_fixture.html`: `31e1fe94a893fe3aa5d1e7e3785bb59d3ccda6544408b864cad6638b33095187`
+- `process_identity_test.py`: `3ad08e36692837e621b1fa266057feaac0ff7c3f9c14a890e44e330949897f62`
+- `launch_cleanup_task.py`: `9636530207ca0af51bdc1beaffb809e77d939b0faca037114d95953e8aad8dbf`

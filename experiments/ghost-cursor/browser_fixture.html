@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Orbit native browser fixture</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui; }
+  body { margin: 24px; }
+  button { padding: 12px 24px; margin-bottom: 20px; }
+  label { display: block; margin-bottom: 8px; }
+  textarea { display: block; width: 85%; height: 240px; font: 18px monospace; }
+  #viewport-marker { position: absolute; width: 40px; height: 40px; background: #888; }
+</style>
+<h1>Native toolkit fixture</h1>
+<button id="press">Record press</button>
+<label for="editor">Agent editor</label>
+<textarea id="editor" spellcheck="false">Initial state</textarea>
+<p id="result">Presses: 0</p>
+<div id="viewport-marker" aria-hidden="true"></div>
+<script>
+  const editor = document.getElementById("editor");
+  let presses = 0;
+  let wheelEvents = 0;
+  let sequence = 0;
+  let scheduled = false;
+  function report() {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(sendReport, 10);
+  }
+  function sendReport() {
+    scheduled = false;
+    const button = document.getElementById("press").getBoundingClientRect();
+    const field = editor.getBoundingClientRect();
+    const marker = document.getElementById("viewport-marker");
+    marker.style.left = (field.right + 20) + "px";
+    marker.style.top = (field.top + 10) + "px";
+    const selected = editor.selectionStart !== editor.selectionEnd;
+    marker.style.background = selected ? "#0000ff" : editor.scrollTop > 50 ? "#00ff00" : "#ff0000";
+    const stamp = marker.getBoundingClientRect();
+    fetch(location.pathname + "state", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({sequence: ++sequence, text: editor.value, presses, wheelEvents,
+        selection: [editor.selectionStart, editor.selectionEnd], scroll: editor.scrollTop,
+        field: [field.x, field.y, field.width, field.height],
+        button: [button.x, button.y, button.width, button.height],
+        marker: [stamp.x, stamp.y, stamp.width, stamp.height]})
+    });
+  }
+  document.getElementById("press").addEventListener("click", () => {
+    presses++;
+    document.getElementById("result").textContent = "Presses: " + presses;
+    report();
+  });
+  for (const event of ["input", "keyup", "select", "scroll", "click"])
+    editor.addEventListener(event, report);
+  editor.addEventListener("wheel", () => { wheelEvents++; setTimeout(report, 100); });
+  document.addEventListener("selectionchange", report);
+  window.addEventListener("load", report);
+</script>
+</html>

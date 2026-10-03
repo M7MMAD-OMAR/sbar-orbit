@@ -114,3 +114,32 @@ damaged records, an out-of-range timestamp and process exit while the journal
 lock is held. The probe changes only its
 temporary controller settings. It is an owner fixture, not an agent action API.
 It does not establish a complete screen-reader or localization acceptance.
+
+## Launch root identity and Chromium
+
+The pre-exec launcher writes the root PID and its kernel start time to the
+temporary marker. Native launch matching combines environment-tag ownership
+with that exact root identity, still requiring the private runtime or lab
+cgroup. A reused PID with a different start time cannot match. This permits
+Chromium launch when its environment tag cannot be observed. Failed launch
+cleanup includes that root, so clearing the tag cannot leave it alive.
+This does not establish ownership of every untagged descendant or production
+owner-session process leases.
+
+`process_identity_test.py` checks exact identity matching and marker validation
+inside the lab. `launch_cleanup_task.py`, run through the lab harness in full
+mode, launches a no-window process with its launch tag removed, expects launch
+failure and verifies process/marker cleanup and the logged error outcome.
+
+`browser_task.py` measures installed Chromium as a native Wayland app window,
+using a fresh lab profile and offline HTTP fixture on an ephemeral loopback
+port. It checks accessibility text, native press/type/select/scroll, eight
+matched native action outcomes and fresh background pixels. Fixture reports
+are coalesced on events, without a polling service. A rendered viewport stamp
+and stable text-row baseline prevent deselection repaint from passing as a
+fresh wheel frame. Pixel observation fails unless a changed text region and
+post-wheel stamp arrive within two seconds. This is an acceptance bound, not
+a performance guarantee. Whole-lab helper cleanup is exclusive-job testing,
+not production owner-session process ownership. Pillow is already installed on
+this test host; no dependency or persistent service was added. Firefox and
+XWayland remain outside this measured run.

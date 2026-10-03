@@ -16,7 +16,7 @@ def identity(pid):
         return None
 
 
-def processes(launch_id=None):
+def processes(launch_id=None, root_identity=None):
     guard(os.environ)
     lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     expected = f"XDG_RUNTIME_DIR={lab}/run".encode()
@@ -40,10 +40,23 @@ def processes(launch_id=None):
         # Headless compositor processes may disable environment inspection.
         # Their lab-specific systemd scope remains authoritative ownership.
         owned_scope = f"/ghostlab-{lab.name}-" in cgroup
-        belongs = launch_id is None or f"ORBIT_AGENT_LAUNCH_ID={launch_id}".encode() in environment
-        if (expected in environment or owned_scope) and belongs and (item := identity(pid)):
-            found.add(item)
+        if (expected in environment or owned_scope) and (item := identity(pid)):
+            belongs = launch_id is None or f"ORBIT_AGENT_LAUNCH_ID={launch_id}".encode() in environment or item == root_identity
+            if belongs:
+                found.add(item)
     return found
+
+
+def launch_identity(marker):
+    """Retain the pre-exec root PID and start time, never match a PID alone."""
+    import json
+    try:
+        value = json.loads(Path(marker).read_text())
+    except json.JSONDecodeError:
+        return None  # The launcher has not completed its small marker write.
+    if not isinstance(value, list) or len(value) != 2 or any(type(part) is not int or part <= 0 for part in value):
+        raise ValueError("Invalid launch process identity")
+    return tuple(value)
 
 
 def terminate(items):
