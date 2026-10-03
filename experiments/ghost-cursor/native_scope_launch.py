@@ -59,7 +59,7 @@ def main():
                        XDG_DATA_HOME=str(work / "data"), XDG_CACHE_HOME=str(work / "cache"),
                        XDG_STATE_HOME=str(work / "state"), DBUS_SESSION_BUS_ADDRESS=f"unix:path={work / 'session'}",
                        AT_SPI_BUS_ADDRESS=f"unix:path={work / 'a11y'}",
-                       QT_LINUX_ACCESSIBILITY_ALWAYS_ON="1", GTK_A11Y="atspi")
+                       QT_LINUX_ACCESSIBILITY_ALWAYS_ON="1", GTK_A11Y="atspi", ORBIT_NATIVE_UNIT=unit)
     if (work / "config" / "kdeglobals").is_file():
         plugin = Path("/usr/lib64/qt6/plugins/platformthemes/KDEPlasmaPlatformTheme6.so")
         info = plugin.lstat()

@@ -48,6 +48,79 @@
 #include <sys/syscall.h>
 #include <poll.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <regex>
+#include <memory>
+
+// Native scoped identity begin. Also compiled independently by the lease probe.
+class ScopedProcess {
+    pid_t pid;
+    int processFD = -1;
+    int directoryFD = -1;
+    std::string group;
+    std::string directory;
+    bool revoked = false;
+
+    static std::string processGroup(pid_t pid) {
+        std::ifstream stream(std::format("/proc/{}/cgroup", pid));
+        std::string line;
+        while (std::getline(stream, line))
+            if (line.starts_with("0::"))
+                return line.substr(3);
+        return {};
+    }
+
+  public:
+    ScopedProcess(pid_t value, const std::string& unit) : pid(value) {
+        if (pid <= 0 || !std::regex_match(unit, std::regex{"orbit-native-[0-9a-f]{32}\\.scope"}))
+            throw std::runtime_error("invalid native scope identity");
+        struct stat process{};
+        if (stat(std::format("/proc/{}", pid).c_str(), &process) || process.st_uid != getuid())
+            throw std::runtime_error("native process has another owner");
+        group = std::format("/user.slice/user-{}.slice/user@{}.service/sbarorbit.slice/{}", getuid(), getuid(), unit);
+        const auto actual = processGroup(pid);
+        if (actual != group && !actual.starts_with(group + "/"))
+            throw std::runtime_error("process is outside its native scope");
+        directory = "/sys/fs/cgroup" + group;
+        processFD = syscall(SYS_pidfd_open, pid, 0);
+        if (processFD < 0)
+            throw std::runtime_error("cannot retain native process");
+        directoryFD = open(directory.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (directoryFD < 0 || !valid()) {
+            if (directoryFD >= 0)
+                close(directoryFD);
+            close(processFD);
+            throw std::runtime_error("native identity changed during registration");
+        }
+    }
+    ScopedProcess(const ScopedProcess&) = delete;
+    ScopedProcess& operator=(const ScopedProcess&) = delete;
+    ~ScopedProcess() {
+        close(directoryFD);
+        close(processFD);
+    }
+    bool exited() const {
+        pollfd process{processFD, POLLIN, 0};
+        return poll(&process, 1, 0) > 0 && (process.revents & POLLIN);
+    }
+    bool valid() {
+        if (revoked)
+            return false;
+        pollfd process{processFD, POLLIN, 0};
+        struct stat retained{}, current{};
+        if (poll(&process, 1, 0) != 0 || fstat(directoryFD, &retained) ||
+            lstat(directory.c_str(), &current) || !S_ISDIR(current.st_mode) ||
+            retained.st_dev != current.st_dev || retained.st_ino != current.st_ino) {
+            revoked = true;
+            return false;
+        }
+        const auto actual = processGroup(pid);
+        revoked = (actual != group && !actual.starts_with(group + "/")) || poll(&process, 1, 0) != 0;
+        return !revoked;
+    }
+};
+// Native scoped identity end.
 
 inline HANDLE PHANDLE = nullptr;
 static const std::string AGENT_SPACE = "special:ghost";
@@ -85,6 +158,15 @@ static std::map<wl_resource*, SClipboardGuard> clipboardGuards;
 static wl_protocol_logger* selectionLogger = nullptr;
 static std::string selectionDiagnostic;
 static std::map<pid_t, int> registeredProcesses;
+static std::map<pid_t, std::unique_ptr<ScopedProcess>> scopedProcesses;
+
+static void pruneScopedProcesses() {
+    for (auto it = scopedProcesses.begin(); it != scopedProcesses.end();)
+        if (it->second->exited())
+            it = scopedProcesses.erase(it);
+        else
+            ++it;
+}
 
 static void pruneRegisteredProcesses() {
     for (auto it = registeredProcesses.begin(); it != registeredProcesses.end();) {
@@ -101,14 +183,20 @@ static bool agentClient(wl_client* client) {
     pruneRegisteredProcesses();
     pid_t pid;
     wl_client_get_credentials(client, &pid, nullptr, nullptr);
-    bool found = registeredProcesses.contains(pid);
+    const auto runtime = std::getenv("XDG_RUNTIME_DIR");
+    const bool privateLab = runtime && std::string_view{runtime}.starts_with("/tmp/gl-");
+    const auto scoped = scopedProcesses.find(pid);
+    bool found = scoped != scopedProcesses.end() && scoped->second->valid();
+    if (scoped != scopedProcesses.end() && !found)
+        return false; // An expired scoped registration cannot fall back to workspace ownership.
+    found = found || (privateLab && registeredProcesses.contains(pid));
     for (const auto& window : Desktop::windowState()->windows()) {
         auto surface = window->resource();
         if (!window->m_isMapped || !surface || surface->client() != client)
             continue;
         if (!window->m_workspace || window->m_workspace->m_name != AGENT_SPACE)
             return false;
-        found = true;
+        found = found || privateLab;
     }
     return found;
 }
@@ -568,6 +656,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!agentKeyboard->m_xkbKeymap)
         throw std::runtime_error("[ghostinput] cannot build agent keymap");
     agentKeyboard->updateKeymapFD();
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-scope-process", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            std::istringstream in(request);
+            std::string command, unit, extra;
+            pid_t pid = 0;
+            if (!(in >> command >> pid >> unit) || (in >> extra))
+                return std::string{"invalid scoped process"};
+            pruneScopedProcesses();
+            if (!scopedProcesses.contains(pid) && scopedProcesses.size() >= 64)
+                return std::string{"native process registration limit reached"};
+            try {
+                auto identity = std::make_unique<ScopedProcess>(pid, unit);
+                scopedProcesses[pid] = std::move(identity);
+                return std::string{"ok"};
+            } catch (const std::exception& error) {
+                return std::string{error.what()};
+            }
+        }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream in(request);
@@ -724,4 +830,5 @@ APICALL EXPORT void PLUGIN_EXIT() {
     for (const auto& [pid, fd] : registeredProcesses)
         close(fd);
     registeredProcesses.clear();
+    scopedProcesses.clear();
 }
