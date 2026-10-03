@@ -116,7 +116,7 @@ def scoped(lab, name, argv, env):
     fd = os.open(envfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(env, f)
-    return ["systemd-run", "--user", "--scope", "--quiet", f"--unit={unit}", f"--description=ghost lab {safe}",
+    return ["systemd-run", "--user", "--scope", "--quiet", "--slice=sbarorbit.slice", f"--unit={unit}", f"--description=ghost lab {safe}",
             "-p", "MemoryMax=3G", "-p", "CPUWeight=50", "-p", "CollectMode=inactive-or-failed", "--",
             "/usr/bin/python3", str(Path(__file__).resolve()), "exec-env", str(envfile), *argv]
 

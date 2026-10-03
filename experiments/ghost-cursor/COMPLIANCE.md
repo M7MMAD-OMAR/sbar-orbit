@@ -542,7 +542,7 @@ avoid a partial JSON startup race. Their 15-second RuntimeMaxSec is a fallback,
 not the cleanup measurement. Raw reports and reconstructed fixtures stay ignored.
 
 Current source binding:
-- `src/native/lease.py`: `1b23cbd2c8df5a329e6f5e0d20fd52b0b6703f71a7aa2b57ef526092a032c9fb`
+- `src/native/lease.py`: `4437f27eb9a8b9053c580eac27e5329c3d74c605d4a15ce7c1f824a9cdd02c4e`
 - `native_lease_probe.py`: `65d28c6b131292de1847906a080e2a3a4c3de2822afbc5c342532b43a549207d`
 - `native_lease_test.py`: `2e584ec3945076d304f6cef793ea745781072f2f3b20f9a9cdc202de73a4c799`
 - `tests/native-lease.test.ts`: `66ee9e125d343a666f1223d5a5e733549a9a2f5fe0ab818e0f50d3642ecf3d5f`
@@ -553,3 +553,91 @@ unmeasured coverage. Public audit passed over 801 files with no findings;
 staged Gitleaks found no leaks. Owner input,
 production plugin registration, real application/private accessibility bus
 integration, full appearance parity and comparative performance remain pending.
+
+## Native application scope launch
+
+Scope: attach a compositor-spawned lab launcher to its own generated systemd
+scope before it creates application clients. Keep Hyprland's existing silent
+spawn rules, and provide private session and accessibility buses plus fresh
+application profiles. This remains lab-only development, not owner activation.
+Sources reviewed 4 October 2026:
+- [systemd manager API](https://github.com/systemd/systemd/blob/main/man/org.freedesktop.systemd1.xml):
+  StartTransientUnit, explicit PIDs and Slice properties. Scope membership must
+  be verified after the start job, before client creation. The rendered manual
+  returned HTTP 403; upstream source was used.
+- [Hyprland rules](https://wiki.hypr.land/configuring/core/rules/window-rules/):
+  matching/rule behavior. Installed 0.56.2 also supports the existing measured
+  dispatch-exec rule syntax. Applying exec rules to a separate systemd service
+  is not assumed to work, since it is not the compositor child process.
+Session and accessibility bus sockets must belong to the exact generated scope.
+Native applications must have new PIDs and private profiles, must not reuse
+baseline instances, and must be cleaned by their exact scopes. Native scope,
+application, input and noninterference checks are measured only in the private
+lab, with the limits below.
+
+The lab scope was outside the enforced shared slice despite its individual
+memory cap. A real child budget check failed against the prior lab source and
+passed after adding the shared slice. Initial missing-HOME setup diagnostics
+are retained separately. New native application scopes support the same exact
+InvocationID/cgroup/PID-start identity checks as services, without widening
+membership to the shared slice or sibling units.
+
+The launcher attaches its original compositor child PID before application
+clients exist, then directly execs the application wrapper at that same PID.
+A separate dbus-run-session child lost the existing exec rule/root identity;
+that failed experiment is retained. Each worker has its own session and
+accessibility buses, registry, profile and exact scope. Actual socket peer
+identities must belong to the worker lease. Scope stop cleans activated helpers
+and application children; RuntimeMaxSec is a fallback, not measured cleanup.
+
+Review found that daemon activation inherited the shared lab profile. The
+corrected launcher creates the private environment first and passes it to both
+daemons. An actual D-Bus-activated Gio helper reports HOME, four XDG/profile
+values, session/a11y addresses and PID/start identity. Its session address may
+contain the daemon-generated GUID, which is verified against the same socket
+path rather than rejected as a different bus. A reconstruction with omitted
+daemon environments activated this helper and failed on shared HOME/XDG values
+and absent private accessibility address. The fixture service directory was
+made explicit in that reconstruction to isolate environment inheritance from
+service discovery. The corrected source passes the activation profile and
+scope checks. The initial import setup and overly strict GUID comparison
+failures remain private diagnostics, not successful regression evidence.
+Bus startup now has its own deadline after scope readiness.
+
+Fresh GTK4 Text Editor and Qt Dolphin use distinct scopes/private buses and
+perform real native text, selection, clicks and scrolling concurrently.
+GTK4 verifies 1525 characters, selection and first-character geometry;
+Dolphin verifies path entry, item selection and scroll geometry, with fresh
+captured pixels. Native journal outcomes are balanced and successful.
+The driver stops both exact scopes, restores its original controller mode,
+and checks root process identities disappeared. This is a lab fixture with
+cooperative same-user identity, not production enrollment or an OS security
+boundary. A preexisting single-instance Dolphin scenario is not measured.
+
+Appearance staging still does not prove visual parity: the captured Qt window
+remains light while the owner theme is dark. Private portal/PipeWire warnings
+remain in launcher logs. No owner windows or input were accessed. Production
+owner integration, universal audit integration, all toolkit/clipboard cases,
+cursor reference comparison and whole-system comparative performance remain
+incomplete. This publishes reviewed experimental source, not release acceptance.
+
+Current source binding:
+
+- `lab.py`: `68359d54432e8736362256f1b9b48fefe43406f7b7cefdce33e07a1701f798ba`
+- `native_scope_launch.py`: `de6ef625102d0eaa0874020d406c2484d8f99a67b6e00199bcaf35dea995ed43`
+- `native_activation_fixture.py`: `4983e607aba282d463bbb7f99fa699b95ea9acce5ebdec03e006dc193d4c08a1`
+- `native_scoped_apps.py`: `0e8148a031dbc70f46f7754fe11fe196ecb45a5e5f926f5bb9f305076bb142de`
+- `native_budget_probe.py`: `65dbfc7a319dc455549b61e0bd0e08c96d1519dc99a1c56690718eedca72a9db`
+
+Final current-source scoped application run passed B1, B2, B3, B4 and B12,
+with zero agent diagnostics, 20 successful native outcomes and 1.787 seconds
+of overlapping native action intervals. Both activated profiles and bus peers
+passed, and both scopes cleaned their root identities. The two-service lease
+probe also passed on the current inspector, including untagged detached
+children, sibling refusal and exact stop cleanup. Both private development
+labs were stopped after preserving evidence.
+
+Typecheck passed. The complete bounded suite passed: 581 passed, 45 skipped,
+zero failed, 3764 assertions across 133 files. Skipped native opt-in cases are
+not acceptance evidence. Publication audit passed over 805 files with no findings; staged Gitleaks
+found no leaks. Full owner-session release acceptance remains incomplete.

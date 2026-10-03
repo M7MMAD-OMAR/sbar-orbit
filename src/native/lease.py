@@ -23,7 +23,7 @@ def manager_environment():
 
 
 def unit_properties(unit):
-    if not isinstance(unit, str) or not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.service", unit):
+    if not isinstance(unit, str) or not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.(service|scope)", unit):
         raise LeaseError("Not a generated native unit name")
     result = subprocess.run(["/usr/bin/systemctl", "--user", "show", unit,
                              "--property=InvocationID,ControlGroup,ActiveState"],
