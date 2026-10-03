@@ -379,3 +379,52 @@ Current source binding:
 - `browser_fixture.html`: `31e1fe94a893fe3aa5d1e7e3785bb59d3ccda6544408b864cad6638b33095187`
 - `process_identity_test.py`: `3ad08e36692837e621b1fa266057feaac0ff7c3f9c14a890e44e330949897f62`
 - `launch_cleanup_task.py`: `9636530207ca0af51bdc1beaffb809e77d939b0faca037114d95953e8aad8dbf`
+
+## Owner-native preparation
+
+Scope: read-only Hyprland endpoint preflight. No owner display capture, window
+query, input, plugin load or service restart is performed by this command.
+Filtered GTK/KDE appearance staging remains pending; the existing broad dconf
+copy is not evidence for owner-native theme matching.
+
+Sources reviewed 3 October 2026:
+- [Linux unix(7), SO_PEERCRED](https://man7.org/linux/man-pages/man7/unix.7.html):
+  Linux-specific peer credentials on Unix stream sockets, applicable here.
+- [Hyprland plugin usage](https://wiki.hypr.land/Plugins/Using-Plugins/):
+  plugin version compatibility guidance. Observed installed compositor version
+  is 0.56.2, commit `efb50993780079460b0cbed1363e2166a2de1d9f`.
+- [BAR.md](BAR.md): the owner-imposed final acceptance boundary. Endpoint
+  preparation does not authorize or satisfy actual owner-session activation.
+
+`native_host.py plan` binds IPC and Wayland endpoints to one live peer PID,
+kernel start time, UID, socket identities and reported ABI. `check --plan PATH`
+repeats the read-only check and refuses stale identities. Only `j/version` is
+sent; no Wayland protocol requests are sent. Directories and sockets must be
+owned by the current UID and not writable by group or others. Directory and
+socket identities are rechecked after the response. Version replies are
+bounded to 32 KiB and three seconds; plan files are regular, not symlinks, and
+bounded to 64 KiB. These are cooperative same-user checks, not authentication
+against a malicious process running as the same user or an OS security boundary.
+
+Nine synthetic checks pass using real Unix sockets: stable plan, stale process,
+ABI and socket identities, unsafe paths/permissions, socket symlinks, malformed
+and oversized version replies, distinct peer rejection, stalled-reply deadline,
+bounded regular plan files, and unknown schemas. The distinct-peer branch uses
+a controlled credential stub; separate compositor processes are not exercised.
+A condition synchronizes server request observation before the assertion.
+Private-lab and read-only owner metadata plans both passed, and owner plan
+revalidation passed. Raw endpoint identities stay in ignored evidence files.
+No owner applications were started and no screen or input was accessed.
+
+Endpoint identity is preparation state. Theme matching, isolation, owner
+activation and comparative performance remain not measured. Full project
+acceptance remains incomplete. Scoped publication gates passed: typecheck; complete bounded suite, 573 passed,
+45 skipped, zero failed, 3736 assertions across 131 files. Native opt-in skips
+do not count as measured owner coverage. Publication audit passed over 793 files with no findings. Staged Gitleaks
+found no leaks. Both reviewer findings were corrected: bounded observation
+synchronization in the socket test and direct official source links here.
+
+Current source binding:
+- `native_host.py`: `e0e74fbdb23e38c47db9c85322e29c133222b84d4957cb9a65c152520256dd53`
+- `native_host_test.py`: `51943268d9fc5212a9a8cfb42716366adb39b6d70f03841d70f8a47d5be57d2b`
+- `tests/native-host.test.ts`: `48f225ed4636e3346297272db0a891dbd217a4cc61070e0e58a47994d93ff920`
