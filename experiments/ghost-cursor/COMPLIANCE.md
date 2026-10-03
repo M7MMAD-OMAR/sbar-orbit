@@ -384,8 +384,9 @@ Current source binding:
 
 Scope: read-only Hyprland endpoint preflight. No owner display capture, window
 query, input, plugin load or service restart is performed by this command.
-Filtered GTK/KDE appearance staging remains pending; the existing broad dconf
-copy is not evidence for owner-native theme matching.
+Filtered GTK/KDE appearance preparation is documented below; wiring it into
+the native session remains pending. The existing broad dconf copy is not
+evidence for owner-native theme matching.
 
 Sources reviewed 3 October 2026:
 - [Linux unix(7), SO_PEERCRED](https://man7.org/linux/man-pages/man7/unix.7.html):
@@ -428,3 +429,62 @@ Current source binding:
 - `native_host.py`: `e0e74fbdb23e38c47db9c85322e29c133222b84d4957cb9a65c152520256dd53`
 - `native_host_test.py`: `51943268d9fc5212a9a8cfb42716366adb39b6d70f03841d70f8a47d5be57d2b`
 - `tests/native-host.test.ts`: `48f225ed4636e3346297272db0a891dbd217a4cc61070e0e58a47994d93ff920`
+
+## Filtered native appearance preparation
+
+Scope: stage only named GTK/KDE visual settings into a fresh private directory.
+Do not copy dconf, bookmarks, histories, executable settings or session state.
+This preparation does not activate the owner session or prove visual parity.
+Sources reviewed 3 October 2026:
+- [GTK4 Settings](https://docs.gtk.org/gtk4/class.Settings.html): settings.ini
+  properties, including theme, icons, font and cursor. Desktop-provided settings
+  can override files; libadwaita has separate color-scheme behavior.
+- [KDE themes](https://develop.kde.org/docs/plasma/): color schemes populate
+  kdeglobals and can include separate GTK CSS. CSS/assets are outside this
+  initial metadata staging scope, so their visual effect remains not measured.
+- [KConfig introduction](https://develop.kde.org/docs/features/configuration/introduction/):
+  group/key configuration and global settings. The allowlist is an owner privacy
+  choice, not a platform mandate. No KConfig expansion suffixes are propagated.
+Implementation: `src/native-appearance.ts` is a separate preparation helper.
+It is not wired to the old broad private-display copy. The CLI is:
+`bun experiments/ghost-cursor/native_appearance_stage.ts SOURCE_CONFIG PRIVATE_PARENT`.
+Only GTK3/GTK4 settings.ini and kdeglobals are read. Unknown keys/groups,
+KConfig expansion/lockdown suffixes, bookmarks, dconf and session state are
+excluded. Source files must be regular, final-component nonsymlinks, valid
+UTF-8, at most 1 MB and stable during reading. The source root must be a real
+directory. Staging creates a fresh 0700 directory and 0600 files, removes its
+partial output on error, and reports absent or empty optional settings.
+This is cooperative filesystem preparation, not a same-user security boundary.
+
+Seven behavioral tests pass. The prototype-named group and missing-root tests
+failed on a reconstructed pre-fix helper before passing after correction.
+Failure logs and that helper remain ignored evidence. The standard reviewer
+found the prototype lookup issue; the spec reviewer also found missing-root
+success. Both findings were corrected and verified.
+
+Final-source staging of owner-selected GTK3/GTK4/KDE files passed into the
+private lab. A GTK4 process on the lab display read back all five selected
+properties exactly: theme, icon theme, font, cursor theme and cursor size.
+The inherited file did not request gtk-application-prefer-dark-theme. Reading
+a theme name does not prove installed compatible assets, CSS, libadwaita color
+scheme or rendered parity. No owner display/window was queried or captured.
+The lab Settings portal warning remains in the evidence log and prevents
+claiming a complete portal/theme integration result. Qt readback was not run:
+PyQt6 is absent and Qt6Widgets development metadata is unavailable; no packages
+were installed for this check. Existing Dolphin/cursor visual evidence remains
+separate and historical, not proof of the staged appearance on owner apps.
+
+Current source binding:
+- `src/native-appearance.ts`: `9bf5e4b9da51eefd6af07b5a792500011930c0ff1e20b598db965739441a2814`
+- `tests/native-appearance.test.ts`: `a318f8389b3d99aabd75a68b960fab1ecfe2ec324967318ddc95161b34b3b9ad`
+- `native_appearance_stage.ts`: `0afb4b4e2de98d80867c010c49cff903df1003e45980658bb0d146ee65777815`
+- `native_appearance_probe.py`: `8f3ad471dd7809a6fae5f5ab0a907be5d89d0450aeea6073602de3aca8a11b8f`
+
+Typecheck passed. The first full suite failed its tracked-source packaging
+check because the new src helper had not been added to Git. That failed log
+is retained. After explicit staging, the complete suite passed: 580 passed,
+45 skipped, zero failed, 3761 assertions across 132 files. Public audit passed
+over 797 files with no findings, and staged Gitleaks found no leaks. Native
+opt-in skips do not close unmeasured coverage. Owner-session activation,
+universal audit coverage, CSS/assets/portal integration, complete native
+toolkit matrix and comparative performance remain incomplete.
