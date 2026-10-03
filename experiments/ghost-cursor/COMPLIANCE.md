@@ -88,7 +88,7 @@ of the owner's input settings do not establish live-session acceptance.
 
 ## Acceptance and outstanding requirements
 
-Project diagnostics passed: typecheck and the full bounded suite, 571 passed,
+Project diagnostics passed: typecheck and the full bounded suite, 572 passed,
 45 skipped, zero failed. The skips do not establish native coverage.
 
 To reproduce project diagnostics, run `bun run scripts/limited.ts bun run typecheck`, then
@@ -114,3 +114,42 @@ as experimental source without being presented as a completed product release.
 - `agent_launch.py`: `93d2cec4df05d3858e6b91a7856e3ab6d5d6c3f611ce6339cef8680c3ae0faa4`
 - `clipboard_task.py`: `4a90cf44e7ec9fedf07df912eeff77ec97621a3aac4743bae9031ce52af20b6f`
 - `native_fresh_task.py`: `96d2f01f32794501c50b8ae1ff670a4f1ab8bd06c0e67977e2f4bef11428d69a`
+
+## Action control development
+
+The next controller stores mode and one-use approvals outside action requests,
+with a private durable journal. Journal synchronization runs in the requesting
+process, never in the compositor rendering thread. The first implementation
+covers calls made through this controller only. Direct experimental Hyprland
+IPC and accessibility paths still require integration before all-action coverage
+can be claimed. Same-user files are configuration, not a security boundary
+against arbitrary code running with the owner's account. No live-seat use is
+authorized by the controller's existence.
+
+The real GTK3 fixture passed protected denial, exact one-use approval, replay
+refusal, full-mode input, error recording and refusal when its journal path was
+unwritable. B1, B2, B3, B4 and B12 passed with all 171 stand-in characters.
+The initial run failed because the successful text response includes a key
+count; that protocol parsing error was corrected and the failure is retained.
+Five behavioral checks passed, including eight concurrent actors and journal
+reopen. Deliberately bypassing approval made the protected-mode test fail.
+An interrupted begin remains unresolved when inspecting the ledger, never a
+reported success. Hardware power-loss behavior remains not measured.
+
+Technical references, Python 3.14.8 documentation reviewed 3 October 2026:
+[os.fsync](https://docs.python.org/3/library/os.html#os.fsync) requires flushing
+the buffered stream before synchronizing its descriptor.
+[fcntl.flock](https://docs.python.org/3/library/fcntl.html#fcntl.flock) provides
+the exclusive advisory lock used to serialize cooperative controller writers.
+These are implementation references, not a security claim about same-user code.
+
+Current controller gates: typecheck passed; complete bounded suite 572 passed,
+45 skipped, zero failed, 3734 assertions across 130 files. The five controller
+behavioral checks also passed with temporary storage rooted on persistent btrfs.
+
+A 100-query microbenchmark on persistent btrfs measured median native state
+query latency of 0.016 ms and controlled query latency of 1.114 ms, with the
+controlled p95 at 1.773 ms. This measures journaling around hidden-window state
+queries only. It is not a comparison with the old desktop runtime or a typing,
+rendering, memory or owner-session benchmark. The earlier tmpfs measurement is
+retained with its storage limit and is not used as disk-journal evidence.
