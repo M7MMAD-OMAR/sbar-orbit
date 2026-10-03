@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Ghost matrix page</title>
+<style>body { font: 16px sans-serif; margin: 24px } #list { height: 120px; overflow: auto; border: 1px solid #888 }</style>
+<h1>Ghost matrix page</h1>
+<label>Name <input id="name" aria-label="Name"></label>
+<button id="go" onclick="go()">Count</button>
+<label>Colour <select id="colour" aria-label="Colour"><option>red</option><option>green</option><option>blue</option></select></label>
+<label><input type="checkbox" id="agree"> Agree</label>
+<div id="list" role="list" aria-label="Rows">
+  <script>for (let i = 1; i <= 60; i++) document.write(`<div role="listitem">row ${i}</div>`)</script>
+</div>
+<p id="result" role="status" aria-label="Result">result: none</p>
+<script>
+let n = 0
+function go() {
+  n++
+  const v = document.getElementById("name").value
+  const c = document.getElementById("colour").value
+  const a = document.getElementById("agree").checked
+  document.getElementById("result").textContent = `result: ${n} ${v} ${c} ${a ? "agreed" : "no"}`
+}
+</script>
+</html>
