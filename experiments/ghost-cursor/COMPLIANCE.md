@@ -775,3 +775,58 @@ Final publication checks: typecheck passed; complete bounded suite passed with
 Native opt-in skips do not establish missing coverage. Publication audit checked
 811 files with no findings; staged Gitleaks found no leaks. The private lab was
 stopped after evidence preservation.
+
+## Private cursor compositor cost probe
+
+Measure the isolated compositor and its headless outer compositor with the same
+mapped canvases and stand-in. Compare hidden overlays, static overlays, and
+20 Hz cursor motion against 20 Hz read-only IPC. Alternate phase order to expose
+order effects. Sample kernel CPU ticks with PID/start identity checks. This
+measures CPU cost on the installed private nested renderer, not the owner GPU,
+input throughput, memory allocation, power, or comparison with the former Orbit
+pipeline. No zero-cost or system-wide improvement claim follows from it.
+The first run failed on protected cursor actions and retained its error; cleanup
+then exposed an unconditional workspace toggle. A later run exposed redundant
+hide calls after the final hidden-overlay phase. Both failures remain private.
+The corrected tool tracks shown cursors, restores workspace/controller state,
+and escalates fixture termination with a bounded kill/reap fallback while
+preserving the original failure. Canvas stderr stays in private files.
+
+Final-source run passed eight six-second samples in forward/reverse order,
+with five seconds of warmup. Exact compositor and fixture PID/start identities,
+mapped window geometry and simulated owner focus were checked before/after
+each sample. Loaded library mappings matched the hashed file's device/inode,
+and the build snapshot sidecar matched current C++ source throughout. The
+build script's prototype configuration is O0, not a production optimization
+benchmark. Moving and read-only IPC both achieved 120 request pairs per sample,
+approximately 20 Hz within a 0.2 Hz tolerance. Per-request timestamps remain
+private, so this mean rate does not assert uniform frame/input latency.
+
+Combined compositor CPU seconds for each six-second sample:
+
+| Phase | Forward | Reverse |
+| --- | ---: | ---: |
+| Hidden overlays, idle | 0.15 | 0.03 |
+| Static overlays | 0.02 | 0.01 |
+| Read-only IPC, 20 request pairs/s | 0.05 | 0.01 |
+| Two moving overlays, 20 request pairs/s | 0.22 | 0.26 |
+
+Moving overlays used approximately 3.7% and 4.3% of one CPU core in these two
+short samples. Order effects and kernel tick quantization are visible; do not
+infer zero static cost, a precise causal difference, or statistical confidence.
+Application/controller CPU, GPU, memory, energy and whole-system performance
+are not measured. This is a baseline for a subsequent same-workload redraw
+optimization, not proof that Orbit is faster than the previous pipeline.
+Cleanup and controller-mode restoration passed. Both independent code reviews
+found their initial measurement/cleanup findings corrected. The private lab
+was stopped after saving evidence.
+
+Cost-probe evidence bindings:
+- `cursor_cost_probe.py`: `32a4daa6fed8bbc546be64a10c2ebaf92caa04549fd6ab12a1773cad74eb9a7c`
+- Plugin source: `3ebaa36827ca7ee559fb7b3715e58545deb81add231442bfc3e0f21d8beb82ce`
+- Loaded plugin binary: `9481f25e621fed67090fb5010c1ceb75ea0d9fc24e38d916abf475b3765f24b8`
+
+Publication gates for the cost probe: typecheck passed; full bounded suite
+583 passed, 45 skipped, zero failed and 3771 assertions across 135 files.
+Publication audit checked 812 files with no findings; staged Gitleaks found
+no leaks. Native skips do not close missing coverage or owner acceptance.
