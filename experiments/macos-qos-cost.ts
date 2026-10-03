@@ -63,7 +63,8 @@ if (inheritedBackgroundClass()) throw new Error("Foreground control still inheri
 const rounds = Number(process.argv[2] ?? 3);
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 10) throw new Error("Rounds must be 1 through 10");
 const firstArm = process.argv[3] ?? "background";
-if (!["background", "foreground"].includes(firstArm)) throw new Error("First arm must be background or foreground");
+if (!["background", "foreground", "production"].includes(firstArm)) throw new Error("First arm must be background, foreground or production");
+const productionOnly = firstArm === "production";
 
 /** One session's real work, timed: launch, navigate to a local page, read it back, close. */
 async function timeOneSession(background: boolean) {
@@ -109,7 +110,7 @@ for (let round = 0; round < rounds; round++) {
   // Alternating order per round, so a machine that warms up or gets busier does not systematically
   // favour one arm.
   const backgroundFirst = (round % 2 === 0) === (firstArm === "background");
-  const order = backgroundFirst ? [true, false] : [false, true];
+  const order = productionOnly ? [false] : backgroundFirst ? [true, false] : [false, true];
   for (const background of order) samples.push({ round, background, ...await timeOneSession(background) });
 }
 
@@ -140,6 +141,8 @@ console.log(JSON.stringify({
   host: { cpus: cpus().length, memoryGiB: Number((totalmem() / 2 ** 30).toFixed(1)) },
   rounds,
   firstArm,
+  scope: productionOnly ? "current production utility policy cold starts" : "legacy background versus production utility comparison",
+  legacyBackground: productionOnly ? "not measured in production-only mode" : "included in comparison",
   controlPolicy: "non-background, with utility QoS inherited from the bounded entry point",
   requestedUtilityClamp: process.env.ORBIT_EXPERIMENT_UTILITY_CLAMP === "1",
   background: withBackground,
@@ -150,7 +153,8 @@ console.log(JSON.stringify({
   backgroundCostRatio: ratio,
   failures: samples.filter(sample => sample.failed).map(({ round, background, failed }) => ({ round, background, failed })),
   samples,
-  verdict: samples.some(sample => sample.failed) ? "incomplete comparison: failures retained"
+  verdict: samples.some(sample => sample.failed) ? "incomplete measurement: failures retained"
+    : productionOnly ? "measured production cold starts verified; legacy background not measured"
     : "measured scheduling classes verified; ratio applies only to these samples",
 }, null, 2));
 if (samples.some(sample => sample.failed)) process.exitCode = 1;

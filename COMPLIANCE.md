@@ -73,5 +73,40 @@ standard-library-only cleanup fixture failed before dependency isolation with
 both assertions after isolation. Cleanup and navigation now pass locally.
 The post-fix viewer run was blocked twice by RESOURCE_EXHAUSTED because other
 Orbit sessions occupied the shared task budget. This is retained as blocked
-evidence, not a passing viewer result. Remote acceptance remains pending. Native display coverage remains not measured
+evidence, not a passing viewer result. Remote run 37160046987 passed all nine jobs for revision
+`78010a1ae24dcdfdb770e78f21f7f49c7e40a7c0`: Ubuntu 537 passed and 91 skipped;
+Windows 408 passed and 220 skipped; macOS 418 passed and 210 skipped. Each
+platform reported zero failures. Both installation and host registration
+passed on all three platforms. These skips retain opt-in or platform coverage
+limits and do not certify native owner-session displays.
+
+Run: https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37160046987
+
+The final production cold-start result will be recorded in the local
+`output/ci-repair-acceptance.json` with exact source hashes and run URLs.
+That report is generated only after all final-revision jobs have completed. Native display coverage remains not measured
 unless its opt-in checks run. No deployment workflow exists in this repository.
+
+### macOS cold-start workflow scope
+
+The manual scheduling experiment reproduced a failure of the discarded
+darwin-background policy on 4 October 2026. Production uses utility QoS.
+The cold-start workflow will verify the current policy by default; an explicit
+legacy comparison input preserves both old-policy arms, their deadlines and
+nonzero exit on any failure. Legacy comparison evidence is historical research,
+not current production acceptance. It must not be reported as passing or removed.
+Production-only mode requires three successful real browser launches, navigation,
+read and capture with verified non-background ownership. Its report explicitly
+identifies its scope and contains no measured background ratio.
+
+### Existing scoped prototype changes included for upload
+
+The owner requested uploading all project changes. The existing launcher,
+plugin and scoped enrollment probe were reviewed together. The bounded
+`scoped_process_probe.py` passed against plugin SHA-256
+`592f62e843466404365608419a7ca82ffa88cc8adf23be5c2fcbb55b45f0419e`.
+It verified policy refusal, exact membership, process death, migration,
+permanent revocation and cleanup. It opened no owner-desktop application.
+The prototype's limits and prior private-compositor evidence remain in
+`experiments/ghost-cursor/SCOPED-ENROLLMENT.md`. This upload does not claim
+production native-display acceptance.

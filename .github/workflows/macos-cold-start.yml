@@ -2,6 +2,10 @@ name: macos-cold-start
 on:
   workflow_dispatch:
     inputs:
+      legacy-comparison:
+        description: Compare the discarded background policy with production utility QoS
+        type: boolean
+        default: false
       utility-control:
         description: Clamp both comparison arms to utility QoS
         type: boolean
@@ -13,7 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        first-arm: [background, foreground]
+        # Production verification excludes the discarded policy explicitly.
+        # Its historical comparison remains opt-in and failures still fail the job.
+        first-arm: ${{ fromJSON(inputs.legacy-comparison && '["background","foreground"]' || '["production"]') }}
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -22,7 +28,7 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile --ignore-scripts
-      - name: Measure both orders on separate fresh hosts
+      - name: Measure current cold starts or the requested legacy comparison
         run: |
           mkdir -p output
           ${{ inputs.utility-control && '/usr/sbin/taskpolicy -c utility' || '' }} bun run scripts/limited.ts bun experiments/macos-qos-cost.ts 3 '${{ matrix.first-arm }}' > output/cold-start.json
