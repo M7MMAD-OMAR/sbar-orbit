@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -59,6 +60,12 @@ def main():
                        XDG_STATE_HOME=str(work / "state"), DBUS_SESSION_BUS_ADDRESS=f"unix:path={work / 'session'}",
                        AT_SPI_BUS_ADDRESS=f"unix:path={work / 'a11y'}",
                        QT_LINUX_ACCESSIBILITY_ALWAYS_ON="1", GTK_A11Y="atspi")
+    if (work / "config" / "kdeglobals").is_file():
+        plugin = Path("/usr/lib64/qt6/plugins/platformthemes/KDEPlasmaPlatformTheme6.so")
+        info = plugin.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError("KDE platform theme must be an installed root-owned library")
+        environment["QT_QPA_PLATFORMTHEME"] = "kde"
     for name in ("home", "config", "data", "cache", "state"):
         (work / name).mkdir(mode=0o700, exist_ok=True)
     services_dir = work / "data" / "dbus-1" / "services"

@@ -26,6 +26,11 @@ here = Path(__file__).resolve().parent
 lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
 baseline = {window["pid"] for window in clients()}
 control_path = Path(os.environ["XDG_STATE_HOME"]) / "orbit-native-control"
+unit_report = os.environ.get("ORBIT_NATIVE_DEMO_UNITS_FILE")
+if unit_report:
+    unit_report = Path(unit_report)
+    if unit_report.resolve().parent != lab or unit_report.stat().st_mode & 0o077:
+        raise RuntimeError("Demo unit report must be a private lab file")
 units, profiles, workers, actors, results = [], [], [], [], []
 primary_error = None
 with ActionControl(control_path) as control:
@@ -38,6 +43,11 @@ try:
         profiles.append(work)
         unit = "orbit-native-" + uuid.uuid4().hex + ".scope"
         units.append(unit)
+        if unit_report:
+            temporary = unit_report.with_suffix(".pending")
+            with open(temporary, "w", opener=lambda path, flags: os.open(path, flags, 0o600)) as report:
+                json.dump({"units": units}, report)
+            os.replace(temporary, unit_report)
         if len(sys.argv) == 2:
             staged = subprocess.run(["bun", str(here / "native_appearance_stage.ts"), sys.argv[1], str(work)],
                                     capture_output=True, text=True, timeout=5, check=True)
@@ -49,7 +59,14 @@ try:
         lease = NativeLease(unit)
         process = process_identity(window["pid"])
         assert window["pid"] not in baseline and lease.contains(process), "Application reused a baseline instance or escaped its scope"
-        if name == "qt":
+        if os.environ.get("ORBIT_NATIVE_DEMO_LAYOUT") == "1":
+            assert hypr(f"dispatch setfloating address:{window['address']}").strip() == "ok"
+            height = 950 if name == "gtk4" else 650
+            left = 30 if name == "gtk4" else 950
+            assert hypr(f"dispatch resizewindowpixel exact 850 {height},address:{window['address']}").strip() == "ok"
+            assert hypr(f"dispatch movewindowpixel exact {left} 20,address:{window['address']}").strip() == "ok"
+            window = window_for(window["pid"])
+        elif name == "qt":
             assert hypr(f"dispatch setfloating address:{window['address']}").strip() == "ok"
             assert hypr(f"dispatch resizewindowpixel exact 850 650,address:{window['address']}").strip() == "ok"
             window = window_for(window["pid"])
@@ -104,6 +121,8 @@ try:
         subprocess.run(["grim", "-T", worker["window"]["stableId"], str(here / "evidence" / f"native-scoped-{worker['name']}.png")],
                        env=worker["env"], capture_output=True, timeout=5, check=True)
         results.append({"name": worker["name"], "task": summary, "native_actions": len(begins), "interval": interval, "private_tree": "pass", "scope_membership": "pass", "bus_peers": "pass", "activated_profile": "pass", "diagnostics": error.decode()})
+    if os.environ.get("ORBIT_NATIVE_DEMO_LAYOUT") == "1":
+        time.sleep(1)
 except BaseException as error:
     if isinstance(error, subprocess.CalledProcessError):
         print(json.dumps({"failed_command_stdout": error.stdout, "failed_command_stderr": error.stderr}), flush=True)

@@ -624,9 +624,9 @@ incomplete. This publishes reviewed experimental source, not release acceptance.
 Current source binding:
 
 - `lab.py`: `68359d54432e8736362256f1b9b48fefe43406f7b7cefdce33e07a1701f798ba`
-- `native_scope_launch.py`: `de6ef625102d0eaa0874020d406c2484d8f99a67b6e00199bcaf35dea995ed43`
+- `native_scope_launch.py`: `ddb60eaa6c1fcb5f5c10d48a5113fc54cdc2cce7407baaf5ef15fa6407808ad2`
 - `native_activation_fixture.py`: `4983e607aba282d463bbb7f99fa699b95ea9acce5ebdec03e006dc193d4c08a1`
-- `native_scoped_apps.py`: `0e8148a031dbc70f46f7754fe11fe196ecb45a5e5f926f5bb9f305076bb142de`
+- `native_scoped_apps.py`: `a122bc928a8252010ed5dd839e094fe3c931474466c852bf84b1460da7adccd2`
 - `native_budget_probe.py`: `65dbfc7a319dc455549b61e0bd0e08c96d1519dc99a1c56690718eedca72a9db`
 
 Final current-source scoped application run passed B1, B2, B3, B4 and B12,
@@ -641,3 +641,81 @@ Typecheck passed. The complete bounded suite passed: 581 passed, 45 skipped,
 zero failed, 3764 assertions across 133 files. Skipped native opt-in cases are
 not acceptance evidence. Publication audit passed over 805 files with no findings; staged Gitleaks
 found no leaks. Full owner-session release acceptance remains incomplete.
+
+## Native Qt appearance environment
+
+Scope: supply the installed KDE platform theme to the scoped private application
+when filtered kdeglobals has been staged. Qt's native platform-theme selector
+is distinct from its Wayland platform plugin. Reviewed 4 October 2026:
+[Qt application source and documented options](https://github.com/qt/qtbase/blob/dev/src/gui/kernel/qguiapplication.cpp)
+confirm QT_QPA_PLATFORMTHEME and child inheritance. Installed Fedora provides
+KDEPlasmaPlatformTheme6.so. The owner's named KDE style is Darkly and the color
+scheme is MaterialYouDark. Values are read only through the visual filter;
+application/session state stays private. No owner capture/input is authorized
+by this preparation. Current Qt visual correction and visible cursor recording
+remain pending, and no performance parity is claimed.
+
+The KDE platform theme is now selected only when filtered kdeglobals exists
+and the installed theme library is a regular root-owned file without group or
+other write access. A missing or unsafe installed library fails explicitly.
+The resulting Dolphin capture is dark, with the owner-selected palette/style
+and icons visibly applied. No owner screenshot was taken; this is private-lab
+visual inspection, not exact full-theme parity. GTK4 remains light, and its
+supported color-scheme/settings delivery remains pending.
+
+A new visible recording runs the same scoped GTK4/Dolphin input tasks with two
+independent compositor cursors. It deliberately arranges only the private lab
+windows and keeps seat focus on a fresh simulated-person window. That window
+continues typing while the agent cursors move. The owner pointer check uses the
+simulated pointer, not the person's actual device. A separate hidden-workspace
+harness measures B1/B2/B3/B4/B12; the recording is not substituted for it.
+
+The first unanchored recording failed when Dolphin acquired the lab seat focus;
+the plugin refused input and the failure remains in evidence. A following
+setup refused the leftover private special workspace. Cleanup now reconciles
+its actual state rather than toggling an already-closed workspace back open.
+A Path.open opener mistake failed before launch and remains diagnostic evidence.
+Review also found setup outside cleanup and SIGTERM bypassing worker finally.
+Setup is protected, cleanup attempts are independent with aggregated errors,
+SIGINT lets the worker execute its finally, and exact published unit names are
+reconciled even if the actor already died. Not-found/inactive and loaded/inactive
+are distinguished from manager errors. Unexpected failed states remain errors,
+and surviving units are stopped and checked. Workspace restoration and mode
+restoration are independent. These are cooperative lab controls, not a
+malicious-same-UID boundary or production owner-session supervisor.
+
+Two pure failure tests reconstruct setup outside cleanup, fail on the faulty
+fixture, then pass corrected source: setup failure releases the simulated
+person, and a stop failure does not skip wait, mode restore or metadata cleanup.
+Initial harness import/setup failures were retained separately. Fixture imports
+are mocked; these tests never open or capture a display. A real SIGTERM probe
+observed 13 surviving scope members, then cleaned those exact units explicitly.
+The corresponding SIGINT probe cleaned every captured PID/start identity and
+restored the original controller mode. A separate live injected SIGKILL after
+two scopes existed left the actor error visible, while the recording supervisor
+reconciled both exact scopes and cleaned all captured members and stand-in
+windows. Raw fault probes stay ignored.
+
+The lossless APNG encoder retains original screenshot PNGs, merges only equal
+consecutive pixels, and verifies every decoded frame plus its duration. Its
+recording overhead is not production performance evidence. Final-source hidden-workspace run passed B1, B2, B3, B4 and B12 with 20
+successful native outcomes and 2.321 seconds of native input overlap. The
+final visible recording has 43 encoded frames, 2.439 seconds of native action
+overlap, exact continued stand-in typing and one simulated pointer position.
+All decoded pixels and frame durations are preserved. Original PNG data totals
+3,654,027 bytes, compared with 1,575,724 bytes for APNG; raw originals remain
+private. Both cursor overlays were visually inspected in actual compositor
+frames, without adding labels or drawing substitute pointers. APNG SHA-256:
+`aa4fdf06083fdadc6f790719c832980512e10d150468366541de1f00b2514bd6`.
+The already-dead-actor probe also passed on final source, keeping its error
+visible while cleaning both scopes and the stand-in. The private lab was
+stopped after evidence preservation. Typecheck and complete bounded suite passed: 582 passed, 45 skipped, zero
+failed, 3768 assertions across 134 files. Native opt-in skips do not close the
+remaining toolkit/owner coverage. Publication audit passed over 808 files with no findings; staged Gitleaks
+found no leaks. This is experimental publication, not full owner-session acceptance.
+
+- `native_scope_launch.py`: `ddb60eaa6c1fcb5f5c10d48a5113fc54cdc2cce7407baaf5ef15fa6407808ad2`
+- `native_scoped_apps.py`: `a122bc928a8252010ed5dd839e094fe3c931474466c852bf84b1460da7adccd2`
+- `native_scoped_cursor_demo.py`: `d06b8cf78841352c612ce3ead095f305350a15d4b5eb4b4691dbd9846cf90b81`
+- `native_cursor_cleanup_test.py`: `e071a57f37c447853364a70ae18513fdfd43cd574758b9f8ca67850b3d39397b`
+- `tests/native-cursor-cleanup.test.ts`: `1386f3377eea681514a6db31fe6293f1cf1613959b0f3ced8e8491103250486b`
