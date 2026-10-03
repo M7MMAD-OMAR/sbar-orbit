@@ -22,7 +22,18 @@ demo = types.ModuleType("recording_fixture")
 demo.__file__ = str(source)
 # Import fixture definitions only. All display operations below are replaced.
 fixtures = types.SimpleNamespace(StandIn=None, Pointer=lambda: types.SimpleNamespace(ident=None))
-with patch.dict(sys.modules, {"harness": fixtures}):
+# Cleanup must run on a standard-library-only runner without importing image
+# encoding or the live accessibility stack. These dependencies are never used
+# before the injected setup failure; unexpected use must fail visibly.
+def unused_dependency(*args, **kwargs):
+    raise AssertionError("Display dependency reached the cleanup-only fixture")
+
+
+image_fixture = types.SimpleNamespace(open=unused_dependency)
+ghost_fixture = types.SimpleNamespace(hypr=unused_dependency)
+with patch.dict(sys.modules, {"harness": fixtures,
+                              "PIL": types.SimpleNamespace(Image=image_fixture),
+                              "ghost": ghost_fixture}):
     exec(compile(text, str(source), "exec"), demo.__dict__)
 
 

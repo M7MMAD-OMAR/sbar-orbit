@@ -84,6 +84,16 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#error').waitFor({state:'hidden'});
     await page.unroute('**/rpc');
 
+    // Model an asynchronous control request before it reaches the route handler.
+    await page.evaluate(() => {
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (typeof init?.body === 'string' && JSON.parse(init.body).method === 'session.stop') {
+          await new Promise<void>(done => setTimeout(done, 100));
+        }
+        return originalFetch(input, init);
+      }, originalFetch);
+    });
     let failCommand = true, failNextCapture = false;
     await page.route('**/rpc', async route => {
       const method = route.request().postDataJSON()?.method;
@@ -105,9 +115,17 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await settled();
     expect(await page.locator('#error').isVisible()).toBe(true);
     expect(await page.locator('#error').textContent()).toBe('Unresolved command probe');
+    // The error clears when command() starts, before the request reaches the route.
+    // Keep the mock until its reply arrives so a slow runner cannot stop the real session.
+    const stopped = page.waitForResponse(response => response.url().endsWith('/rpc')
+      && response.request().postDataJSON()?.method === 'session.stop');
     await page.locator('#stop').click();
+    expect(await (await stopped).json()).toMatchObject({ok:true});
+    await page.waitForFunction(() => !(document.querySelector('#stop') as HTMLButtonElement).disabled);
     await page.locator('#error').waitFor({state:'hidden'});
     await page.unroute('**/rpc');
+    const active = await call(broker.socket,'session.list') as {sessionId:string;state:string}[];
+    expect(active.find(session => session.sessionId === a.sessionId)?.state).toBe('running');
 
     const normal = await page.locator('#frame').boundingBox();
     if (!normal) throw new Error('Frame missing');
