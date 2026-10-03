@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """The agent's tool: operate real applications in the background through accessibility.
 
-    ghost.py launch -- CMD...          start CMD hidden in the agent's workspace; prints window JSON
+    ghost.py launch [--raw] -- CMD...  start CMD hidden; raw mode claims its process before exec
     ghost.py windows                   agent windows: address, pid, class, title
     ghost.py snapshot PID [--all]      numbered elements (refs) of that process's accessible tree
     ghost.py press PID REF             do the element's primary action (click, press, activate)
@@ -167,20 +167,61 @@ def main():
     if cmd == "launch":
         argv = a[a.index("--") + 1:]
         before = {c["address"] for c in clients()}
+        launch_pid_file = None
+        raw = "--raw" in a[1:a.index("--")]
+        # Register intent before the first client selection request. Every
+        # environment passed to the compositor child stays allowlisted.
+        import tempfile
+        import uuid
+        from lab import guard, lab_env
+        guard(os.environ)
+        lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
+        fd, envfile = tempfile.mkstemp(prefix="raw-launch-", suffix=".json", dir=lab)
+        launch_id = uuid.uuid4().hex
+        environment = lab_env(lab)
+        environment["ORBIT_AGENT_LAUNCH_ID"] = launch_id
+        with os.fdopen(fd, "w") as stream:
+            json.dump(environment, stream)
+        fd, launch_pid_file = tempfile.mkstemp(prefix="raw-launch-pid-", dir=lab)
+        os.close(fd)
+        here = Path(__file__).resolve().parent
+        argv = ["/usr/bin/python3", str(here / "lab.py"), "exec-env", envfile,
+                "/usr/bin/python3", str(here / "agent_launch.py"), launch_pid_file,
+                *(["--register"] if raw else []), "--", *argv]
         # Launch rules apply only to this process's windows: hidden workspace, never focused on
         # map, kept rendering while unseen so pixels stay current.
         rules = f"workspace {SPACE} silent; no_initial_focus on; render_unfocused on; focus_on_activate off"
-        line = " ".join(subprocess.list2cmdline([x]) for x in argv)
-        res = hypr(f"dispatch exec [{rules}] {line}")
-        if res.strip() != "ok":
-            sys.exit(f"ghost: launch refused: {res}")
-        for _ in range(150):
-            new = [c for c in agent_windows() if c["address"] not in before]
-            if new:
-                print(json.dumps({k: new[0][k] for k in ("address", "pid", "class", "title")}))
-                return
-            time.sleep(0.1)
-        sys.exit("ghost: no window appeared in the agent workspace within 15 s")
+        import shlex
+        line = shlex.join(argv)
+        launched = False
+        try:
+            res = hypr(f"dispatch exec [{rules}] {line}")
+            if res.strip() != "ok":
+                sys.exit(f"ghost: launch refused: {res}")
+            for _ in range(150):
+                new = [c for c in agent_windows() if c["address"] not in before]
+                if launch_pid_file:
+                    launch_pid = Path(launch_pid_file).read_text().strip()
+                    if raw:
+                        new = [c for c in new if launch_pid.isdigit() and c["pid"] == int(launch_pid)]
+                    else:
+                        from process_scope import processes
+                        owned_pids = {pid for pid, started in processes(launch_id)}
+                        new = [c for c in new if c["pid"] in owned_pids]
+                if new:
+                    launched = True
+                    print(json.dumps({k: new[0][k] for k in ("address", "pid", "class", "title")}))
+                    return
+                time.sleep(0.1)
+            sys.exit("ghost: no matching window appeared within 15 s" +
+                     ("; raw launch currently requires the window in the exec process" if raw else ""))
+        finally:
+            if launch_pid_file:
+                if not launched:
+                    from process_scope import processes, terminate
+                    terminate(processes(launch_id))
+                Path(launch_pid_file).unlink(missing_ok=True)
+                Path(envfile).unlink(missing_ok=True)
     if cmd == "windows":
         for c in agent_windows():
             print(json.dumps({k: c[k] for k in ("address", "pid", "class", "title")}))

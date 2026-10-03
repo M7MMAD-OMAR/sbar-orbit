@@ -73,6 +73,42 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.evaluate(()=>new Promise<void>(done=>setTimeout(done,2600)));
     expect(await page.locator('.session').first().getAttribute('data-probe')).toBe('1');
 
+    let failCapture = true;
+    await page.route('**/rpc', async route => {
+      if (route.request().postDataJSON()?.method === 'session.observe' && failCapture) {
+        failCapture = false;
+        await route.fulfill({json:{ok:false,error:{code:'CAPTURE_TIMEOUT',message:'Capture timeout probe'}}});
+      } else await route.continue();
+    });
+    await page.locator('#error').waitFor({state:'visible'});
+    await page.locator('#error').waitFor({state:'hidden'});
+    await page.unroute('**/rpc');
+
+    let failCommand = true, failNextCapture = false;
+    await page.route('**/rpc', async route => {
+      const method = route.request().postDataJSON()?.method;
+      if (method === 'session.stop') {
+        if (failCommand) {
+          failCommand = false;
+          await route.fulfill({json:{ok:false,error:{code:'CONTROL_FAILED',message:'Unresolved command probe'}}});
+        } else await route.fulfill({json:{ok:true,result:{}}});
+      } else if (method === 'session.observe' && failNextCapture) {
+        failNextCapture = false;
+        await route.fulfill({json:{ok:false,error:{code:'CAPTURE_TIMEOUT',message:'Recovery must preserve command probe'}}});
+      } else await route.continue();
+    });
+    await page.locator('#stop').click();
+    await page.waitForFunction(() => document.querySelector('#error')?.textContent === 'Unresolved command probe');
+    failNextCapture = true;
+    await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('data-connected') === 'false');
+    await page.waitForFunction(() => document.querySelector('#connection')?.getAttribute('data-connected') === 'true');
+    await settled();
+    expect(await page.locator('#error').isVisible()).toBe(true);
+    expect(await page.locator('#error').textContent()).toBe('Unresolved command probe');
+    await page.locator('#stop').click();
+    await page.locator('#error').waitFor({state:'hidden'});
+    await page.unroute('**/rpc');
+
     const normal = await page.locator('#frame').boundingBox();
     if (!normal) throw new Error('Frame missing');
     expect(normal.height).toBeGreaterThan(600);
@@ -94,13 +130,43 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     expect(Math.abs((surface?.width ?? 0)-(focused?.width ?? 1))).toBeLessThan(1);
     await mkdir(shots,{recursive:true});
     await page.screenshot({path:join(shots,'focus.png'),fullPage:true});
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#sidebar').waitFor({state:'visible'});
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#sidebar').waitFor({state:'hidden'});
     await page.keyboard.press('Escape');
     expect(await page.locator('#expand').getAttribute('aria-pressed')).toBe('false');
     await page.locator('#sidebar').waitFor({state:'visible'});
     await page.locator('#viewer-fullscreen').click();
     await page.waitForFunction(()=>!!document.fullscreenElement);
+    await settled();
+    const fullscreenStage = await page.locator('#stage').boundingBox();
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    expect(fullscreenStage?.x).toBe(0);
+    expect(fullscreenStage?.y).toBe(0);
+    expect(fullscreenStage?.width).toBe(viewport.width);
+    expect(fullscreenStage?.height).toBe(viewport.height);
+    const fullscreenFrame = await page.locator('#frame').boundingBox();
+    if (!fullscreenFrame) throw new Error('Fullscreen frame missing');
+    expect(Math.min(Math.abs(fullscreenFrame.width - viewport.width), Math.abs(fullscreenFrame.height - viewport.height))).toBeLessThan(1);
+    expect(fullscreenFrame.width).toBeLessThanOrEqual(viewport.width);
+    expect(fullscreenFrame.height).toBeLessThanOrEqual(viewport.height);
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#sidebar').waitFor({state:'visible'});
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#sidebar').waitFor({state:'hidden'});
+    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    await page.waitForFunction(() => document.querySelector('#shell')?.classList.contains('controls-idle'));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.head') as Element).opacity === '0');
+    await page.screenshot({path:join(shots,'fullscreen-idle.png')});
+    await page.mouse.move(20, 20);
+    await page.waitForFunction(() => !document.querySelector('#shell')?.classList.contains('controls-idle'));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.head') as Element).opacity === '1');
+    await page.screenshot({path:join(shots,'fullscreen-controls.png')});
     await page.locator('#viewer-fullscreen').click();
     await page.waitForFunction(()=>!document.fullscreenElement);
+    expect(await page.locator('#expand').getAttribute('aria-pressed')).toBe('false');
+    await page.locator('#sidebar').waitFor({state:'visible'});
     await page.keyboard.press('Escape');
 
     // Picking a session from the rail, and the page tabs of the one that is on the stage.
@@ -174,6 +240,16 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#sidebar').waitFor({state:'visible'});
     await page.keyboard.press('Escape');
     await page.locator('#sidebar').waitFor({state:'hidden'});
+    await page.locator('#viewer-fullscreen').click();
+    await page.waitForFunction(()=>!!document.fullscreenElement);
+    await page.mouse.move(20,20);
+    await page.screenshot({path:join(shots,'mobile-fullscreen.png')});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#sidebar').waitFor({state:'visible'});
+    await page.locator('#sidebar-toggle').click();
+    await page.locator('#viewer-fullscreen').click();
+    await page.waitForFunction(()=>!document.fullscreenElement);
     expect(errors).toEqual([]);
   } finally {await viewer.close();await broker.close();server.stop(true);}
 },60000);

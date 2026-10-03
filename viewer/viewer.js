@@ -256,7 +256,13 @@ applyLanguage();
 const surfaces = [[1280, 800], [1440, 900], [1600, 1000], [1920, 1080], [1920, 1200]];
 let tabs = [], surfaceValue = '1280x800', listed = [], railSignature = '';
 let selected = '', state = '', backend = '', accountName = '', capturedAt = 0, imageWidth = 1280, imageHeight = 800, busy = false;
-function error(message) { element('error').textContent = message; element('error').hidden = !message; }
+const notices = { command: '', poll: '' };
+function error(message, source = 'command') {
+  notices[source] = message;
+  const notice = element('error');
+  const visibleSource = notices.command ? 'command' : 'poll';
+  notice.textContent = notices[visibleSource]; notice.hidden = !notice.textContent; notice.dataset.source = visibleSource;
+}
 async function rpc(method, params = {}) {
   const response = await fetch('/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error(response.status === 403 ? t('Open the complete preview link printed by Orbit, including its access token.') : t('Viewer connection failed.'));
@@ -631,7 +637,8 @@ async function poll() {
       }
     }
   pollFailures = 0;
-  } catch (e) { pollFailures++; element('connection').textContent = t('Lost the connection, trying again'); element('connection').dataset.connected = 'false'; error(e.message); }
+  error('', 'poll');
+  } catch (e) { pollFailures++; element('connection').textContent = t('Lost the connection, trying again'); element('connection').dataset.connected = 'false'; error(e.message, 'poll'); }
   const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
   // Idle at least as long as the iteration cost, so a viewer that cannot keep up
   // drops its frame rate instead of polling back to back and taking a whole core.
@@ -668,14 +675,18 @@ if (typeof window !== "undefined") {
 (() => {
   const toggle = document.getElementById('sidebar-toggle');
   const mobile = matchMedia('(max-width: 900px)');
+  let immersive = false, drawerOpen = false, idleTimer;
   let collapsed = mobile.matches;
   try { collapsed = mobile.matches || localStorage.getItem('orbit-sidebar') === 'collapsed'; } catch {}
   function sidebar() {
-    shell.classList.toggle('sidebar-collapsed', collapsed);
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    toggle.setAttribute('aria-label', t(collapsed ? 'Show sidebar' : 'Hide sidebar'));
+    const hidden = immersive || bigger ? !drawerOpen : collapsed;
+    shell.classList.toggle('sidebar-collapsed', hidden);
+    shell.classList.toggle('drawer-open', drawerOpen);
+    toggle.setAttribute('aria-expanded', String(!hidden));
+    toggle.setAttribute('aria-label', t(hidden ? 'Show sidebar' : 'Hide sidebar'));
   }
   toggle.onclick = () => {
+    if (immersive || bigger) { drawerOpen = !drawerOpen; sidebar(); revealControls(); return; }
     collapsed = !collapsed;
     try { localStorage.setItem('orbit-sidebar', collapsed ? 'collapsed' : 'open'); } catch {}
     sidebar();
@@ -691,6 +702,8 @@ if (typeof window !== "undefined") {
     requestAnimationFrame(() => {
       sizing = false;
       const stage = document.getElementById('stage');
+      shell.style.setProperty('--viewer-head-height', `${document.querySelector('.head').getBoundingClientRect().height}px`);
+      shell.style.setProperty('--viewer-controls-height', `${['.stage-bar', '.tab-row', '.caption'].reduce((height, selector) => height + document.querySelector(selector).getBoundingClientRect().height, 0)}px`);
       const caption = document.querySelector('.caption');
       const panels = document.querySelector('.panels');
       const footer = bigger ? 0 : Math.min(56, panels.getBoundingClientRect().height);
@@ -710,9 +723,22 @@ if (typeof window !== "undefined") {
     shell.classList.toggle('bigger', bigger);
     biggerButton.setAttribute('aria-pressed', String(bigger));
     biggerButton.textContent = t(bigger ? 'Exit focus' : 'Focus view');
+    drawerOpen = false; sidebar();
     fitScreen();
   }
   biggerButton.onclick = () => focusView(!bigger);
+  function revealControls() {
+    clearTimeout(idleTimer);
+    shell.classList.remove('controls-idle');
+    if (!immersive) return;
+    idleTimer = setTimeout(() => {
+      if (drawerOpen || shell.matches(':has(:focus-visible)') || shell.querySelector('.head:hover, .stage-bar:hover, .tab-row:hover, .panels:hover')) {
+        revealControls(); return;
+      }
+      shell.classList.add('controls-idle');
+    }, 2200);
+  }
+  for (const name of ['pointermove', 'pointerdown', 'keydown', 'focusin']) shell.addEventListener(name, revealControls);
   const fullscreen = document.getElementById('viewer-fullscreen');
   fullscreen.onclick = async () => {
     try {
@@ -722,10 +748,12 @@ if (typeof window !== "undefined") {
   };
   document.addEventListener('fullscreenchange', () => {
     fullscreen.setAttribute('aria-label', t(document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen'));
-    if (document.fullscreenElement) focusView(true);
+    immersive = !!document.fullscreenElement;
+    shell.classList.toggle('immersive', immersive);
+    drawerOpen = false; sidebar(); revealControls(); fitScreen();
   });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { if (bigger) focusView(false); else if (mobile.matches && !collapsed) { collapsed = true; sidebar(); toggle.focus(); } }
+    if (event.key === 'Escape') { if (drawerOpen) { drawerOpen = false; sidebar(); toggle.focus(); } else if (!immersive && bigger) focusView(false); else if (mobile.matches && !collapsed) { collapsed = true; sidebar(); toggle.focus(); } }
   });
 })();
 }

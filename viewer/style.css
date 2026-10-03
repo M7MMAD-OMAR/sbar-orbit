@@ -283,7 +283,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .tech summary { padding:8px 0; font-size:11px; color:var(--ink-dim); cursor:pointer; }
 .tech p { font-size:11px; overflow-wrap:anywhere; }
 #report-github { color:var(--ink); font-size:12px; margin-inline-end:12px; }
-#error { background:var(--loud); color:var(--on-loud); border-radius:var(--r-md); padding:10px 14px; font-size:12px; animation:card-in .26s var(--ease) both; }
+#error { background:var(--level-2); color:var(--ink); border-radius:var(--r-md); padding:10px 14px; font-size:12px; animation:card-in .26s var(--ease) both; }
 [hidden] { display:none!important; }
 .sr-only { position:absolute; clip:rect(0,0,0,0); width:1px; height:1px; overflow:hidden; }
 
@@ -296,11 +296,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .shell.bigger .head { min-height:36px; }
 .shell.bigger #task-name { font-size:13px; }
 .shell.bigger .head-identity { display:flex; align-items:baseline; gap:10px; }
-.shell.bigger #sidebar-toggle { display:none; }
+.shell.bigger #sidebar-toggle { display:inline-flex; }
+.shell.bigger.drawer-open .rail { opacity:1; visibility:visible; }
+.shell.bigger.drawer-open { grid-template-columns:var(--rail-width) minmax(0,1fr); }
 
 @media(max-width:900px) {
   .shell { grid-template-columns:minmax(0,1fr); margin:0; border-radius:0; height:100dvh; }
-  .shell.sidebar-collapsed,.shell.bigger { grid-template-columns:minmax(0,1fr); }
+  .shell.sidebar-collapsed,.shell.bigger,.shell.bigger.drawer-open { grid-template-columns:minmax(0,1fr); }
   /* On a narrow window the rail is a sheet over the work rather than a column
      beside it, so it slides in from the reading edge and dims nothing behind. */
   .rail { position:fixed; inset-block:64px 12px; inset-inline:12px auto; width:min(300px,calc(100vw - 24px)); height:auto;
@@ -431,4 +433,32 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
   .setting-control { justify-content:flex-start; }
   .search input { min-width:0; width:100%; }
   .search { flex:1; }
+}
+
+/* Fullscreen picture and controls share one viewport. Chrome overlays the picture. */
+:root:fullscreen { background:var(--sunken); }
+.shell.immersive { position:fixed; inset:0; width:100%; height:100dvh; margin:0; border-radius:0; display:block; }
+.shell.immersive .work { position:absolute; inset:0; padding:0; overflow:hidden; border-radius:0; background:var(--sunken); }
+.shell.immersive .stage-card { display:grid; grid-template-rows:minmax(0,1fr) auto auto auto; position:absolute; inset:0; padding:0; gap:0; border-radius:0; background:var(--sunken); box-shadow:none; }
+.shell.immersive .stage { position:absolute; inset:0; padding:0; border-radius:0; min-height:0; }
+.shell.immersive .surface { width:min(100vw,calc(100dvh * var(--shot-width,1280) / var(--shot-height,800))); border-radius:0; }
+.shell.immersive .head,.shell.immersive .stage-bar,.shell.immersive .tab-row,.shell.immersive .caption,.shell.immersive .panels {
+  position:absolute; z-index:5; inset-inline:0; margin:0; padding:12px 16px; background:var(--level-1); opacity:1;
+  transition:opacity .15s ease-out;
+}
+.shell.immersive .head { top:0; }
+.shell.immersive .head-status { display:flex; }
+.shell.immersive .stage-bar { position:relative; inset:auto; grid-row:3; }
+.shell.immersive .tab-row { position:relative; inset:auto; grid-row:2; }
+.shell.immersive .caption { position:relative; inset:auto; grid-row:4; }
+.shell.immersive .panels { display:flex; bottom:var(--viewer-controls-height,140px); max-height:30dvh; overflow:auto; }
+.shell.immersive .panels:has(#manual[hidden]) { display:none; }
+.shell.immersive #tools,.shell.immersive #account-controls,.shell.immersive #expand { display:none; }
+.shell.immersive.controls-idle .head,.shell.immersive.controls-idle .stage-bar,.shell.immersive.controls-idle .tab-row,.shell.immersive.controls-idle .caption,.shell.immersive.controls-idle .panels { opacity:0; pointer-events:none; }
+.shell.immersive .rail { position:absolute; inset-block:var(--viewer-head-height,60px) 0; inset-inline-start:0; width:min(var(--rail-width),100vw); z-index:8; background:var(--level-1); transform:none; transition:none; }
+.shell.immersive.drawer-open .rail { opacity:1; visibility:visible; }
+.shell.immersive .rail-inner { transform:none; width:100%; }
+.shell.immersive #error { position:absolute; top:calc(var(--viewer-head-height,60px) + 12px); inset-inline:16px; z-index:9; max-height:20dvh; overflow:auto; }
+@media (prefers-reduced-motion:reduce) {
+  .shell.immersive .head,.shell.immersive .stage-bar,.shell.immersive .tab-row,.shell.immersive .caption,.shell.immersive .panels { transition:none; }
 }

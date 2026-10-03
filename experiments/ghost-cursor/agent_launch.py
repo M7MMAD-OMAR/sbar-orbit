@@ -1,0 +1,26 @@
+#!/usr/bin/python3
+"""Claim a raw agent process in the private lab before exec creates a client."""
+import os
+import socket
+import sys
+from pathlib import Path
+from lab import guard
+
+guard(os.environ)
+os.setpgid(0, 0)
+register = sys.argv[2] == "--register"
+separator = 3 if register else 2
+assert sys.argv[separator] == "--" and len(sys.argv) > separator + 1
+pidfile = Path(sys.argv[1])
+assert pidfile.parent.resolve() == Path(os.environ["XDG_RUNTIME_DIR"]).parent.resolve()
+pidfile.write_text(str(os.getpid()))
+if register:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(5)
+        connection.connect(f"{os.environ['XDG_RUNTIME_DIR']}/hypr/{os.environ['HYPRLAND_INSTANCE_SIGNATURE']}/.socket.sock")
+        connection.sendall(f"ghost-register-process {os.getpid()}".encode())
+        result = b""
+        while data := connection.recv(4096):
+            result += data
+    assert result.decode().strip() == "ok", result.decode()
+os.execvpe(sys.argv[separator + 1], sys.argv[separator + 1:], os.environ)

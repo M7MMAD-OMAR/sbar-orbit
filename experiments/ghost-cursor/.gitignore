@@ -1,2 +1,4 @@
 plugin/.deps/
+plugin/*.so
 __pycache__/
+evidence/

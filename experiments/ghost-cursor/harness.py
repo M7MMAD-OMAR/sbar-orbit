@@ -189,7 +189,7 @@ def judge_events(lines, start_active, person, space):
         elif kind in ("closewindow", "movewindow", "movewindowv2", "changefloatingmode", "fullscreen", "pin",
                       "minimized"):
             (violations if "0x" + target in person else noise).append(line)
-        elif kind in ("urgent", "openwindow", "windowtitle", "screencast", "submap", "bell", "activewindow",
+        elif kind in ("urgent", "openwindow", "windowtitle", "screencast", "screencastv2", "submap", "bell", "activewindow",
                       "moveintogroup", "moveoutofgroup", "togglegroup"):
             noise.append(line)
         elif kind in ("workspace", "workspacev2", "focusedmon", "focusedmonv2", "activespecial", "activespecialv2",
@@ -254,6 +254,7 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--agent-space", default="special:ghost", help="workspace name prefix the agent owns")
     a = ap.parse_args()
+    from process_scope import processes, terminate
     import ctypes
     ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
 
@@ -275,6 +276,7 @@ def main():
                             if i == "wl_keyboard" and e == "modifiers"), "0")
         state_offset = len(standin.states)
     before = snapshot(a.agent_space)
+    baseline_processes = processes()
     ev, ptr = Events(), Pointer()
     ev.start(); ptr.start()
     time.sleep(0.3)
@@ -297,8 +299,13 @@ def main():
     agent_s = time.monotonic() - t0
     typist.wait()
     time.sleep(a.settle)  # measurement continues: delayed effects of the agent land here
-    leftovers = descendants(os.getpid(), {standin.p.pid, typist.pid})
+    compositor_leftovers = processes() - baseline_processes
+    leftovers = sorted(set(descendants(os.getpid(), {standin.p.pid, typist.pid})) |
+                       {pid for pid, started in compositor_leftovers if pid != typist.pid})
+    terminate(compositor_leftovers - {item for item in compositor_leftovers if item[0] == typist.pid})
     for pid in leftovers:
+        if pid in {item[0] for item in compositor_leftovers}:
+            continue  # Already terminated through the retained process identities.
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -334,7 +341,8 @@ def main():
         "B4_view_and_settings": {"pass": not violations and not moved and not diffs,
                                  "events": violations[:20], "noise": noise[:20], "changed_windows": moved,
                                  "changed_state": diffs},
-        "B12_leftovers": {"pass": not leftovers, "pids": leftovers},
+        "B12_leftovers": {"pass": not leftovers, "pids": leftovers,
+                          "compositor_processes": sorted(compositor_leftovers)},
     }
     ok = all(report[k]["pass"] for k in report if k.startswith("B")) and agent_exit == 0 and not timed_out
     report["pass"] = ok
