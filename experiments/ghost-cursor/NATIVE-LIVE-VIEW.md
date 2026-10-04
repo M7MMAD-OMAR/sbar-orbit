@@ -64,7 +64,7 @@ Full-suite and staged publication results are recorded in COMPLIANCE.md.
 
 ## Outstanding owner goal
 
-The CLI path is implemented. Managed broker activation, owner controls UI,
+The CLI path is implemented. Managed broker activation, final owner controls acceptance,
 owner theme inheritance, accessibility routing, child-client enrollment,
 the complete simultaneous-input and toolkit/clipboard/cursor matrix, and
 CPU/memory/latency comparison remain incomplete. The 10000 worker-request limit
@@ -73,6 +73,11 @@ cadence is not input latency evidence. No faster-operation or zero-overhead
 claim follows from these checks, and production support tiers remain unchanged.
 
 ## Source binding
+
+This live-view proof is bound to the source below at revision 9a82eeb. Later
+addition of the owner settings CLI is measured separately in
+NATIVE-SETTINGS-RUNTIME.md. These hashes are historical proof bindings, not a
+claim that every listed file still has the same current contents.
 
 The actual public live GTK proof exited zero. The isolated client checks passed
 five tests with 20 assertions; the cache helper now passes two Python tests.

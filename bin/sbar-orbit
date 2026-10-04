@@ -5,7 +5,7 @@ orbit_script=$(readlink -f -- "${BASH_SOURCE[0]}")
 orbit_root=$(dirname -- "$(dirname -- "$orbit_script")")
 orbit_uname=$(uname -s)
 
-# The three subcommands below are GTK and Python, and both are Linux only here. Spawning
+# The GTK surfaces below use Python and are Linux only here. Spawning
 # `/usr/bin/python3` on macOS is not merely useless: that path is a stub that raises the Command Line
 # Tools installer dialog on a machine without them, which puts a system window on the person's screen.
 # docs/porting.md lists it among the calls Orbit will not make on darwin, so the refusal is explicit
@@ -62,6 +62,7 @@ Sbar Orbit, a private browser and desktop for your AI agent
   sbar-orbit panel               Dock the session mark to the desktop edge
                                  (right click it for the settings window)
   sbar-orbit settings            Open the settings window, searchable
+  sbar-orbit native-settings     Open protected/full native controls and the action log
   sbar-orbit config list         Every setting, its value and its default
   sbar-orbit config search WORD  Find a setting by name, meaning, English or Arabic
   sbar-orbit config get KEY
@@ -170,6 +171,10 @@ HELP
     # person's home has no business in a browser's environment.
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
+    ;;
+  native-settings)
+    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop native-settings
+    exec bun run "$orbit_root/scripts/limited.ts" bun run "$orbit_root/src/cli.ts" "$@"
     ;;
   session)
     if [ "${2:-}" = "native-view" ]; then

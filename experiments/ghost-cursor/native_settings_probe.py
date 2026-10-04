@@ -8,6 +8,9 @@ import subprocess
 import tempfile
 import time
 import argparse
+import hashlib
+import shutil
+import uuid
 
 import lab
 lab.guard(os.environ)
@@ -16,7 +19,7 @@ gi.require_version("Atspi", "2.0")
 from gi.repository import Atspi
 from action_control import ActionControl, ControlError
 from ghost import clients, window_for, _hypr
-from process_scope import identity, terminate
+from process_scope import identity, processes, terminate
 
 
 def wait(check):
@@ -33,7 +36,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ui", type=Path, default=Path(__file__).with_name("native_settings.py"))
     parser.add_argument("--close-only", action="store_true")
+    parser.add_argument("--cli", action="store_true")
+    parser.add_argument("--kill-cli", action="store_true")
     args = parser.parse_args()
+    if args.kill_cli and not args.cli:
+        parser.error("--kill-cli requires --cli")
     with tempfile.TemporaryDirectory(prefix="settings-probe-", dir=os.environ["XDG_STATE_HOME"]) as directory:
         state = Path(directory) / "orbit-native-control"
         with ActionControl(state) as control:
@@ -43,19 +50,44 @@ def main():
                 pass
             else:
                 raise AssertionError("Protected request unexpectedly succeeded")
-        env = dict(os.environ, XDG_STATE_HOME=directory)
-        process = subprocess.Popen(["/usr/bin/python3", str(args.ui)], env=env)
+        repo = Path(__file__).resolve().parents[2]
+        evidence_directory = Path(__file__).with_name("evidence")
+        launch_id = uuid.uuid4().hex
+        env = dict(os.environ, XDG_STATE_HOME=directory, ORBIT_NATIVE_CONTROL=str(state),
+                   ORBIT_NATIVE_PLAN=str(Path(directory) / "owner-plan.json"),
+                   ORBIT_AGENT_LAUNCH_ID=launch_id)
+        argv = [shutil.which("bun"), str(repo / "src/cli.ts"), "native-settings"] if args.cli else ["/usr/bin/python3", str(args.ui)]
+        log = open(evidence_directory / f"native-settings-{os.getpid()}.log", "xb")
+        process = subprocess.Popen(argv, env=env, stdout=log, stderr=log)
         process_identity = identity(process.pid)
+        ui_identity = None
         try:
             desktop = Atspi.get_desktop(0)
 
             def application():
                 for index in range(desktop.get_child_count()):
                     child = desktop.get_child_at_index(index)
-                    if child and child.get_process_id() == process.pid:
+                    if not child:
+                        continue
+                    pid = child.get_process_id()
+                    if pid == process.pid and not args.cli:
                         return child
+                    if args.cli and pid > 0:
+                        try:
+                            parent = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+                        except (OSError, ValueError, IndexError):
+                            continue
+                        if parent == process.pid and any(client["pid"] == pid and client["title"] == "Orbit native settings" for client in clients()):
+                            return child
 
             root = wait(application)
+            ui_pid = root.get_process_id()
+            ui_identity = identity(ui_pid)
+            if args.kill_cli:
+                process.kill()
+                process.wait(timeout=5)
+                assert ui_identity and identity(ui_pid) == ui_identity, "Fixture must leave a live GTK child"
+                return
 
             def nodes(node):
                 yield node
@@ -80,7 +112,7 @@ def main():
                     # GTK4 radios expose focus but no AT-SPI Action interface.
                     # Owner fixture uses the private lab keyboard to exercise
                     # the same keyboard activation available to the person.
-                    address = next(client["address"] for client in clients() if client["pid"] == process.pid)
+                    address = next(client["address"] for client in clients() if client["pid"] == ui_pid)
                     _hypr("dispatch focuswindow address:" + address)
                     for _ in range(20):
                         if node.get_state_set().contains(Atspi.StateType.FOCUSED):
@@ -104,7 +136,7 @@ def main():
             # Settings must remain outside the agent workspace and API.
             wait(lambda: named("Approve this action once"))
             try:
-                window_for(process.pid)
+                window_for(ui_pid)
             except SystemExit:
                 pass
             else:
@@ -146,23 +178,35 @@ def main():
             with ActionControl(state) as control:
                 evidence = control.inspect()
             assert not evidence["unresolved"]
-            screenshot = Path(os.environ["XDG_STATE_HOME"]) / "native-settings-preview.png"
-            subprocess.run(["grim", "-o", "WAYLAND-1", str(screenshot)], check=True)
+            screenshot = evidence_directory / ("native-settings-runtime.png" if args.cli else "native-settings-preview.png")
+            target = next(client for client in clients() if client["pid"] == ui_pid)
+            subprocess.run(["grim", "-T", target["stableId"], str(screenshot)], check=True, timeout=10)
             with (state / "lock").open("r+") as held_lock:
                 fcntl.flock(held_lock, fcntl.LOCK_EX)
                 click("Refresh")
                 wait(lambda: status("Reading settings..."))
-                address = next(client["address"] for client in clients() if client["pid"] == process.pid)
+                address = next(client["address"] for client in clients() if client["pid"] == ui_pid)
                 _hypr("dispatch closewindow address:" + address)
                 assert process.wait(timeout=2) == 0, "Close while lock is held"
             print(json.dumps({"passed": True, "approval_once": True, "mode_roundtrip": True,
                               "journal_error_visible": not args.close_only, "agent_target_refused": True,
                               "close_during_lock": True,
                               "events": len(evidence["events"]), "screenshot": str(screenshot)}))
+            print(json.dumps({"public_cli": args.cli, "owner_activation": "not performed",
+                              "source_sha256": {name: hashlib.sha256((repo / name).read_bytes()).hexdigest() for name in (
+                                  "src/native/settings.py", "src/native/control.py", "src/native-settings.ts", "src/cli.ts",
+                                  "experiments/ghost-cursor/native_settings.py", "experiments/ghost-cursor/native_settings_probe.py")}}))
         finally:
-            if process_identity:
-                terminate({process_identity})
-            process.wait(timeout=5)
+            try:
+                owned = processes(launch_id=launch_id, root_identity=process_identity)
+                owned.update(item for item in (process_identity, ui_identity) if item)
+                terminate(owned)
+                process.wait(timeout=5)
+                assert not processes(launch_id=launch_id, root_identity=process_identity), "Owned UI processes survived cleanup"
+                if args.kill_cli:
+                    print(json.dumps({"parent_killed": True, "owned_child_cleanup": True}))
+            finally:
+                log.close()
 
 
 if __name__ == "__main__":

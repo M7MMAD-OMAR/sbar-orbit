@@ -334,3 +334,62 @@ Publication audit checked 859 staged files with zero findings. Staged Gitleaks
 found no leaks, and Graft was refreshed. The exact final index is checked again
 by the commit hook. This is an authorized diagnostic/runtime draft update,
 not a release or cross-platform acceptance.
+
+### Native owner controls runtime entry
+
+Reviewed 4 October 2026 before implementation. Promote the measured GTK4
+settings preview into runtime source and expose an explicit native-settings
+owner CLI. Require the same fixed absolute ORBIT_NATIVE_CONTROL and
+ORBIT_NATIVE_PLAN configuration as the native broker; refuse unconfigured,
+relative or non-private control storage before opening the UI. Configuration
+paths and protected/full choice remain absent from agent RPC capabilities.
+Use the existing shared resource budget and durable ActionControl journal,
+one-use exact approval, visible storage errors and cancellation on window close.
+The guarded experimental preview becomes a thin adapter to the same runtime UI.
+Measure the public CLI in the private lab through accessibility with mode
+roundtrip, exact approval replay refusal, corrupted journal refusal and close
+while the lock is held. Owner activation remains the final consented acceptance
+step; no owner display or service is touched during development.
+
+Official references reviewed: GTK API 4.0, documentation library 4.23.4:
+https://docs.gtk.org/gtk4/class.ApplicationWindow.html and
+https://docs.gtk.org/gtk4/class.CheckButton.html . Main-thread updates use
+https://docs.gtk.org/glib/func.idle_add.html . Installed GTK version and
+source-bound results will be recorded after measurement. No asset or dependency
+is added. UI Skills routing selected the Rams checklist for labels, native
+keyboard navigation, text status, disabled/error states and layout; its web
+checks are heuristics adapted to GTK, not a claim of complete WCAG certification.
+
+Previous source revision 9a82eeb37cdffd5b8399d5fdce6adf4e1088e858 passed all
+nine GitHub jobs in run 37176817702. Windows real lock controls passed both
+release and persistent refusal cases; original rm retry options rejected in
+zero measured milliseconds. The previous macOS viewer timeout did not recur,
+but its original cause remains unidentified. This does not certify owner
+activation, theme matching, full Windows descendant-exit cleanup or performance.
+
+
+Runtime native owner controls measurement: the actual public CLI passed exact
+one-use approval/replay refusal, protected/full roundtrip, damaged journal
+refusal, exclusion of settings as an agent target and close under lock. GTK
+4.22.5 and system Python 3.14.7 were used in the private lab. The target-only
+screenshot was visually inspected. Source hashes and limits are recorded in
+experiments/ghost-cursor/NATIVE-SETTINGS-RUNTIME.md. Owner activation and theme
+acceptance remain not measured.
+
+The initial three CLI refusal tests failed because they read stdout instead of
+stderr. After repairing the tests, all three pass with nine assertions. Review
+also identified root-only probe cleanup that could leave the GTK child when Bun
+is killed first. A forced-parent-death fixture passes with unique launch-tag
+and retained process identity cleanup. Restoring root-only termination in a
+temporary source copy reproduces the surviving-child failure. Lab shutdown
+removed that negative-control child; both new labs and temporary source were
+removed. The diagnostic log closes independently of cleanup errors.
+
+Typecheck passed. Staged public audit checked 863 files with zero findings;
+Gitleaks found no leaks. Graft was refreshed. Full local suite and publication
+results follow when their commands reach terminal status.
+
+Final local runtime-owner-controls suite: 604 passed, 48 skipped, zero failed,
+3846 assertions across 652 tests in 144 files, 183.27 seconds. The platform
+and opt-in skips are not measurements of their skipped capabilities. Remote
+checks on the published revision remain pending until observed terminal.

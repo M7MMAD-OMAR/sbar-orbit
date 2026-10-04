@@ -25,7 +25,7 @@ Development uses a private lab and does not send input to the owner's seat.
   denial, approval, readback and journal-failure evidence.
 - Native controller decisions and durable intent/outcome records are measured
   on a real GTK3 target, including failure before input when the journal fails.
-- Native GTK4 owner settings preview is measured in the lab, including one-use
+- Native GTK4 owner settings public CLI is measured in the lab, including one-use
   approval, damaged journal refusal and closing while storage is locked.
 - Chromium 153 on Wayland passes native state, press, English/Arabic text,
   selection and scroll with matched action outcomes and background pixels.
@@ -41,14 +41,16 @@ Development uses a private lab and does not send input to the owner's seat.
   handles, checks guarded stable identity and scope inside the plugin, captures
   only its own targets, and deduplicates uncertain requests. Ten private checks
   passed, including sticky capture revocation and protected EOF cleanup. See
-  `NATIVE-SESSION.md`; public broker and UI routing remain incomplete.
+  `NATIVE-SESSION.md`. The public broker and live GTK routing are measured in
+  `NATIVE-BROKER.md` and `NATIVE-LIVE-VIEW.md`; owner activation remains open.
 
 ## Remaining acceptance work
 
 The native GTK target viewer now visibly renders acknowledged cursor positions
 from session frames, with logical-to-image scaling and source EOF cleanup. Six
 pixel/validation checks and the actual private GTK probe passed, see
-`NATIVE-VIEW.md`. Its public broker integration and owner activation remain open.
+`NATIVE-VIEW.md`. Public broker integration is measured in `NATIVE-LIVE-VIEW.md`.
+Owner activation remains open.
 
 - Complete the current-build toolkit, clipboard and cursor regression matrix,
   including Firefox and XWayland. Chromium fixture evidence is not a universal
@@ -56,9 +58,10 @@ pixel/validation checks and the actual private GTK probe passed, see
 - Finish owner-session launch supervision, activation and theme inheritance.
   Prepared-host transport and the generic supervised launcher are implemented.
   Private GTK3 launch, paired input and lifecycle checks passed, see
-  `NATIVE-LAUNCH.md`. Production broker and owner settings wiring remain incomplete.
+  `NATIVE-LAUNCH.md`. Public owner settings are measured in
+  `NATIVE-SETTINGS-RUNTIME.md`. Managed production activation remains incomplete.
 - Integrate the tested protected/full controller into every agent entry point
-  and the owner settings UI.
+  beyond the measured public native controls and owner settings UI.
 - Extend auditing to remaining imported accessibility actions and broker
   lifecycle operations. CLI launch/accessibility and shared raw requests are
   controlled; direct experimental IPC remains outside the cooperative API.

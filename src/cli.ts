@@ -83,7 +83,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
-  if (command !== "usage" && command !== "serve") await usage.assertEnabled();
+  if (command !== "usage" && command !== "serve" && command !== "native-settings") await usage.assertEnabled();
   if (command === "usage") {
     if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");
     if (!["on", "off", "status"].includes(verb ?? "") || fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use usage on|off|status [ID]");
@@ -100,6 +100,11 @@ try {
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
     const status = await readStatus(socketFromEnvironment());
     console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
+  } else if (command === "native-settings") {
+    if (verb !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-settings without action or configuration arguments");
+    const { openNativeSettings } = await import("./native-settings");
+    await openNativeSettings();
+    console.log(JSON.stringify({ ok: true, result: { closed: true } }));
   } else if (command === "session" && verb === "native-view") {
     const words = process.argv.slice(4);
     const [sessionId, appId, windowId, flag, count] = words;
