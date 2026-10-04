@@ -5,6 +5,7 @@ import { strict as assert } from "node:assert";
 import { OrbitError } from "../../src/errors";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
+import { loadNativeAppearance } from "../../src/native-appearance";
 
 const work = process.argv[2];
 const labRuntime = process.env.XDG_RUNTIME_DIR;
@@ -20,7 +21,11 @@ const wait = async (probe: () => Promise<boolean>, label: string) => {
   }
 };
 const exists = async (path: string) => Bun.file(path).exists();
-const broker = await startBroker({ native: { planPath: join(work, "host.json"), controlDirectory: join(work, "control") } });
+const appearanceDirectory = process.env.ORBIT_NATIVE_APPEARANCE;
+const expectedAppearance = appearanceDirectory === undefined ? undefined : await loadNativeAppearance(appearanceDirectory);
+const broker = await startBroker({ native: { planPath: join(work, "host.json"), controlDirectory: join(work, "control"),
+  ...(appearanceDirectory === undefined ? {} : { appearanceDirectory }),
+} });
 const checks: string[] = [];
 try {
   const doctor = await call(broker.socket, "doctor") as { backends: string[]; backendAliases: unknown };
@@ -52,6 +57,15 @@ try {
   const targets: { appId: string; windowId: string }[] = [];
   for (const [index, session] of sessions.entries()) {
     const app = await act(session, { type: "launch", argv: argv(index) }) as { appId: string };
+    if (expectedAppearance) {
+      const appearanceReport = join(work, `appearance-app-${index}.json`);
+      await wait(() => exists(appearanceReport), "Application did not report appearance delivery");
+      const delivered = JSON.parse(await readFile(appearanceReport, "utf8"));
+      const expectedHashes = Object.fromEntries(Object.entries(expectedAppearance).map(([name, text]) =>
+        [name, new Bun.CryptoHasher("sha256").update(text).digest("hex")]));
+      assert.deepEqual(delivered.configuration_sha256, expectedHashes);
+      await writeFile(join(work, `appearance-${index}-verified.json`), JSON.stringify({ delivered, expectedHashes }));
+    }
     let windows: { windowId: string }[] = [];
     await wait(async () => {
       windows = (await act(session, { type: "windows", appId: app.appId }) as { windows: { windowId: string }[] }).windows;
@@ -66,6 +80,7 @@ try {
       "Native broker text did not reach the owned target");
   }
   checks.push("two public broker sessions launch and address only their own real GTK targets");
+  if (expectedAppearance) checks.push("both applications receive exact owner snapshot settings in their private configuration");
   assert(targets[0] && targets[1]);
   await assert.rejects(() => act(first, { ...targets[1], type: "key", key: "Return" }), /another session/);
   await assert.rejects(() => call(broker.socket, "session.create", { backend: "native", planPath: join(work, "host.json") }), /cannot select host paths/);

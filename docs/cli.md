@@ -315,6 +315,16 @@ means the private Fedora display. Native sessions refuse browser accounts,
 profiles, viewport selection and bounded network origins. This experimental
 backend does not enforce native network origin lists.
 
+The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
+prepared private settings snapshot. The directory and GTK subdirectories must
+be canonical, user-owned and mode `0700`; files must be single-link regular
+files with mode `0600`. Only filtered literal GTK3, GTK4 and KDE visual settings
+are loaded. Each session retains immutable defaults; explicit application
+configuration overrides them before worker validation and protected approval.
+An agent action cannot choose the snapshot path. Invalid snapshots refuse
+startup. These settings do not include CSS, theme assets, portal preferences
+or viewer chrome, so exact owner appearance remains unmeasured.
+
 An explicit owner command displays one owned native target and its acknowledged
 agent cursor in a GTK window:
 

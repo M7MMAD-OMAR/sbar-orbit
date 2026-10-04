@@ -121,6 +121,10 @@ def main():
                 child.wait(timeout=60)
                 assert child.returncode == 0, "Native broker integration failed"
                 result = json.loads((work / "broker-result.json").read_text())
+                if os.environ.get("ORBIT_NATIVE_APPEARANCE"):
+                    result["appearance_delivery"] = [json.loads(path.read_text())
+                        for path in sorted(work.glob("appearance-*-verified.json"))]
+                    assert len(result["appearance_delivery"]) == 2, "Both application appearance proofs are required"
                 if recording:
                     result["recording"] = str(recording)
                 for report in work.glob("app-*.json"):
@@ -133,6 +137,7 @@ def main():
                 result["source_sha256"] = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in (
                     "src/session.ts", "src/ipc.ts", "src/hyprland.ts", "src/native-worker.ts", "src/native/session_worker.py",
                     "src/native-preview.ts", "src/cli.ts", "src/diagnostics.ts", "src/native/view.py",
+                    "src/native-appearance.ts", "experiments/ghost-cursor/native_broker_application.py",
                     "experiments/ghost-cursor/native_broker_fixture.ts", "experiments/ghost-cursor/native_broker_probe.py")}
             except BaseException as error:
                 primary = error

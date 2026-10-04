@@ -5,14 +5,17 @@ import { isAbsolute, join } from "node:path";
 import { OrbitError, record } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
 
-export type NativeOptions = { planPath: string; controlDirectory: string };
+export type NativeOptions = { planPath: string; controlDirectory: string; appearanceDirectory?: string };
 
 export function nativeOptionsFromEnv(): NativeOptions | undefined {
   const planPath = process.env.ORBIT_NATIVE_PLAN, controlDirectory = process.env.ORBIT_NATIVE_CONTROL;
-  if (planPath === undefined && controlDirectory === undefined) return undefined;
+  const appearanceDirectory = process.env.ORBIT_NATIVE_APPEARANCE;
+  if (planPath === undefined && controlDirectory === undefined && appearanceDirectory === undefined) return undefined;
   if (!planPath || !controlDirectory || !isAbsolute(planPath) || !isAbsolute(controlDirectory))
     throw new OrbitError("INVALID_REQUEST", "Native broker configuration requires absolute plan and control paths");
-  return { planPath, controlDirectory };
+  if (appearanceDirectory !== undefined && (!appearanceDirectory || !isAbsolute(appearanceDirectory)))
+    throw new OrbitError("INVALID_REQUEST", "Native appearance requires an absolute owner snapshot path");
+  return { planPath, controlDirectory, ...(appearanceDirectory === undefined ? {} : { appearanceDirectory }) };
 }
 
 /** One bounded exchange at a time. Closing stdin is the worker's ownership cleanup signal. */

@@ -3,6 +3,7 @@ import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
 import { requireResourceBudget } from "./resource-budget";
+import { loadNativeAppearance } from "./native-appearance";
 import { basename, join } from "node:path";
 import { copyFile, mkdir, rm, chmod, readdir, lstat } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -32,7 +33,8 @@ export class NativeBackend {
   private scales = new Map<string, { x: number; y: number }>();
 
   private closing?: Promise<void>;
-  private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions) {}
+  private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions,
+    private appearance: Readonly<Record<string, string>>) {}
 
   static async create(_profile: string, options: NativeOptions) {
     await requireResourceBudget();
@@ -40,13 +42,17 @@ export class NativeBackend {
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker;
-    try { worker = await NativeWorker.create(join(directory, "worker"), options); }
+    let appearance: Readonly<Record<string, string>> = Object.freeze({});
+    try {
+      if (options.appearanceDirectory !== undefined) appearance = await loadNativeAppearance(options.appearanceDirectory);
+      worker = await NativeWorker.create(join(directory, "worker"), options);
+    }
     catch (error) {
       try { await rm(directory, { recursive: true, force: true }); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and directory cleanup failed"); }
       throw error;
     }
-    const backend = new NativeBackend(worker, directory, options);
+    const backend = new NativeBackend(worker, directory, options, appearance);
     try {
       const response = record(await worker.request("status", {}));
       if (response.ready !== true) throw new OrbitError("BACKEND_ERROR", "Native worker did not become ready");
@@ -114,8 +120,12 @@ export class NativeBackend {
   async act(value: unknown): Promise<unknown> {
     const action = this.parseAction(value);
     if (action.type === "launch") {
+      const configuration = action.configuration === undefined ? undefined : record(action.configuration);
       const result = record(await this.worker.request("launch", {
-        argv: action.argv, ...(action.configuration === undefined ? {} : { configuration: action.configuration }),
+        argv: action.argv,
+        ...(configuration === undefined && !Object.keys(this.appearance).length ? {} : {
+          configuration: { ...this.appearance, ...configuration },
+        }),
       }));
       this.applications.add(identifier(result.appId));
       return result;
