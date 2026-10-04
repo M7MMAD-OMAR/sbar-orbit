@@ -24,7 +24,7 @@ const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'selec
  * list honest. An intentionally listed code that nothing throws belongs in that test's allowlist with
  * its reason, not here.
  */
-export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED',
+export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BROKER_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED',
   // Added after measuring what the layer recorded for each: every one of these was landing as
   // BACKEND_ERROR. They are refusals a person or an agent can act on, and an agent that cannot tell
   // "you hit a ceiling" from "something broke" retries the wrong thing.

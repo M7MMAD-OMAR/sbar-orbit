@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { writeFile, readFile } from "node:fs/promises";
 import { strict as assert } from "node:assert";
 import { OrbitError } from "../../src/errors";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
 const work = process.argv[2];
 if (!work || !process.env.XDG_RUNTIME_DIR?.startsWith("/tmp/gl-")
@@ -72,6 +74,31 @@ try {
   assert.deepEqual(frame.pointer, { x: 40.5, y: 30.25 });
   await writeFile(join(work, "view-frame.json"), JSON.stringify(frame), { mode: 0o600 });
   await writeFile(join(import.meta.dir, "evidence/native-broker-target.png"), Buffer.from(String(frame.image), "base64"));
+  const viewer = spawn("bun", [join(import.meta.dir, "../../src/cli.ts"), "session", "native-view", first.sessionId,
+    targets[0].appId, targets[0].windowId, "--frames", "3"], { env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdio: ["ignore", "pipe", "inherit"] });
+  const viewerExit = new Promise<number | null>((resolve, reject) => { viewer.once("close", resolve); viewer.once("error", reject); });
+  const draws: unknown[] = [];
+  try {
+    for await (const line of createInterface({ input: viewer.stdout })) {
+      const value = JSON.parse(line);
+      if (value.rendered) {
+        draws.push(value.rendered.pointer);
+        if (draws.length === 1) {
+          await writeFile(join(work, "native-view-visible"), "ready");
+          await wait(() => exists(join(work, "native-view-captured")), "Private native GTK view was not captured");
+          await act(first, { ...targets[0], type: "cursor", x: 200.5, y: 100.25 });
+        }
+      }
+    }
+    assert.equal(await viewerExit, 0);
+    assert.equal(draws.length, 3);
+    assert.deepEqual(draws[0], [40.5, 30.25]);
+    assert.deepEqual(draws[2], [200.5, 100.25]);
+    checks.push("public native-view CLI renders three actual GTK frames and the changed acknowledged agent cursor");
+  } finally {
+    if (viewer.exitCode === null) viewer.kill("SIGTERM");
+    await viewerExit;
+  }
   const requestId = crypto.randomUUID();
   const action = { ...targets[0], type: "text", text: " once" };
   const result = await act(first, action, requestId);

@@ -44,6 +44,16 @@ def main():
                 assert child.poll() is None, "Native broker failed before protected launch test"
                 control.configure(mode="full")
                 (work / "full-ready").write_text("ready")
+                wait(lambda: (work / "native-view-visible").exists() or child.poll() is not None, "Public native GTK view")
+                assert child.poll() is None, "Native broker failed before GTK viewing"
+                from ghost import clients
+                views = [value for value in clients() if value.get("title") == "Orbit native target"]
+                assert len(views) == 1, "Native CLI did not map exactly one owned lab viewer"
+                view = views[0]
+                capture = evidence / "native-live-broker-view.png"
+                with open(capture, "wb") as output:
+                    subprocess.run(["/usr/bin/grim", "-T", view["stableId"], "-"], stdout=output, check=True, timeout=10)
+                (work / "native-view-captured").write_text("ready")
                 child.wait(timeout=60)
                 assert child.returncode == 0, "Native broker integration failed"
                 result = json.loads((work / "broker-result.json").read_text())
@@ -55,7 +65,9 @@ def main():
                 assert control.inspect()["unresolved"] == []
                 result["plugin"] = build
                 result["source_sha256"] = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in (
-                    "src/session.ts", "src/ipc.ts", "src/hyprland.ts", "src/native-worker.ts", "src/native/session_worker.py")}
+                    "src/session.ts", "src/ipc.ts", "src/hyprland.ts", "src/native-worker.ts", "src/native/session_worker.py",
+                    "src/native-preview.ts", "src/cli.ts", "src/diagnostics.ts", "src/native/view.py",
+                    "experiments/ghost-cursor/native_broker_fixture.ts", "experiments/ghost-cursor/native_broker_probe.py")}
             except BaseException as error:
                 primary = error
             finally:

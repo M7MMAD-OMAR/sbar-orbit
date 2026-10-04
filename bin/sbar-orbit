@@ -91,6 +91,8 @@ Sbar Orbit, a private browser and desktop for your AI agent
                                  Start from a saved account snapshot
   sbar-orbit session list
   sbar-orbit session observe ID  One screenshot and what the session shows
+  sbar-orbit session native-view ID APP WINDOW [--frames COUNT]
+                                 Show the owned target and agent cursor in a native GTK window
   sbar-orbit session pause ID    Hand the session to a person in the viewer
   sbar-orbit session resume ID
   sbar-orbit session journal ID  Every decision the session made
@@ -168,6 +170,13 @@ HELP
     # person's home has no business in a browser's environment.
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
+    ;;
+  session)
+    if [ "${2:-}" = "native-view" ]; then
+      [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop native-view
+      exec bun run "$orbit_root/scripts/limited.ts" bun run "$orbit_root/src/cli.ts" "$@"
+    fi
+    exec bun run "$orbit_root/src/cli.ts" "$@"
     ;;
   *) exec bun run "$orbit_root/src/cli.ts" "$@" ;;
 esac

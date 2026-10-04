@@ -305,3 +305,39 @@ The same input is available through `session.control` only while paused and thro
 Session creation accepts `conversationName` and `projectName` as optional display labels, each 1 to 80 printable characters. The viewer uses them on conversation buttons and its browser title. A missing conversation name falls back to `taskName`; a missing project is shown as not provided.
 
 CLI callers can supply `ORBIT_CONVERSATION_NAME` and `ORBIT_PROJECT_NAME`, alongside `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. These labels identify the work visually and do not attach Orbit to a host conversation. Existing sessions keep the labels they were created with.
+
+## Experimental native GTK viewing
+
+When the owner has fixed a prepared `ORBIT_NATIVE_PLAN` and
+`ORBIT_NATIVE_CONTROL` at broker startup, a native session can launch owned
+applications and return generated application/window handles. `system` still
+means the private Fedora display. Native sessions refuse browser accounts,
+profiles, viewport selection and bounded network origins. This experimental
+backend does not enforce native network origin lists.
+
+An explicit owner command displays one owned native target and its acknowledged
+agent cursor in a GTK window:
+
+```sh
+sbar-orbit session native-view SESSION_ID APP_ID WINDOW_ID
+sbar-orbit session native-view SESSION_ID APP_ID WINDOW_ID --frames 3
+```
+
+The launcher runs this Linux-only viewer inside the shared budget. Direct
+`bun run src/cli.ts` callers must supply that budget themselves. This command
+opens a native application window on its caller's display, so agents developing
+Orbit run it only inside their private lab. It has no input forwarding. Closing
+the window stops new captures and closes the viewer; the application session
+remains available for its owner to stop separately. `--frames` closes after the
+requested number of actual draws, from 1 to 10000.
+
+One explicit-target capture waits for the matching GTK draw acknowledgement
+before the next, with at least one second between draws and no queued screenshots.
+Closing cancels the client wait; a capture already admitted by the broker retains
+its own existing cleanup bound. The CLI prints small draw metadata, not image
+bytes. The worker retains only the most recent image reply. An older capture ID
+returns `REPLAY_EXPIRED`, and a fresh observation ID requests a new capture.
+Mutation outcomes and request fingerprints remain retained. The 10000-request
+session bound still applies. Native theme acceptance, owner activation and
+comparative CPU, memory and latency remain unmeasured. See the source-bound
+[private live view proof](../experiments/ghost-cursor/NATIVE-LIVE-VIEW.md).

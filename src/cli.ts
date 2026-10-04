@@ -100,6 +100,17 @@ try {
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
     const status = await readStatus(socketFromEnvironment());
     console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
+  } else if (command === "session" && verb === "native-view") {
+    const words = process.argv.slice(4);
+    const [sessionId, appId, windowId, flag, count] = words;
+    if (!sessionId || !appId || !windowId || (words.length !== 3 && (words.length !== 5 || flag !== "--frames")))
+      throw new OrbitError("INVALID_REQUEST", "Use session native-view SESSION APP WINDOW [--frames COUNT]");
+    const { nativePreview } = await import("./native-preview");
+    const result = await nativePreview(process.env.ORBIT_SOCKET ?? serviceSocketPath(), {
+      sessionId, appId, windowId, ...(count === undefined ? {} : { frames: Number(count) }),
+      onRendered: frame => console.log(JSON.stringify({ ok: true, rendered: frame })),
+    });
+    console.log(JSON.stringify({ ok: true, result }));
   } else if (command === "update") {
     // Check and stage reach the registry; activation requires an idle managed broker.
     const { activateVersion, updateStatus, pruneVersions, checkForUpdate, prepareVersion, runUpdate, setAutomaticUpdates, automaticUpdates } = await import("./update");

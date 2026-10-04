@@ -215,3 +215,72 @@ short disk workspaces were removed after the final successful proof.
 
 Final staged Gitleaks validation found no leaks. Publication is an authorized
 draft source update, not installation, owner-session acceptance or release.
+
+### Live GTK broker view and bounded capture replay
+
+Work in progress, reviewed 4 October 2026. Owner request requires a visible native
+agent cursor and live application viewing, with explicit cleanup and measured
+performance. Add an explicit CLI native view path backed by target-only broker
+observation. Keep one in-flight capture/frame and wait for actual GTK draw before
+sampling again. Window closure must stop new capture requests and release the
+owned viewer without stopping another session. Avoid retaining every image in the
+worker reply cache; expire older image replay explicitly while preserving request
+fingerprints and mutation replay. Verify current protocol, actual GTK rendering,
+window/EOF cleanup and a negative cache-growth control inside the private lab.
+
+Technical references: https://nodejs.org/api/globals.html#static-method-abortsignalanysignals
+and https://nodejs.org/api/child_process.html, reviewed 4 October 2026. GTK 3.24
+DrawingArea documentation remains the rendering reference. Abort of a client
+request does not promise cancellation of an already admitted broker capture;
+server capture cleanup retains its existing bound. No owner-display activation,
+zero-overhead or comparative-performance claim follows from this component.
+
+Current private proof passed eight public broker checks, including three actual
+GTK draws with changed fractional cursor positions, then owned process cleanup.
+Five client/cache wrapper tests passed with 20 assertions. The direct cache
+helper passed two tests; the saved unfixed worker fails its later-capture and
+mutation check after exhausting the image cache. Source hashes, failed attempts
+and remaining acceptance limits are in
+`experiments/ghost-cursor/NATIVE-LIVE-VIEW.md`. Current typecheck passed. Full
+suite and exact staged publication validation are pending below. No owner
+desktop activation or managed service restart was performed.
+
+### Visible session cleanup failure and Windows transient locks
+
+Reviewed 4 October 2026 before implementation. GitHub run 37173758353 on
+revision dc16174009cd4de8e0427a620762f4ca6e703ba4 passed eight jobs but failed
+the Windows suite's owned-profile removal check: session.stop returned while
+profile-lYdQ7A remained. Existing removal paths suppress filesystem errors.
+Use the supported bounded fs.rm transient-lock retries on Windows, propagate
+persistent removal failure from stop, and retain failure diagnostics on unexpected
+exit. Do not lengthen the test's assertion timeout or exclude the check.
+https://nodejs.org/api/fs.html#fspromisesrmpath-options is the technical reference,
+Node.js 26.10.0, reviewed 4 October 2026. Remote Windows remeasurement is required;
+a passing Linux check cannot certify Windows handle-release behavior.
+
+The first live-view full suite also failed the diagnostic-code completeness
+check because the new bounded client throws BROKER_ERROR explicitly. Add that
+real code to the diagnostic allowlist rather than bypassing its check.
+
+The final cleanup checks include removal-only failure and simultaneous owned
+clone-release/profile-removal failure. The saved unfixed session source fails
+both intended assertions; the fixed source preserves the original release
+error and EACCES in AggregateError. The combined current cleanup/client/cache
+checks passed 11 tests with 82 assertions. The final source-bound private broker
+proof passed eight checks and normal/immediate GTK source EOF. Both review axes
+have no remaining scoped actionable findings. All lab processes and owned short
+workspaces were removed. Windows CI verification remains pending until the
+updated source is published and measured remotely.
+
+Final current local validation: typecheck passed. The bounded full suite passed
+601 tests, skipped 46, failed zero, with 3836 assertions across 647 tests in
+142 files in 190.73 seconds. Platform and explicit opt-in skips retain their
+scope limits. This replaces the earlier failed diagnostic-completeness run;
+that failure is retained and documented above. No comparative performance or
+owner-display acceptance follows from the suite. Exact staged publication
+audits are recorded after they run below.
+
+The staged publication audit checked 858 index files with zero findings.
+Staged Gitleaks found no leaks. Graft was refreshed deterministically after
+the code changes. Publication remains an authorized draft source update,
+not owner-session activation, complete BAR.md acceptance or a release.

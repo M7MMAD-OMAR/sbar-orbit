@@ -13,7 +13,7 @@ import { expectPrivatePath } from "../private-path";
  * test covers, and they drive the real broker over its real socket rather than an in-process object.
  */
 import { test, expect } from "bun:test";
-import { readdir, stat, readFile, utimes } from "node:fs/promises";
+import { readdir, stat, readFile, utimes, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { call } from "../../src/ipc";
@@ -156,13 +156,8 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
     expect(during.filter(entry => entry.startsWith("profile-")).length).toBe(1);
 
     await broker.run("session.stop", { sessionId: created.sessionId });
-    // The release chain is awaited inside stop, but the profile removal hangs off a promise, so poll.
-    let after = await entriesOf(broker.workspace);
-    for (let attempt = 0; attempt < 100; attempt++) {
-      after = await entriesOf(broker.workspace);
-      if (!after.some(entry => entry.startsWith("profile-") || entry.startsWith("restore-"))) break;
-      await Bun.sleep(30);
-    }
+    // Successful stop acknowledges actual removal, not a background deletion attempt.
+    const after = await entriesOf(broker.workspace);
     expect(after.filter(entry => entry.startsWith("profile-"))).toEqual([]);
     expect(after.filter(entry => entry.startsWith("restore-"))).toEqual([]);
     // The journal deliberately SURVIVES: it is the record an autonomous run is reviewed from, and
@@ -173,6 +168,33 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
     await broker.close();
     fixture.stop(true);
   }
+}, 120000);
+
+test.skipIf(!supported || !linux || process.getuid?.() === 0).each([false, true])("a persistent profile removal refusal cannot return a successful stop (release failure: %s)", async releaseFails => {
+  const broker = await openBroker("adversarial-cleanup-refusal");
+  let cleanupError: unknown;
+  try {
+    const created = await broker.run("session.create", { backend: "browser" }) as { sessionId: string };
+    const session = broker.sessions["get"](created.sessionId);
+    const releaseFailure = new Error("Owned clone release refused");
+    if (releaseFails) session.releaseClone = async () => { throw releaseFailure; };
+    await chmod(broker.workspace, 0o500);
+    await expect(broker.run("session.stop", { sessionId: created.sessionId })).rejects.toMatchObject({ code: "BACKEND_ERROR" });
+    expect((await entriesOf(broker.workspace)).some(entry => entry.startsWith("profile-"))).toBe(true);
+    if (releaseFails) {
+      const failure = await session.releasing?.catch(error => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect(failure.errors).toHaveLength(2);
+      expect(failure.errors[0]).toBe(releaseFailure);
+      expect(failure.errors[1]).toMatchObject({ code: "EACCES" });
+    }
+  } finally {
+    await chmod(broker.workspace, 0o700);
+    // The cleanup rejection remains available rather than being silently replaced by a later success.
+    try { await broker.close(); } catch (error) { cleanupError = error; }
+    finally { await rm(broker.workspace, { recursive: true, force: true }); }
+  }
+  expect(cleanupError).toBeInstanceOf(Error);
 }, 120000);
 
 /**

@@ -306,9 +306,21 @@ export class Sessions {
         session.state = "closed"; session.lastActivityAt = Date.now(); this.leases.delete(lease);
         // Restore points go before the profile does. Each is a copy of the person's live cookies, and
         // a read only snapshot inside the profile would stop the profile itself being removed.
-        session.releasing ??= session.tail.then(() => account?.release()).then(() => session.releaseClone?.()).then(() => session.egress.close())
-          .then(async () => { if (session.restoreStore) await clearRestorePoints(session.restoreStore); })
-          .finally(() => rm(profile, { recursive: true, force: true }).catch(() => {}));
+        session.releasing ??= (async () => {
+          const failures: unknown[] = [];
+          try {
+            await session.tail;
+            await account?.release();
+            await session.releaseClone?.();
+            await session.egress.close();
+            if (session.restoreStore) await clearRestorePoints(session.restoreStore);
+          } catch (error) { failures.push(error); }
+          try { await this.removeProfile(profile); } catch (error) { failures.push(error); }
+          if (failures.length === 1) throw failures[0];
+          if (failures.length > 1) throw new AggregateError(failures, "Owned session resource release and profile removal failed");
+        })();
+        // Keep the rejected release for stop to report. Unexpected exits also reach the private operator log.
+        void session.releasing.catch(error => console.error("Owned session cleanup failed", error));
       };
       session.reap = reap;
       backend.onClose(reap);
@@ -536,6 +548,12 @@ export class Sessions {
     catch (error) { activity.state = "failed"; throw error; }
     finally { session.lastActivityAt = Date.now(); }
   }
+  private removeProfile(profile: string) {
+    // Windows can briefly retain deletion locks after its browser job has exited.
+    // The filesystem retries are bounded; persistent errors still reject stop.
+    return rm(profile, { recursive: true, force: true,
+      maxRetries: process.platform === "win32" ? 8 : 0, retryDelay: 100 });
+  }
   async stop(session: Session) {
     if (session.closing) return session.closing;
     if (session.state === "closed") { await session.releasing; return this.info(session); }
@@ -545,7 +563,7 @@ export class Sessions {
       await session.tail;
       await session.releasing;
       // Belt and braces for a backend whose close never reported itself.
-      await rm(session.profile, { recursive: true, force: true }).catch(() => {});
+      await this.removeProfile(session.profile);
       session.state = "closed";
       session.lastActivityAt = Date.now();
       return this.info(session);

@@ -94,9 +94,50 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});
   } };
 }
-export async function call(socket: string, method: string, params: unknown = {}): Promise<unknown> {
+async function cancellableCall(socket: string, method: string, params: unknown, signal: AbortSignal): Promise<unknown> {
+  const { request } = await import("node:http");
+  const combined = AbortSignal.any([signal, AbortSignal.timeout(45000)]);
+  combined.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ method, params });
+    const child = request({ socketPath: socket, path: "/rpc", method: "POST", headers: {
+      "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
+    } }, response => {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > 32 * 1024 * 1024) {
+          child.destroy(new OrbitError("BROKER_ERROR", "Native broker reply exceeds its client bound"));
+        } else chunks.push(chunk);
+      });
+      response.on("error", reject);
+      response.on("end", () => {
+        try {
+          const result = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok: boolean; result?: unknown; error?: { code?: string; message?: string; diagnosticId?: string } };
+          if (!result.ok) reject(new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId));
+          else resolve(result.result);
+        } catch { reject(new OrbitError("BROKER_ERROR", "Native broker reply is invalid JSON")); }
+      });
+    });
+    const abort = () => {
+      const error = combined.reason instanceof Error ? combined.reason : new Error("Native client request cancelled");
+      // Settle locally even when the runtime delays its socket error event.
+      reject(error); child.destroy(error);
+    };
+    combined.addEventListener("abort", abort, { once: true });
+    child.on("error", reject);
+    child.once("close", () => combined.removeEventListener("abort", abort));
+    if (combined.aborted) abort(); else child.end(body);
+  });
+}
+
+export async function call(socket: string, method: string, params: unknown = {}, signal?: AbortSignal): Promise<unknown> {
+  // Bun 1.3.14's Unix fetch did not cancel an admitted request in the native view check.
+  if (signal) return cancellableCall(socket, method, params, signal);
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method, params }), signal: AbortSignal.timeout(45000) });
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method, params }),
+    signal: AbortSignal.timeout(45000) });
   const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string } };
   if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
   return result.result;

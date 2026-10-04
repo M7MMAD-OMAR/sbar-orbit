@@ -71,15 +71,19 @@ pass, including a real SIGSTOP worker that is reaped without an explicit stop.
 
 ## Limits
 
-The managed broker was not restarted or enabled. Public GTK viewer launch,
-owner controls UI, owner theme acceptance, accessibility routing, child-client
+The managed broker was not restarted or enabled. The public GTK viewer launch
+is now measured in NATIVE-LIVE-VIEW.md. Owner controls UI, owner theme acceptance, accessibility routing, child-client
 enrollment, complete clipboard/toolkit/current invariant matrix and concurrent
-input remain incomplete. The worker's 10,000-request and 16 MiB reply-cache
-limits still bound long sessions; this is not an unlimited streaming view.
+input remain incomplete. The worker's 10000-request limit still bounds long sessions. The current cache
+retains one image and bounded metadata, as measured in NATIVE-LIVE-VIEW.md;
+this is not an unlimited streaming view.
 The plugin is the O0 prototype. Comparative CPU, memory and latency are
 `not measured`, and neither faster operation nor zero overhead is claimed.
 
-## Source binding
+## Historical source binding
+
+These hashes bind the earlier broker proof. Current CLI viewing and broker
+source hashes are recorded in [NATIVE-LIVE-VIEW.md](NATIVE-LIVE-VIEW.md).
 
 Final private probe exited zero. Transport checks: 7 passed, zero failed,
 22 assertions. Lifecycle negative control: 2 failed as expected.
