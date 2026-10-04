@@ -71,3 +71,23 @@ Owner activation remains open.
 
 Publication of this research source does not close these requirements. Raw
 workstation evidence is retained locally in ignored storage.
+
+## Latest scoped Firefox evidence, 4 October 2026
+
+The explicit official accessibility launcher now enables Firefox157 AT-SPI
+readback without a forced accessibility preference. Current scoped task evidence
+at .private/native-firefox-1926117 measured one native press,926 English/Arabic
+characters, selection/reset, one wheel event,222-pixel scroll and matched text
+readback. All11 direct source hashes and32 successful action pairs were verified.
+The target captures use fixture-specific painted-marker coordinates because
+Firefox's background accessibility extents remain invalid. Target-only captures
+do not prove the separate cursor overlay. Portal warnings, complete interference
+checks, clipboard and owner-session acceptance remain open. XWayland needs a
+separate owned-client design: the current plugin resolves Wayland surface-client
+credentials and a client seat, so a shared XWayland server must not be admitted
+as though it were the scoped application. No XWayland capability is claimed.
+
+The existing cleanup test fixture currently fails during preparation on /tmp;
+a diagnostic run exposed an actual quota error in supervisor journal writes.
+Full local gates remain blocked. No owner or foreign-agent data is removed to
+turn this into a pass. Source publication remains a draft research update.
