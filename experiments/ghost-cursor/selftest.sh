@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 # Prove the harness can fail: a no-op agent must pass, and each deliberate violation must be caught
 # by the criteria it targets. The cases after the first five come from the adversarial review of
-# 3 October 2026, which found each of them passing the earlier harness. Usage: selftest.sh LAB
+# 3 October 2026, which found each of them passing the earlier harness. Usage: selftest.sh LAB [ABSOLUTE_TYPIST]
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LAB=$1
+TYPIST=${2:-/usr/bin/wtype}
 run() { "$HERE/lab.py" run "$LAB" -- "$@"; }
+run /usr/bin/true || exit 1
+[[ $TYPIST == /* && -f $TYPIST && -x $TYPIST ]] || { echo 'Expected an absolute typist executable' >&2; exit 1; }
+OUT=$(mktemp -d "$LAB/selftest-XXXXXXXX") || exit 1
+printf 'Evidence: %s\n' "$OUT"
+printf -v typist_command '%q' "$TYPIST"
 run hyprctl clients -j | grep -q org.gnome.Calculator || "$HERE/lab.py" spawn "$LAB" -- gnome-calculator >/dev/null
 /usr/bin/python3 -c 'import time; time.sleep(2)'
 CALC=$(run hyprctl clients -j | /usr/bin/python3 -c "import json,sys; print([c['address'] for c in json.load(sys.stdin) if 'Calculator' in c['class']][0])")
 fail=0
 check() { # name, criteria that must fail (or "none"), agent command
-  local name=$1 expect=$2 agent=$3 got ok=yes
-  got=$(run /usr/bin/python3 "$HERE/harness.py" --agent "$agent" --repeat 1 --settle 3 2>/dev/null |
-    /usr/bin/python3 -c 'import json,sys; r=json.load(sys.stdin); a=r["agent"]; print(("AGENT-FAILED " if a["exit"] or a["timed_out"] else "") + (" ".join(k.split("_")[0] for k,v in r.items() if k.startswith("B") and not v["pass"]) or "none"))' 2>/dev/null)
-  [[ -z $got || $got == AGENT-FAILED* ]] && ok=no
+  local name=$1 expect=$2 agent=$3 got status ok=yes
+  run /usr/bin/python3 "$HERE/harness.py" --typist "$TYPIST" --agent "$agent" --repeat 1 --settle 3 \
+    --out "$OUT/$name.json" >"$OUT/$name.stdout" 2>"$OUT/$name.stderr"
+  status=$?
+  got=$(/usr/bin/python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); a=r["agent"]; p=r["person_typist"]; print(("AGENT-FAILED " if a["exit"] or a["timed_out"] else "") + ("TYPIST-FAILED " if p["exit"] or p["stderr"] else "") + (" ".join(k.split("_")[0] for k,v in r.items() if k.startswith("B") and not v["pass"]) or "none"))' "$OUT/$name.json")
+  [[ -z $got || $got == *FAILED* || $status -gt 1 ]] && ok=no
   for c in $expect; do
     if [[ $c == none ]]; then [[ $got == none ]] || ok=no; else [[ " $got " == *" $c "* ]] || ok=no; fi
   done
@@ -24,7 +32,7 @@ check() { # name, criteria that must fail (or "none"), agent command
 check baseline none "sleep 1"
 check focus-steal "B2 B4" "hyprctl dispatch focuswindow address:$CALC; sleep 0.3; hyprctl dispatch focuswindow class:lab.person.standin"
 check pointer-move "B1" "hyprctl dispatch movecursor 5 5; sleep 0.2; hyprctl dispatch movecursor 6 6"
-check stray-key "B3" "wtype Z"
+check stray-key "B3" "$typist_command Z"
 check sendshortcut "B2" "hyprctl dispatch sendshortcut SHIFT, G, address:$CALC | grep -qx ok"
 check normal-spawn "B4" "setsid gnome-calculator >/dev/null 2>&1 & sleep 2.5"
 check select-all "B3" "sleep 1; /usr/bin/python3 $HERE/a11y_select_all.py"
@@ -35,7 +43,8 @@ check delayed-focus "B4" "setsid sh -c 'sleep 1.5; hyprctl dispatch focuswindow 
 check leftover-process "B12" "setsid sleep 30 >/dev/null 2>&1 </dev/null & disown; true"
 check screen-off "B4" "hyprctl dispatch dpms off >/dev/null; sleep 0.5; hyprctl dispatch dpms on >/dev/null; hyprctl dispatch dpms off >/dev/null"
 check pinned-overlay "B4" "hyprctl dispatch exec '[float on; no_initial_focus on; pin on; move 0 0; size 900 900] gnome-calculator' >/dev/null; sleep 2.5"
-check screen-shader "B4" "printf 'void main(){}' > /tmp/gl-shader.frag; hyprctl keyword decoration:screen_shader /tmp/gl-shader.frag >/dev/null"
+printf -v shader_path '%q' "$OUT/screen.frag"
+check screen-shader "B4" "printf 'void main(){}' > $shader_path; hyprctl keyword decoration:screen_shader $shader_path >/dev/null"
 # Restore what the cases changed, so the next run starts clean.
 run hyprctl reload >/dev/null; run hyprctl dispatch dpms on >/dev/null
 for a in $(run hyprctl clients -j | /usr/bin/python3 -c "import json,sys; c=[x['address'] for x in json.load(sys.stdin) if 'Calculator' in x['class']]; print(' '.join(c[1:]))"); do
