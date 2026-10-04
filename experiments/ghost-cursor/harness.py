@@ -281,10 +281,12 @@ def main():
     ev.start(); ptr.start()
     time.sleep(0.3)
     typed = a.text * a.repeat
-    typist = subprocess.Popen(["wtype", "-d", "12", typed], stdin=subprocess.DEVNULL)
+    import tempfile
+    typist_err = tempfile.TemporaryFile()
+    typist = subprocess.Popen(["wtype", "-d", "12", typed], stdin=subprocess.DEVNULL,
+                              stderr=typist_err)
     time.sleep(0.2)
 
-    import tempfile
     out_f, err_f = tempfile.TemporaryFile(), tempfile.TemporaryFile()
     t0 = time.monotonic()
     agent = subprocess.Popen(["/bin/bash", "-c", a.agent], stdin=subprocess.DEVNULL, stdout=out_f, stderr=err_f,
@@ -297,7 +299,10 @@ def main():
         os.killpg(agent.pid, signal.SIGKILL)
         agent_exit = agent.wait()
     agent_s = time.monotonic() - t0
-    typist.wait()
+    typist_exit = typist.wait()
+    typist_err.seek(0)
+    typist_error = typist_err.read(2001)
+    typist_err.close()
     time.sleep(a.settle)  # measurement continues: delayed effects of the agent land here
     compositor_leftovers = processes() - baseline_processes
     leftovers = sorted(set(descendants(os.getpid(), {standin.p.pid, typist.pid})) |
@@ -329,12 +334,15 @@ def main():
              for k in set(before["windows"]) | set(after["windows"]) if before["windows"].get(k) != after["windows"].get(k)}
     found = client_events(events, start_group)
     report = {
+        "person_typist": {"exit": typist_exit, "stderr": typist_error[:2000].decode(errors="replace"),
+                          "stderr_truncated": len(typist_error) > 2000},
         "agent": {"cmd": a.agent, "exit": agent_exit, "timed_out": timed_out, "seconds": round(agent_s, 3),
                   "stdout": out_f.read().decode(errors="replace")[-2000:],
                   "stderr": err_f.read().decode(errors="replace")[-2000:]},
         "B1_pointer": {"pass": len(xs) == 1, "distinct_positions": sorted(xs)[:10], "samples": len(ptr.samples)},
         "B2_client_events": {"pass": not found, "events": found[:20]},
-        "B3_keystrokes": {"pass": final["text"] == before_state["text"] + typed and not selected_ever
+        "B3_keystrokes": {"pass": typist_exit == 0 and not typist_error
+                          and final["text"] == before_state["text"] + typed and not selected_ever
                           and final["caret"] == len(final["text"]),
                           "expected_len": len(typed), "got_len": len(final["text"]) - len(before_state["text"]),
                           "got_tail": final["text"][-60:], "selected": selected_ever[:5], "caret": final["caret"]},
