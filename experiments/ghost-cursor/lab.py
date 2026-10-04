@@ -157,7 +157,9 @@ def spawn(lab, argv, env, name, log=True):
     p = subprocess.Popen(scoped(lab, name, argv, env), env=HOST_ENV, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
                          start_new_session=True, cwd=env["HOME"])
     with open(lab / "pids", "a") as f:
-        f.write(f"{p.pid}\n")
+        record = process_record(p.pid)
+        if record is not None:
+            f.write(json.dumps(record) + "\n")
     return p
 
 
@@ -281,21 +283,78 @@ def up(render_node=None, disk=False):
     print(lab)
 
 
-def members(lab):
-    """Recorded pids plus any process whose environment names this lab's runtime directory."""
-    run = f"XDG_RUNTIME_DIR={lab}/run".encode()
+def process_record(pid):
+    try:
+        path = Path(f"/proc/{pid}")
+        if path.stat().st_uid != os.getuid():
+            return None
+        fields = (path / "stat").read_text().rsplit(")", 1)[1].split()
+        return {"pid": pid, "start": int(fields[19]),
+                "boot": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def recorded_members(lab):
     pids = set()
     if (lab / "pids").exists():
-        pids |= {int(x) for x in (lab / "pids").read_text().split()}
+        for line in (lab / "pids").read_text().splitlines():
+            if line.isdecimal():
+                continue  # A historical bare PID is not process ownership evidence.
+            value = json.loads(line)
+            if (not isinstance(value, dict) or set(value) != {"pid", "start", "boot"}
+                    or type(value["pid"]) is not int or value["pid"] <= 0
+                    or type(value["start"]) is not int or value["start"] < 0
+                    or not isinstance(value["boot"], str)):
+                raise RuntimeError("lab: invalid saved process identity")
+            if process_record(value["pid"]) == value:
+                pids.add(value["pid"])
+    return pids
+
+
+def owns(lab, pid):
+    if pid in recorded_members(lab):
+        return True
+    try:
+        return (f"XDG_RUNTIME_DIR={lab}/run".encode() in
+                Path(f"/proc/{pid}/environ").read_bytes().split(b"\0") and process_record(pid) is not None)
+    except (FileNotFoundError, ProcessLookupError, PermissionError):
+        return False
+
+
+def members(lab):
+    """Current identities plus processes with this exact private runtime environment."""
+    run = f"XDG_RUNTIME_DIR={lab}/run".encode()
+    pids = recorded_members(lab)
     for p in Path("/proc").iterdir():
         if p.name.isdigit():
             try:
-                if run in (p / "environ").read_bytes().split(b"\0"):
+                if run in (p / "environ").read_bytes().split(b"\0") and process_record(int(p.name)) is not None:
                     pids.add(int(p.name))
             except OSError:
                 pass
     pids.discard(os.getpid())
     return pids
+
+
+def signal_member(lab, pid, sig):
+    before = process_record(pid)
+    if before is None:
+        return False
+    try:
+        descriptor = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return False
+    try:
+        if process_record(pid) != before or not owns(lab, pid) or pid == os.getpid():
+            return False
+        try:
+            signal.pidfd_send_signal(descriptor, sig)
+        except ProcessLookupError:
+            return False
+        return True
+    finally:
+        os.close(descriptor)
 
 
 def down(lab):
@@ -306,10 +365,7 @@ def down(lab):
     subprocess.run(["systemctl", "--user", "stop", f"ghostlab-{lab.name}-*.scope"], stderr=subprocess.DEVNULL, check=False)
     for sig in [signal.SIGTERM, signal.SIGKILL]:
         for pid in members(lab):
-            try:
-                os.kill(pid, sig)
-            except ProcessLookupError:
-                pass
+            signal_member(lab, pid, sig)
         time.sleep(1.0)
     left = [p for p in members(lab) if Path(f"/proc/{p}").exists()]
     if left:

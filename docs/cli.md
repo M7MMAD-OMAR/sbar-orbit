@@ -360,6 +360,32 @@ File-identity components are decimal strings so JSON clients preserve large
 inode and nanosecond values exactly. Older bundles with numeric identity
 components must be prepared again.
 
+The owner can inspect and load a successful pinned preparation:
+
+```sh
+sbar-orbit native-plugin status ABSOLUTE_PREPARATION_DIRECTORY
+sbar-orbit native-plugin load ABSOLUTE_PREPARATION_DIRECTORY
+```
+
+These Linux owner commands have no agent RPC counterpart. The launcher applies
+the existing shared budget. Status creates no files and sends no input. Load
+rechecks the host and artifact, takes a lock shared by all preparations for the
+same compositor, and durably records intent and outcome in the preparation's
+private `plugin-owner.jsonl`. It loads only that preparation's `plugin.so`.
+A verified repeated load sends no further load request. The loaded build stamp,
+ABI, artifact pin and exact kernel mapping device/inode must all agree.
+The prototype must be compiled through its snapshot `build.sh` to embed the stamp.
+This stamp remains self-reported provenance, not compiler attestation.
+
+Failed acknowledgement or outcome retention after sending load explicitly
+reports uncertain compositor state and requires owner review. Inspect status
+and the retained journal before recovery. Status cannot resolve an unfinished
+journal or prove descendant cleanup. No automatic unload, service restart or
+mode change is performed. Coordinated unload and final owner acceptance remain
+outstanding. The strict mapping check currently refuses the observed btrfs
+mapping-device discrepancy; private runtime storage passed the guarded lab
+proof. This command does not establish complete owner appearance or performance.
+
 The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
 prepared private settings snapshot. The directory and GTK subdirectories must
 be canonical, user-owned and mode `0700`; files must be single-link regular

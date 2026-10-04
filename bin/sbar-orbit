@@ -63,6 +63,9 @@ Sbar Orbit, a private browser and desktop for your AI agent
                                  (right click it for the settings window)
   sbar-orbit settings            Open the settings window, searchable
   sbar-orbit native-settings     Open protected/full native controls and the action log
+  sbar-orbit native-prepare DIR  Prepare native owner configuration without activation
+  sbar-orbit native-plugin status|load DIR
+                                Inspect or load the fixed prepared native plugin
   sbar-orbit config list         Every setting, its value and its default
   sbar-orbit config search WORD  Find a setting by name, meaning, English or Arabic
   sbar-orbit config get KEY
@@ -172,8 +175,8 @@ HELP
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
     ;;
-  native-settings)
-    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop native-settings
+  native-settings|native-prepare|native-plugin)
+    [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop "$1"
     exec bun run "$orbit_root/scripts/limited.ts" bun run "$orbit_root/src/cli.ts" "$@"
     ;;
   session)
