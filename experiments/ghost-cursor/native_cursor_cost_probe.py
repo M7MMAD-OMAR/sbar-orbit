@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 """Measure scoped cursor costs on the private nested display, never owner input."""
 import hashlib
+import argparse
 from contextlib import ExitStack
 import json
 import os
+import resource
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +18,7 @@ from src.native.budget import require_budget
 from src.native.control import ActionControl
 from src.native.host import inspect_host
 from src.native.session import NativeSession
+from src.native import lease
 from cursor_cost_probe import identity, loaded_plugin
 from ghost import clients, hypr
 from harness import StandIn
@@ -25,6 +28,22 @@ from lab import guard, members
 def main():
     guard(os.environ)
     require_budget()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manager-read", choices=("auto", "systemctl"), default="auto")
+    options = parser.parse_args()
+    if options.manager_read == "systemctl":
+        # Exercise the checked fallback in this probe only, never child applications.
+        sys.modules["gi.repository"] = None
+    query_counts = {"dbus": 0, "systemctl": 0}
+
+    def counted(name, reader):
+        def read(*arguments):
+            query_counts[name] += 1
+            return reader(*arguments)
+        return read
+
+    lease.manager_properties = counted("dbus", lease.manager_properties)
+    lease.systemctl_properties = counted("systemctl", lease.systemctl_properties)
     here = Path(__file__).resolve().parent
     private = here.parents[1] / ".private"
     retained = private / f"native-cursor-cost-{os.getpid()}"
@@ -34,7 +53,9 @@ def main():
               "display_latency": "not measured", "samples": [],
               "response_scope": "guarded Python session action and durable journal, no public broker or capture",
               "rss_scope": "approximate per-process RSS including shared pages; not unique memory",
-              "cpu_scope": "inner/outer compositor and probe only; helper and application CPU excluded"}
+              "cpu_scope": "inner/outer compositor, probe and waited-child CPU; live helper/application CPU excluded",
+              "manager_read": options.manager_read,
+              "child_cpu_scope": "terminated and waited-for probe children only, including synchronous manager queries"}
     sources = [Path(__file__), here / "plugin/ghostinput.cpp", here / "native_broker_application.py",
                here / "native_application_probe.py", here / "cursor_cost_probe.py", here / "harness.py",
                here / "ghost.py", here / "lab.py"] + [here.parents[1] / f"src/native/{name}.py"
@@ -88,6 +109,9 @@ def main():
                                         else {"type": "hide-cursor", **target})
                     time.sleep(0.5)
                     before = {pid: identity(pid) for pid in processes}
+                    queries_before = dict(query_counts)
+                    usage_before = {name: resource.getrusage(who) for name, who in
+                                    (("self", resource.RUSAGE_SELF), ("children", resource.RUSAGE_CHILDREN))}
                     start = time.monotonic()
                     pairs, durations, misses = 0, [], 0
                     while time.monotonic() - start < 6:
@@ -105,6 +129,8 @@ def main():
                         else:
                             time.sleep(max(0, start + 6 - time.monotonic()))
                     elapsed = time.monotonic() - start
+                    usage_after = {name: resource.getrusage(who) for name, who in
+                                   (("self", resource.RUSAGE_SELF), ("children", resource.RUSAGE_CHILDREN))}
                     after = {pid: identity(pid) for pid in processes}
                     assert all(before[pid][0] == starts[pid] == after[pid][0] for pid in processes)
                     current = {value["address"]: {key: value[key] for key in ("pid", "at", "size", "workspace", "mapped")}
@@ -116,6 +142,11 @@ def main():
                     report["samples"].append({"phase": phase, "seconds": elapsed, "requested_pair_hz": 20,
                         "actual_pair_hz": pairs / elapsed, "missed_pair_deadlines": misses,
                         "pair_response_seconds": durations, "rss_bytes": rss,
+                        "manager_query_counts": {name: query_counts[name] - queries_before[name]
+                                                 for name in query_counts},
+                        "rusage_cpu_seconds": {name: usage_after[name].ru_utime + usage_after[name].ru_stime
+                                               - usage_before[name].ru_utime - usage_before[name].ru_stime
+                                               for name in usage_before},
                         "cpu_seconds": {name: (after[pid][1] - before[pid][1]) / os.sysconf("SC_CLK_TCK")
                                         for pid, name in processes.items()}})
             report["measurement_complete"] = True

@@ -77,3 +77,22 @@ On 4 October 2026, native leases began using fresh GIO D-Bus connections when th
 A real owned service-only comparison matched all three properties across two alternating rounds of 50 reads per method. D-Bus median was 1.25/1.63 ms; systemctl median was 4.83/5.09 ms. The stopped service was refused and all recorded member identities disappeared. The raw source-bound proof is retained privately as native-manager-live.json. Cold import and Scope-specific integration were not measured by this comparison.
 
 The unchanged two-target cursor workload completed eight samples on the new implementation. Moving-pair median was 20.71 ms versus the prior 40.43 ms; both new moving samples had zero scheduled deadline misses. These are separate source-bound runs, not simultaneous measurements. Probe CPU increased to 25.83/25.67 percent of one core from 14.67/16.17 percent. The previous CPU scope excluded systemctl child processes, while the new GIO work occurs inside the measured probe. These figures do not determine total CPU improvement or regression. Child-process accounting and a repeated original/new comparison are required before overall efficiency acceptance. Raw report: .private/native-cursor-cost-1103093/report.json, with all fifteen source hashes independently verified. The owned lab was removed after bounded cleanup. Whole-system performance and owner activation remain not measured.
+
+## Controller plus waited-child comparison
+
+The follow-up on 4 October 2026 uses Python getrusage SELF and CHILDREN immediately around each phase. SELF includes all controller threads; CHILDREN includes terminated, waited-for children, including synchronous systemctl queries. These values are separate from procfs compositor values and are not added twice. Live application/helper CPU and work in the manager daemon remain outside this comparison.
+
+Both eight-phase runs used identical source and plugin hashes. Actual invocation counters prove 720 systemctl reads per active phase in the forced fallback and 720 D-Bus reads in the automatic path, with zero calls to the other reader. Runtime production selection and ownership guards are unchanged.
+
+| Component measurement | systemctl fallback | GIO D-Bus |
+|---|---|---|
+| Moving-pair median | 39.30 ms | 20.51 ms |
+| Moving controller + waited-child CPU, percent of one core | 43.03 / 42.59 | 25.62 / 26.77 |
+| Moving scheduled deadline misses | 40 / 18 | 0 / 0 |
+| State-pair median | 38.25 ms | 21.25 ms |
+| State controller + waited-child CPU, percent of one core | 43.17 / 43.80 | 26.12 / 26.47 |
+| State scheduled deadline misses | 0 / 0 | 0 / 6 |
+
+Mean cadence stayed near20 pairs per second, which does not erase missed individual deadlines. Forward/reverse samples are shown separately. This resolves the previous omitted-child comparison for the measured component; it does not prove whole-system performance, cold-start cost, actual display/input latency or superiority over the complete old Orbit architecture.
+
+Raw source-bound reports are retained privately at native-cursor-cost-1235447/report.json and native-cursor-cost-1259797/report.json, with native-cursor-cpu-comparison.json as the derived summary. Both reports completed without errors; all fifteen source bindings and identical plugin bindings were verified. The owned lab was removed after bounded cleanup. Owner-desktop and complete toolkit acceptance remain outstanding.
