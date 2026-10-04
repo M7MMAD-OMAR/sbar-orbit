@@ -6,16 +6,17 @@ runtime directory, HOME and XDG directories, so nothing it starts can reach the 
 input, session bus or files.
 
     lab.py up                 start a lab, print its directory
+    lab.py up --disk          use a private disk-backed lab for scoped native proofs
     lab.py up --render-node /dev/dri/renderDNUMBER  select an outer render device
     lab.py down LAB           stop every process that belongs to it
     lab.py run LAB -- CMD...  run a command inside the lab environment (foreground)
     lab.py spawn LAB -- CMD...  start a command inside the lab, detached, print its pid
     lab.py env LAB            print the environment as shell exports
 """
-import json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
+import argparse, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
 from pathlib import Path
 
-PREFIX = "/tmp/gl-"
+LAB_ROOTS = (Path("/tmp"), Path("/var/tmp"))
 STRIP = ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE",
          "DBUS_SESSION_BUS_ADDRESS", "AT_SPI_BUS_ADDRESS", "XAUTHORITY", "NOTIFY_SOCKET", "HYPRLAND_CMD",
          "XDG_SESSION_DESKTOP", "XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDK_BACKEND", "QT_QPA_PLATFORM",
@@ -60,9 +61,21 @@ def wait(cond, seconds, what):
     raise SystemExit(f"lab: timed out waiting for {what}")
 
 
+def private_lab_directory(path):
+    path = Path(path)
+    info = path.lstat()
+    if (not path.is_absolute() or path.resolve() != path or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700):
+        raise SystemExit("lab: refusing noncanonical or nonprivate directory")
+    return path
+
+
 def lab_path(arg, partial=False):
-    lab = Path(arg).resolve()
-    if not str(lab).startswith(PREFIX) or not (partial or (lab / "state.json").exists()):
+    lab = Path(arg)
+    if lab.parent not in LAB_ROOTS or not re.fullmatch(r"gl-[A-Za-z0-9_-]+", lab.name):
+        raise SystemExit(f"lab: not a lab directory: {arg}")
+    private_lab_directory(lab)
+    if not (partial or (lab / "state.json").is_file()):
         raise SystemExit(f"lab: not a lab directory: {arg}")
     return lab
 
@@ -81,7 +94,7 @@ def base_env(lab):
                XDG_CACHE_HOME=str(home / ".cache"), HYPRLAND_NO_CRASHREPORTER="1", HYPRLAND_NO_SD_NOTIFY="1",
                HYPRLAND_NO_SD_VARS="1", NO_AT_BRIDGE="0",
                # No gvfs or document portal FUSE mounts inside the lab: they outlive a crashed lab.
-               GIO_USE_VFS="local", GTK_USE_PORTAL="0")
+               GIO_USE_VFS="local", GTK_USE_PORTAL="0", TMPDIR=str(lab / "tmp"))
     return env
 
 
@@ -92,14 +105,30 @@ def lab_env(lab):
     return env
 
 
+def lab_socket(path):
+    path = Path(path)
+    run = private_lab_directory(path.parent)
+    if run.name != "run":
+        raise SystemExit("lab: refusing socket outside the lab runtime")
+    lab_path(run.parent, partial=True)
+    info = path.lstat()
+    if path.resolve() != path or not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+        raise SystemExit("lab: refusing noncanonical or foreign Wayland socket")
+    return path
+
+
 def guard(env):
     """Refuse to act unless every display, bus and runtime path points inside a lab."""
     run = env.get("XDG_RUNTIME_DIR", "")
     bus = env.get("DBUS_SESSION_BUS_ADDRESS", "")
-    if not run.startswith(PREFIX) or not bus.startswith(f"unix:path={PREFIX}") or "DISPLAY" in env:
+    display = env.get("WAYLAND_DISPLAY", "")
+    if (not run or not display or display in (".", "..") or "/" in display
+            or bus != f"unix:path={run}/bus" or "DISPLAY" in env or "WAYLAND_SOCKET" in env):
         raise SystemExit("lab: refusing, environment does not point inside a lab")
-    if not (Path(run) / env.get("WAYLAND_DISPLAY", "-")).is_socket():
-        raise SystemExit("lab: refusing, lab Wayland socket missing")
+    try:
+        lab_socket(Path(run) / display)
+    except OSError as error:
+        raise SystemExit("lab: refusing, lab Wayland socket missing") from error
 
 
 HOST_ENV = {k: os.environ[k] for k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "PATH", "HOME") if k in os.environ}
@@ -169,18 +198,25 @@ def failed_output(lab, source_log, observed, primary):
     raise BaseExceptionGroup("Lab output validation or cleanup failed", errors)
 
 
-def up(render_node=None):
+def up(render_node=None, disk=False):
     if render_node is not None:
         if not re.fullmatch(r"/dev/dri/renderD[0-9]+", render_node):
             raise SystemExit("lab: expected an explicit DRM render node")
         info = os.lstat(render_node)
         if not stat.S_ISCHR(info.st_mode) or info.st_uid != 0:
             raise SystemExit("lab: render node must be a root-owned character device")
-    lab = Path(tempfile.mkdtemp(prefix="gl-", dir="/tmp"))
+    root = "/var/tmp" if disk else "/tmp"
+    if disk:
+        filesystem = subprocess.check_output(
+            ["/usr/bin/findmnt", "-n", "-o", "FSTYPE", "-T", root], text=True).strip()
+        if not filesystem or filesystem in ("tmpfs", "ramfs", "devtmpfs"):
+            raise SystemExit("lab: disk root must be backed by a non-RAM filesystem")
+    lab = Path(tempfile.mkdtemp(prefix="gl-", dir=root))
     os.chmod(lab, 0o700)
-    for d in ["run", "home/.config", "home/.local/share", "home/.local/state", "home/.cache", "hypr"]:
+    for d in ["run", "tmp", "home/.config", "home/.local/share", "home/.local/state", "home/.cache", "hypr"]:
         (lab / d).mkdir(parents=True, exist_ok=True)
     os.chmod(lab / "run", 0o700)
+    os.chmod(lab / "tmp", 0o700)
     (lab / "state.json").write_text(json.dumps({"env": {}}))
     env = base_env(lab)
     bus = f"unix:path={lab}/run/bus"
@@ -292,11 +328,11 @@ def main():
         os.chdir(env["HOME"])
         os.execvpe(a[2], a[2:], env)
     if a[0] == "up":
-        if len(a) == 1:
-            return up()
-        if len(a) == 3 and a[1] == "--render-node":
-            return up(a[2])
-        raise SystemExit("lab: usage: up [--render-node /dev/dri/renderDNUMBER]")
+        parser = argparse.ArgumentParser(prog="lab.py up")
+        parser.add_argument("--disk", action="store_true")
+        parser.add_argument("--render-node")
+        options = parser.parse_args(a[1:])
+        return up(options.render_node, disk=options.disk)
     lab = lab_path(a[1], partial=a[0] == "down")
     if a[0] == "down":
         return down(lab)

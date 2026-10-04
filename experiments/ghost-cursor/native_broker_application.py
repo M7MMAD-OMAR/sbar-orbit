@@ -8,10 +8,12 @@ from native_application_probe import fixture
 from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.lease import NativeLease, process_identity
+from lab import lab_socket
 
 display = Path(os.environ.get("WAYLAND_DISPLAY", ""))
-if not display.is_absolute() or not str(display).startswith("/tmp/gl-") or not display.is_socket() or "DISPLAY" in os.environ:
+if not display.is_absolute() or "DISPLAY" in os.environ or "WAYLAND_SOCKET" in os.environ:
     raise SystemExit("Native broker fixture requires a private lab display")
+lab_socket(display)
 runtime = private_directory(Path(os.environ["XDG_RUNTIME_DIR"]))
 if os.environ.get("DBUS_SESSION_BUS_ADDRESS") != f"unix:path={runtime.parent / 'session'}":
     raise SystemExit("Native broker fixture requires its owned application bus")

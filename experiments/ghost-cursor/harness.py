@@ -28,8 +28,8 @@ import argparse, json, os, re, signal, socket, subprocess, sys, threading, time
 from pathlib import Path
 
 RUN = Path(os.environ["XDG_RUNTIME_DIR"])
-if not str(RUN).startswith("/tmp/gl-"):
-    sys.exit("harness: refusing to run outside a lab")
+from lab import guard
+guard(os.environ)
 HYPR = RUN / "hypr" / os.environ["HYPRLAND_INSTANCE_SIGNATURE"]
 HERE = Path(__file__).resolve().parent
 OPTIONS = ["decoration:screen_shader", "cursor:invisible", "decoration:active_opacity", "decoration:inactive_opacity",

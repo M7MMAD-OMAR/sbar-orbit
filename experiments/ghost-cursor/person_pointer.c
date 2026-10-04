@@ -40,16 +40,31 @@ int main(int argc, char **argv) {
     char canonical[PATH_MAX], path[PATH_MAX];
     struct stat st;
     if (!runtime || !socket || strchr(socket, '/') || !realpath(runtime, canonical) ||
-        strncmp(canonical, "/tmp/gl-", 8) || getenv("DISPLAY")) {
+        strcmp(runtime, canonical) || getenv("DISPLAY") || getenv("WAYLAND_SOCKET")) {
         fprintf(stderr, "Refused: pointer simulation requires a private ghost lab\n");
         return 1;
     }
+    const char *leaf = NULL;
+    if (!strncmp(canonical, "/tmp/gl-", 8)) leaf = canonical + 8;
+    if (!strncmp(canonical, "/var/tmp/gl-", 12)) leaf = canonical + 12;
+    const char *slash = leaf ? strchr(leaf, '/') : NULL;
+    if (!slash || slash == leaf || strcmp(slash, "/run") ||
+        strspn(leaf, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != (size_t)(slash - leaf) ||
+        lstat(canonical, &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 0777) != 0700)
+        return 1;
+    strcpy(path, canonical);
+    path[slash - canonical] = '\0';
+    if (lstat(path, &st) || !S_ISDIR(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 0777) != 0700)
+        return 1;
+    const char *bus = getenv("DBUS_SESSION_BUS_ADDRESS");
+    if (!bus || snprintf(path, sizeof(path), "unix:path=%s/bus", canonical) >= (int)sizeof(path) || strcmp(bus, path))
+        return 1;
     if (strlen(canonical) + strlen(socket) + 2 > sizeof(path))
         return 1;
     strcpy(path, canonical);
     strcat(path, "/");
     strcat(path, socket);
-    if (lstat(path, &st) || !S_ISSOCK(st.st_mode) || (argc != 5 && argc != 6)) {
+    if (lstat(path, &st) || !S_ISSOCK(st.st_mode) || st.st_uid != getuid() || (argc != 5 && argc != 6)) {
         fprintf(stderr, "Expected a lab socket and x y width height\n");
         return 1;
     }

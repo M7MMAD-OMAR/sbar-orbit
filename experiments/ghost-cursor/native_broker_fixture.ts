@@ -7,8 +7,10 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const work = process.argv[2];
-if (!work || !process.env.XDG_RUNTIME_DIR?.startsWith("/tmp/gl-")
-    || !process.env.DBUS_SESSION_BUS_ADDRESS?.startsWith("unix:path=/tmp/gl-") || process.env.DISPLAY)
+const labRuntime = process.env.XDG_RUNTIME_DIR;
+if (!work || !labRuntime || !/^\/(?:tmp|var\/tmp)\/gl-[A-Za-z0-9_-]+\/run$/.test(labRuntime)
+    || process.env.DBUS_SESSION_BUS_ADDRESS !== `unix:path=${labRuntime}/bus`
+    || process.env.DISPLAY !== undefined || process.env.WAYLAND_SOCKET !== undefined)
   throw new Error("Native broker fixture requires its private lab");
 const wait = async (probe: () => Promise<boolean>, label: string) => {
   const end = Date.now() + 12_000;
