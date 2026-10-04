@@ -138,7 +138,9 @@ def main():
                     "src/session.ts", "src/ipc.ts", "src/hyprland.ts", "src/native-worker.ts", "src/native/session_worker.py",
                     "src/native-preview.ts", "src/cli.ts", "src/diagnostics.ts", "src/native/view.py",
                     "src/native-appearance.ts", "experiments/ghost-cursor/native_broker_application.py",
-                    "experiments/ghost-cursor/native_broker_fixture.ts", "experiments/ghost-cursor/native_broker_probe.py")}
+                    "experiments/ghost-cursor/native_broker_fixture.ts", "experiments/ghost-cursor/native_broker_probe.py",
+                    "src/native/session.py", "src/native/application.py", "src/native/application_worker.py",
+                    "src/native/control.py", "src/native/transport.py", "src/native/host.py", "src/native/lease.py")}
             except BaseException as error:
                 primary = error
             finally:
