@@ -109,3 +109,20 @@ The image and reports remain ignored private evidence; no owner display was
 activated. B9 reference comparison, two visible agent cursors in the concurrent
 Firefox measurement, the complete toolkit matrix and final owner acceptance
 remain incomplete. See COMPLIANCE.md for exact source bindings and failures.
+
+## Current paired compositor cursor evidence, 4 October 2026
+
+A current private paired Firefox run now combines distinct936-character native
+task readbacks, one actual request-interval overlap, two visible compositor
+cursors and passing unchanged B1/B2/B3/B4/B12 person interference checks. Both
+arrow interior pixels appear in the same real frame. Hiding each cursor through
+its own native session changes only that cursor pixel, providing independent
+negative controls. Source/plugin bindings and exact PID/start cleanup are verified.
+See COMPLIANCE.md and local `.private/native-cursor-pair/verification.json`.
+
+This closes the missing two-visible-cursor evidence for this private cooperative
+Firefox run. It does not close owner activation, labels-off OpenAI comparison,
+comparative performance or full current toolkit/clipboard acceptance. The
+current X11 selection proxy is still experimental and not integrated into the
+production scoped native route. The required local project suite remains
+failed/incomplete on the recorded quota errors.
