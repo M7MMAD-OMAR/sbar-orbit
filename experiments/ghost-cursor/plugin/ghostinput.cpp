@@ -107,6 +107,17 @@ class ScopedProcess {
         pollfd process{processFD, POLLIN, 0};
         return poll(&process, 1, 0) > 0 && (process.revents & POLLIN);
     }
+    static bool descriptorLive(int descriptor) {
+        pollfd process{descriptor, POLLIN, 0};
+        const int result = poll(&process, 1, 0);
+        if (result < 0 || (process.revents & (POLLERR | POLLNVAL)) ||
+            (result > 0 && !(process.revents & POLLIN)))
+            throw std::runtime_error("registered root liveness unavailable");
+        return !(process.revents & POLLIN);
+    }
+    bool live() const {
+        return descriptorLive(processFD);
+    }
     bool belongsTo(const std::string& unit) const {
         return group.ends_with("/" + unit);
     }
@@ -711,6 +722,13 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
+#ifndef ORBIT_PLUGIN_SOURCE_SHA256
+    throw std::runtime_error("[ghostinput] build.sh source stamp is required");
+#else
+    const std::string sourceStamp = ORBIT_PLUGIN_SOURCE_SHA256;
+    if (sourceStamp.size() != 64 || sourceStamp.find_first_not_of("0123456789abcdef") != std::string::npos)
+        throw std::runtime_error("[ghostinput] invalid compiled source stamp");
+#endif
     const std::string HASH = __hyprland_api_get_hash();
     if (HASH != __hyprland_api_get_client_hash()) {
         HyprlandAPI::addNotification(PHANDLE, "[ghostinput] built for another Hyprland, refusing", CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
@@ -724,6 +742,26 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!agentKeyboard->m_xkbKeymap)
         throw std::runtime_error("[ghostinput] cannot build agent keymap");
     agentKeyboard->updateKeymapFD();
+#ifdef ORBIT_PLUGIN_SOURCE_SHA256
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-build-info", false,
+        [sourceStamp, HASH](eHyprCtlOutputFormat, std::string request) {
+            if (request != "ghost-build-info")
+                return std::string{"refused: build-info takes no arguments"};
+            std::map<pid_t, bool> liveRoots;
+            try {
+                for (const auto& [pid, identity] : scopedProcesses)
+                    if (identity->live())
+                        liveRoots[pid] = true;
+                for (const auto& [pid, descriptor] : registeredProcesses)
+                    if (ScopedProcess::descriptorLive(descriptor))
+                        liveRoots[pid] = true;
+            } catch (const std::exception&) {
+                return std::string{"refused: registered root liveness unavailable"};
+            }
+            return std::string{"{\"schema\":1,\"source_sha256\":\""} + sourceStamp +
+                "\",\"abi_hash\":\"" + HASH + "\",\"live_roots\":" + std::to_string(liveRoots.size()) + "}";
+        }});
+#endif
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-scope-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream in(request);
