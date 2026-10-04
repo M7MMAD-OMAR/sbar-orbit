@@ -6,12 +6,13 @@ runtime directory, HOME and XDG directories, so nothing it starts can reach the 
 input, session bus or files.
 
     lab.py up                 start a lab, print its directory
+    lab.py up --render-node /dev/dri/renderDNUMBER  select an outer render device
     lab.py down LAB           stop every process that belongs to it
     lab.py run LAB -- CMD...  run a command inside the lab environment (foreground)
     lab.py spawn LAB -- CMD...  start a command inside the lab, detached, print its pid
     lab.py env LAB            print the environment as shell exports
 """
-import json, os, re, shutil, signal, subprocess, sys, tempfile, time
+import json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time
 from pathlib import Path
 
 PREFIX = "/tmp/gl-"
@@ -146,7 +147,35 @@ def ensure_no_devices(lab, pid):
         raise SystemExit(f"lab: ABORTED, nested compositor opened real devices: {sorted(set(held))}")
 
 
-def up():
+def usable_output(monitors):
+    return (len(monitors) == 1 and monitors[0].get("name") == "WAYLAND-1"
+            and monitors[0].get("width") == 1920 and monitors[0].get("height") == 1200
+            and not monitors[0].get("disabled"))
+
+
+def failed_output(lab, source_log, observed, primary):
+    errors = [primary]
+    try:
+        evidence = Path(__file__).with_name("evidence")
+        (evidence / f"{lab.name}-invalid-output.json").write_text(json.dumps(observed))
+        if source_log.is_file():
+            shutil.copyfile(source_log, evidence / f"{lab.name}-invalid-output.log")
+    except BaseException as error:
+        errors.append(error)
+    try:
+        down(lab)
+    except BaseException as error:
+        errors.append(error)
+    raise BaseExceptionGroup("Lab output validation or cleanup failed", errors)
+
+
+def up(render_node=None):
+    if render_node is not None:
+        if not re.fullmatch(r"/dev/dri/renderD[0-9]+", render_node):
+            raise SystemExit("lab: expected an explicit DRM render node")
+        info = os.lstat(render_node)
+        if not stat.S_ISCHR(info.st_mode) or info.st_uid != 0:
+            raise SystemExit("lab: render node must be a root-owned character device")
     lab = Path(tempfile.mkdtemp(prefix="gl-", dir="/tmp"))
     os.chmod(lab, 0o700)
     for d in ["run", "home/.config", "home/.local/share", "home/.local/state", "home/.cache", "hypr"]:
@@ -162,8 +191,11 @@ def up():
     # bundled sway lacks, and under headless Mutter it stalls before creating an output. On 3 October
     # 2026 something outside this project SIGKILLed every kwin_wayland for a while; if that recurs the
     # lab stops here, it never falls back to anything that touches the person's seat.
+    outer_env = dict(env)
+    if render_node is not None:
+        outer_env["KWIN_RENDER_NODES"] = render_node
     outer = spawn(lab, ["kwin_wayland", "--virtual", "--no-lockscreen", "--no-global-shortcuts",
-                        "--width", "1920", "--height", "1200", "--socket", "outer-0"], env, "outer")
+                        "--width", "1920", "--height", "1200", "--socket", "outer-0"], outer_env, "outer")
     wait(lambda: (lab / "run/outer-0").is_socket(), 15, "outer compositor")
     (lab / "hypr/hyprland.conf").write_text(HYPR_CONF)
     # Hyprland must never open the person's seat. If its seat backend works it opens a session, and
@@ -180,6 +212,18 @@ def up():
     hypr = lab / "run/hypr"
     wait(lambda: hypr.is_dir() and any((d / ".socket.sock").exists() for d in hypr.iterdir()), 20, "Hyprland")
     sig = next(d.name for d in hypr.iterdir() if (d / ".socket.sock").exists())
+    monitor_env = dict(henv, HYPRLAND_INSTANCE_SIGNATURE=sig)
+    observed = []
+    def observe_output():
+        nonlocal observed
+        reply = subprocess.run(["hyprctl", "-j", "monitors"], env=monitor_env,
+                               capture_output=True, text=True, timeout=2, check=True)
+        observed = json.loads(reply.stdout)
+        return usable_output(observed)
+    try:
+        wait(observe_output, 8, "usable 1920x1200 nested output")
+    except BaseException as primary:
+        failed_output(lab, hypr / sig / "hyprland.log", observed, primary)
     time.sleep(1.0)
     ensure_no_devices(lab, hypr_proc.pid)
     wait(lambda: any(p.name.startswith("wayland-") and p.is_socket() for p in (lab / "run").iterdir()), 10, "nested socket")
@@ -248,7 +292,11 @@ def main():
         os.chdir(env["HOME"])
         os.execvpe(a[2], a[2:], env)
     if a[0] == "up":
-        return up()
+        if len(a) == 1:
+            return up()
+        if len(a) == 3 and a[1] == "--render-node":
+            return up(a[2])
+        raise SystemExit("lab: usage: up [--render-node /dev/dri/renderDNUMBER]")
     lab = lab_path(a[1], partial=a[0] == "down")
     if a[0] == "down":
         return down(lab)

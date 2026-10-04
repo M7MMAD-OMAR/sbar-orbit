@@ -32,11 +32,12 @@ def pixels():
 
 
 before_text = text()
-before_pixels = pixels()
 extent = Atspi.Component.get_extents(widget, Atspi.CoordType.WINDOW)
 x = extent.x + min(100, extent.width // 2)
 y = extent.y + min(100, extent.height // 2)
 assert 0 <= x < window["size"][0] and 0 <= y < window["size"][1]
+command("ghost-cursor", x, y)
+before_pixels = pixels()
 command("ghost-click", x, y)
 command("ghost-key", "ctrl+a")
 message = "Native editor 0123\n" + "\u0645\u0631\u062d\u0628\u0627\n" + "".join(

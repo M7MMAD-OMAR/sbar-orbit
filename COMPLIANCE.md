@@ -110,3 +110,17 @@ permanent revocation and cleanup. It opened no owner-desktop application.
 The prototype's limits and prior private-compositor evidence remain in
 `experiments/ghost-cursor/SCOPED-ENROLLMENT.md`. This upload does not claim
 production native-display acceptance.
+
+### Private native output readiness follow-up
+
+Reviewed 4 October 2026 against KWin 6.7.5. The optional render-only device
+selection uses the supported `KWIN_RENDER_NODES` setting documented in the
+[versioned implementation](https://github.com/KDE/kwin/blob/v6.7.5/src/core/gpumanager.cpp).
+It affects only the outer private compositor child. The lab now requires its
+expected live output before reporting startup success and attempts cleanup even
+if storing failure evidence fails. The standalone `lab_output_test.py` catches
+the old evidence-storage cleanup failure and passes the fixed path.
+Private GTK4 and Dolphin cursor recording and source-bound pre-map checks passed;
+details and failed attempts remain in `experiments/ghost-cursor/PRE-MAP-PLACEMENT.md`.
+Owner-display operation and comparative performance remain unaccepted and
+unmeasured. This follow-up does not change production native support tiers.

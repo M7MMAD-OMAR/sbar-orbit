@@ -63,11 +63,78 @@ against that corrected fixture. A later GTK4 and Qt cursor recording attempt
 failed when `grim -T` timed out on the GTK4 surface; it is not accepted evidence
 for this revision. Earlier recordings remain historical evidence only.
 
-Typecheck passed. The full bounded suite passed with 583 passes, 45 skips and
+Follow-up diagnosis found two lab preconditions were missing. A headless lab can
+have no pointer device, and its nested compositor can enter a zero-size FALLBACK
+output after GBM allocation fails. A diagnostic change to enumerate additional
+seat resources did not fix the pointer failure and was discarded. The retained
+renderer log showed allocation failures on the NVIDIA render node. KWin 6.7.5
+supports selecting render-only devices with
+[`KWIN_RENDER_NODES`](https://github.com/KDE/kwin/blob/v6.7.5/src/core/gpumanager.cpp).
+The lab now accepts an explicit validated render node and requires a live
+1920x1200 WAYLAND-1 output before reporting successful startup. Invalid output
+evidence is retained before the lab is stopped. The option accepts render-only
+character devices; the nested real-input and display-card refusal remains in force.
+Default and explicit NVIDIA startup checks also subsequently produced valid
+outputs. The retained allocation failure does not establish that either path
+always fails. Attempts to disable or resize the output through a legacy monitor
+keyword returned success without changing the observed geometry; those fixture
+mutations failed their assertions and are not accepted negative runtime checks.
+
+The output-failure cleanup probe injects unavailable evidence storage into the
+actual old startup exception handler. The old handler fails both cleanup
+assertions. The fixed handler passes all three checks, including preservation of
+the original error alongside evidence and cleanup errors. Output validation also
+rejects a recorded zero-size FALLBACK, wrong geometry, disabled or extra outputs.
+This check runs without opening any display:
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/ghost-cursor/lab_output_test.py
+```
+
+To reproduce the recording, start the lab with `lab.py up --render-node
+/dev/dri/renderDNUMBER`, selecting a verified local render node, then load the
+version-matched plugin. Stage the allowed theme subset with
+`native_appearance_stage.ts SOURCE_CONFIG LAB` and use its returned directory.
+The device preconditions must persist through both native tasks. Build
+`person_pointer.c` with its generated virtual-pointer protocol source and
+`libwayland-client`; then launch the following inside the private lab with
+`lab.py spawn LAB --`, through one bounded command at a time:
+
+```sh
+/absolute/path/to/person-pointer 960 1080 1920 1200 hold
+wtype -s 60000
+```
+
+The first fixture creates a private pointer without clicking; the second holds
+a private keyboard for 60 seconds without typing. Run the absolute path to
+`native_scoped_cursor_demo.py STAGED_CONFIG prefer-dark` through `lab.py run
+LAB --` before that keyboard expires. These are explicit test preconditions,
+not production input devices. Stop the lab with `lab.py down LAB` after the
+probe, including on failure; it owns both fixture processes.
+
+A fresh lab with the Intel render node and held private simulated-person pointer
+and keyboard completed the GTK4 and Dolphin recording: 21 native actions,
+3.0311073 seconds of overlapping input, continuing stand-in typing, and pointer
+samples fixed at one position. The text task displays its scoped cursor before
+its initial capture. The 58-frame APNG preserved decoded pixels and durations,
+shrinking 4,192,755 source PNG bytes to 1,356,262 bytes. Its SHA-256 is
+`a38523cd232c16feefc200892027337709304fe3f6fef8fedcdd4201a013b1e9`.
+The final pre-map probe was rerun successfully on that valid nested output and
+confirmed the mapped plugin binary and source hashes above. This recording proves
+private native operation only. It does not measure owner-session activation,
+whole-system noninterference or comparative performance.
+
+For the preceding pre-map revision, typecheck passed. The full bounded suite passed with 583 passes, 45 skips and
 zero failures across 628 tests. This run followed the owner's explicit approval
 to stop five unrelated project sessions; the previous resource-related failed
 run remains retained. The public audit checked 819 files with no findings, and
 the staged Gitleaks scan reported no leaks. Raw runtime logs and appearance configuration remain
-private. Owner-session activation, production launch transport, cursor visual
-acceptance on this source and comparative whole-system performance are not
+private. Owner-session activation, production launch transport, owner-session
+cursor visual acceptance and comparative whole-system performance are not
 measured by this probe and remain required work.
+
+After the output readiness and cleanup follow-up, bounded typecheck and the full
+suite passed again: 583 passes, 45 skips, zero failures, 3,772 assertions across
+628 tests in 135 files. The standalone output regression suite also passed its
+three checks after detecting two failures in the saved unfixed handler. These
+gates do not replace the outstanding owner-session and performance checks.
