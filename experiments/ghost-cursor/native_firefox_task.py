@@ -8,6 +8,7 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -46,7 +47,11 @@ def main():
     guard(os.environ)
     parser = argparse.ArgumentParser()
     parser.add_argument("--firefox", required=True)
+    parser.add_argument("--label", default="")
+    parser.add_argument("--input-barrier-fd", type=int)
     options = parser.parse_args()
+    if options.label and not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", options.label):
+        parser.error("label must contain at most32 ASCII letters, digits, underscores or hyphens")
     executable = Path(options.firefox).resolve(strict=True)
     root = Path(__file__).resolve().parents[2]
     retained = root / ".private" / f"native-firefox-{os.getpid()}"
@@ -57,7 +62,7 @@ def main():
         (work / name).mkdir(mode=0o700)
     (work / "profile" / "user.js").write_text(
         'user_pref("termsofuse.bypassNotification", true);\n')
-    report = {"complete": False, "interference_bar": "not measured", "errors": [],
+    report = {"complete": False, "interference_bar": "not measured", "errors": [], "text_label": options.label,
               "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
               "source_sha256": {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
                 for path in [Path(__file__), Path(fixture.__file__), root / "experiments/ghost-cursor/browser_fixture.html"]
@@ -128,13 +133,22 @@ def main():
                 extent = [int(state["field"][0]+offset[0]), int(state["field"][1]+offset[1]),
                           int(state["field"][2]), int(state["field"][3])]
                 bx, by, bw, bh = state["button"]
+                if options.input_barrier_fd is not None:
+                    import socket
+                    with socket.socket(fileno=options.input_barrier_fd) as barrier:
+                        barrier.settimeout(50)
+                        barrier.sendall(b"R")
+                        if barrier.recv(1) != b"S":
+                            raise RuntimeError("Private input barrier did not release the task")
                 session.execute({"type": "click", "button": "left", "x": int(bx + offset[0] + bw/2),
                                  "y": int(by + offset[1] + bh/2), **target})
                 fixture.wait(lambda: fixture.observed()["presses"] == 1, "Firefox native press missing")
                 x, y = extent[0] + 30, extent[1] + 30
                 session.execute({"type": "click", "button": "left", "x": x, "y": y, **target})
                 session.execute({"type": "key", "key": "ctrl+a", **target})
-                message = "Native Firefox 0123\n\u0645\u0631\u062d\u0628\u0627\n" + "".join(f"Agent line {i:03d}\n" for i in range(60))
+                prefix = "Native Firefox " + (options.label + " " if options.label else "")
+                message = prefix + "0123\n\u0645\u0631\u062d\u0628\u0627\n" + "".join(f"Agent line {i:03d}\n" for i in range(60))
+                report["message_sha256"] = hashlib.sha256(message.encode()).hexdigest()
                 session.execute({"type": "text", "text": message, **target})
                 fixture.wait(lambda: fixture.observed()["text"] == message, "Firefox native text mismatch")
                 assert read()["text"] == message
