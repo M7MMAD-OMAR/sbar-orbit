@@ -14,7 +14,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.budget import require_budget
 from src.native.control import ActionControl
-from src.native.host import inspect_host
+from src.native.host import inspect_host, read_plan, verify_host
 from src.native.lease import process_identity
 from lab import guard
 from cursor_cost_probe import loaded_plugin
@@ -45,6 +45,7 @@ def main():
     require_budget()
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", action="store_true")
+    parser.add_argument("--prepare", action="store_true")
     args = parser.parse_args()
     here = Path(__file__).resolve()
     root = here.parents[2]
@@ -53,10 +54,22 @@ def main():
     private.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="broker-cache-", dir=private) as cache, tempfile.TemporaryDirectory(prefix="native-broker-", dir=private) as directory:
         work = Path(directory)
-        prepared = inspect_host(os.environ)
+        preparation = None
+        if args.prepare:
+            completed = subprocess.run([shutil.which("bun"), str(root / "src/cli.ts"), "native-prepare", str(work)],
+                                       capture_output=True, text=True, timeout=25, check=True)
+            preparation = json.loads(completed.stdout)
+            assert preparation["ok"] and preparation["result"]["prepared"]
+            assert preparation["result"]["plan"] == str(work / "host.json")
+            assert preparation["result"]["control"] == str(work / "control")
+            prepared = read_plan(work / "host.json")
+            verify_host(prepared)
+        else:
+            prepared = inspect_host(os.environ)
         plugin_source = hashlib.sha256((here.parent / "plugin/ghostinput.cpp").read_bytes()).hexdigest()
         build = loaded_plugin(prepared["compositor"][0], plugin_source)
-        (work / "host.json").write_text(json.dumps(prepared))
+        if not args.prepare:
+            (work / "host.json").write_text(json.dumps(prepared))
         with ActionControl(work / "control") as control, open(work / "broker.log", "xb") as log:
             child = subprocess.Popen([shutil.which("bun"), str(here.with_name("native_broker_fixture.ts")), str(work)],
                                      stdout=log, stderr=log, env=dict(os.environ, XDG_CACHE_HOME=cache))
@@ -121,6 +134,8 @@ def main():
                 child.wait(timeout=60)
                 assert child.returncode == 0, "Native broker integration failed"
                 result = json.loads((work / "broker-result.json").read_text())
+                if preparation:
+                    result["preparation"] = preparation
                 if os.environ.get("ORBIT_NATIVE_APPEARANCE"):
                     result["appearance_delivery"] = [json.loads(path.read_text())
                         for path in sorted(work.glob("appearance-*-verified.json"))]
@@ -140,7 +155,8 @@ def main():
                     "src/native-appearance.ts", "experiments/ghost-cursor/native_broker_application.py",
                     "experiments/ghost-cursor/native_broker_fixture.ts", "experiments/ghost-cursor/native_broker_probe.py",
                     "src/native/session.py", "src/native/application.py", "src/native/application_worker.py",
-                    "src/native/control.py", "src/native/transport.py", "src/native/host.py", "src/native/lease.py")}
+                    "src/native/control.py", "src/native/transport.py", "src/native/host.py", "src/native/lease.py",
+                    "src/native/prepare.py", "src/native-prepare.ts")}
             except BaseException as error:
                 primary = error
             finally:

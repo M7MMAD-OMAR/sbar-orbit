@@ -315,6 +315,24 @@ means the private Fedora display. Native sessions refuse browser accounts,
 profiles, viewport selection and bounded network origins. This experimental
 backend does not enforce native network origin lists.
 
+The owner can prepare those paths using:
+
+```sh
+sbar-orbit native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY
+```
+
+The existing directory must be canonical, owned by the current user and mode
+`0700`. The Linux command checks the current Hyprland endpoints and ABI, writes
+an exclusive private `host.json`, initializes protected controls, and emits a
+`broker-native.env` file and unapplied `service-drop-in.conf` template. A final
+`preparation.json` records successful preparation and source hashes. Partial
+failure artifacts are retained; a nonempty directory is refused on a later run.
+The command is an owner CLI entry, without an agent RPC counterpart. It accepts
+no mode argument. Preparation leaves the broker service and compositor plugin
+unchanged. Applying the template, matching plugin preparation and the final
+consented owner-desktop acceptance remain separate steps. A compositor restart
+invalidates the saved endpoint identity; the plan must be prepared again.
+
 The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
 prepared private settings snapshot. The directory and GTK subdirectories must
 be canonical, user-owned and mode `0700`; files must be single-link regular
