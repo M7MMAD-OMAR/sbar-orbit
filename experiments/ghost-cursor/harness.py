@@ -24,7 +24,7 @@ Known limits, printed here so nobody reads more into a pass: the agent runs as t
 could still kill or ptrace the harness itself; wtype carries its own keymap, so a layout change is
 caught by the keymap and event checks in B2 and B4, not by B3.
 """
-import argparse, json, os, re, signal, socket, subprocess, sys, threading, time
+import argparse, hashlib, json, os, re, signal, socket, subprocess, sys, threading, time
 from pathlib import Path
 
 RUN = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -247,6 +247,8 @@ def descendants(root, exclude):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--agent", required=True, help="shell command for the agent's work")
+    ap.add_argument("--typist", type=Path, default=Path("/usr/bin/wtype"),
+                    help="absolute experimental typist path; default is the installed wtype")
     ap.add_argument("--text", default="the person keeps typing while the agent works 0123456789 ")
     ap.add_argument("--repeat", type=int, default=3)
     ap.add_argument("--timeout", type=float, default=60)
@@ -254,6 +256,9 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--agent-space", default="special:ghost", help="workspace name prefix the agent owns")
     a = ap.parse_args()
+    if not a.typist.is_absolute() or not a.typist.is_file():
+        ap.error("typist must be an absolute executable file path")
+    typist_sha256 = hashlib.sha256(a.typist.read_bytes()).hexdigest()
     from process_scope import processes, terminate
     import ctypes
     ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
@@ -283,7 +288,7 @@ def main():
     typed = a.text * a.repeat
     import tempfile
     typist_err = tempfile.TemporaryFile()
-    typist = subprocess.Popen(["wtype", "-d", "12", typed], stdin=subprocess.DEVNULL,
+    typist = subprocess.Popen([str(a.typist), "-d", "12", typed], stdin=subprocess.DEVNULL,
                               stderr=typist_err)
     time.sleep(0.2)
 
@@ -335,7 +340,8 @@ def main():
     found = client_events(events, start_group)
     report = {
         "person_typist": {"exit": typist_exit, "stderr": typist_error[:2000].decode(errors="replace"),
-                          "stderr_truncated": len(typist_error) > 2000},
+                          "stderr_truncated": len(typist_error) > 2000, "executable": str(a.typist),
+                          "sha256": typist_sha256},
         "agent": {"cmd": a.agent, "exit": agent_exit, "timed_out": timed_out, "seconds": round(agent_s, 3),
                   "stdout": out_f.read().decode(errors="replace")[-2000:],
                   "stderr": err_f.read().decode(errors="replace")[-2000:]},
