@@ -8,6 +8,7 @@ import { OrbitError } from "./errors";
 import { chromeExecutables, darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
 import { inheritedBackgroundClass } from "./macos";
 import { defaultViewport } from "./viewport";
+import { createWorkspaceDirectory } from "./workspace-storage";
 
 export type ChromeLaunchOptions = {
   /**
@@ -382,6 +383,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   const common = [`--user-data-dir=${profile}`, "--headless", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
     "--no-first-run", "--no-default-browser-check", "--disable-background-networking"];
   let owner: OwnedBrowser;
+  let temporary: string | undefined;
   if (windows) {
     // No --no-sandbox: the Chrome sandbox works on Windows and dropping it is a straight regression.
     // No --password-store: that switch is the Linux keyring selector and means nothing here, where a
@@ -448,10 +450,20 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // `--database=/home/<person>/.config/google-chrome/Crash Reports` and the settings.dat in it is
     // written while a session runs. Writing into the person's browser state is the promise this
     // project is built on, so the flag belongs on every platform rather than on two of three.
-    owner = launchOnLinux(executable, profile, [...common, "--disable-dev-shm-usage", "--no-sandbox",
-      "--disable-crash-reporter",
-      `--password-store=${options.passwordStore ?? "basic"}`,
-      ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"], env);
+    // Chromium uses TMPDIR for both its singleton socket and shared-memory files
+    // when --disable-dev-shm-usage is enabled. Keep it short, private and on disk.
+    temporary = await createWorkspaceDirectory("chrome", "/var/tmp/orbit-chrome-" + process.getuid?.());
+    env.TMPDIR = temporary;
+    try {
+      owner = launchOnLinux(executable, profile, [...common, "--disable-dev-shm-usage", "--no-sandbox",
+        "--disable-crash-reporter",
+        `--password-store=${options.passwordStore ?? "basic"}`,
+        ...(options.extensions ? [] : ["--disable-extensions"]), ...(options.extraArgs ?? []), "about:blank"], env);
+    } catch (error) {
+      try { await rm(temporary, { recursive: true, force: true }); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "Chrome startup and temporary storage cleanup failed"); }
+      throw error;
+    }
   }
   // The last of what Chrome said, kept for the failure message. Dropping it entirely was how a
   // refused fork spent a day reported as "did not publish its local endpoint": the cause was on
@@ -475,8 +487,12 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     await owner.stop();
     socket?.close();
     await browser?.close().catch(() => {});
-    closed = true;
-    for (const listener of listeners) listener();
+    try {
+      if (temporary) await rm(temporary, { recursive: true, force: true });
+    } finally {
+      closed = true;
+      for (const listener of listeners) listener();
+    }
   })();
   try {
     const waitMs = endpointWaitMs();
@@ -532,7 +548,10 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     const page = context.pages()[0] ?? await context.newPage();
     await page.setViewportSize(size);
     await owner.assertContained();
-    browser.on("disconnected", () => { void close(); });
+    const reportCleanup = (error: unknown) => {
+      console.error(JSON.stringify({ ownedBrowser: "cleanup failed", cause: String(error) }));
+    };
+    browser.on("disconnected", () => { void close().catch(reportCleanup); });
     // A browser that dies mid session takes every action after it down with "Target page, context or
     // browser has been closed", which names neither the browser nor the reason. The one moment the
     // cause is still readable is here, before the tree is reaped, so it goes to the broker's own
@@ -548,11 +567,15 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
         console.error(JSON.stringify({ ownedBrowser: "exited while its session was open", exitCode: owner.exitCode(), cause }));
       }
       await close();
-    });
+    }).catch(reportCleanup);
     return {
       context, browser, page,
       close: () => { requested = true; return close(); },
       onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); },
     };
-  } catch (error) { await close(); throw error; }
+  } catch (error) {
+    try { await close(); }
+    catch (cleanup) { throw new AggregateError([error, cleanup], "Chrome startup and cleanup failed"); }
+    throw error;
+  }
 }

@@ -393,3 +393,139 @@ Final local runtime-owner-controls suite: 604 passed, 48 skipped, zero failed,
 3846 assertions across 652 tests in 144 files, 183.27 seconds. The platform
 and opt-in skips are not measurements of their skipped capabilities. Remote
 checks on the published revision remain pending until observed terminal.
+
+### Native live cursor recording
+
+Reviewed 4 October 2026 before implementation. Extend the private public-broker
+probe with an optional target-only recording of its actual GTK live view. Keep
+its existing behavioral checks unchanged, bound capture count and subprocess
+deadlines, and record real capture timestamps rather than calling a sampled
+preview input latency. No owner display capture, input or activation is allowed.
+The recording shows the acknowledged cursor drawn in the native GTK view; it
+does not establish the compositor overlay's owner-display click-through.
+Official recording reference: https://ffmpeg.org/ffmpeg-formats.html#image2
+reviewed 4 October 2026, locally installed FFmpeg 8.1.2. PNG-frame encoding is
+used only in the private evidence producer, not the installed runtime. Preserve
+the captures, inspect decoded motion and retain errors before claiming evidence.
+
+Recording results: current source-bound public broker proof passed all eight
+checks plus normal/immediate view EOF supervision. Its 11-frame APNG retains
+identical decoded RGBA captures, and its isolated teal marker moves between
+the acknowledged positions. The old whole-image motion check accepted a
+no-motion fixture because unrelated repainting changed pixels; the replacement
+marker check rejects it. The old RGB comparison also ignored alpha-only
+changes; exact RGBA bytes now reject those. Both review findings are fixed.
+Final-path recording is published only after validation.
+
+Initial lab startup omitted virtual input devices and failed before viewing.
+Its generic worker error was retained, but cleanup removed the detailed worker
+log. The updated probe preserves the lab control journal, and the next run
+identified target has no pointer resource. Adding only the private lab devices
+resolved that precondition, and the final recording passed. The lab and its
+processes and temporary negative sources were removed. Owner activation,
+compositor click-through acceptance and performance remain not measured.
+
+### Renderer crash diagnosis
+
+The current full bounded suite failed four browser viewer cases with Target
+crashed/Page crashed, and one isolated browser-scroll case reproduces the crash.
+Slice OOM and pids-max counters did not change during the isolated run; memory
+high events increased. High shared usage is observed, but an OOM or pids limit
+cause is not proven. Two foreign Hukm sessions remain open. Permission to stop
+these specific current sessions is pending; the previous five-session stop
+authorization is not reused for them.
+
+Before implementation: retain the existing bounded Chrome stderr diagnostic
+when a renderer page crashes while its browser stays running. Watch existing
+and later owned pages through the supported Playwright crash event, record no
+page URL or document data, change no assertions or deadlines, and do not retry
+or suppress the failed action. Official Page crash event reference reviewed
+4 October 2026: https://playwright.dev/docs/api/class-page#page-event-crash ,
+installed Playwright 1.63.0. This is diagnosis, not a claimed crash fix.
+
+The added renderer observer was tried in one isolated run. The owned browser
+instead exited with code 0 before the observer could attribute a renderer crash;
+its retained stderr tail contains SSL handshake errors, not an identified
+crash cause. The diagnostic patch was reverted and retained privately. No
+production renderer change or resolved-cause claim is included. The failed
+full suite and isolated runs remain recorded. Publication of this increment
+is pending these failures and pending resource permission.
+
+The recording at probe hash 88896c3f is verified. A subsequent private-evidence
+retention change aggregates artifact-copy errors with the original proof error
+rather than masking it. That additional cleanup-error path is implemented but
+not yet exercised, so the recording's earlier source binding remains historical
+for that change. Fresh proof and final gates are required before publication.
+
+Further browser diagnosis, 4 October 2026: source remains unchanged. A private
+copy of the failing browser-scroll fixture will request Chrome's supported
+per-profile log file for its own headless viewer, retain that log before
+cleanup and keep all original assertions. This observes only a newly created
+private profile. It does not touch foreign sessions or the owner's browser.
+Current slice memory is about 7.2 GB; launching remains subject to its existing
+headroom admission and bounded resource limits. The earlier resource request
+is still pending, not permission to stop the current Hukm sessions.
+
+The private diagnostic fixture's first invocation matched no Bun tests because
+its path lacked the explicit ./ prefix. The corrected explicit path ran and
+failed navigation with net::ERR_INSUFFICIENT_RESOURCES. Logging references were
+checked against https://www.chromium.org/for-testers/enable-logging/ on
+4 October 2026. Only newly created private profile logs were read, and logs
+remain private. This is a resource refusal result, not proof of which resource
+failed. Slice usage remained around 7.2 GB with unchanged task-limit/OOM counters.
+
+The lower-footprint native lab proof remains useful independently of browser
+acceptance. Next run exercises the final recording/error-retention source,
+including an injected evidence-copy failure combined with a no-motion proof
+failure, and then removes that private lab. It does not waive the failed
+browser gate or imply permission to stop foreign sessions.
+
+### Owned Linux Chrome temporary storage
+
+Before implementation, 4 October 2026: tmpfs user quota is at its 12715 MiB
+hard limit although df reports free blocks. A fresh native probe failed to
+write host.json with EDQUOT. The unchanged browser-scroll fixture fails with
+the default temporary path, fails with Chrome's explicit SingletonSocket
+path-length diagnostic under a long private TMPDIR, and passes all 12 assertions
+with a short private disk-backed TMPDIR. No resource limit or foreign session
+was changed. This provides a concrete temporary-storage diagnosis.
+
+Linux Chrome currently passes --disable-dev-shm-usage. Chromium's official
+file_util_posix.cc GetShmemTempDir falls back to GetTempDir under that switch;
+GetTempDir reads TMPDIR before /tmp. Reviewed 4 October 2026 at main blob
+3c9b141c66da18cd56bb2384597366d2a6914a91:
+https://chromium.googlesource.com/chromium/src/+/refs/heads/main/base/files/file_util_posix.cc
+Linux tmpfs quota reference, reviewed 4 October 2026:
+https://docs.kernel.org/filesystems/tmpfs.html . usrquota enforces a per-user
+block limit distinct from total free blocks. No quota, mount or memory limit
+will be changed.
+
+Create one short private disk-backed temporary workspace per Linux Chrome
+launch using the existing validated workspace allocator. Pass only that owned
+path as its TMPDIR, and remove it after owned process shutdown or failed
+startup. Preserve both startup and cleanup errors. macOS/Windows paths remain
+unchanged. Verify inherited long TMPDIR refusal on unfixed code, actual child
+path/permissions on fixed code, cleanup on success/failure and the previously
+failed browser cases. This is a quota/path-length correctness fix, not measured
+performance improvement.
+
+
+### Owned Linux Chrome temporary storage, verification on 4 October 2026
+
+The original four-file browser regression group passed unchanged with a short disk-backed TMPDIR: 6 tests, 114 assertions, no failures. The default fixture TMPDIR remained quota-exhausted: account persistence and monitors.json writes reported EDQUOT. This environment change selects temporary storage only; slice limits, quota, mounts, browser assertions and deadlines were not changed.
+
+Two new process-level tests failed against the unchanged published Chrome launcher, then passed against the new launcher. They cover failed startup cleanup and actual Chrome rendering despite an inherited path longer than the Unix socket limit. A third test forces EACCES on temporary deletion after an automatic browser exit and verifies close listeners still run, explicit close retains the error, and automatic cleanup logs the failure. The review identified and corrected that notification ordering before release.
+
+Scope: this change owns the Linux launch supervisor's temporary directory. The network namespace wrapper still deliberately sets its own isolated TMPDIR to /tmp; its filesystem and isolation policy are unchanged. Disk storage uses the existing private, owner-validated allocator. No performance improvement is claimed from these tests.
+
+The fresh native recording attempt failed with EDQUOT in private GTK/dconf/icon-loader runtime files. Evidence retained in native-broker-3380681.log and .private/native-recording-current.log. The previous recording is historical; current recording and injected retention-failure proof remain not measured. The lab is being shut down. The five older sessions authorized for stopping were verified closed; two newer Hukm sessions remain untouched.
+
+The first full suite run with a globally relocated TMPDIR failed: 602 passed, 48 skipped, 5 failed, 655 tests. Sway socket transport and two GTK mount-policy fixtures require /tmp paths, while two restore fixtures require a non-btrfs temporary filesystem. A globally changed test filesystem violates those fixture assumptions. This diagnostic run is retained and is not acceptance evidence. After the task-owned lab shutdown freed a small amount of tmpfs quota, the unchanged default verification command is being run against the scoped Chrome fix.
+
+Default verification completed successfully: `bun run verify`, 607 passed, 48 skipped, 0 failed, 3859 assertions, 655 tests across 145 files, 182.28 seconds. Evidence: `.private/chrome-owned-temp-default-verify.log`. Native display checks remain outside this default command. Typecheck passed. The private lab was confirmed absent after shutdown; only the exact task-owned diagnostic browser profile was removed after its recorded browser PID exited. No newer foreign session was stopped.
+
+Source binding for this scoped Chrome correction:
+- `src/chrome.ts`: `9bc34e61bdf66c93c1a00468fe3e0dc1de0211602073632bdf0579c3f16bb125`.
+- `tests/chrome-temporary-storage.test.ts`: `25cca6ef79c785a9062fb6eee86e2fa315bc450fe92b12a9e3264ac2c7f9852c`.
+
+Scoped publication checks: public index audit inspected 864 files with no findings; staged Gitleaks found no leaks; git diff whitespace checks passed; Graft was refreshed. Both read-only review axes confirmed the temporary-removal notification fix with no remaining actionable findings in this scope. This is a draft source publication, not owner desktop acceptance.
