@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import threading
 
 from .budget import require_budget
 
@@ -25,15 +26,95 @@ def manager_environment():
 def unit_properties(unit):
     if not isinstance(unit, str) or not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.(service|scope)", unit):
         raise LeaseError("Not a generated native unit name")
+    environment = manager_environment()
+    try:
+        from gi.repository import Gio, GLib
+    except ImportError:
+        Gio = GLib = None
+    if Gio is not None:
+        properties = manager_properties(unit, environment, Gio, GLib)
+    else:
+        properties = systemctl_properties(unit, environment)
+    if properties.get("ActiveState") != "active" or not re.fullmatch(r"[0-9a-f]{32}", properties.get("InvocationID", "")):
+        raise LeaseError("Native unit is not active with a valid invocation")
+    return properties
+
+
+def systemctl_properties(unit, environment):
     result = subprocess.run(["/usr/bin/systemctl", "--user", "show", unit,
                              "--property=InvocationID,ControlGroup,ActiveState"],
-                            env=manager_environment(), capture_output=True, text=True,
+                            env=environment, capture_output=True, text=True,
                             timeout=3, check=True)
     if len(result.stdout) > 32768:
         raise LeaseError("Manager response is too large")
     properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    if properties.get("ActiveState") != "active" or not re.fullmatch(r"[0-9a-f]{32}", properties.get("InvocationID", "")):
-        raise LeaseError("Native unit is not active with a valid invocation")
+    return properties
+
+
+def manager_properties(unit, environment, Gio, GLib):
+    """Fresh bounded reads, with no connection or unit-state cache."""
+    cancel = Gio.Cancellable()
+    timer = threading.Timer(3, cancel.cancel)
+    timer.daemon = True
+    connection = None
+    errors = []
+    timer.start()
+    try:
+        connection = Gio.DBusConnection.new_for_address_sync(
+            environment["DBUS_SESSION_BUS_ADDRESS"],
+            Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION,
+            None, cancel)
+        connection.set_exit_on_close(False)
+
+        def call(path, interface, method, arguments, signature):
+            reply = connection.call_sync("org.freedesktop.systemd1", path, interface, method,
+                                         arguments, GLib.VariantType(signature),
+                                         Gio.DBusCallFlags.NO_AUTO_START, 3000, cancel)
+            if reply.get_size() > 32768:
+                raise LeaseError("Manager response is too large")
+            return reply
+
+        path = call("/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "GetUnit",
+                    GLib.Variant("(s)", (unit,)), "(o)").unpack()[0]
+        expected = "/org/freedesktop/systemd1/unit/" + unit.replace("-", "_2d").replace(".", "_2e")
+        if path != expected:
+            raise LeaseError("Manager returned a different unit")
+        properties = {}
+        for name, interface, signature in (
+                ("InvocationID", "Unit", "ay"), ("ActiveState", "Unit", "s"),
+                ("ControlGroup", "Service" if unit.endswith(".service") else "Scope", "s")):
+            value = call(path, "org.freedesktop.DBus.Properties", "Get",
+                         GLib.Variant("(ss)", ("org.freedesktop.systemd1." + interface, name)),
+                         "(v)").get_child_value(0).get_variant()
+            if value.get_type_string() != signature:
+                raise LeaseError("Manager property has an invalid type")
+            data = value.unpack()
+            if name == "InvocationID":
+                if len(data) != 16:
+                    raise LeaseError("Manager invocation has an invalid size")
+                data = bytes(data).hex()
+            properties[name] = data
+        if cancel.is_cancelled():
+            raise LeaseError("Manager query deadline exceeded")
+    except Exception as error:
+        errors.append(LeaseError(f"Native manager query failed: {error}"))
+    finally:
+        timer.cancel()
+        timer.join()
+        if connection is not None:
+            close_cancel = Gio.Cancellable()
+            close_timer = threading.Timer(3, close_cancel.cancel)
+            close_timer.daemon = True
+            close_timer.start()
+            try:
+                connection.close_sync(close_cancel)
+            except Exception as error:
+                errors.append(LeaseError(f"Native manager connection cleanup failed: {error}"))
+            finally:
+                close_timer.cancel()
+                close_timer.join()
+    if errors:
+        raise LeaseError("Native manager read or cleanup failed") from ExceptionGroup("Manager errors", errors)
     return properties
 
 

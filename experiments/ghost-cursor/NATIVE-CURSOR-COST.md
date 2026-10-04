@@ -69,3 +69,11 @@ verified and the owned lab was closed. Official profiler scope:
 https://docs.python.org/3/library/profile.html. The rendered systemd manual was
 inaccessible; its official source documents GetUnit and the unit D-Bus interfaces:
 https://raw.githubusercontent.com/systemd/systemd/main/man/org.freedesktop.systemd1.xml.
+
+## Fresh manager read candidate
+
+On 4 October 2026, native leases began using fresh GIO D-Bus connections when the system Python binding is available. Every action still reads current state and preserves invocation, exact cgroup and process identity checks. No connection or state is cached. Missing bindings retain the systemctl path; a failed D-Bus query refuses the action. Connection/read cancellation and separate bounded connection cleanup retain failures.
+
+A real owned service-only comparison matched all three properties across two alternating rounds of 50 reads per method. D-Bus median was 1.25/1.63 ms; systemctl median was 4.83/5.09 ms. The stopped service was refused and all recorded member identities disappeared. The raw source-bound proof is retained privately as native-manager-live.json. Cold import and Scope-specific integration were not measured by this comparison.
+
+The unchanged two-target cursor workload completed eight samples on the new implementation. Moving-pair median was 20.71 ms versus the prior 40.43 ms; both new moving samples had zero scheduled deadline misses. These are separate source-bound runs, not simultaneous measurements. Probe CPU increased to 25.83/25.67 percent of one core from 14.67/16.17 percent. The previous CPU scope excluded systemctl child processes, while the new GIO work occurs inside the measured probe. These figures do not determine total CPU improvement or regression. Child-process accounting and a repeated original/new comparison are required before overall efficiency acceptance. Raw report: .private/native-cursor-cost-1103093/report.json, with all fifteen source hashes independently verified. The owned lab was removed after bounded cleanup. Whole-system performance and owner activation remain not measured.
