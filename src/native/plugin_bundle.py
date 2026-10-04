@@ -76,7 +76,7 @@ def verify_staged_plugin(directory_fd, artifact):
         if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
                 or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
                 or before.st_size > MAX_BINARY
-                or list(fingerprint(before)) != artifact["file_identity"]):
+                or [str(value) for value in fingerprint(before)] != artifact["file_identity"]):
             raise RuntimeError("Staged plugin identity changed before publication")
         if before.st_size != artifact["bytes"] or digest(fd, MAX_BINARY) != artifact["binary_sha256"]:
             raise RuntimeError("Staged plugin digest changed before publication")
@@ -156,7 +156,7 @@ def stage_plugin(directory_fd, manifest_path, plan):
         unchanged(source, source_fd, source_info)
         unchanged(path, manifest_fd, before)
         return {"schema": 1, "file": "plugin.so", "bytes": size,
-                "file_identity": list(fingerprint(output_info)),
+                "file_identity": [str(value) for value in fingerprint(output_info)],
                 "binary_sha256": manifest["binary_sha256"],
                 "source_sha256": manifest["source_sha256"],
                 "build_identity": {key: manifest[key] for key in ("abi_hash", "commit", "version")},

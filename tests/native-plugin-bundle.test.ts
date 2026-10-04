@@ -9,6 +9,6 @@ test.skipIf(process.platform !== "linux")("owner plugin preparation preserves pi
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ output, error, code }).toMatchObject({ output: "", code: 0 });
-  expect(error).toContain("Ran 12 tests");
+  expect(error).toContain("Ran 13 tests");
   expect(error).toContain("OK");
 });

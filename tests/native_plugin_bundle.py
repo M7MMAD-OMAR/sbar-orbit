@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -76,6 +77,14 @@ class PluginBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "binary digest"):
             self.stage()
         self.assertFalse((self.destination / "plugin.so").exists())
+
+    def test_identity_survives_actual_bun_json_round_trip(self):
+        report = self.stage()
+        child = subprocess.run(["bun", "-e", "process.stdout.write(JSON.stringify(JSON.parse(await Bun.stdin.text())))"],
+                               input=json.dumps(report), capture_output=True, text=True, timeout=3, check=True)
+        decoded = json.loads(child.stdout)
+        plugin_bundle.verify_staged_plugin(self.fd, decoded)
+        self.assertTrue(all(isinstance(value, str) for value in decoded["file_identity"]))
 
     def prepare(self, verify):
         plan = self.plan | {"compositor": "owned fixture, never connected"}

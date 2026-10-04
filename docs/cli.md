@@ -356,6 +356,9 @@ compositor loader must still validate the actual plugin ABI during a separately
 authorized activation. Staging loads nothing, changes no mode and restarts no
 service. Activation must reverify the artifact because preparation does not make
 it immutable. A copied artifact does not complete owner-session acceptance.
+File-identity components are decimal strings so JSON clients preserve large
+inode and nanosecond values exactly. Older bundles with numeric identity
+components must be prepared again.
 
 The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
 prepared private settings snapshot. The directory and GTK subdirectories must
