@@ -322,8 +322,15 @@ files with mode `0600`. Only filtered literal GTK3, GTK4 and KDE visual settings
 are loaded. Each session retains immutable defaults; explicit application
 configuration overrides them before worker validation and protected approval.
 An agent action cannot choose the snapshot path. Invalid snapshots refuse
-startup. These settings do not include CSS, theme assets, portal preferences
-or viewer chrome, so exact owner appearance remains unmeasured.
+startup. These settings do not include CSS, theme assets or portal preferences,
+so exact owner appearance remains unmeasured.
+
+The native-view caller may use that same fixed `ORBIT_NATIVE_APPEARANCE`
+environment setting. Its viewer receives a fresh private copy of the filtered
+settings as `XDG_CONFIG_HOME`, then removes it after the child closes. The raw
+snapshot is never used as GTK's configuration directory or modified. A viewer
+that cannot be reaped retains its configuration with an explicit cleanup error.
+The snapshot path is not an action or native-view command argument.
 
 An explicit owner command displays one owned native target and its acknowledged
 agent cursor in a GTK window:

@@ -1,9 +1,12 @@
-import { spawn } from "node:child_process";
-import { join } from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, join } from "node:path";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { call } from "./ipc";
 import { OrbitError, record } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
+import { loadNativeAppearance } from "./native-appearance";
+import { createWorkspaceDirectory } from "./workspace-storage";
 
 export type NativePreviewOptions = {
   sessionId: string; appId: string; windowId: string; frames?: number;
@@ -13,6 +16,36 @@ export type NativePreviewOptions = {
 /** Explicit owner CLI view. One capture waits for its actual GTK draw before the next. */
 export async function nativePreview(socket: string, options: NativePreviewOptions,
   entry = ["/usr/bin/python3", join(import.meta.dir, "native/view.py"), "--acknowledgements"]) {
+  await requireResourceBudget();
+  const source = process.env.ORBIT_NATIVE_APPEARANCE;
+  if (source === undefined) return renderNativePreview(socket, options, entry);
+  const configuration = await loadNativeAppearance(source);
+  const directory = await createWorkspaceDirectory("native-view");
+  const lifecycle: { child?: ChildProcess } = {};
+  let primary: unknown;
+  try {
+    for (const [name, text] of Object.entries(configuration)) {
+      const destination = join(directory, name);
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+      await writeFile(destination, text, { flag: "wx", mode: 0o600 });
+    }
+    return await renderNativePreview(socket, options, entry, { ...process.env, XDG_CONFIG_HOME: directory }, lifecycle);
+  } catch (error) { primary = error; throw error; }
+  finally {
+    if (lifecycle.child && lifecycle.child.exitCode === null && lifecycle.child.signalCode === null) {
+      const retained = new OrbitError("BACKEND_ERROR", "Native viewer still owns its appearance workspace: " + directory);
+      throw new AggregateError(primary === undefined ? [retained] : [primary, retained], "Native viewer appearance cleanup refused");
+    }
+    try { await rm(directory, { recursive: true, force: true }); }
+    catch (cleanup) {
+      if (primary !== undefined) throw new AggregateError([primary, cleanup], "Native viewer and appearance cleanup failed");
+      throw cleanup;
+    }
+  }
+}
+
+async function renderNativePreview(socket: string, options: NativePreviewOptions, entry: string[], env?: NodeJS.ProcessEnv,
+  lifecycle?: { child?: ChildProcess }) {
   if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native GTK viewing requires Linux");
   if (!options.sessionId || !/^[a-f0-9]{32}$/.test(options.appId) || !/^[a-f0-9]{32}$/.test(options.windowId)
       || (options.frames !== undefined && (!Number.isInteger(options.frames) || options.frames < 1 || options.frames > 10000)))
@@ -28,7 +61,8 @@ export async function nativePreview(socket: string, options: NativePreviewOption
     return value;
   };
   let frame = await observe();
-  const child = spawn(entry[0] ?? "/usr/bin/python3", entry.slice(1), { stdio: ["pipe", "pipe", "inherit"] });
+  const child = spawn(entry[0] ?? "/usr/bin/python3", entry.slice(1), { stdio: ["pipe", "pipe", "inherit"], env });
+  if (lifecycle) lifecycle.child = child;
   const failures: unknown[] = [];
   let ended = false, rendered = 0, buffer = Buffer.alloc(0);
   let pending: { resolve: (drawn: boolean) => void; reject: (error: Error) => void } | undefined;
