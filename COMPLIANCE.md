@@ -166,3 +166,17 @@ Agent requests must not configure protected/full mode or choose a compositor.
 The pinned Hyprland IPC implementation above remains the compatibility source.
 Private routing evidence does not authorize owner-session activation or close
 BAR.md, appearance or performance acceptance.
+
+### Native target viewer integration
+
+Component implemented and privately measured, reviewed 4 October 2026. See
+`experiments/ghost-cursor/NATIVE-VIEW.md` for current evidence and limits. The
+GTK 3.24 drawing API follows the official
+[DrawingArea documentation](https://docs.gtk.org/gtk3/class.DrawingArea.html).
+This is a technical API reference, not a platform permission requirement.
+The viewer displays only supplied target frames and draws the acknowledged agent
+cursor at logical surface coordinates. It has no capture or input delivery path.
+Updates are event-driven, queued frames are coalesced, image dimensions are
+bounded, and source EOF closes the view after its final draw. Public broker
+wiring, live owner activation, theme acceptance and comparative performance
+remain unaccepted.

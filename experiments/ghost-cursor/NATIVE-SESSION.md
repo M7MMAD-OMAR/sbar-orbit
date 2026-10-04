@@ -76,7 +76,8 @@ no systemd attach-back success is claimed. Earlier worker import, event assertio
 and fixture-controller failures are retained. Each terminal attempt was diagnosed
 before the next changed attempt. Raw requests, images and logs remain private.
 
-Successful final-run source SHA-256:
+Historical routing-run source SHA-256. The geometry extension and fresh routing
+run are recorded in `NATIVE-VIEW.md`; the earlier session hash is not current:
 
 - `session.py`: `c13a7d04ac6fb8fb3971451ca568229697e2a3bbabefc33ddac9bb3ad4b6c56f`.
 - `session_worker.py`: `ece1f7d898098615ebd19d4fabdd5c2d018f5cd3dee59e23a24332801458b61f`.
@@ -99,6 +100,6 @@ clients require their own scoped registration and remain unmeasured on this
 path. The two-worker task actions were sequential; this run does not prove B10.
 It did not measure whole-system B1 to B4, click-through, the toolkit matrix,
 owner theme match, actual owner activation or comparative performance. Public
-broker and settings UI integration, native viewing of the cursor, accessibility
+broker and settings UI integration, public native viewing of the cursor, accessibility
 routing and final BAR.md acceptance remain required work. Earlier experimental
 recording is historical evidence, not current routing acceptance.

@@ -143,6 +143,9 @@ class NativeSession:
             elif self.windows[window_id]["address"] != client["address"]:
                 raise SessionError("Native target address changed for a retained identity")
             self.windows[window_id]["size"] = size
+            pointer = self.windows[window_id]["pointer"]
+            if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
+                self.windows[window_id]["pointer"] = None
             result.append({"windowId": window_id, "appId": app_id, "title": str(client.get("title", ""))[:160],
                            "width": size[0], "height": size[1]})
         app.lease.verify()
@@ -218,6 +221,7 @@ class NativeSession:
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
                 captured = int(time.time() * 1000)
+                surface_size = tuple(target["size"])
                 self._check_target(address)
                 image, width, height = bounded_capture(
                     ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
@@ -225,8 +229,12 @@ class NativeSession:
                 verify_host(self.plan)
                 self._target(app_id, action["windowId"])
                 self._check_target(address)
+                if tuple(target["size"]) != surface_size:
+                    raise SessionError("Native target resized during capture")
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
+                         "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],
+                         "cursorVariant": (int(target["address"], 16) >> 4) & 1,
                          "appId": app_id, "windowId": action["windowId"], "pointer": copy.deepcopy(target["pointer"])}
                 return {key: value for key, value in frame.items() if key != "image"} | {
                     "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest()}

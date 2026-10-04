@@ -141,6 +141,12 @@ def main():
                 capture = base64.b64decode(after["result"]["image"])
                 (evidence / "native-session-target.png").write_bytes(capture)
                 checks.append("fresh target-only PNG changes after input and image bytes stay out of journal")
+                view_frames = [after["result"]]
+                if "--native-view" in sys.argv:
+                    assert workers[0].request("act", {"type": "cursor", "x": 200, "y": 100, **targets[0]})["ok"]
+                    moved = workers[0].request("act", {"type": "observe", **targets[0]})
+                    assert moved["ok"] and moved["result"]["pointer"] == {"x": 200, "y": 100}
+                    view_frames.append(moved["result"])
                 request_id = uuid.uuid4().hex
                 value = {"type": "text", "text": " once", **targets[0]}
                 first = workers[0].request("act", value, request_id)
@@ -202,6 +208,10 @@ def main():
                     assert person.states[-1]["text"] == owner_text
                 assert json.loads(hypr("j/activewindow"))["address"] == owner["address"]
                 checks.append("stand-in text and keyboard focus preserved")
+                if "--native-view" in sys.argv:
+                    from native_view_probe import prove_view
+                    view_proof = prove_view(view_frames, work, evidence)
+                    checks.append({"native_gtk_view": view_proof})
             except BaseException as error:
                 primary = error
             finally:
@@ -227,7 +237,7 @@ def main():
         raise BaseExceptionGroup("Native session proof or cleanup failed", ([primary] if primary else []) + errors)
     root = here.parents[2]
     sources = {name: hashlib.sha256((root / "src/native" / name).read_bytes()).hexdigest()
-               for name in ("session.py", "session_worker.py", "application.py", "transport.py")}
+               for name in ("session.py", "session_worker.py", "application.py", "transport.py", "view.py")}
     assert loaded_plugin(prepared["compositor"][0], plugin_source) == build
     print(json.dumps({"checks": checks, "source_sha256": sources, "plugin": build, "owner_activation": "not performed",
                       "whole_system_invariants": "not measured", "comparative_performance": "not measured"}))

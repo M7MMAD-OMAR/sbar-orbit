@@ -45,6 +45,11 @@ Development uses a private lab and does not send input to the owner's seat.
 
 ## Remaining acceptance work
 
+The native GTK target viewer now visibly renders acknowledged cursor positions
+from session frames, with logical-to-image scaling and source EOF cleanup. Six
+pixel/validation checks and the actual private GTK probe passed, see
+`NATIVE-VIEW.md`. Its public broker integration and owner activation remain open.
+
 - Complete the current-build toolkit, clipboard and cursor regression matrix,
   including Firefox and XWayland. Chromium fixture evidence is not a universal
   browser/toolkit guarantee.
