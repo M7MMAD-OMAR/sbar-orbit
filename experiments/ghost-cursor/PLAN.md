@@ -91,3 +91,21 @@ The existing cleanup test fixture currently fails during preparation on /tmp;
 a diagnostic run exposed an actual quota error in supervisor journal writes.
 Full local gates remain blocked. No owner or foreign-agent data is removed to
 turn this into a pass. Source publication remains a draft research update.
+
+## Latest scoped concurrency and compositor cursor evidence,4October2026
+
+Two labelled scoped Firefox157 tasks now have independent936-character readbacks,
+distinct application units/window handles and4 measured native request-interval
+overlaps under the experimental memfd person typist. The unchanged interference
+harness passed B1/B2/B3/B4/B12 with1,140 concurrent person characters. This is
+cooperative request overlap, not simultaneous compositor event execution.
+
+A separate current-build native compositor experiment verifies the actual arrow
+pixel at the person-click point, receives exactly one underlying canvas click,
+and observes the pixel change after hiding the overlay. The actually mapped
+plugin/source sidecar is checked before/after. A no-overlay negative control
+rejects absent-arrow evidence, and all owned experiment processes were cleaned.
+The image and reports remain ignored private evidence; no owner display was
+activated. B9 reference comparison, two visible agent cursors in the concurrent
+Firefox measurement, the complete toolkit matrix and final owner acceptance
+remain incomplete. See COMPLIANCE.md for exact source bindings and failures.
