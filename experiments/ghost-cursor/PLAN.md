@@ -44,8 +44,9 @@ Development uses a private lab and does not send input to the owner's seat.
   including Firefox and XWayland. Chromium fixture evidence is not a universal
   browser/toolkit guarantee.
 - Finish owner-session launch supervision, activation and theme inheritance.
-  Prepared-host transport is implemented; the launcher and owner settings wiring
-  remain incomplete.
+  Prepared-host transport and the generic supervised launcher are implemented.
+  Private GTK3 launch, paired input and lifecycle checks passed, see
+  `NATIVE-LAUNCH.md`. Production broker and owner settings wiring remain incomplete.
 - Integrate the tested protected/full controller into every agent entry point
   and the owner settings UI.
 - Extend auditing to remaining imported accessibility actions and broker

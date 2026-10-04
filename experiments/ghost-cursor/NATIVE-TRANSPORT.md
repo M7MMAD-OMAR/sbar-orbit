@@ -64,9 +64,9 @@ journal records, with no unresolved requests. Fixture scopes and processes are
 cleaned independently. The report binds the loaded plugin and runtime sources by
 SHA-256; raw logs and journal requests remain private.
 
-The final private integration run passed six requests with no unresolved
+The historical integration run for commit 7926ff7 passed six requests with no unresolved
 journal entries, preserving initial and post-reload mapping and refusing input
-after migration. Runtime source SHA-256:
+after migration. Runtime source SHA-256 for that historical run:
 
 - `host.py`: `d8be87fd3354de860b8de8d351c65a68fc835c9bff30dce44290cbcb95d7d32a`.
 - `transport.py`: `1c2185107fb7d117ee6a59fc2a0e8d6217035c0e0060df4cd89d155110c46b9c`.
@@ -86,7 +86,9 @@ These are component and repository gates, not final owner-desktop acceptance.
 
 ## Limits
 
-This component does not launch or supervise production application buses,
+This transport alone does not launch or supervise production application buses.
+The new launcher component and its current source-bound evidence are documented
+in `NATIVE-LAUNCH.md`. The production integration still does not
 install a compositor plugin, expose owner settings, route every broker action,
 or enable the feature on the owner's desktop. Those integrations and the full
 toolkit, clipboard, simultaneous-input and cursor matrix remain required work.

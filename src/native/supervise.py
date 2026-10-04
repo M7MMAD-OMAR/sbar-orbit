@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import resource
+import re
 import select
 import signal
 import stat
@@ -15,6 +16,7 @@ from file_leases import acquire_files, FileLeaseError
 from landlock_unix import LandlockUnavailable, make_abstract_ruleset, make_ruleset, restrict_child
 from mount_unix import PrivateMountUnavailable, mount_command
 from zen_file_mount import ZenFileMountError, prepare_zen_file_mounts
+from control import ActionControl
 
 require_budget()
 # This limit is inherited by every supervised application and its descendants.
@@ -39,11 +41,18 @@ def stop(_signal, _frame):
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 arguments = sys.argv[2:]
+native_control, native_unit = None, None
 selected_files, lease_fds = [], []
 policy_fd = None
 mount_fds = []
 zero_core_filter = False
 try:
+    if arguments[:1] == ["--native-lifecycle"]:
+        native_unit = arguments[2]
+        if not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.scope", native_unit):
+            raise ValueError("Invalid native lifecycle scope")
+        native_control = ActionControl(Path(arguments[1]))
+        arguments = arguments[3:]
     if arguments[:1] == ["--selected-files"]:
         selected_files, lease_fds = acquire_files(json.loads(arguments[1]))
         arguments = arguments[2:]
@@ -109,28 +118,37 @@ try:
         if ready and not os.read(0, 1024):
             stopping = True
 finally:
-    # Only direct children of this supervisor are addressed. Orphans become direct
-    # children as their parents exit, so repeat until all owned descendants reap.
-    deadline = time.monotonic() + 1.0
-    while True:
-        children_path = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
-        children = [int(pid) for pid in children_path.read_text().split()]
-        if not children:
-            break
-        for pid in children:
-            try:
-                os.kill(pid, signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+    def reap_owned():
+        # Only direct children are addressed. Orphans become direct children as
+        # their parents exit, so repeat until all owned descendants reap.
+        deadline = time.monotonic() + 1.0
         while True:
-            try:
-                pid, _ = os.waitpid(-1, os.WNOHANG)
-                if pid == 0:
-                    break
-            except ChildProcessError:
+            children_path = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
+            children = [int(pid) for pid in children_path.read_text().split()]
+            if not children:
                 break
-        time.sleep(0.01)
-
-    # Keep reservations throughout descendant termination, not just the parent EOF.
-    for fd in lease_fds:
-        os.close(fd)
+            for pid in children:
+                try:
+                    os.kill(pid, signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            while True:
+                try:
+                    pid, _ = os.waitpid(-1, os.WNOHANG)
+                    if pid == 0:
+                        break
+                except ChildProcessError:
+                    break
+            time.sleep(0.01)
+        return {"owned_tree_reaped": True}
+    try:
+        if native_control is None:
+            reap_owned()
+        else:
+            native_control.cleanup("native-supervisor-close " + native_unit, reap_owned)
+    finally:
+        # Keep reservations throughout descendant termination, not just parent EOF.
+        for fd in lease_fds:
+            os.close(fd)
+        if native_control is not None:
+            native_control.close()

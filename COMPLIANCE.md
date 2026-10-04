@@ -140,3 +140,17 @@ owner requirements. The transport remains cooperative same-user code.
 It does not install the plugin, enable owner-session use or replace the final
 BAR.md acceptance. Current checks and remaining integration work are recorded in
 `experiments/ghost-cursor/NATIVE-TRANSPORT.md`.
+
+### Native application launcher integration
+
+Component implemented and privately measured, reviewed 4 October 2026. See
+`experiments/ghost-cursor/NATIVE-LAUNCH.md` for source-bound evidence and limits.
+The launcher uses the existing Linux
+child supervisor and a generated exact native scope. Subreaper behavior follows
+[Linux man-pages 6.19](https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html).
+Application buses must start after scope attachment, and application exec must
+follow token enrollment. The public launch entry point must honor protected/full
+admission and durable intent before creating application processes. Owned cleanup
+must still run if its journal cannot be written. Owner-display activation,
+appearance acceptance and comparative performance remain unmeasured; passing
+launcher checks will not close those requirements.

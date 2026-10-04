@@ -87,22 +87,27 @@ class NativeTransport:
         return control.execute(request, lambda: action_response(command, self._exchange(request)))
 
     def enroll(self, lease, process, control):
+        request = self._enrollment_request(lease, process)
+        return control.execute(request, lambda: self._enroll(lease, process))
+
+    @staticmethod
+    def _enrollment_request(lease, process):
         require_budget()
         if (not isinstance(process, tuple) or len(process) != 2
                 or any(type(value) is not int or value <= 0 for value in process)
                 or not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.scope", lease.unit)):
             raise HostError("Enrollment requires an exact native scope and process identity")
-        request = f"ghost-register-scope-process {process[0]} {lease.unit}"
+        return f"ghost-register-scope-process {process[0]} {lease.unit}"
 
-        def operation():
-            if not lease.contains(process):
-                raise HostError("Application is outside its native scope")
-            response = self._exchange(request).strip()
-            match = re.fullmatch(r"ok ([0-9a-fA-F-]{36})", response)
-            if not match:
-                raise HostError(response or "Empty native enrollment response")
-            if not lease.contains(process):
-                raise HostError("Application scope changed during enrollment")
-            return match[1]
-
-        return control.execute(request, operation)
+    def _enroll(self, lease, process):
+        """Internal step of an already admitted, journaled launch operation."""
+        request = self._enrollment_request(lease, process)
+        if not lease.contains(process):
+            raise HostError("Application is outside its native scope")
+        response = self._exchange(request).strip()
+        match = re.fullmatch(r"ok ([0-9a-fA-F-]{36})", response)
+        if not match:
+            raise HostError(response or "Empty native enrollment response")
+        if not lease.contains(process):
+            raise HostError("Application scope changed during enrollment")
+        return match[1]
