@@ -548,11 +548,17 @@ export class Sessions {
     catch (error) { activity.state = "failed"; throw error; }
     finally { session.lastActivityAt = Date.now(); }
   }
-  private removeProfile(profile: string) {
-    // Windows can briefly retain deletion locks after its browser job has exited.
-    // The filesystem retries are bounded; persistent errors still reject stop.
-    return rm(profile, { recursive: true, force: true,
-      maxRetries: process.platform === "win32" ? 8 : 0, retryDelay: 100 });
+  private async removeProfile(profile: string) {
+    // Bun 1.4.2 parses fs.rm retry options but does not apply them to recursive deletion.
+    // Retry only transient Windows locks, with eight waits totaling 3.6 seconds.
+    for (let attempt = 0; ; attempt++) {
+      try { await rm(profile, { recursive: true, force: true }); return; }
+      catch (error) {
+        if (process.platform !== "win32" || attempt === 8
+            || !["EBUSY", "ENOTEMPTY", "EPERM", "EMFILE", "ENFILE"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+        await Bun.sleep(100 * (attempt + 1));
+      }
+    }
   }
   async stop(session: Session) {
     if (session.closing) return session.closing;

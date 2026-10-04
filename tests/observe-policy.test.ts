@@ -21,7 +21,12 @@ test("a session whose policy allows no reading is refused a frame, and the refus
   const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0,
     fetch: () => new Response('<!doctype html><title>Fixture</title><output>secret page</output>',
       { headers: { "Content-Type": "text/html" } }) });
-  const run = (method: string, params: unknown = {}) => sessions.dispatch({ method, params });
+  const run = async (method: string, params: unknown = {}) => {
+    const started = performance.now();
+    console.error(JSON.stringify({observePolicyPhase:method,status:"start"}));
+    try { return await sessions.dispatch({ method, params }); }
+    finally { console.error(JSON.stringify({observePolicyPhase:method,status:"settled",elapsedMs:Math.round(performance.now()-started)})); }
+  };
   try {
     const origin = `http://127.0.0.1:${fixture.port}`;
     const created = await run("session.create", {

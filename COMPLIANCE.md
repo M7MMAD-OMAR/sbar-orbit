@@ -284,3 +284,53 @@ The staged publication audit checked 858 index files with zero findings.
 Staged Gitleaks found no leaks. Graft was refreshed deterministically after
 the code changes. Publication remains an authorized draft source update,
 not owner-session activation, complete BAR.md acceptance or a release.
+
+### Cross-platform CI failure diagnosis on a7673ad
+
+Reviewed 4 October 2026 before further changes. GitHub run 37175889848
+completed with seven jobs passing, macOS suite failing one viewer-layout
+timeout, and Windows suite failing browser navigation timeout and two EBUSY
+profile deletions. Those failures remain retained in private logs and are not
+certified as fixed. Add boundary/timing-only diagnostics to the viewer layout
+check without changing its 60-second bound, assertions or test coverage.
+
+The Windows runner uses Bun 1.4.2+744846f84. Its exact upstream source
+https://github.com/oven-sh/bun/blob/bun-v1.4.2/src/runtime/node/node_fs.rs
+parses maxRetries/retryDelay but recursive rm invokes zig_delete_tree once and
+returns its error. Its fs.promises wrapper forwards directly:
+https://github.com/oven-sh/bun/blob/bun-v1.4.2/src/js/node/fs.promises.ts .
+The runtime documentation https://bun.com/reference/node/fs/promises/rm
+describes Node retry semantics; that declaration does not establish Bun's
+actual implementation. CI deletion checks ended before the requested 3.6-second
+backoff could elapse. Replace the ineffective option with an explicit bounded
+Windows transient-error loop, preserving permanent failure and both cleanup
+errors. Add a real Windows locked-directory negative control and verify release
+while the loop waits, with persistent failure still refused. No ownership,
+profile, policy, operation deadline or production support scope is broadened.
+Remote Windows and macOS measurement remains required.
+
+The root/dependent file actually holding the Windows lock is not identified:
+Bun attaches the supplied root path to recursive child deletion errors too.
+The existing Windows browser stop waits for the root process, not an explicit
+all-descendants exit measurement, and that lifecycle evidence gap remains open.
+The retry test covers an owned directory held as a disposable child cwd; it
+does not attribute the Chrome lock. Its teardown waits after forced kill,
+attempts independent cleanup and aggregates proof/cleanup failures.
+
+Current local targeted validation passed eight tests, skipped the two Windows
+lock cases, failed zero, with 123 assertions. The current private native broker
+proof passed its eight checks and both source EOF paths again after the retry
+change. Windows lock behavior and macOS timeout location are still not measured
+on the updated source until the next remote run.
+
+Current retry/diagnostic revision: typecheck passed; full bounded local suite
+601 passed, 48 skipped, zero failed, 3836 assertions across 649 tests in 143
+files in 181.20 seconds. The two additional skips are explicitly Windows-only
+lock cases, not successful Windows measurements. Source-bound native viewing
+passed again and its lab/short workspaces were removed. Staged publication
+validation and replacement remote CI results are required below.
+
+Publication audit checked 859 staged files with zero findings. Staged Gitleaks
+found no leaks, and Graft was refreshed. The exact final index is checked again
+by the commit hook. This is an authorized diagnostic/runtime draft update,
+not a release or cross-platform acceptance.

@@ -91,6 +91,6 @@ five tests with 20 assertions; the cache helper now passes two Python tests.
 - `tests/native-reply-cache.test.ts`: `29ed57550cc64e3ee91fdd77487cbf02af6daa0572bb2ea3d1017110bcf48951`
 - Saved unfixed worker: `713832f95b15718cbcaa4e53f77749536fb50741a4051ef3963d03ba5f92f52d`
 
-- `src/session.ts`: `b5a507aefa445697ba86ea56b2eb3edae1346cfaa0ebbd36064dd6ae0ca0e216`
+- `src/session.ts`: `0d8ebce82b392545f4e464e1ffe183226752f3d9d839003fd0fb1c22db90c132`
 - `src/diagnostics.ts`: `f6e4a22ea1a50afa2f31834ad3153732fa08036b0a2c7f24c9052feee4ba1616`
 - `tests/adversarial/reaping-and-secrets.test.ts`: `285af915ff164b4a165aef6d1b67002e62406606cb40c293ffeeafeaec0458be`

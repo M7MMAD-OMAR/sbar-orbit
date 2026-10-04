@@ -12,28 +12,52 @@ const fixture = `<!doctype html><html><head><title>Workspace library</title><sty
  * breaks on the next copy change while the interface it is guarding is perfectly fine.
  */
 test('the rail is the only session list, newest first, and mirrors for Arabic', async () => {
+  const started = performance.now();
+  const phase = (name: string) => console.error(JSON.stringify({viewerLayoutPhase:name,elapsedMs:Math.round(performance.now()-started)}));
+  phase('broker:start');
   const broker = await startBroker();
+  phase('broker:ready');
   // The viewer follows the browser's languages; this one asks for Arabic. The English default is
   // checked at the end of the test, from the same page with nothing remembered.
+  phase('viewer:start');
   const viewer = await openViewerPage('Viewer design QA', { language: 'ar-SY', viewport: { width: 1440, height: 1000 } });
+  phase('viewer:ready');
   const { page, errors } = viewer;
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/rpc') phase(`rpc:${request.postDataJSON()?.method}:start`);
+  });
+  page.on('response', response => {
+    if (new URL(response.url()).pathname === '/rpc') phase(`rpc:${response.request().postDataJSON()?.method}:response`);
+  });
+  page.on('requestfailed', request => {
+    if (new URL(request.url()).pathname === '/rpc') phase(`rpc:${request.postDataJSON()?.method}:failed`);
+  });
   const server = Bun.serve({hostname:'127.0.0.1',port:0,fetch:() => new Response(fixture,{headers:{'Content-Type':'text/html'}})});
   const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-viewer-layout';
   try {
+    phase('session-a:start');
     const a = await call(broker.socket,'session.create',{backend:'browser',agentName:'Codex',taskName:'Review navigation',conversationName:'Polish the workspace',projectName:'Sbar Orbit'}) as {sessionId:string};
+    phase('session-a:ready');
+    phase('session-b:start');
     const b = await call(broker.socket,'session.create',{backend:'browser',agentName:'Hermes',taskName:'Review account settings',conversationName:'Account settings',projectName:'Studio'}) as {sessionId:string};
+    phase('session-b:ready');
     expect(a).toMatchObject({conversationName:'Polish the workspace',projectName:'Sbar Orbit'});
     // Every session is stamped when it opens and again whenever something happens in it. The rail
     // reads these; nothing else in the product does.
     expect(typeof (a as unknown as {createdAt:number}).createdAt).toBe('number');
+    phase('navigate:start');
     await call(broker.socket,'session.act',{...a,requestId:'navigate',action:{type:'navigate',url:`http://127.0.0.1:${server.port}`}});
+    phase('navigate:done');
     await call(broker.socket,'session.act',{...a,requestId:'tab',action:{type:'open-tab',url:`http://127.0.0.1:${server.port}/settings`}});
     const preview = await call(broker.socket,'preview.open') as {url:string};
     /* The rail opens and closes over about a third of a second now, and the picture is sized from
        what is left, so anything measuring the picture waits for the movement to finish first. */
     const settled = () => page.evaluate(() => new Promise<void>(done => setTimeout(() => requestAnimationFrame(() => done()), 500)));
+    phase('preview:goto');
     await page.goto(preview.url,{waitUntil:'domcontentloaded'});
+    phase('preview:dom');
     await page.locator('#frame').waitFor({state:'visible'});
+    phase('preview:frame');
 
     // Arabic, right to left, for a reader whose browser asks for it, and the picture never mirrors.
     expect(await page.evaluate(()=>document.documentElement.dir)).toBe('rtl');
@@ -73,6 +97,7 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.evaluate(()=>new Promise<void>(done=>setTimeout(done,2600)));
     expect(await page.locator('.session').first().getAttribute('data-probe')).toBe('1');
 
+    phase('capture-fault:start');
     let failCapture = true;
     await page.route('**/rpc', async route => {
       if (route.request().postDataJSON()?.method === 'session.observe' && failCapture) {
@@ -269,5 +294,8 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#viewer-fullscreen').click();
     await page.waitForFunction(()=>!document.fullscreenElement);
     expect(errors).toEqual([]);
-  } finally {await viewer.close();await broker.close();server.stop(true);}
+  } finally {
+    phase('viewer:close');await viewer.close();phase('viewer:closed');
+    phase('broker:close');await broker.close();phase('broker:closed');server.stop(true);
+  }
 },60000);
