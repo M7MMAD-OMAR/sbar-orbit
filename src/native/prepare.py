@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.control import ActionControl
 from src.native.host import inspect_host, verify_host
 from src.native.budget import require_budget
+from src.native.plugin_bundle import stage_plugin, verify_staged_plugin
 
 
 def quoted(value):
@@ -19,7 +20,7 @@ def quoted(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def prepare(directory, environment):
+def prepare(directory, environment, plugin_manifest=None):
     require_budget()
     text = str(directory)
     if not directory.is_absolute() or str(directory.resolve(strict=True)) != text:
@@ -33,6 +34,7 @@ def prepare(directory, environment):
         if os.listdir(descriptor):
             raise ValueError("Preparation directory must be empty")
         plan = inspect_host(environment)
+        plugin = stage_plugin(descriptor, plugin_manifest, plan) if plugin_manifest is not None else None
 
         def write(name, content):
             fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
@@ -64,10 +66,15 @@ def prepare(directory, environment):
                   "compositor": plan["compositor"], "abi_hash": plan["abi_hash"],
                   "source_sha256": {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
                                     for name in ("prepare.py", "host.py", "control.py", "lease.py", "budget.py")}}
+        if plugin is not None:
+            result["plugin"] = plugin | {"path": str(directory / "plugin.so")}
+            result["source_sha256"]["plugin_bundle.py"] = hashlib.sha256((source / "plugin_bundle.py").read_bytes()).hexdigest()
         write("preparation.pending.json", json.dumps(result, indent=2) + "\n")
         pending = os.stat("preparation.pending.json", dir_fd=descriptor, follow_symlinks=False)
         published = False
         try:
+            if plugin is not None:
+                verify_staged_plugin(descriptor, plugin)
             os.link("preparation.pending.json", "preparation.json", src_dir_fd=descriptor,
                     dst_dir_fd=descriptor, follow_symlinks=False)
             published = True
@@ -91,9 +98,10 @@ def prepare(directory, environment):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--plugin-manifest", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory, os.environ)
+        result = prepare(args.directory, os.environ, args.plugin_manifest)
         print(json.dumps({"ok": True, "result": result}))
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, ExceptionGroup) as error:

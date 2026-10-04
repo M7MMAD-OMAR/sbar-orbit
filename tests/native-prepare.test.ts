@@ -5,6 +5,9 @@ test.each([
   { args: [] },
   { args: ["relative"] },
   { args: ["/unused-owner-preparation", "full"] },
+  { args: ["/unused-owner-preparation", "--plugin-manifest"] },
+  { args: ["/unused-owner-preparation", "--plugin-manifest", "relative"] },
+  { args: ["/unused-owner-preparation", "--plugin-manifest", "/unused", "extra"] },
 ])("native preparation rejects invalid owner arguments before host access", async ({ args }) => {
   const env = { ...process.env };
   delete env.ORBIT_CONVERSATION_ID;

@@ -101,9 +101,10 @@ try {
     const status = await readStatus(socketFromEnvironment());
     console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
   } else if (command === "native-prepare") {
-    if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY");
+    if (arg !== undefined && (arg !== "--plugin-manifest" || !fourth || process.argv.slice(2).length !== 4))
+      throw new OrbitError("INVALID_REQUEST", "Use native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY [--plugin-manifest ABSOLUTE_PRIVATE_JSON]");
     const { prepareNative } = await import("./native-prepare");
-    console.log(JSON.stringify(await prepareNative(verb)));
+    console.log(JSON.stringify(await prepareNative(verb, fourth)));
   } else if (command === "native-settings") {
     if (verb !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-settings without action or configuration arguments");
     const { openNativeSettings } = await import("./native-settings");

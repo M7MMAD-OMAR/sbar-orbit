@@ -333,6 +333,30 @@ unchanged. Applying the template, matching plugin preparation and the final
 consented owner-desktop acceptance remain separate steps. A compositor restart
 invalidates the saved endpoint identity; the plan must be prepared again.
 
+An optional owner build manifest stages a pinned plugin with that preparation:
+
+```sh
+sbar-orbit native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY --plugin-manifest ABSOLUTE_PRIVATE_JSON
+```
+
+The manifest is a canonical, user-owned `0600` JSON file in a `0700` directory.
+Its exact fields are `schema: 1`, absolute `binary` and `source` paths,
+`binary_sha256`, `source_sha256`, `abi_hash`, `commit` and `version`. Digests are
+lowercase SHA256; the declared build identity must match the live prepared host.
+Inputs must be regular, single-link files owned by this user, without group or
+other write permission. Binary and source inputs are bounded to 64 MiB each.
+This Linux option currently accepts ELF64 little-endian x86-64 shared objects.
+The binary is copied exclusively as private `plugin.so`, read back against its
+pin, and included in the final preparation result. Its identity and digest are
+checked again immediately before publishing the success manifest. Changed, linked or mismatched
+inputs refuse preparation and retain any partial bundle without a success manifest.
+
+Build identity remains owner-supplied metadata, not compiler attestation. The
+compositor loader must still validate the actual plugin ABI during a separately
+authorized activation. Staging loads nothing, changes no mode and restarts no
+service. Activation must reverify the artifact because preparation does not make
+it immutable. A copied artifact does not complete owner-session acceptance.
+
 The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
 prepared private settings snapshot. The directory and GTK subdirectories must
 be canonical, user-owned and mode `0700`; files must be single-link regular

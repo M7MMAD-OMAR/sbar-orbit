@@ -3,11 +3,13 @@ import { OrbitError } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
 
 /** Owner command only; writes an unapplied configuration bundle. */
-export async function prepareNative(directory: string | undefined) {
+export async function prepareNative(directory: string | undefined, pluginManifest?: string) {
   if (!directory || !isAbsolute(directory)) throw new OrbitError("INVALID_REQUEST", "Use native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY");
+  if (pluginManifest !== undefined && !isAbsolute(pluginManifest)) throw new OrbitError("INVALID_REQUEST", "Plugin manifest must be absolute");
   if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native preparation requires Linux and Hyprland");
   await requireResourceBudget();
-  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native/prepare.py"), directory], {
+  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native/prepare.py"), directory,
+    ...(pluginManifest === undefined ? [] : ["--plugin-manifest", pluginManifest])], {
     stdout: "pipe", stderr: "pipe", timeout: 20000,
   });
   async function bounded(stream: ReadableStream<Uint8Array>) {
