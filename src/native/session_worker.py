@@ -11,6 +11,7 @@ from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
 from src.native.host import read_plan
 from src.native.session import NativeSession, SessionError, identifier
+from src.native.host import verify_host
 
 
 def main(directory, control_directory, plan_path):
@@ -45,7 +46,10 @@ def main(directory, control_directory, plan_path):
                         params, method = request["params"], request["method"]
                         if method not in ("close", "close-application") and (len(requests) >= 10000 or cached_bytes >= 16 * 1024 * 1024):
                             raise SessionError("Native request cache limit reached")
-                        if method == "launch" and not set(params) - {"argv", "configuration"}:
+                        if method == "status" and not params:
+                            verify_host(session.plan)
+                            result = {"ready": True}
+                        elif method == "launch" and not set(params) - {"argv", "configuration"}:
                             result = session.launch(params.get("argv"), params.get("configuration"))
                         elif method == "act":
                             result = session.execute(params)

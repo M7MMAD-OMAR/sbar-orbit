@@ -180,3 +180,38 @@ Updates are event-driven, queued frames are coalesced, image dimensions are
 bounded, and source EOF closes the view after its final draw. Public broker
 wiring, live owner activation, theme acceptance and comparative performance
 remain unaccepted.
+
+### Public native broker integration
+
+Component implemented and privately measured, reviewed 4 October 2026. See
+`experiments/ghost-cursor/NATIVE-BROKER.md` for source hashes, reproduction,
+failed attempts and explicit limits. Native backend activation must use a
+fixed prepared plan and control directory supplied by the owner at broker startup,
+never paths or mode changes from agent session requests. The broker adapter must
+preserve exact target ownership, protected/full admission, durable native outcomes,
+bounded framing and mandatory cleanup on worker or broker death. The public
+protocol will expose explicit native target handles and capabilities without
+changing the existing private-display alias. Development runs use a separate
+broker inside the lab. Owner activation, complete matrix and performance remain
+unaccepted until their source-bound checks run.
+
+Official technical references reviewed 4 October 2026:
+
+- https://nodejs.org/api/child_process.html: Node.js 26.10.0 framing, stream and child close API reference.
+- https://bun.sh/docs/runtime/nodejs-compat: Bun runtime compatibility reference, currently 1.4.2. The actual measured runtime is Bun 1.3.14; compatibility is established only by the checks run here.
+
+No dependency or externally sourced asset was added. The public broker private
+proof passed seven checks and the native view EOF proof. Owner activation and
+comparative performance remain not measured. Native bounded network origins are
+explicitly unsupported and refused at creation and narrowing. The lifecycle
+negative control failed both checks before restoration; the fixed worker passed
+seven tests with 22 assertions. Current typecheck passed. The bounded full suite passed: 594 passed, 46 skipped,
+zero failures, 3,820 assertions across 640 tests in 140 files in 185.93 seconds.
+Platform and opt-in skips retain their original scope limits. The staged public
+audit checked 852 files with no findings. Final staged secret validation is
+recorded below. Both review axes report no remaining actionable component
+findings. The managed service was not restarted, and the private lab and owned
+short disk workspaces were removed after the final successful proof.
+
+Final staged Gitleaks validation found no leaks. Publication is an authorized
+draft source update, not installation, owner-session acceptance or release.

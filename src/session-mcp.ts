@@ -41,9 +41,11 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
     }
   };
   server.registerTool("orbit_observe", {
-    description: "Observe this session only. Metadata mode avoids image capture.",
-    inputSchema: { mode: z.enum(["image", "metadata"]).default("image") },
-  }, ({ mode }) => invoke(mode === "metadata" ? "session.presence" : "session.observe"));
+    description: "Observe this session only. Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state. Metadata mode avoids image capture.",
+    inputSchema: { mode: z.enum(["image", "metadata"]).default("image"),
+      appId: z.string().regex(/^[a-f0-9]{32}$/).optional(), windowId: z.string().regex(/^[a-f0-9]{32}$/).optional() },
+  }, ({ mode, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
+    { ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
   server.registerTool("orbit_act", {
     description: "Perform one action in this session only. Reuse requestId when retrying an uncertain result. Codex launch-app with profile active uses a read-only gate to the running Desktop owner for limited account status, project names and conversation titles. It denies opening conversation bodies, model turns, commands and profile writes, and never copies the owner's profile as a fallback.",
     inputSchema: { requestId: id, action: orbitActionSchema },

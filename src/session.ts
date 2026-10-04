@@ -5,6 +5,8 @@ import { AccountLease } from "./profiles";
 import { join } from "node:path";
 import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
+import { NativeBackend } from "./hyprland";
+import { nativeOptionsFromEnv, type NativeOptions } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
 import { canCloneProfile, describeMachine, detectPlatform, type PlatformCapabilities } from "./platform";
@@ -46,7 +48,7 @@ interface Session {
    * finished since the morning.
    */
   createdAt: number; lastActivityAt: number;
-  id: string; state: State; backend: BrowserBackend | FedoraBackend; kind: string; lease: string; profile: string;
+  id: string; state: State; backend: BrowserBackend | FedoraBackend | NativeBackend; kind: string; lease: string; profile: string;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
   observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
@@ -131,7 +133,7 @@ export class Sessions {
    * the place to pay for that repeatedly; nothing it reports changes while the broker runs.
    */
   private probed?: Promise<PlatformCapabilities>;
-  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics"))) {}
+  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv()) {}
   protected capabilities() { return this.probed ??= detectPlatform(); }
   /** A test fixture can supply a clone without reading a person's browser profile. */
   protected cloneProfileForSession: typeof cloneProfile = cloneProfile;
@@ -161,7 +163,13 @@ export class Sessions {
     // wlroots runtime this project builds, and everything reported back says `fedora`, so status,
     // observation and the journal keep one name for one thing.
     const requested = String(input.backend) === "system" ? "fedora" : String(input.backend);
-    if (!["browser", "fedora"].includes(requested)) throw new OrbitError("UNSUPPORTED", "Unknown backend");
+    if (!["browser", "fedora", "native"].includes(requested)) throw new OrbitError("UNSUPPORTED", "Unknown backend");
+    if (requested === "native") {
+      if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured the native broker backend");
+      const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey"]);
+      if (Object.keys(input).some(key => !allowed.has(key)))
+        throw new OrbitError("INVALID_REQUEST", "Native session options cannot select host paths, profiles or a viewport");
+    }
     input = { ...input, backend: requested };
     if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
@@ -175,6 +183,8 @@ export class Sessions {
     const projectName = input.projectName === undefined ? undefined : label(input.projectName, "");
     // Parsed before anything is started, so an unusable policy fails the request rather than a later action.
     const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
+    if (requested === "native" && policy.origins !== "any")
+      throw new OrbitError("UNSUPPORTED", "Native network origin enforcement is not implemented; bounded origins are unavailable");
     const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
     if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Profile key is leased to another session");
     this.leases.add(lease);
@@ -182,7 +192,7 @@ export class Sessions {
     let profileOwned: string | undefined;
     let cloneOwned: Awaited<ReturnType<typeof cloneProfile>> | undefined;
     let egressOwned: EgressLease | undefined;
-    let backendOwned: BrowserBackend | FedoraBackend | undefined;
+    let backendOwned: BrowserBackend | FedoraBackend | NativeBackend | undefined;
     try {
       if (input.accountName !== undefined) {
         if (input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Saved accounts require the browser backend");
@@ -242,10 +252,14 @@ export class Sessions {
       if ((clone || account) && policy.origins !== "any" && egress?.tier !== "namespace")
         throw new OrbitError("UNSUPPORTED", "A cloned profile or saved account requires a confined network namespace");
       const queued = Date.now();
-      const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend> => {
+      const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend | NativeBackend> => {
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
+        if (requested === "native") {
+          if (!this.native) throw new OrbitError("UNSUPPORTED", "Native backend is not configured");
+          return await NativeBackend.create(join(profile, "native-worker"), this.native);
+        }
         return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins)
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
@@ -301,12 +315,19 @@ export class Sessions {
       account?.onLost(() => { void this.stop(session); });
       return this.info(session);
     } catch (error) {
-      await backendOwned?.close().catch(() => {});
+      const nativeCleanup: unknown[] = [];
+      if (backendOwned instanceof NativeBackend) {
+        try { await backendOwned.close(); } catch (cleanup) { nativeCleanup.push(cleanup); }
+      } else await backendOwned?.close().catch(() => {});
       await egressOwned?.close().catch(() => {});
       await cloneOwned?.close().catch(() => {});
-      if (profileOwned) await rm(profileOwned, { recursive: true, force: true }).catch(() => {});
+      if (profileOwned) {
+        try { await rm(profileOwned, { recursive: true, force: true }); }
+        catch (cleanup) { if (requested === "native") nativeCleanup.push(cleanup); }
+      }
       await account?.release().catch(() => {});
       this.leases.delete(lease);
+      if (nativeCleanup.length) throw new AggregateError([error, ...nativeCleanup], "Native creation and cleanup failed");
       const failure = error as { code?: string; syscall?: string } | null;
       if (failure?.code === "EAGAIN" && ["posix_spawn", "spawn"].includes(failure.syscall ?? ""))
         throw new OrbitError("RESOURCE_UNAVAILABLE", "The system could not start an Orbit process; release resources before retrying");
@@ -556,7 +577,7 @@ export class Sessions {
     }
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
-    if (request.method === "doctor") return { version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora"], backendAliases: { system: "fedora" },
+    if (request.method === "doctor") return { version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora", ...(this.native ? ["native"] : [])], backendAliases: { system: "fedora" },
       capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine(),
       // Whether the units on disk are the ones this version writes. A managed broker that was
       // installed before a directive existed does not carry it, and nothing else on the machine
@@ -617,6 +638,8 @@ export class Sessions {
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {
+      if (session.backend instanceof NativeBackend && params.origins !== undefined)
+        throw new OrbitError("UNSUPPORTED", "Native network origin enforcement is not implemented; narrow action classes instead");
       if (params.origins === undefined && params.allow === undefined)
         throw new OrbitError("INVALID_REQUEST", "Narrowing needs origins, allow, or both");
       // Validated field by field. Going through parsePolicy would apply its cross field rule, which
@@ -691,6 +714,15 @@ export class Sessions {
         actor: "agent", actionType: "observe", decision, after: session.policy,
       }));
       throw new OrbitError("POLICY_DENIED", decision.reason);
+    }
+    if (session.backend instanceof NativeBackend) {
+      if (Object.keys(params).some(key => !["sessionId", "appId", "windowId"].includes(key)))
+        throw new OrbitError("INVALID_REQUEST", "Unknown native observation fields");
+      const selected = params.appId === undefined && params.windowId === undefined ? undefined
+        : { appId: params.appId, windowId: params.windowId };
+      const frame = await session.backend.observe(selected);
+      this.taintedBy(session, "observe");
+      return frame;
     }
     session.observing ??= session.backend.observe().then(frame => {
       this.taintedBy(session, "observe");

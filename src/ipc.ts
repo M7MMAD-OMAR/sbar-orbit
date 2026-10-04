@@ -13,8 +13,9 @@ import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storag
 import { claimSocket } from "./service";
 import { Diagnostics, diagnosticRoot } from "./diagnostics";
 import { normaliseClientResponseUrls } from "./http-response-url";
+import type { NativeOptions } from "./native-worker";
 
-export async function startBroker(options: { accountRoot?: string; socketPath?: string } = {}) {
+export async function startBroker(options: { accountRoot?: string; socketPath?: string; native?: NativeOptions } = {}) {
   await requireResourceBudget();
   // Before anything can make an HTTP request. A Bun client response carries the request path in
   // `url`, where Node leaves it empty, and Playwright's fetch path feeds that field to `new URL`
@@ -37,7 +38,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     socket = join(privateRoot, "broker.sock");
   }
   const workspace = await createWorkspaceDirectory("broker");
-  const sessions = new Sessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")));
+  const sessions = new Sessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native);
   let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
