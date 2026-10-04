@@ -1,11 +1,11 @@
-import { copyFile, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { createWorkspaceDirectory } from "../src/workspace-storage";
 
 /** Produce the installable registry artifact, including its frozen dependency lock. */
 export async function registryPackage(destination: string, source = resolve(import.meta.dir, "..")) {
-  const staging = await mkdtemp(join(tmpdir(), "orbit-registry-"));
+  const staging = await createWorkspaceDirectory("registry");
   async function run(args: string[]) {
     const child = Bun.spawn(args, { cwd: source, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([

@@ -99,3 +99,82 @@ five tests with 20 assertions; the cache helper now passes two Python tests.
 - `src/session.ts`: `0d8ebce82b392545f4e464e1ffe183226752f3d9d839003fd0fb1c22db90c132`
 - `src/diagnostics.ts`: `f6e4a22ea1a50afa2f31834ad3153732fa08036b0a2c7f24c9052feee4ba1616`
 - `tests/adversarial/reaping-and-secrets.test.ts`: `285af915ff164b4a165aef6d1b67002e62406606cb40c293ffeeafeaec0458be`
+
+
+## Actual live cursor recording
+
+A fresh public broker proof on the native-settings runtime source now passes
+all eight broker checks again and records its actual GTK native-view window.
+The optional `--record` probe captures only that exact stable target, with a
+maximum of 20 captures at a requested five samples per second. Real monotonic
+capture timestamps are retained; encoding uses that nominal cadence rather
+than claiming exact wall-clock playback or input latency. The final APNG has
+11 frames and is 24569 bytes. Every decoded RGBA frame has the same dimensions
+and bytes as its original target capture. The first frame was visually inspected.
+The isolated blue agent marker, acknowledged variant 1, moves from (549.5, 100) to (703, 167), with the direction of
+the acknowledged logical displacement from (40.5, 30.25) to (200.5, 100.25).
+The check requires a minimum displacement and verifies the 70/160 slope
+within two pixels; it does not validate the full projected vector magnitude. The animation is retained
+privately as evidence/native-live-cursor-motion.png.
+
+A no-motion fixture first exposed a false positive: the old whole-image check
+accepted repainting while the agent pointer stayed fixed. The new isolated
+marker check rejects that same fixture. An alpha-only mutation also exposes
+the old RGB-only equality check and is rejected by exact RGBA comparison.
+Neither initial check is counted as successful cursor-motion validation.
+The recording is committed to its final evidence path only after these checks.
+
+The first attempt failed before viewing because the fresh lab had no pointer
+resource. A second diagnosis retained the cooperative journal and identified
+`target has no pointer resource`. Private virtual pointer and keyboard devices
+were then started, and the actual recording passed. The original failed logs,
+diagnostic journal and negative-control logs remain retained locally. The lab and
+its devices, temporary negative sources and owned application trees were removed.
+No owner display was captured, and no owner activation or performance result
+follows. This demonstrates the live GTK preview's drawn cursor, not acceptance
+of compositor overlay click-through on the owner's desktop.
+
+Reproduce after preparing the private lab, plugin and its virtual seat:
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/ghost-cursor/lab.py run LAB -- /usr/bin/python3 ABSOLUTE_REPO/experiments/ghost-cursor/native_broker_probe.py --record
+```
+
+Current recording proof bindings, distinct from the historical list above:
+
+- `src/cli.ts`: `85cba40e5c2143dd7d992ef3a7058a4caa113ab62bff0b7af8308a5009edd6e8`
+- `experiments/ghost-cursor/native_broker_probe.py`: `4b189157b8bc7d0b227ebace569225271ec30fadef6f1778b0516be0550a5d1e`
+- Renderer, preview client, IPC client, session worker, session lifecycle,
+  diagnostics and broker fixture retain the hashes printed above.
+
+The variant-aware proof completed on the c32efa3 runtime checkout with the
+current uncommitted probe source bound above. The first two fresh setup attempts
+failed because the pointer helper was invoked incorrectly; the private journal
+retained `target has no pointer resource`. After starting the documented held
+virtual pointer, recording reached the real viewer and exposed the detector's
+teal-only assumption. The renderer legitimately chooses either teal or blue
+from the acknowledged target variant. The corrected detector accepts only that
+variant's fixed accent and retains the isolated marker bound.
+
+A fresh no-motion fixture with a forced evidence-copy collision failed with both
+the movement assertion and FileExistsError in one ExceptionGroup. An actual
+recording alpha-only negative control also failed exact RGBA equality as
+required. Negative sources were private and temporary, and the positive APNG
+was not overwritten by the rejected recording. The fresh source-bound report is
+retained in .private/native-recording-variant-proof.log. The first and last
+decoded frames were visually inspected. Playback remains nominal five frames
+per second, with actual capture timestamps retained separately.
+
+Prepare the private virtual seat after loading the pinned plugin:
+
+```sh
+bun run scripts/limited.ts /usr/bin/python3 experiments/ghost-cursor/lab.py spawn LAB -- /tmp/ghost-person-pointer 50 50 1920 1200 hold
+bun run scripts/limited.ts /usr/bin/python3 experiments/ghost-cursor/lab.py spawn LAB -- wtype -s 300000
+```
+
+The pointer helper takes numeric coordinates and extent followed by `hold`;
+it obtains the private socket from the lab environment. It does not take a
+socket pathname as a positional argument. All such devices belong to the lab
+and are stopped by `lab.py down LAB`.
+
+Private animation SHA256: `34e69935c7942d3c54c33c4f66678521d3f203e4f1ab3eaa57da01e463babb97`.
