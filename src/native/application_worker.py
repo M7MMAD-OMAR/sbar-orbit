@@ -50,8 +50,10 @@ def main(profile):
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
             raise RuntimeError("KDE platform theme must be an installed trusted library")
         environment["QT_QPA_PLATFORMTHEME"] = "kde"
-    for name, bus_type, services in (("session", "session", "<standard_session_servicedirs/>"),
-                                     ("a11y", "accessibility", "<servicedir>/usr/share/dbus-1/accessibility-services</servicedir>")):
+    a11y_socket = profile / "run" / "at-spi" / "bus"
+    if len(os.fsencode(a11y_socket)) >= 100:
+        raise RuntimeError("Private accessibility socket exceeds the launcher's fixed-path limit")
+    for name, bus_type, services in (("session", "session", "<standard_session_servicedirs/>"),):
         config = f'<busconfig><type>{bus_type}</type><listen>unix:path={escape(str(profile / name))}</listen><auth>EXTERNAL</auth>{services}<policy context="default"><allow own="*"/><allow send_destination="*"/><allow receive_type="method_call"/><allow receive_type="method_return"/><allow receive_type="error"/><allow receive_type="signal"/></policy></busconfig>'
         path = profile / f"{name}.conf"
         with open(path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
@@ -60,17 +62,51 @@ def main(profile):
                          env=dict(environment, DBUS_SESSION_BUS_ADDRESS=f"unix:path={profile / name}"),
                          stdin=subprocess.DEVNULL)
     deadline = time.monotonic() + 3
-    while not all((profile / name).is_socket() for name in ("session", "a11y")):
+    while not (profile / "session").is_socket():
         if time.monotonic() >= deadline:
             raise TimeoutError("Private application buses did not start")
         time.sleep(0.02)
-    for name in ("session", "a11y"):
+    launcher = subprocess.Popen(["/usr/libexec/at-spi-bus-launcher", "--launch-immediately", "--a11y=1"],
+                                env=dict(environment, ATSPI_DBUS_IMPLEMENTATION="dbus-daemon"),
+                                stdin=subprocess.DEVNULL)
+    deadline = time.monotonic() + 3
+    while not a11y_socket.is_socket():
+        if launcher.poll() is not None:
+            raise RuntimeError("Private accessibility launcher exited before readiness")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Private accessibility bus did not start")
+        time.sleep(0.02)
+    if not lease.contains(process_identity(launcher.pid)):
+        raise RuntimeError("Private accessibility launcher escaped the application scope")
+    for bus_socket in (profile / "session", a11y_socket):
         with socket.socket(socket.AF_UNIX) as connection:
             connection.settimeout(1)
-            connection.connect(str(profile / name))
+            connection.connect(str(bus_socket))
             pid, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != os.getuid() or not lease.contains(process_identity(pid)):
             raise RuntimeError("Private bus escaped the application scope")
+    bus_args = ["/usr/bin/busctl", f"--address={environment['DBUS_SESSION_BUS_ADDRESS']}",
+                "--auto-start=no", "--timeout=1", "--json=short"]
+    deadline = time.monotonic() + 3
+    while True:
+        enabled = subprocess.run(bus_args + ["get-property", "org.a11y.Bus", "/org/a11y/bus",
+                                 "org.a11y.Status", "IsEnabled"], capture_output=True, timeout=1)
+        if enabled.returncode == 0:
+            if len(enabled.stdout) > 4096 or json.loads(enabled.stdout) != {"type": "b", "data": True}:
+                raise RuntimeError("Private accessibility service is not enabled")
+            break
+        if launcher.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError("Private accessibility status service did not start")
+        time.sleep(0.02)
+    address = subprocess.run(bus_args + ["call", "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus",
+                             "GetAddress"], capture_output=True, timeout=1, check=True)
+    if len(address.stdout) > 4096:
+        raise RuntimeError("Private accessibility address reply is too large")
+    reply = json.loads(address.stdout)
+    if (reply.get("type") != "s" or not isinstance(reply.get("data"), list) or len(reply["data"]) != 1
+            or not isinstance(reply["data"][0], str)
+            or not re.fullmatch(re.escape(environment["AT_SPI_BUS_ADDRESS"]) + r",guid=[0-9a-f]{32}", reply["data"][0])):
+        raise RuntimeError("Private accessibility service returned a different bus")
     subprocess.Popen(["/usr/libexec/at-spi2-registryd"],
                      env=dict(environment, DBUS_SESSION_BUS_ADDRESS=environment["AT_SPI_BUS_ADDRESS"]),
                      stdin=subprocess.DEVNULL)

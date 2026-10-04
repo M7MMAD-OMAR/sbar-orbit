@@ -49,7 +49,7 @@ def application_environment(profile, plan, unit):
             "XDG_STATE_HOME": str(profile / "state"), "XDG_DATA_DIRS": "/usr/local/share:/usr/share",
             "WAYLAND_DISPLAY": str(Path(plan["runtime"]) / plan["display"]),
             "DBUS_SESSION_BUS_ADDRESS": f"unix:path={profile / 'session'}",
-            "AT_SPI_BUS_ADDRESS": f"unix:path={profile / 'a11y'}", "GDK_BACKEND": "wayland",
+            "AT_SPI_BUS_ADDRESS": f"unix:path={profile / 'run' / 'at-spi' / 'bus'}", "GDK_BACKEND": "wayland",
             "QT_QPA_PLATFORM": "wayland", "QT_LINUX_ACCESSIBILITY_ALWAYS_ON": "1",
             "GTK_A11Y": "atspi", "GIO_USE_VFS": "local", "GTK_USE_PORTAL": "0",
             "ORBIT_NATIVE_UNIT": unit}

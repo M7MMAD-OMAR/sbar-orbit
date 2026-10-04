@@ -56,8 +56,7 @@ def main():
     for name in ("apps", "profile"):
         (work / name).mkdir(mode=0o700)
     (work / "profile" / "user.js").write_text(
-        'user_pref("termsofuse.bypassNotification", true);\n'
-        'user_pref("accessibility.force_disabled", -1);\n')
+        'user_pref("termsofuse.bypassNotification", true);\n')
     report = {"complete": False, "interference_bar": "not measured", "errors": [],
               "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
               "source_sha256": {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
@@ -105,7 +104,7 @@ def main():
                         app.lease.verify()
                         environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                             "DBUS_SESSION_BUS_ADDRESS": f"unix:path={app.profile / 'session'}",
-                            "AT_SPI_BUS_ADDRESS": f"unix:path={app.profile / 'a11y'}"}
+                            "AT_SPI_BUS_ADDRESS": f"unix:path={app.profile / 'run' / 'at-spi' / 'bus'}"}
                         result = subprocess.run(["/usr/bin/python3", "-c", READ_FIELD, str(app.process[0])],
                             env=environment, capture_output=True, text=True, timeout=5, check=True)
                         if len(result.stdout) > 65536:
