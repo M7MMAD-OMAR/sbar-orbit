@@ -37,6 +37,11 @@ Development uses a private lab and does not send input to the owner's seat.
   supports scoped pre-exec enrollment. Its private pre-map integration test
   measures protected approval, exact membership and revoked-target refusal.
   This is a transport component, not owner-session activation.
+- A persistent native session worker now retains generated application/window
+  handles, checks guarded stable identity and scope inside the plugin, captures
+  only its own targets, and deduplicates uncertain requests. Ten private checks
+  passed, including sticky capture revocation and protected EOF cleanup. See
+  `NATIVE-SESSION.md`; public broker and UI routing remain incomplete.
 
 ## Remaining acceptance work
 

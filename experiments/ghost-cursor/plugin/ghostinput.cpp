@@ -107,6 +107,9 @@ class ScopedProcess {
         pollfd process{processFD, POLLIN, 0};
         return poll(&process, 1, 0) > 0 && (process.revents & POLLIN);
     }
+    bool belongsTo(const std::string& unit) const {
+        return group.ends_with("/" + unit);
+    }
     bool valid() {
         if (revoked)
             return false;
@@ -406,6 +409,22 @@ struct STarget {
 static STarget resolve(const std::string& address, bool wake = true) {
     STarget t;
     std::string want = address;
+    std::string stable, unit;
+    if (const auto separator = want.find('@'); separator != std::string::npos) {
+        const auto next = want.find('@', separator + 1);
+        if (next == std::string::npos || want.find('@', next + 1) != std::string::npos) {
+            t.error = "refused: invalid guarded native target";
+            return t;
+        }
+        stable = want.substr(separator + 1, next - separator - 1);
+        unit = want.substr(next + 1);
+        want.resize(separator);
+        if (!std::regex_match(stable, std::regex{"[0-9a-f]{1,16}"}) ||
+            !std::regex_match(unit, std::regex{"orbit-native-[0-9a-f]{32}\\.scope"})) {
+            t.error = "refused: invalid guarded native identity";
+            return t;
+        }
+    }
     if (want.starts_with("0x"))
         want = want.substr(2);
     for (auto const& w : Desktop::windowState()->windows()) {
@@ -418,6 +437,10 @@ static STarget resolve(const std::string& address, bool wake = true) {
         t.error = "no such window";
         return t;
     }
+    if (!stable.empty() && std::format("{:x}", t.window->m_stableID) != stable) {
+        t.error = "refused: native window stable identity changed";
+        return t;
+    }
     if (!t.window->m_isMapped || !t.window->m_workspace || t.window->m_workspace->m_name != AGENT_SPACE) {
         t.error = "refused: window is not in " + AGENT_SPACE;
         t.window.reset();
@@ -427,6 +450,16 @@ static STarget resolve(const std::string& address, bool wake = true) {
     if (!t.surface) {
         t.error = "window has no surface";
         return t;
+    }
+    if (!unit.empty()) {
+        pid_t pid = 0;
+        wl_client_get_credentials(t.surface->client(), &pid, nullptr, nullptr);
+        const auto registration = scopedProcesses.find(pid);
+        if (registration == scopedProcesses.end() || !registration->second->valid() ||
+            !registration->second->belongsTo(unit)) {
+            t.error = "refused: native target belongs to another scope";
+            return t;
+        }
     }
     if (!agentClient(t.surface->client())) {
         t.error = "refused: target client also owns non-agent windows";
@@ -754,6 +787,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-selection-diagnostic", false,
         [](eHyprCtlOutputFormat, std::string) { return selectionDiagnostic; }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-target-check", false, [](eHyprCtlOutputFormat, std::string r) {
+        std::istringstream in(r);
+        std::string command, address, extra;
+        if (!(in >> command >> address) || (in >> extra) || address.find('@') == std::string::npos)
+            return std::string{"refused: guarded target required"};
+        const auto target = resolve(address, false);
+        return target.error.empty() ? std::string{"ok"} : target.error;
+    }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-state", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string cmd, address;
@@ -813,6 +854,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         std::istringstream in(r);
         std::string cmd, address;
         in >> cmd >> address;
+        auto target = resolve(address, false);
+        if (!target.error.empty())
+            return target.error;
         auto it = cursors.find(address);
         if (it == cursors.end())
             return std::string{"no cursor for window"};

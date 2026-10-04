@@ -154,3 +154,15 @@ admission and durable intent before creating application processes. Owned cleanu
 must still run if its journal cannot be written. Owner-display activation,
 appearance acceptance and comparative performance remain unmeasured; passing
 launcher checks will not close those requirements.
+
+### Native session routing integration
+
+Component implemented and privately measured, reviewed 4 October 2026. See
+`experiments/ghost-cursor/NATIVE-SESSION.md` for evidence and limits. It owns its admitted application handles and expose only generated application and
+window identifiers. Foreign compositor windows must be filtered before returning
+metadata, and target identity and exact scope must be rechecked before delivery.
+Capture must require an owned stable window ID with no whole-display fallback.
+Agent requests must not configure protected/full mode or choose a compositor.
+The pinned Hyprland IPC implementation above remains the compatibility source.
+Private routing evidence does not authorize owner-session activation or close
+BAR.md, appearance or performance acceptance.

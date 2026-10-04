@@ -48,7 +48,7 @@ fixtures as documented in `PRE-MAP-PLACEMENT.md`. Run the absolute path to
 `native_application_probe.py` through `lab.py run LAB --`, inside the shared
 budget, then stop that lab even if the probe fails.
 
-The final private GTK3 run passed nine checks: denial before resource allocation,
+The historical launch integration run preceding session routing passed nine checks: denial before resource allocation,
 one-use approved launch, independent scopes and buses, detached child ownership,
 paired cursor/click/text readback, preserved stand-in focus and text, independent
 protected cleanup, failed exec cleanup and parent-death cleanup with journal
@@ -63,7 +63,8 @@ Runtime source SHA-256 for that successful run:
 - `transport.py`: `f0d6269d8a940916afa7c1785f897238b0eb68a43735fb958e557a618c05b1fb`.
 - `supervise.py`: `675a7004231d00ce7e606bef0a3906b96d8e422a75738584ed8480f01826e5c5`.
 
-The plugin is the unchanged artifact recorded in `PRE-MAP-PLACEMENT.md`.
+That run used the artifact recorded in `PRE-MAP-PLACEMENT.md`. Current
+session routing source and plugin evidence are in `NATIVE-SESSION.md`.
 
 ## Repository validation
 
