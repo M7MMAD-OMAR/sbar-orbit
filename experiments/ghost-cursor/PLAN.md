@@ -32,13 +32,20 @@ Development uses a private lab and does not send input to the owner's seat.
 - Launch ownership now retains the root PID and start time when an application's
   launch environment tag is not observable. Failed untagged-root launch cleanup
   is measured, without widening the private-lab process scope.
+- Prepared endpoint binding now lives in the runtime source tree. A journaled
+  native transport checks compositor identity before sending plugin actions and
+  supports scoped pre-exec enrollment. Its private pre-map integration test
+  measures protected approval, exact membership and revoked-target refusal.
+  This is a transport component, not owner-session activation.
 
 ## Remaining acceptance work
 
 - Complete the current-build toolkit, clipboard and cursor regression matrix,
   including Firefox and XWayland. Chromium fixture evidence is not a universal
   browser/toolkit guarantee.
-- Implement owner-session integration and owner theme inheritance.
+- Finish owner-session launch supervision, activation and theme inheritance.
+  Prepared-host transport is implemented; the launcher and owner settings wiring
+  remain incomplete.
 - Integrate the tested protected/full controller into every agent entry point
   and the owner settings UI.
 - Extend auditing to remaining imported accessibility actions and broker

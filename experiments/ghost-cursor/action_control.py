@@ -184,7 +184,7 @@ def dispatch_native(request):
     if not parts or parts[0] not in commands:
         raise ControlError("Unknown native action; mode changes use the owner settings entry point")
     response = _hypr(request).strip()
-    if response == "ok":
+    if response == "ok" and parts[0] != "ghost-state":
         return response
     if parts[0] in ("ghost-type", "ghost-texthex") and re.fullmatch(r"ok \d+ keys", response):
         return response

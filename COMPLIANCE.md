@@ -124,3 +124,19 @@ Private GTK4 and Dolphin cursor recording and source-bound pre-map checks passed
 details and failed attempts remain in `experiments/ghost-cursor/PRE-MAP-PLACEMENT.md`.
 Owner-display operation and comparative performance remain unaccepted and
 unmeasured. This follow-up does not change production native support tiers.
+
+### Native prepared-host transport
+
+Reviewed 4 October 2026. Native endpoint preparation now lives in
+`src/native/host.py`; the experimental command remains a compatibility wrapper.
+The transport binds journaled plugin actions to that prepared process, socket
+identity and compositor ABI. Linux peer credentials follow the
+[unix(7) specification](https://man7.org/linux/man-pages/man7/unix.7.html).
+The request framing follows the
+[versioned Hyprland IPC implementation](https://github.com/hyprwm/Hyprland/blob/efb50993780079460b0cbed1363e2166a2de1d9f/src/debug/HyprCtl.cpp).
+These are technical compatibility constraints. Private ownership, durable
+intent/outcome records, protected approval and no owner-seat interference are
+owner requirements. The transport remains cooperative same-user code.
+It does not install the plugin, enable owner-session use or replace the final
+BAR.md acceptance. Current checks and remaining integration work are recorded in
+`experiments/ghost-cursor/NATIVE-TRANSPORT.md`.

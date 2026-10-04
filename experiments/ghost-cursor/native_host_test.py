@@ -9,8 +9,11 @@ import threading
 import unittest
 from unittest.mock import patch
 import time
+import sys
 
-from native_host import HostError, inspect_host, read_plan, verify_host
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.native.host import HostError, inspect_host, read_plan, verify_host
 
 
 class HostTests(unittest.TestCase):
@@ -113,7 +116,7 @@ class HostTests(unittest.TestCase):
                 inspect_host(self.env)
 
     def test_distinct_endpoint_processes_fail(self):
-        with patch("native_host.peer", side_effect=([1, 2], [3, 4])):
+        with patch("src.native.host.peer", side_effect=([1, 2], [3, 4])):
             with self.assertRaisesRegex(HostError, "different compositor"):
                 inspect_host(self.env)
 

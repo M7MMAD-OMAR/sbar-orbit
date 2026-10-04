@@ -49,16 +49,24 @@ def worker(unit):
     # This fixture intentionally uses the direct launch path. No exec rule, move,
     # focus restoration or agent_launch wrapper can conceal a placement failure.
     lease = adopt(unit, os.getpid())
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(3)
-        connection.connect(f"{os.environ['XDG_RUNTIME_DIR']}/hypr/{os.environ['HYPRLAND_INSTANCE_SIGNATURE']}/.socket.sock")
-        connection.sendall(f"ghost-register-scope-process {os.getpid()} {unit}".encode())
-        reply = bytearray()
-        while chunk := connection.recv(4096):
-            reply.extend(chunk)
-            if len(reply) > 65536:
-                raise RuntimeError("Native registration response is too large")
-    reply = reply.decode().strip()
+    if os.environ.get("ORBIT_NATIVE_PROBE_PLAN"):
+        from src.native.host import read_plan
+        from src.native.transport import NativeTransport
+        from action_control import ActionControl
+        transport = NativeTransport(read_plan(Path(os.environ["ORBIT_NATIVE_PROBE_PLAN"])))
+        with ActionControl(Path(os.environ["ORBIT_NATIVE_PROBE_CONTROL"])) as control:
+            reply = "ok " + transport.enroll(lease, process_identity(os.getpid()), control)
+    else:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(3)
+            connection.connect(f"{os.environ['XDG_RUNTIME_DIR']}/hypr/{os.environ['HYPRLAND_INSTANCE_SIGNATURE']}/.socket.sock")
+            connection.sendall(f"ghost-register-scope-process {os.getpid()} {unit}".encode())
+            reply = bytearray()
+            while chunk := connection.recv(4096):
+                reply.extend(chunk)
+                if len(reply) > 65536:
+                    raise RuntimeError("Native registration response is too large")
+        reply = reply.decode().strip()
     match = re.fullmatch(r"ok ([0-9a-fA-F-]{36})", reply)
     if match:
         os.environ["HL_EXEC_RULE_TOKEN"] = match[1]
@@ -103,7 +111,7 @@ def windows(unit):
     Gtk.main()
 
 
-def probe(source):
+def probe(source, use_transport=False):
     lab = Path(os.environ["XDG_RUNTIME_DIR"]).parent
     compositor = [pid for pid in members(lab) if Path(f"/proc/{pid}/comm").read_text().strip() == "Hyprland"]
     if len(compositor) != 1:
@@ -116,6 +124,7 @@ def probe(source):
     units = [unit]
     errors = []
     checks = []
+    transport_evidence = None
     primary = None
     with tempfile.TemporaryDirectory(prefix="pre-map-", dir=lab) as work:
         log = open(Path(work) / "worker.log", "wb")
@@ -127,6 +136,19 @@ def probe(source):
             with person.lock:
                 event_start = len(person.events)
             environment = dict(os.environ, GTK_A11Y="none", NO_AT_BRIDGE="1")
+            if use_transport:
+                from src.native.host import inspect_host
+                from src.native.transport import NativeTransport
+                from action_control import ActionControl, ControlError
+                plan = inspect_host(os.environ)
+                plan_file = Path(work) / "host.json"
+                plan_file.write_text(json.dumps(plan))
+                control_path = Path(work) / "control"
+                with ActionControl(control_path) as control:
+                    control.configure(mode="full")
+                transport = NativeTransport(plan)
+                environment.update(ORBIT_NATIVE_PROBE_PLAN=str(plan_file),
+                                   ORBIT_NATIVE_PROBE_CONTROL=str(control_path))
             actor = subprocess.Popen(["/usr/bin/python3", str(Path(__file__).resolve()), "--worker", unit],
                                      env=environment, stdin=subprocess.PIPE, stdout=log, stderr=log)
             wait_member(unit, actor.pid)
@@ -152,6 +174,23 @@ def probe(source):
                     changed = [event for event in person.events[event_start:] if event[0] == "wl_keyboard" and event[1] in ("enter", "leave")]
                 assert not changed, "Owner received a transient focus change"
                 checks.append("initial map" if count == 1 else "new window after config reload")
+                if use_transport and count == 1:
+                    address = mapped[0]["address"]
+                    cursor = f"ghost-cursor {address} 50 50"
+                    with ActionControl(control_path) as control:
+                        control.configure(mode="protected")
+                        try:
+                            transport.execute(cursor, control)
+                        except ControlError:
+                            pass
+                        else:
+                            raise RuntimeError("Transport bypassed protected approval")
+                        control.configure(approve=cursor)
+                        transport.execute(cursor, control)
+                        control.configure(mode="full")
+                        transport.execute(f"ghost-hide-cursor {address}", control)
+                        transport.execute(f"ghost-state {address}", control)
+                    checks.append("journaled native transport actions and protected denial")
             migrated = "orbit-native-" + uuid.uuid4().hex + ".scope"
             units.append(migrated)
             adopt(migrated, actor.pid)
@@ -170,6 +209,28 @@ def probe(source):
             latest = [window for window in mapped if window["title"] == "native-pre-map-2"]
             assert len(latest) == 1 and latest[0]["workspace"]["name"] != "special:ghost", "Revoked process retained its placement rule"
             checks.append("migration revokes placement on config reload")
+            if use_transport:
+                from src.native.host import HostError
+                with ActionControl(control_path) as control:
+                    try:
+                        transport.execute(cursor, control)
+                    except HostError:
+                        pass
+                    else:
+                        raise RuntimeError("Transport action reached a revoked target")
+                    journal = control.inspect()
+                assert not journal["unresolved"], "Transport journal has unfinished requests"
+                requests = [event for event in journal["events"] if event.get("kind") == "action"]
+                assert len(requests) == 6, requests
+                finishes = {event["id"]: event for event in journal["events"] if event["phase"] == "finish"}
+                assert all(event["id"] in finishes for event in requests if event["phase"] == "begin")
+                (Path(__file__).with_name("evidence") / "native-transport-actions.jsonl").write_bytes(
+                    (control_path / "actions.jsonl").read_bytes())
+                transport_evidence = {"requests": len(requests), "protected_denial": "pass",
+                                      "revoked_target_refusal": "pass", "journal_outcomes": "pass",
+                                      "source_sha256": {name: hashlib.sha256((Path(__file__).resolve().parents[2]
+                                          / "src/native" / name).read_bytes()).hexdigest()
+                                          for name in ("host.py", "transport.py")}}
         except BaseException as error:
             primary = error
         finally:
@@ -213,7 +274,7 @@ def probe(source):
     assert loaded_plugin(compositor[0], source_hash) == build, "Loaded plugin changed during the probe"
     print(json.dumps({"checks": checks, "workspace_placement": "pass", "focus_preserved": "pass",
                       "no_transient_keyboard_focus_events": "pass", "config_reload": "pass", "cleanup": "pass",
-                      "plugin": build,
+                      "plugin": build, "transport": transport_evidence,
                       "owner_desktop_activation": "not performed", "performance": "not measured"}))
 
 
@@ -224,6 +285,8 @@ if __name__ == "__main__":
         worker(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "--windows":
         windows(sys.argv[2])
+    elif len(sys.argv) == 2 and sys.argv[1] == "--transport":
+        probe(Path(__file__).with_name("plugin") / "ghostinput.cpp", use_transport=True)
     elif len(sys.argv) == 1:
         probe(Path(__file__).with_name("plugin") / "ghostinput.cpp")
     elif len(sys.argv) == 3 and sys.argv[1] == "--source":
