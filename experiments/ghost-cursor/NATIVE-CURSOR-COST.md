@@ -44,3 +44,28 @@ prototype plugin and holding the lab's virtual pointer/keyboard devices. It
 never accepts an owner display or input device and preserves the controller log
 through cleanup. Linux accounting reference, reviewed 4 October 2026:
 https://docs.kernel.org/filesystems/proc.html.
+
+## Guarded-action profile
+
+A separate system-Python cProfile run on unchanged sources completed all eight
+phases and cleanup. Instrumentation adds overhead, so its timings locate
+bottlenecks and do not replace the benchmark above. Native session execution
+accumulated 20.820 seconds across 984 calls. Fresh unit-property queries accumulated
+14.374 seconds across 2962 calls, including 14.201 seconds in subprocess.run.
+Lease verification accumulated 14.663 seconds, transport exchange 3.075 seconds,
+host revalidation 2.378 seconds and journal recording 1.557 seconds. These are
+overlapping cumulative call-tree totals, not independent costs to sum.
+
+The main candidate is replacing repeated systemctl subprocess queries with fresh
+reads through the manager's supported D-Bus interface. Invocation, active-state,
+cgroup identity and bounded errors must still be checked for every verification.
+No ownership decision may be cached to obtain the speedup. This optimization is
+not implemented or measured yet.
+
+Profile artifacts: `.private/native-cursor-cost.profile`,
+`.private/native-cursor-profile-summary.json`, and
+`.private/native-cursor-cost-880266/report.json`. All 15 source bindings were
+verified and the owned lab was closed. Official profiler scope:
+https://docs.python.org/3/library/profile.html. The rendered systemd manual was
+inaccessible; its official source documents GetUnit and the unit D-Bus interfaces:
+https://raw.githubusercontent.com/systemd/systemd/main/man/org.freedesktop.systemd1.xml.
