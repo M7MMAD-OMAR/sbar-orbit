@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, posix } from "node:path";
 
-export const chromeExecutables = ["/opt/google/chrome/chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+// Shared by the owned launcher, preflight and profile discovery. Keep known absolute locations:
+// the agent host's PATH must not choose the browser that owns a private session.
+export const linuxBrowserExecutables: Record<string, string[]> = {
+  "google-chrome": ["/opt/google/chrome/chrome", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"],
+  chromium: ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/lib64/chromium-browser/chromium-browser"],
+};
+export const chromeExecutables = Object.values(linuxBrowserExecutables).flat();
 
 /**
  * The same question on Windows, where there are no fixed paths.

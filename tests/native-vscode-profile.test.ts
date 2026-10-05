@@ -15,6 +15,12 @@ async function fixture() {
   const configHome = join(root, "source-config");
   const extensionsHome = join(root, "source-extensions");
   const sessionDirectory = join(root, "session");
+  const installation = join(root, "installed-code");
+  const executable = join(installation, "code");
+  await mkdir(join(installation, "resources", "app"), { recursive: true });
+  await writeFile(executable, Buffer.from([0x7f, 0x45, 0x4c, 0x46]), { mode: 0o755 });
+  await writeFile(join(installation, "resources", "app", "product.json"),
+    JSON.stringify({ applicationName: "code", nameLong: "Visual Studio Code", dataFolderName: ".vscode" }));
   const user = join(configHome, "Code", "User");
   const selected = join(extensionsHome, selectedExtension);
   await mkdir(join(user, "globalStorage"), { recursive: true });
@@ -31,7 +37,7 @@ async function fixture() {
   await writeFile(join(selected, "package.json"), packageJson);
   await writeFile(join(selected, "extension.js"), "exports.activate = () => {};\n");
   await writeFile(join(extensionsHome, "other.extension-1.0.0", "package.json"), "{}\n");
-  return { root, configHome, extensionsHome, sessionDirectory, user, selected, settings, packageJson };
+  return { root, configHome, extensionsHome, sessionDirectory, executable, user, selected, settings, packageJson };
 }
 
 function privateFlag(argv: string[], flag: string): string {
@@ -60,11 +66,11 @@ test("VS Code snapshot copies Default settings and one extension without account
   try {
     const { prepareVSCodeLaunch } = await import("../src/native-vscode");
     const prepared = await prepareVSCodeLaunch(f.sessionDirectory,
-      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome });
+      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome, executable: f.executable });
     expect(prepared.toolkit).toBe("wayland");
     expect(prepared.selectedFiles).toEqual([]);
     expect(prepared.snapshot).toEqual({ settings: "copied", accountState: "absent", extensions: [selectedExtension] });
-    expect(prepared.argv[0]).toBe("/usr/share/code/code");
+    expect(prepared.argv[0]).toBe(f.executable);
     expect(prepared.argv).toContain("--new-window");
     expect(prepared.argv).not.toContain("--reuse-window");
     const data = privateFlag(prepared.argv, "--user-data-dir");
@@ -98,7 +104,7 @@ test("VS Code snapshot refuses a linked source settings file and leaves no copy"
     await rm(join(f.user, "settings.json"));
     await symlink(outside, join(f.user, "settings.json"));
     await expect(prepareVSCodeLaunch(f.sessionDirectory,
-      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome })).rejects.toThrow();
+      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome, executable: f.executable })).rejects.toThrow();
     expect(await readdir(f.sessionDirectory)).toEqual([]);
     expect(await readFile(outside, "utf8")).toBe('{"secret":"not for Orbit"}\n');
   } finally { await rm(f.root, { recursive: true, force: true }); }
@@ -113,7 +119,7 @@ test("VS Code account snapshot includes an uncheckpointed SQLite login record", 
     database.query("INSERT INTO ItemTable (key, value) VALUES (?, ?)").run("secret://github.auth", "encrypted fixture");
     const { prepareVSCodeLaunch } = await import("../src/native-vscode");
     const prepared = await prepareVSCodeLaunch(f.sessionDirectory,
-      { extensions: [] }, { configHome: f.configHome, extensionsHome: f.extensionsHome });
+      { extensions: [] }, { configHome: f.configHome, extensionsHome: f.extensionsHome, executable: f.executable });
     expect(prepared.snapshot.accountState).toBe("copied");
     const snapshot = new Database(join(privateFlag(prepared.argv, "--user-data-dir"), "User", "globalStorage", "state.vscdb"));
     try {
@@ -134,7 +140,7 @@ test("VS Code snapshot refuses a linked extension file and leaves no copy", asyn
     await rm(join(f.selected, "extension.js"));
     await symlink(outside, join(f.selected, "extension.js"));
     await expect(prepareVSCodeLaunch(f.sessionDirectory,
-      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome })).rejects.toThrow();
+      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome, executable: f.executable })).rejects.toThrow();
     expect(await readdir(f.sessionDirectory)).toEqual([]);
     expect(await readFile(outside, "utf8")).toBe("exports.activate = () => {};\n");
   } finally { await rm(f.root, { recursive: true, force: true }); }
@@ -148,7 +154,7 @@ test("VS Code snapshot refuses more than 256 MiB of selected extension data", as
     try { await large.truncate(256 * 1024 * 1024 + 1); }
     finally { await large.close(); }
     await expect(prepareVSCodeLaunch(f.sessionDirectory,
-      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome })).rejects.toMatchObject({ code: "LIMIT_REACHED" });
+      { extensions: [selectedExtension] }, { configHome: f.configHome, extensionsHome: f.extensionsHome, executable: f.executable })).rejects.toMatchObject({ code: "LIMIT_REACHED" });
     expect(await readdir(f.sessionDirectory)).toEqual([]);
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });

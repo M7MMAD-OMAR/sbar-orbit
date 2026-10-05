@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-orbit_script=$(readlink -f -- "${BASH_SOURCE[0]}")
+# Resolve relative symlinks with the readlink interface shared by Linux and macOS.
+orbit_script=${BASH_SOURCE[0]}
+for ((orbit_link_count=0; ; orbit_link_count++)); do
+  orbit_directory=$(cd -P -- "$(dirname -- "$orbit_script")" && pwd) || exit 1
+  orbit_script="$orbit_directory/$(basename -- "$orbit_script")"
+  [ -L "$orbit_script" ] || break
+  if [ "$orbit_link_count" -ge 40 ]; then
+    echo "sbar-orbit: too many symbolic links" >&2
+    exit 1
+  fi
+  orbit_target=$(readlink "$orbit_script") || exit 1
+  case "$orbit_target" in
+    /*) orbit_script=$orbit_target ;;
+    *) orbit_script="$orbit_directory/$orbit_target" ;;
+  esac
+done
 orbit_root=$(dirname -- "$(dirname -- "$orbit_script")")
 orbit_uname=$(uname -s)
 

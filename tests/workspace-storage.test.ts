@@ -146,6 +146,18 @@ test("the workspace root follows the platform's own private per user location", 
   expect(workspaceRoot({} as NodeJS.ProcessEnv, "darwin")).toContain("Library/Caches");
 });
 
+test("workspace defaults use the declared user's home on every platform", () => {
+  const home = "/home/External Person";
+  expect(workspaceRoot({ HOME: home } as NodeJS.ProcessEnv, "linux"))
+    .toBe(posix.join(home, ".cache", "sbar-orbit", "workspaces"));
+  expect(workspaceRoot({ HOME: "/Users/External Person" } as NodeJS.ProcessEnv, "darwin"))
+    .toBe("/Users/External Person/Library/Caches/sbar-orbit/workspaces");
+  expect(workspaceRoot({ USERPROFILE: "D:\\Users\\External Person", XDG_CACHE_HOME: "/wrong/cache" } as NodeJS.ProcessEnv, "win32"))
+    .toBe("D:\\Users\\External Person\\AppData\\Local\\sbar-orbit\\workspaces");
+  expect(workspaceRoot({ HOME: home, XDG_CACHE_HOME: "/custom/cache" } as NodeJS.ProcessEnv, "linux"))
+    .toBe("/custom/cache/sbar-orbit/workspaces");
+});
+
 /**
  * The sweep could not remove a workspace that held a restore point, and reported the reason as
  * "Read-only file system": a point is a read-only btrfs snapshot, and unlinking inside one answers

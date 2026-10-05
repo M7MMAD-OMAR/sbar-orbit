@@ -199,13 +199,19 @@ export async function listHostBrowsers(env: Record<string, string | undefined> =
   if (process.platform === "win32") return windowsHostBrowsers(env);
   const preferred = await defaultEntry();
   const found = new Map<string, HostBrowser>();
+  const seen = new Set<string>();
   for (const directory of applicationDirectories(env)) {
     let names: string[];
-    try { names = await readdir(directory); } catch { continue; }
+    try { names = await readdir(directory, { recursive: true }); } catch { continue; }
     for (const name of names) {
-      if (!name.endsWith(".desktop") || found.has(name)) continue;
+      if (!name.endsWith(".desktop")) continue;
+      // Desktop file ids flatten relative directories. A hidden user entry also overrides
+      // its system counterpart, so record precedence before filtering browser fields.
+      const id = name.replaceAll("/", "-");
+      if (seen.has(id)) continue;
       let text: string, fields: Record<string, string>;
       try { text = await readFile(join(directory, name), "utf8"); } catch { continue; }
+      seen.add(id);
       fields = readEntry(text);
       if (fields.Type !== "Application" || !fields.Exec) continue;
       if (fields.NoDisplay === "true" || fields.Hidden === "true") continue;
@@ -218,9 +224,9 @@ export async function listHostBrowsers(env: Record<string, string | undefined> =
       const command = parseExec(fields.Exec);
       const [executable] = command;
       if (!executable) continue;
-      found.set(name, {
-        id: name.replace(/\.desktop$/, ""), name: fields.Name || basename(executable),
-        command, appWindow: family(command, fields.Name || name, text) === "chromium", isDefault: name === preferred,
+      found.set(id, {
+        id: id.replace(/\.desktop$/, ""), name: fields.Name || basename(executable),
+        command, appWindow: family(command, fields.Name || id, text) === "chromium", isDefault: id === preferred,
       });
     }
   }

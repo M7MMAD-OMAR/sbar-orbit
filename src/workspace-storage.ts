@@ -10,6 +10,9 @@ import { OrbitError } from "./errors";
  * deliberately non roaming, so a multi gigabyte browser profile is not synced to a domain share.
  */
 export function workspaceRoot(env = process.env, platform = process.platform) {
+  // Resolve defaults from the supplied environment, as the socket and state paths do.
+  // Otherwise a caller describing another user's installation gets this process's home.
+  const home = env.HOME || env.USERPROFILE || homedir();
   // `platform` is injected for the same reason `env` is: without it the Windows branch cannot be
   // reached from a test on any other host, so the one path a Windows user depends on would be
   // verified only by inference. That is this project's own "not measured" rule being bent inside a
@@ -23,7 +26,7 @@ export function workspaceRoot(env = process.env, platform = process.platform) {
   // where a drive root directory was measured handing down Authenticated Users: Modify. `updateRoot`
   // already ignores XDG on Windows for this reason; these three now agree with it.
   if (platform === "win32")
-    return win32.join(env.LOCALAPPDATA || win32.join(homedir(), "AppData", "Local"), "sbar-orbit", "workspaces");
+    return win32.join(env.LOCALAPPDATA || win32.join(home, "AppData", "Local"), "sbar-orbit", "workspaces");
   // `~/Library/Caches` is the documented place for regenerable per user data on macOS, which is
   // exactly what a session workspace is: it holds a fresh browser profile that is thrown away when
   // the session ends. It is excluded from Time Machine by default, which is the right answer for a
@@ -37,8 +40,8 @@ export function workspaceRoot(env = process.env, platform = process.platform) {
   // otherwise get backslashes in it. The same correction the darwin path builders in
   // `src/service.ts` and `src/runtime-paths.ts` took.
   if (platform === "darwin" && !env.XDG_CACHE_HOME)
-    return posix.join(homedir(), "Library", "Caches", "sbar-orbit", "workspaces");
-  return posix.join(env.XDG_CACHE_HOME || posix.join(homedir(), ".cache"), "sbar-orbit/workspaces");
+    return posix.join(home, "Library", "Caches", "sbar-orbit", "workspaces");
+  return posix.join(env.XDG_CACHE_HOME || posix.join(home, ".cache"), "sbar-orbit/workspaces");
 }
 
 export async function createWorkspaceDirectory(prefix: string, root = workspaceRoot()) {

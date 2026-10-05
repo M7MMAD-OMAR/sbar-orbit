@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { OrbitError } from "./errors";
 
 const maximumBytes = 256 * 1024 * 1024;
@@ -10,8 +10,47 @@ const maximumFiles = 10000;
 const extensionName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export type VSCodeProfileRequest = { extensions: string[]; openPath?: string };
-export type VSCodeProfileSource = { configHome: string; extensionsHome: string };
+export type VSCodeProfileSource = { configHome: string; extensionsHome: string; executable?: string };
 export type VSCodeProfileSnapshot = { settings: "copied" | "absent"; accountState: "copied" | "absent"; extensions: string[] };
+
+/** Resolve the stable official Linux application without running a host launcher script. */
+export async function discoverVSCodeExecutable(location: { executable?: string; path?: string } = {
+  executable: process.env.ORBIT_VSCODE_EXECUTABLE, path: process.env.PATH,
+}): Promise<string> {
+  if (location.executable !== undefined &&
+      (!isAbsolute(location.executable) || location.executable.includes("\0")))
+    throw new OrbitError("INVALID_REQUEST", "VS Code executable must be an absolute path");
+  const candidates: string[] = [];
+  if (location.executable !== undefined) candidates.push(location.executable);
+  else {
+    for (const directory of (location.path ?? process.env.PATH ?? "").split(":").filter(Boolean)) {
+      const launcher = await realpath(join(directory, "code")).catch(() => "");
+      if (!launcher) continue;
+      candidates.push(launcher);
+      if (basename(dirname(launcher)) === "bin") candidates.push(join(dirname(launcher), "..", "code"));
+    }
+    candidates.push("/usr/share/code/code");
+  }
+  for (const candidate of candidates) {
+    try {
+      const executable = await realpath(candidate);
+      const metadata = await stat(executable);
+      if (!metadata.isFile() || !(metadata.mode & 0o111)) continue;
+      const handle = await open(executable, "r");
+      const magic = Buffer.alloc(4);
+      try { await handle.read(magic, 0, 4, 0); } finally { await handle.close(); }
+      if (!magic.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) continue;
+      const productFile = join(dirname(executable), "resources", "app", "product.json");
+      const productMetadata = await stat(productFile);
+      if (!productMetadata.isFile() || productMetadata.size > 1024 * 1024) continue;
+      const product = JSON.parse(await readFile(productFile, "utf8"));
+      if (product?.applicationName !== "code" || product?.nameLong !== "Visual Studio Code" ||
+          product?.dataFolderName !== ".vscode") continue;
+      return executable;
+    } catch { continue; }
+  }
+  throw new OrbitError("UNSUPPORTED", "The stable official VS Code Linux executable was not found; set ORBIT_VSCODE_EXECUTABLE to its installed ELF path");
+}
 
 export function validateVSCodeProfileRequest(request: VSCodeProfileRequest) {
   if (!Array.isArray(request.extensions) || request.extensions.length > 4 ||
@@ -31,9 +70,11 @@ export async function prepareVSCodeLaunch(
   source: VSCodeProfileSource = {
     configHome: process.env.XDG_CONFIG_HOME || join(homedir(), ".config"),
     extensionsHome: process.env.VSCODE_EXTENSIONS || join(homedir(), ".vscode", "extensions"),
+    executable: process.env.ORBIT_VSCODE_EXECUTABLE,
   },
 ): Promise<{ argv: string[]; toolkit: "wayland"; selectedFiles: string[]; snapshot: VSCodeProfileSnapshot }> {
   validateVSCodeProfileRequest(request);
+  const executable = await discoverVSCodeExecutable({ executable: source.executable, path: process.env.PATH });
   let openPath = request.openPath;
   if (openPath !== undefined) {
     let metadata;
@@ -169,7 +210,7 @@ export async function prepareVSCodeLaunch(
       if (!await copyDirectory(join(source.extensionsHome, name), join(extensions, name)))
         throw new OrbitError("INVALID_REQUEST", `VS Code extension folder does not exist: ${name}`);
     return {
-      argv: ["/usr/share/code/code", "--user-data-dir", data, "--extensions-dir", extensions,
+      argv: [executable, "--user-data-dir", data, "--extensions-dir", extensions,
         "--shared-data-dir", sharedData,
         "--new-window", ...(openPath ? [openPath] : [])],
       toolkit: "wayland",

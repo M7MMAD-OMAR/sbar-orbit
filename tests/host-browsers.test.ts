@@ -4,7 +4,7 @@ import { linuxOnlySuite } from "./platform-support";
 const test = linuxOnlySuite("the person's own browsers, which are read from XDG desktop entries; opening the viewer in one needs a Windows mechanism that does not exist yet");
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { listHostBrowsers, parseExec, viewerCommand, viewerPreference, viewerProfileDirectory } from "../src/host-browsers";
 
 /**
@@ -16,11 +16,39 @@ async function fixture(entries: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), "orbit-browsers-"));
   const applications = join(root, "applications");
   await mkdir(applications, { recursive: true });
-  for (const [name, text] of Object.entries(entries)) await writeFile(join(applications, name), text);
+  for (const [name, text] of Object.entries(entries)) {
+    const path = join(applications, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, text);
+  }
   return { root, close: () => rm(root, { recursive: true, force: true }) };
 }
 
 const environment = (root: string) => ({ HOME: root, XDG_DATA_HOME: root, XDG_DATA_DIRS: "" });
+
+test("a user desktop override hides the matching system browser", async () => {
+  const tree = await fixture({ "chromium.desktop": "[Desktop Entry]\nHidden=true\n" });
+  try {
+    const systemData = join(tree.root, "system");
+    await mkdir(join(systemData, "applications"), { recursive: true });
+    await writeFile(join(systemData, "applications", "chromium.desktop"),
+      "[Desktop Entry]\nType=Application\nName=Chromium\nExec=chromium %U\nMimeType=x-scheme-handler/http;\nCategories=WebBrowser;\n");
+    const browsers = await listHostBrowsers({ ...environment(tree.root), XDG_DATA_DIRS: systemData });
+    expect(browsers.some(browser => browser.id === "chromium")).toBe(false);
+  } finally { await tree.close(); }
+});
+
+test("nested desktop entries use their relative path as the desktop id", async () => {
+  const tree = await fixture({
+    "vendor/browser.desktop": "[Desktop Entry]\nType=Application\nName=Portable Chromium\nExec=\"/opt/portable browser/chromium\" %U\nMimeType=x-scheme-handler/http;\nCategories=WebBrowser;\n",
+  });
+  try {
+    const browsers = await listHostBrowsers(environment(tree.root));
+    const browser = browsers.find(browser => browser.id === "vendor-browser");
+    expect(browser).toBeDefined();
+    expect(browser?.command).toEqual(["/opt/portable browser/chromium"]);
+  } finally { await tree.close(); }
+});
 
 test("browsers are the entries that handle http, with app window support decided by family", async () => {
   const tree = await fixture({

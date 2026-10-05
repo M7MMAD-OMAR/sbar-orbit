@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { access, constants, lstat, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { darwinBrowserInstalls, windowsBrowserInstalls } from "./runtime-paths";
+import { darwinBrowserInstalls, linuxBrowserExecutables, windowsBrowserInstalls } from "./runtime-paths";
 
 /**
  * What this machine can actually do, probed rather than assumed.
@@ -90,12 +90,13 @@ const exists = async (path: string, executable = false) => {
  * Candidate browser installs. The order is not a preference: every install is reported, because the
  * only correct choice for a given profile is the install that owns it.
  */
-function browserCandidates(home: string): Omit<BrowserInstall, "executable">[] {
+function browserCandidates(home: string, env: NodeJS.ProcessEnv): Omit<BrowserInstall, "executable">[] {
+  const config = env.XDG_CONFIG_HOME || join(home, ".config");
   const chrome = { id: "google-chrome", keyringItem: "Chrome Safe Storage", keyringApplication: "chrome" };
   const chromium = { id: "chromium", keyringItem: "Chromium Safe Storage", keyringApplication: "chromium" };
   return [
-    { ...chrome, packaging: "system", profileDirectory: join(home, ".config", "google-chrome") },
-    { ...chromium, packaging: "system", profileDirectory: join(home, ".config", "chromium") },
+    { ...chrome, packaging: "system", profileDirectory: join(config, "google-chrome") },
+    { ...chromium, packaging: "system", profileDirectory: join(config, "chromium") },
     // A Flatpak browser keeps its profile inside its own application directory. It asked the Secret
     // portal rather than the session bus, but the portal proxies to the same login keyring item, so
     // a directly launchable browser of the same branding still decrypts it.
@@ -105,24 +106,19 @@ function browserCandidates(home: string): Omit<BrowserInstall, "executable">[] {
   ];
 }
 
-const executablesFor: Record<string, string[]> = {
-  "google-chrome": ["/opt/google/chrome/chrome", "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable"],
-  chromium: ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/lib64/chromium-browser/chromium-browser"],
-};
-
 /** Installs whose executable is present. A profile directory that does not exist yet is still reported. */
-export async function detectBrowsers(home = homedir()): Promise<BrowserInstall[]> {
+export async function detectBrowsers(home = homedir(), env: NodeJS.ProcessEnv = process.env, present = exists): Promise<BrowserInstall[]> {
   const found: BrowserInstall[] = [];
-  for (const candidate of browserCandidates(home)) {
+  for (const candidate of browserCandidates(home, env)) {
     if (candidate.packaging === "flatpak" || candidate.packaging === "snap") {
       // A sandboxed browser is launched through its own runner, not through a path Orbit can exec.
       const runner = candidate.packaging === "flatpak" ? "/usr/bin/flatpak" : "/usr/bin/snap";
-      if (!await exists(runner, true) || !await exists(candidate.profileDirectory)) continue;
+      if (!await present(runner, true) || !await present(candidate.profileDirectory)) continue;
       found.push({ ...candidate, executable: runner });
       continue;
     }
-    for (const executable of executablesFor[candidate.id] ?? []) {
-      if (!await exists(executable, true)) continue;
+    for (const executable of linuxBrowserExecutables[candidate.id] ?? []) {
+      if (!await present(executable, true)) continue;
       found.push({ ...candidate, executable });
       break;
     }

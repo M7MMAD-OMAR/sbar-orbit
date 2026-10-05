@@ -77,13 +77,22 @@ Turn Orbit off for one conversation with `sbar-orbit usage off`, on again only w
 
 | System | State | What that means |
 |---|---|---|
-| Fedora 44, wlroots | **Measured** | Everything: private browser, private display, real-profile sessions, kernel-enforced budget. 468 pass / 0 fail across 495 tests |
-| Other Linux | **Reasoned** | The browser backend is expected to work; no host of that class has run the suite here. A report from yours is welcome |
+| Fedora 44, wlroots | **Measured / Limited by capability** | Private browser and kernel-enforced budget are measured. Private applications and existing application handoff have explicit limits; see the support evidence |
+| Other Linux | **Reasoned / Limited by capability** | Some distribution primitives have container measurements. Full operation on an arbitrary physical host is not measured |
 | Windows 11 | **Limited** | Browser sessions and MCP work. No private display, no keyring sessions. Needs Bun 1.4.2+ |
 | macOS | **Limited** | Browser sessions and install work. The resource budget is advisory, not a kernel ceiling. Real-profile sessions are refused by design |
 
 `sbar-orbit doctor --report` prints which row applies to your machine. It needs no broker and is
 safe to paste into an issue. [Support tiers](docs/support-tiers.md) has the evidence behind each row.
+
+Orbit resolves the current user's locations and installed applications; it does not require the
+developer's username or checkout path. This does not imply every device or application is supported.
+Owned browser sessions need a supported Chrome or Chromium-family installation. Private desktop
+applications need the Linux native runtime and host prerequisites. Existing application handoff
+additionally needs the exact prepared Hyprland compositor and plugin, and currently covers a selected
+Wayland client rather than arbitrary applications on every desktop. See
+[existing application handoff](docs/existing-application-handoff.md) and
+[portability checks](docs/portability.md) before deploying to a new machine.
 
 **The honest half of those two rows.** On Windows the suite runs on an 11 guest at 270 pass and 0
 fail with 113 skipped, and 113 skips is the honest half of that figure: the private display, the
