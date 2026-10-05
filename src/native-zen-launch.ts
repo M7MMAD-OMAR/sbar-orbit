@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 import { openPublicWebLease, type PublicWebLease, type PublicWebLeaseRequest } from "./egress";
 import { snapshotZenProfile, type ZenProfileSnapshot } from "./native-zen";
@@ -68,9 +68,17 @@ export async function discoverZenInstallation(location: ZenLocation = {}): Promi
     throw new OrbitError("UNSUPPORTED", "Zen active profile must be a real directory inside its installation");
   const architecture = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : "";
   if (!architecture) throw new OrbitError("UNSUPPORTED", "Zen installation architecture is unsupported");
+  const absoluteEnvironment = (name: string): string | undefined => {
+    const value = process.env[name];
+    return value && isAbsolute(value) ? value : undefined;
+  };
+  const dataHome = absoluteEnvironment("XDG_DATA_HOME") ?? join(home, ".local/share");
+  const userRoot = absoluteEnvironment("FLATPAK_USER_DIR") ?? join(dataHome, "flatpak");
+  const systemRoot = absoluteEnvironment("FLATPAK_SYSTEM_DIR") ?? "/var/lib/flatpak";
+  const deploymentPath = `app/app.zen_browser.zen/${architecture}/stable/active/files`;
   const candidates = location.deploymentFiles ? [location.deploymentFiles] : [
-    `/var/lib/flatpak/app/app.zen_browser.zen/${architecture}/stable/active/files`,
-    join(home, `.local/share/flatpak/app/app.zen_browser.zen/${architecture}/stable/active/files`),
+    join(systemRoot, deploymentPath),
+    join(userRoot, deploymentPath),
   ];
   for (const candidate of candidates) {
     const files = await realpath(candidate).catch(() => "");

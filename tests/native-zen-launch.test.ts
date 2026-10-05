@@ -9,9 +9,9 @@ import { discoverZenInstallation, prepareZenLaunch } from "../src/native-zen-lau
 const nativeTest = linuxOnlySuite("native Flatpak Zen launch uses Linux bubblewrap and Wayland sockets");
 const test = process.platform !== "linux" ? nativeTest : needsCommand("bwrap", "Zen launch preparation needs bubblewrap");
 
-async function fixture() {
+async function fixture(homeName = "home") {
   const root = await mkdtemp("/tmp/orbit-zen-launch-");
-  const home = join(root, "home");
+  const home = join(root, homeName);
   const profileBase = join(home, ".var/app/app.zen_browser.zen/config/zen");
   const profile = join(profileBase, "Profiles", "fixture.default");
   const deploymentFiles = join(root, "deployment", "files");
@@ -28,6 +28,58 @@ async function fixture() {
   const server = createServer();
   await new Promise<void>((resolve, reject) => server.once("error", reject).listen(wayland, resolve));
   return { root, home, profileBase, profile, deploymentFiles, session, libraries, wayland, server };
+}
+
+async function withFlatpakEnvironment(values: Record<string, string | undefined>, run: () => Promise<void>) {
+  const names = ["XDG_DATA_HOME", "FLATPAK_USER_DIR", "FLATPAK_SYSTEM_DIR"];
+  const previous = names.map(name => process.env[name]);
+  try {
+    for (const name of names) {
+      const value = values[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await run();
+  } finally {
+    for (const [index, name] of names.entries()) {
+      const value = previous[index];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+for (const layout of ["xdg", "default", "empty-xdg", "relative-xdg", "user-override", "system-override"] as const) {
+  nativeTest(`Zen stable discovery uses a disposable home with spaces and ${layout} Flatpak data`, async () => {
+    const f = await fixture("external user home");
+    try {
+      const dataHome = join(f.root, "external data directory");
+      const userRoot = layout === "user-override" ? join(f.root, "user installation") :
+        join(layout === "xdg" ? dataHome : join(f.home, ".local/share"), "flatpak");
+      const systemRoot = join(f.root, "system installation");
+      const architecture = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const stable = join(layout === "system-override" ? systemRoot : userRoot,
+        "app/app.zen_browser.zen", architecture, "stable");
+      const files = join(stable, "fixture-deployment/files");
+      await mkdir(join(files, "zen"), { recursive: true });
+      await writeFile(join(files, "zen/zen"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      await symlink("fixture-deployment", join(stable, "active"));
+      await withFlatpakEnvironment({
+        FLATPAK_SYSTEM_DIR: systemRoot,
+        FLATPAK_USER_DIR: layout === "user-override" ? userRoot : undefined,
+        XDG_DATA_HOME: layout === "xdg" || layout === "user-override" ? dataHome :
+          layout === "empty-xdg" ? "" : layout === "relative-xdg" ? "relative-data" : undefined,
+      }, async () => {
+        expect(await discoverZenInstallation({ home: f.home })).toEqual({
+          deploymentFiles: files, profile: f.profile,
+          appRoot: join(f.home, ".var/app/app.zen_browser.zen"),
+        });
+      });
+    } finally {
+      await new Promise<void>(resolve => f.server.close(() => resolve()));
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
 }
 
 schemaTest("Zen launch-app accepts no caller paths or executable arguments", () => {
@@ -211,7 +263,7 @@ test("Zen launch preflight failure closes the public web lease and removes the c
 });
 
 test("Zen launcher discovers its own profile and prepares an offline mount root", async () => {
-  const f = await fixture();
+  const f = await fixture("external user home");
   let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
   try {
     const install = await discoverZenInstallation({ home: f.home, deploymentFiles: f.deploymentFiles });
