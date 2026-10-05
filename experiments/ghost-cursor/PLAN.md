@@ -46,6 +46,19 @@ Development uses a private lab and does not send input to the owner's seat.
 
 ## Remaining acceptance work
 
+Current LibreOffice26.2 acceptance is a measured failure, not historical support
+promotion. The shipped NativeSession path registers oosplash, while the actual
+Wayland Writer window belongs to soffice.bin in the same retained scope. Target
+admission refuses that unregistered child. Explicit child registration in a
+private diagnostic passes ownership admission, but delivered keyboard/pointer
+protocol events still do not change the tested Bold state. Before acceptance,
+implement and test child admission against the exact retained scope before
+client selection/input access, preserving PID identity, directory identity,
+root/scope lifetime and owner-client refusal. Diagnose Writer's application
+response independently, including the recorded same-client Welcome dialog;
+post-map manual enrollment is not a production fix.
+See the current failure evidence in the root COMPLIANCE.md.
+
 The native GTK target viewer now visibly renders acknowledged cursor positions
 from session frames, with logical-to-image scaling and source EOF cleanup. Six
 pixel/validation checks and the actual private GTK probe passed, see
