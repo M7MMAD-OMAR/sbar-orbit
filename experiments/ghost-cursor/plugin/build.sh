@@ -12,7 +12,8 @@ sha256sum "$SNAPSHOT" > "$OUT.source.sha256"
 SOURCE_SHA256=$(sha256sum "$SNAPSHOT")
 SOURCE_SHA256=${SOURCE_SHA256%% *}
 [[ "$SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-g++ -std=c++23 -shared -fPIC -O0 \
+# GNU-unique template statics keep a DSO mapped after dlclose.
+g++ -std=c++23 -shared -fPIC -fno-gnu-unique -O0 \
   "-DORBIT_PLUGIN_SOURCE_SHA256=\"$SOURCE_SHA256\"" \
   -I"$INCLUDE" -I"$INCLUDE/hyprland" -I"$INCLUDE/hyprland/src" -I"$INCLUDE/hyprland/protocols" \
   $(pkg-config --cflags pixman-1 libdrm cairo libinput xkbcommon wayland-server) \

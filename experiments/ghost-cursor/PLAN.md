@@ -68,7 +68,34 @@ Actual callback/resource-lifetime regressions and the current private GTK3
 clipboard pair pass. Automatic child classification and pre-map protection
 remain unimplemented; this prerequisite does not close child acceptance.
 Post-map manual enrollment is not a production fix.
+The next client classifier must derive its pidfd from the Wayland socket with
+SO_PEERPIDFD, without a numeric pidfd_open fallback. A bounded private UNIX
+socket probe on kernel7.2.8 retained a live peer identity, then reaped that peer
+while retaining a transferred socket. Both the retained descriptor and a new
+SO_PEERPIDFD request reported the original dead peer, despite the socket still
+transferring data. Evidence: `.private/native-loader-readiness/peer-pidfd-proof.json`,
+probe source SHA2568217a413c94fe3b58b0669fa9027508308b1bc718a2431af3d1a3545e42149e1.
+This proves the local kernel mechanism, not integrated child admission or PID
+reuse acceptance. Reject unsupported peer identity acquisition before admission.
+A private fixed-ABI candidate now compiles the optional socket-bound identity
+constructor and compares its scope directory with the original retained scope
+descriptor. Candidate source SHA256c35b046e507389f11434816e64917eec742b65ec82adf1a856c3a11fe2c878c4.
+It has not been loaded. Subsequent private edits wire client classification and
+four fixed-ABI rule/map hooks, but that stage has not been compiled and loading
+is explicitly disabled. Review identified admission error containment and hook
+rollback/override failure paths that must be resolved before enabling it.
+The fixed-ABI map path also releases mouse buttons before reading static rules
+when layer-shell focus is retained. Guard that state before the original map
+entry, then test a held owner button in the private lab. Static-rule hooks alone
+do not prove zero owner input disturbance.
 See the current failure evidence in the root COMPLIANCE.md.
+
+Prepared owner replacement also exposed GNU_UNIQUE DSO retention after unload.
+The corrected build uses -fno-gnu-unique. The guarded native_reload_probe.py
+reproduces the old retained mapping and verifies two sequential exact prepared
+load/unload cycles with no remaining mappings for the new build. A fresh owner
+Hyprland session is still required to clear already pinned old artifacts before
+recovery; keep the strict mapping guard and current control settings intact.
 
 The native GTK target viewer now visibly renders acknowledged cursor positions
 from session frames, with logical-to-image scaling and source EOF cleanup. Six
