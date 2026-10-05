@@ -5,7 +5,7 @@ import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./pre
 import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
 import { activateLocal, commandName } from "./local-install";
 import { installService, serviceSocketPath, connectorConfigDirectory } from "./service";
-import { enableAutostart, autostartStatus } from "./autostart";
+import { autostartPaths, enableAutostart, autostartStatus } from "./autostart";
 import { connectorEntry } from "./connector-entry";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
@@ -183,7 +183,9 @@ export function defaultPrefix(env = process.env, platform = process.platform) {
 export async function runInstall(options: InstallOptions = {}) {
   let source = resolve(options.source ?? project);
   const prefix = resolve(options.prefix ?? defaultPrefix());
-  const unitDirectory = options.unitDirectory ?? process.env.ORBIT_UNIT_DIR ?? join(homedir(), ".config/systemd/user");
+  const paths = autostartPaths();
+  const unitDirectory = options.unitDirectory ?? paths.units;
+  paths.units = unitDirectory;
   const wantsService = options.service !== false;
   const dryRun = options.dryRun === true;
   const install = options.install ?? runBunInstall;
@@ -331,8 +333,8 @@ export async function runInstall(options: InstallOptions = {}) {
       };
     }
     const units = await installService(launcher, unitDirectory);
-    const autostart = await enableAutostart(launcher);
-    const status = await autostartStatus();
+    const autostart = await enableAutostart(launcher, paths);
+    const status = await autostartStatus(paths);
     return {
       state: status.brokerActive ? "done" : "failed",
       detail: status.brokerActive ? (status.startsWithTheDesktop ? "running, and starts with your desktop" : "running") : "the broker service did not come up",

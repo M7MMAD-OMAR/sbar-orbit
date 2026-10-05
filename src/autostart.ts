@@ -30,7 +30,7 @@ import { OrbitError } from "./errors";
 
 export type AutostartPaths = { units: string; xdgAutostart: string; applications: string; icons: string };
 
-export function autostartPaths(home = homedir(), config = process.env.XDG_CONFIG_HOME, data = process.env.XDG_DATA_HOME): AutostartPaths {
+export function autostartPaths(home = process.env.HOME || homedir(), config = process.env.XDG_CONFIG_HOME, data = process.env.XDG_DATA_HOME): AutostartPaths {
   const configRoot = config || join(home, ".config");
   const dataRoot = data || join(home, ".local/share");
   return {

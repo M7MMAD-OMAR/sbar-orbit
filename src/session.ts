@@ -18,6 +18,7 @@ import { consultAdvisor } from "./advisor";
 import { canRestoreTo, clearRestorePoints, createSubvolume, removeRestorePoint, restoreProfile, takeRestorePoint, type RestorePoint } from "./restore";
 import { defaultViewport, parseViewport } from "./viewport";
 import { Diagnostics } from "./diagnostics";
+import { autostartPaths } from "./autostart";
 
 /**
  * The installed units against the ones this version writes, for `doctor`.
@@ -30,7 +31,7 @@ import { Diagnostics } from "./diagnostics";
 async function installedUnitDrift() {
   try {
     const { serviceUnitDrift } = await import("./service");
-    const directory = process.env.ORBIT_UNIT_DIR ?? join(homedir(), ".config/systemd/user");
+    const directory = autostartPaths().units;
     const drift = await serviceUnitDrift(directory);
     // Every unit absent means this is not a managed install, which is not drift and not worth a
     // remedy line telling a person to reinstall something they never installed.
