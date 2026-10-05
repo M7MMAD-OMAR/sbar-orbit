@@ -126,3 +126,21 @@ comparative performance or full current toolkit/clipboard acceptance. The
 current X11 selection proxy is still experimental and not integrated into the
 production scoped native route. The required local project suite remains
 failed/incomplete on the recorded quota errors.
+
+## Current scoped raw acceptance, 5 October 2026
+
+The current NativeSession raw DrawingArea task now measures actual pixel clicks,
+English/Arabic text, BackSpace and wheel input without an editable accessibility
+path. Two source-bound owned tasks pass under the unchanged person harness, with
+exact independent text and overlapping native request intervals. Fully opaque
+changed text-region pixels exclude cursor movement from the repaint assertion.
+Stale/frozen/transparent image controls and setup/storage/recovery regressions
+are refused. Exact reports and independently verified cleanup are in COMPLIANCE.md
+and NATIVE-RAW.md. This updates the raw-input slice of private acceptance only.
+
+The committed color-preference integration at3a06637 passes653 full-suite tests
+with48 configured skips and0 failures, replacing the historical quota-blocked
+status above. The raw addition passes654 current full-suite tests with48 configured skips
+and0 failures; publication checks are recorded in COMPLIANCE.md.
+Owner activation, full matrix/clipboard/XWayland, reference cursor comparison,
+full theme assets and total performance acceptance remain incomplete.
