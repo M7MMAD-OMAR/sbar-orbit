@@ -53,7 +53,8 @@ def prepare(directory, environment, plugin_manifest=None):
         env_path = directory / "broker-native.env"
         write("broker-native.env", "ORBIT_NATIVE_PLAN=" + quoted(str(plan_path)) + "\n"
               + "ORBIT_NATIVE_CONTROL=" + quoted(str(control_path)) + "\n")
-        write("service-drop-in.conf", "[Service]\nEnvironmentFile=" + quoted(str(env_path).replace("%", "%%")) + "\n")
+        # EnvironmentFile takes a literal path, not a shell-quoted argument.
+        write("service-drop-in.conf", "[Service]\nEnvironmentFile=" + str(env_path).replace("%", "%%") + "\n")
         verify_host(plan)
         current = directory.lstat()
         if (current.st_dev, current.st_ino, current.st_uid, current.st_mode) != (
