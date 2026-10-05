@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Native target cursor pixel placement and bounded frame validation."""
 import base64
+from contextlib import nullcontext
 import io
 import json
 import os
@@ -59,7 +60,7 @@ class NativeViewTests(unittest.TestCase):
         session.plan = {"runtime": "/tmp/native-view-fixture", "display": "wayland-fixture"}
         process = process_identity(os.getpid())
         app = SimpleNamespace(unit="orbit-native-" + "c" * 32 + ".scope", profile=Path("."),
-                              lease=SimpleNamespace(members=lambda: {process}, _contains=lambda value: value == process,
+                              lease=SimpleNamespace(membership=lambda: nullcontext({process}), _contains=lambda value: value == process,
                                                     verify=lambda: None))
         session._app = lambda _: app
         client = {"pid": os.getpid(), "workspace": {"name": "special:ghost"},
