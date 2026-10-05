@@ -107,7 +107,7 @@ try {
     console.log(JSON.stringify(await prepareNative(verb, fourth)));
   } else if (command === "native-plugin") {
     if (process.argv.slice(2).length !== 3)
-      throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load ABSOLUTE_PREPARATION_DIRECTORY");
+      throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");
     const { nativePlugin } = await import("./native-prepare");
     console.log(JSON.stringify(await nativePlugin(verb, arg)));
   } else if (command === "native-settings") {

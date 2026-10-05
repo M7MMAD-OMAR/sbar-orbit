@@ -10,14 +10,15 @@ import { join } from "node:path";
   { output: "null", exit: 1 },
   { output: "{}", exit: 1 },
   { output: '{"ok":false,"error":""}', exit: 1 },
-])("owner load keeps uncertainty when its child returns no verified outcome: %j", async ({ output: response, exit }) => {
+].flatMap(fixture => ["load", "unload", "resume"].map(operation => ({ ...fixture, operation }))))(
+  "owner mutation keeps uncertainty when its child returns no verified outcome: %j", async ({ output: response, exit, operation }) => {
   const source = process.env.ORBIT_OWNER_COMMAND_TEST_SOURCE ?? join(import.meta.dir, "../src/native-prepare.ts");
   const script = `
     import { nativePlugin } from ${JSON.stringify(source)};
     Bun.spawn = () => ({ stdout: new Response(${JSON.stringify(exit === 0 ? response : "")}).body,
       stderr: new Response(${JSON.stringify(exit !== 0 ? response : "")}).body,
       exited: Promise.resolve(${exit}), kill() {} });
-    try { await nativePlugin("load", "/unused-private-preparation"); process.exitCode = 2; }
+    try { await nativePlugin(${JSON.stringify(operation)}, "/unused-private-preparation"); process.exitCode = 2; }
     catch (error) { console.log(JSON.stringify({ code: error.code, message: error.message })); }
   `;
   const child = Bun.spawn([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" });
@@ -26,7 +27,7 @@ import { join } from "node:path";
   ]);
   expect({ code, error }).toEqual({ code: 0, error: "" });
   expect(JSON.parse(output)).toMatchObject({ code: "BACKEND_FAILED" });
-  expect(JSON.parse(output).message).toContain("load may have been sent");
+  expect(JSON.parse(output).message).toContain(operation + " may have been sent");
 });
 
 (process.platform === "linux" ? test : test.skip)("owner plugin lifecycle refuses changed artifacts, stale hosts and unavailable journals", async () => {
@@ -36,11 +37,11 @@ import { join } from "node:path";
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output, error }).toMatchObject({ code: 0 });
-  expect(error).toContain("Ran 13 tests");
+  expect(error).toContain("Ran 23 tests");
 });
 
 test.each([
-  [], ["unload", "/unused"], ["load"], ["status", "relative"],
+  [], ["pause", "/unused"], ["load"], ["status", "relative"],
   ["load", "/unused", "full"], ["load", "/unused", "--path", "/other"],
 ].map(args => ({ args })))("owner plugin command rejects invalid arguments before host access", async ({ args }) => {
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "../src/cli.ts"), "native-plugin", ...args],

@@ -365,23 +365,36 @@ The owner can inspect and load a successful pinned preparation:
 ```sh
 sbar-orbit native-plugin status ABSOLUTE_PREPARATION_DIRECTORY
 sbar-orbit native-plugin load ABSOLUTE_PREPARATION_DIRECTORY
+sbar-orbit native-plugin unload ABSOLUTE_PREPARATION_DIRECTORY
+sbar-orbit native-plugin resume ABSOLUTE_PREPARATION_DIRECTORY
 ```
 
 These Linux owner commands have no agent RPC counterpart. The launcher applies
 the existing shared budget. Status creates no files and sends no input. Load
 rechecks the host and artifact, takes a lock shared by all preparations for the
 same compositor, and durably records intent and outcome in the preparation's
-private `plugin-owner.jsonl`. It loads only that preparation's `plugin.so`.
+private `plugin-owner.jsonl` and a compositor-wide `orbit-plugin-owner.jsonl`
+in its private Hyprland runtime directory. Global intent precedes private intent;
+global completion follows private completion. An interrupted operation blocks
+mutations from every preparation for that compositor. It loads only that
+preparation's `plugin.so`.
 A verified repeated load sends no further load request. The loaded build stamp,
 ABI, artifact pin and exact kernel mapping device/inode must all agree.
 The prototype must be compiled through its snapshot `build.sh` to embed the stamp.
 This stamp remains self-reported provenance, not compiler attestation.
 
-Failed acknowledgement or outcome retention after sending load explicitly
+Failed acknowledgement or outcome retention after any mutation explicitly
 reports uncertain compositor state and requires owner review. Inspect status
 and the retained journal before recovery. Status cannot resolve an unfinished
-journal or prove descendant cleanup. No automatic unload, service restart or
-mode change is performed. Coordinated unload and final owner acceptance remain
+journal. Loaded status includes the validated admission/readiness snapshot.
+Unload takes the same lock and durable journal, pauses enrollment, then requires
+empty retained scopes, no live roots and no legacy registration before sending
+the exact unload path. It confirms the plugin is absent afterward. An already
+absent plugin produces an audited no-op. Refusal after pausing leaves admission
+paused; an initial verification failure sends no pause. The
+owner can inspect status and explicitly resume admission through the same
+lock and journal. Resume never loads an absent plugin. No automatic rollback,
+service restart or mode change is performed. Final owner acceptance remains
 outstanding. The strict mapping check currently refuses the observed btrfs
 mapping-device discrepancy; private runtime storage passed the guarded lab
 proof. This command does not establish complete owner appearance or performance.
@@ -394,8 +407,8 @@ subtrees. Retained scopes survive root-registration pruning, so live orphan
 descendants continue to prevent readiness. Any legacy unscoped registration
 prevents verified unload for that loaded generation. The prototype retains at
 most 128 distinct scope identities until unload. Missing population evidence
-is a refusal. These commands are not agent RPC operations; journaled owner
-unload is still pending integration into `native-plugin`. A ready result is
+is a refusal. These commands are not agent RPC operations; owner lifecycle
+commands use them under the shared lock and journal. A ready result is
 cooperative registered-scope evidence, not a guarantee against hostile process
 migration or proof of complete owner acceptance.
 

@@ -64,7 +64,7 @@ Sbar Orbit, a private browser and desktop for your AI agent
   sbar-orbit settings            Open the settings window, searchable
   sbar-orbit native-settings     Open protected/full native controls and the action log
   sbar-orbit native-prepare DIR  Prepare native owner configuration without activation
-  sbar-orbit native-plugin status|load DIR
+  sbar-orbit native-plugin status|load|unload|resume DIR
                                 Inspect or load the fixed prepared native plugin
   sbar-orbit config list         Every setting, its value and its default
   sbar-orbit config search WORD  Find a setting by name, meaning, English or Arabic

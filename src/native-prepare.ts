@@ -16,8 +16,8 @@ export async function prepareNative(directory: string | undefined, pluginManifes
 
 /** Fixed owner entry, without an agent RPC counterpart. */
 export async function nativePlugin(operation: string | undefined, directory: string | undefined) {
-  if (!["status", "load"].includes(operation ?? "") || !directory || !isAbsolute(directory))
-    throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load ABSOLUTE_PREPARATION_DIRECTORY");
+  if (!["status", "load", "unload", "resume"].includes(operation ?? "") || !directory || !isAbsolute(directory))
+    throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");
   if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native plugin loading requires Linux and Hyprland");
   await requireResourceBudget();
   let outcome: Awaited<ReturnType<typeof runOwnerCommand>>;
@@ -31,9 +31,9 @@ export async function nativePlugin(operation: string | undefined, directory: str
       throw new OrbitError("BACKEND_FAILED", "Owner plugin command returned an incomplete error");
   }
   catch (error) {
-    if (operation !== "load") throw error;
+    if (operation === "status") throw error;
     const detail = error instanceof Error ? error.message : "No verified owner command result";
-    throw new OrbitError("BACKEND_FAILED", "Plugin load outcome is unknown; load may have been sent. Inspect status and plugin-owner.jsonl before recovery. " + detail);
+    throw new OrbitError("BACKEND_FAILED", `Plugin ${operation} outcome is unknown; ${operation} may have been sent and admission may have changed. Inspect status and plugin-owner.jsonl before recovery. ` + detail);
   }
   const { code, reply } = outcome;
   if (code !== 0) {
@@ -53,8 +53,14 @@ function validPluginReply(reply: unknown, operation: string, directory: string):
   if (typeof result.loaded !== "boolean" || result.owner_service_activation !== "not performed"
       || !Array.isArray(result.compositor) || result.compositor.length !== 2
       || !result.compositor.every(value => Number.isSafeInteger(value) && value > 0)) return false;
-  if (operation === "load" && (result.loaded !== true || typeof result.load_sent !== "boolean"
-      || result.journal !== join(directory, "plugin-owner.jsonl"))) return false;
+  if (operation !== "status" && (typeof result[operation + "_sent"] !== "boolean"
+      || typeof result.admission_pause_sent !== "boolean" || result.journal !== join(directory, "plugin-owner.jsonl"))) return false;
+  if (operation === "load" && (result.loaded !== true || result.admission_pause_sent !== false)) return false;
+  if (operation === "unload" && (result.loaded !== false || (result.unload_sent === true
+      && (!validAdmission(result.admission_before_unload) || !result.admission_before_unload.ready)))) return false;
+  if (operation === "resume" && (result.loaded !== true || result.admission_pause_sent !== false
+      || !validAdmission(result.admission) || result.admission.admission_paused !== false)) return false;
+  if (operation === "status" && result.loaded && !validAdmission(result.admission)) return false;
   if (!result.loaded) return true;
   const build = result.build;
   return object(build) && build.schema === 1 && digest(build.source_sha256)
@@ -64,6 +70,17 @@ function validPluginReply(reply: unknown, operation: string, directory: string):
     && digest(result.binary_sha256) && result.path === join(directory, "plugin.so")
     && result.binding === "prepared identity/digest plus exact kernel maps device/inode"
     && result.unload_readiness === "not measured";
+}
+
+function validAdmission(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const info = value as Record<string, unknown>;
+  const fields = ["schema", "admission_paused", "live_roots", "tracked_scopes", "scopes_empty", "legacy_enrollment", "ready"];
+  if (Object.keys(info).length !== fields.length || !fields.every(key => key in info) || info.schema !== 1
+      || !["admission_paused", "scopes_empty", "legacy_enrollment", "ready"].every(key => typeof info[key] === "boolean")
+      || !["live_roots", "tracked_scopes"].every(key => typeof info[key] === "number"
+        && Number.isInteger(info[key]) && info[key] >= 0 && info[key] <= 128)) return false;
+  return info.ready === (info.admission_paused && info.live_roots === 0 && info.scopes_empty && !info.legacy_enrollment);
 }
 
 async function runOwnerCommand(entry: string, words: string[]) {
