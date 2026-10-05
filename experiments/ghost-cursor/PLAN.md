@@ -62,6 +62,11 @@ root/scope lifetime and owner-client refusal. Child placement must remain safe
 after the launch root exits and through static-rule rechecks and dynamic-rule
 updates. Keep client selection isolation sticky until its Wayland connection
 ends, including selection devices created after membership revocation.
+The current guard now retains a classified private connection when either
+selection protection is installed or its first selection request is observed.
+Actual callback/resource-lifetime regressions and the current private GTK3
+clipboard pair pass. Automatic child classification and pre-map protection
+remain unimplemented; this prerequisite does not close child acceptance.
 Post-map manual enrollment is not a production fix.
 See the current failure evidence in the root COMPLIANCE.md.
 

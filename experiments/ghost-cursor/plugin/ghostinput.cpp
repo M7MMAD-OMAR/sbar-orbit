@@ -258,6 +258,7 @@ struct SClipboardGuard {
     wl_listener destroy{};
 };
 static std::map<wl_resource*, SClipboardGuard> clipboardGuards;
+static std::map<wl_client*, wl_listener> selectionClients;
 static wl_protocol_logger* selectionLogger = nullptr;
 static std::string selectionDiagnostic;
 static std::map<pid_t, int> registeredProcesses;
@@ -350,6 +351,26 @@ static bool agentClient(wl_client* client) {
     return found;
 }
 
+static bool privateSelectionClient(wl_client* client) {
+    if (selectionClients.contains(client))
+        return true;
+    if (!agentClient(client))
+        return false;
+    auto [it, inserted] = selectionClients.try_emplace(client);
+    it->second.notify = [](wl_listener* listener, void* data) {
+        wl_list_remove(&listener->link);
+        selectionClients.erase(static_cast<wl_client*>(data));
+    };
+    wl_client_add_destroy_listener(client, &it->second);
+    return true;
+}
+
+static void clearSelectionClients() {
+    for (auto& [client, listener] : selectionClients)
+        wl_list_remove(&listener.link);
+    selectionClients.clear();
+}
+
 template <typename Device, typename Guards, typename Destroy, typename Configure>
 static void installSelectionGuard(Device* raw, Guards& guards, Destroy destroy, Configure configure) {
     auto resource = raw->resource();
@@ -375,35 +396,33 @@ static void restoreSelectionGuards(Guards& guards) {
 }
 
 static void guardPrimarySelection(wl_client* client) {
+    if (!privateSelectionClient(client))
+        return;
     for (const auto& device : PROTO::primarySelection->m_devices) {
         if (device->client() != client)
             continue;
         installSelectionGuard(device->m_resource.get(), primaryGuards, [](wl_listener* listener, void* data) {
             wl_list_remove(&listener->link);
             primaryGuards.erase(static_cast<wl_resource*>(data));
-        }, [](auto* raw, auto original) {
-          raw->setSetSelection([original](CZwpPrimarySelectionDeviceV1* current, wl_resource* source, uint32_t serial) {
+        }, [](auto* raw, auto) {
+          raw->setSetSelection([](CZwpPrimarySelectionDeviceV1*, wl_resource*, uint32_t) {
             // Native text selection stays local. It must not publish or clear the person's primary selection.
-            if (!agentClient(current->client()))
-                original(current, source, serial);
           });
         });
     }
 }
 
 static void guardClipboard(wl_client* client) {
+    if (!privateSelectionClient(client))
+        return;
     for (const auto& device : PROTO::data->m_devices) {
         if (device->client() != client)
             continue;
         installSelectionGuard(device->m_resource.get(), clipboardGuards, [](wl_listener* listener, void* data) {
             wl_list_remove(&listener->link);
             clipboardGuards.erase(static_cast<wl_resource*>(data));
-        }, [](auto* raw, auto original) {
-          raw->setSetSelection([original](CWlDataDevice* current, wl_resource* sourceR, uint32_t serial) {
-            if (!agentClient(current->client())) {
-                original(current, sourceR, serial);
-                return;
-            }
+        }, [](auto* raw, auto) {
+          raw->setSetSelection([](CWlDataDevice* current, wl_resource* sourceR, uint32_t) {
             auto source = sourceR ? CWLDataSourceResource::fromResource(sourceR) : SP<CWLDataSourceResource>{};
             if (source)
                 source->markUsed();
@@ -421,7 +440,7 @@ static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_
     if (direction != WL_PROTOCOL_LOGGER_REQUEST || std::strcmp(message->message->name, "set_selection") != 0)
         return;
     auto client = wl_resource_get_client(message->resource);
-    if (!agentClient(client)) {
+    if (!privateSelectionClient(client)) {
         const auto interface = wl_resource_get_class(message->resource);
         if (std::strcmp(interface, "zwp_primary_selection_device_v1") == 0) {
             std::string state;
@@ -1088,6 +1107,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     agentKeyboards.clear();
     restoreSelectionGuards(primaryGuards);
     restoreSelectionGuards(clipboardGuards);
+    clearSelectionClients();
     for (const auto& [address, weak] : awakeWindows) {
         if (auto window = weak.lock(); window && !g_pHyprRenderer->shouldRenderWindow(window))
             window->setSuspended(true);
