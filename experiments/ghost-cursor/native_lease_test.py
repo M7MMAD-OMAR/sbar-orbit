@@ -4,11 +4,14 @@ from pathlib import Path
 import sys
 import os
 import subprocess
+import json
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.lease import LeaseError, NativeLease, unit_properties
+from src.native.session import NativeSession
 from native_lease_probe import cleanup_units
 
 
@@ -79,6 +82,49 @@ class LeaseTests(unittest.TestCase):
             for unit in ("sbarorbit.slice", "other.service", "../other.service", None):
                 with self.assertRaises(LeaseError):
                     unit_properties(unit)
+
+    def owned_window_query(self, target_check=None):
+        app_id = "d" * 32
+        session = object.__new__(NativeSession)
+        session.apps = {app_id: SimpleNamespace(lease=self.lease, unit=self.unit, closed=False)}
+        session.windows = {}
+        client = {"pid": 123, "workspace": {"name": "special:ghost"},
+                  "address": "0x123", "stableId": "a", "size": [800, 600]}
+        def exchange(command):
+            if command == "j/clients":
+                return json.dumps([client])
+            if target_check:
+                target_check()
+            return "ok"
+        session.transport = SimpleNamespace(_exchange=exchange)
+        with patch("src.native.lease.process_identity", return_value=(123, 456)), \
+                patch("src.native.session.process_identity", return_value=(123, 456)), \
+                patch.object(Path, "iterdir", return_value=[]), \
+                patch.object(Path, "read_text", autospec=True,
+                             side_effect=lambda path: "123\n" if path.name == "cgroup.procs" else "0::" + self.group + "\n"):
+            return session._owned_windows(app_id)
+
+    def test_owned_window_query_uses_one_fresh_membership_observation(self):
+        self.mocks[0].reset_mock()
+        windows = self.owned_window_query()
+        self.assertEqual(len(windows), 1)
+        self.assertEqual(self.mocks[0].call_count, 2,
+                         "One window query needs fresh manager reads before and after its whole observation")
+
+    def test_owned_window_query_refuses_restart_during_target_check(self):
+        def restart():
+            self.mocks[0].return_value = {**self.properties, "InvocationID": "c" * 32}
+        with self.assertRaisesRegex(LeaseError, "invocation changed"):
+            self.owned_window_query(restart)
+
+    def test_owned_window_query_preserves_operation_and_revalidation_errors(self):
+        def fail_and_restart():
+            self.mocks[0].return_value = {**self.properties, "InvocationID": "c" * 32}
+            raise RuntimeError("target query failed")
+        with self.assertRaises(BaseExceptionGroup) as caught:
+            self.owned_window_query(fail_and_restart)
+        self.assertEqual([str(error) for error in caught.exception.exceptions],
+                         ["target query failed", "Native unit invocation changed"])
 
 
 if __name__ == "__main__":

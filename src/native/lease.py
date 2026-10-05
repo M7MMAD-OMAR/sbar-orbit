@@ -5,6 +5,7 @@ import re
 import stat
 import subprocess
 import threading
+from contextlib import contextmanager
 
 from .budget import require_budget
 
@@ -184,20 +185,34 @@ class NativeLease:
         return (group == self.group or group.startswith(self.group + "/")) and process_identity(pid) == process
 
     def members(self):
+        with self.membership() as members:
+            return members
+
+    @contextmanager
+    def membership(self):
+        """Fresh membership, verified across the caller's entire observation."""
         self.verify()
-        result = set()
-        directories = [self.directory]
-        while directories:
-            directory = directories.pop()
+        try:
+            result = set()
+            directories = [self.directory]
+            while directories:
+                directory = directories.pop()
+                try:
+                    for entry in directory.iterdir():
+                        if entry.is_dir() and not entry.is_symlink():
+                            directories.append(entry)
+                    for token in (directory / "cgroup.procs").read_text().split():
+                        process = process_identity(int(token))
+                        if process and self._contains(process):
+                            result.add(process)
+                except FileNotFoundError:
+                    continue
+            yield result
+        except BaseException as error:
             try:
-                for entry in directory.iterdir():
-                    if entry.is_dir() and not entry.is_symlink():
-                        directories.append(entry)
-                for token in (directory / "cgroup.procs").read_text().split():
-                    process = process_identity(int(token))
-                    if process and self._contains(process):
-                        result.add(process)
-            except FileNotFoundError:
-                continue
-        self.verify()
-        return result
+                self.verify()
+            except BaseException as verification:
+                raise BaseExceptionGroup("Native membership observation and revalidation failed", [error, verification])
+            raise
+        else:
+            self.verify()

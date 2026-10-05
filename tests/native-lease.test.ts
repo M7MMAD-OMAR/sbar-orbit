@@ -8,6 +8,6 @@ test.skipIf(process.platform !== "linux")("native unit leases reject changed inv
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 8 tests");
+  expect(stderr).toContain("Ran 11 tests");
   expect(stderr).toContain("OK");
 }, 15_000);

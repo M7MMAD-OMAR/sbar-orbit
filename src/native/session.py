@@ -112,44 +112,43 @@ class NativeSession:
 
     def _owned_windows(self, app_id):
         app = self._app(app_id)
-        members = app.lease.members()
-        clients = json.loads(self.transport._exchange("j/clients"))
-        if not isinstance(clients, list):
-            raise SessionError("Compositor returned invalid window data")
-        result = []
-        for client in clients:
-            if not isinstance(client, dict) or type(client.get("pid")) is not int:
-                raise SessionError("Compositor returned invalid window identity")
-            process = process_identity(client["pid"])
-            if process not in members or not app.lease._contains(process):
-                continue
-            if (not isinstance(client.get("workspace"), dict)
-                    or client["workspace"].get("name") != "special:ghost"):
-                raise SessionError("Owned native window left the agent workspace")
-            if (not re.fullmatch(r"0x[0-9a-fA-F]+", str(client.get("address", "")))
-                    or not isinstance(client.get("stableId"), str)
-                    or not re.fullmatch(r"[0-9a-f]{1,16}", client["stableId"])):
-                raise SessionError("Compositor returned invalid target identifiers")
-            size = client.get("size")
-            if (not isinstance(size, list) or len(size) != 2
-                    or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in size)):
-                raise SessionError("Native target has invalid surface size")
-            self._check_target(client["address"] + "@" + client["stableId"] + "@" + app.unit)
-            key = (app_id, client["stableId"], process)
-            window_id = next((value for value, target in self.windows.items() if target["key"] == key), None)
-            if window_id is None:
-                window_id = uuid.uuid4().hex
-                self.windows[window_id] = {"key": key, "address": client["address"], "size": size, "pointer": None}
-            elif self.windows[window_id]["address"] != client["address"]:
-                raise SessionError("Native target address changed for a retained identity")
-            self.windows[window_id]["size"] = size
-            pointer = self.windows[window_id]["pointer"]
-            if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
-                self.windows[window_id]["pointer"] = None
-            result.append({"windowId": window_id, "appId": app_id, "title": str(client.get("title", ""))[:160],
-                           "width": size[0], "height": size[1]})
-        app.lease.verify()
-        return result
+        with app.lease.membership() as members:
+            clients = json.loads(self.transport._exchange("j/clients"))
+            if not isinstance(clients, list):
+                raise SessionError("Compositor returned invalid window data")
+            result = []
+            for client in clients:
+                if not isinstance(client, dict) or type(client.get("pid")) is not int:
+                    raise SessionError("Compositor returned invalid window identity")
+                process = process_identity(client["pid"])
+                if process not in members or not app.lease._contains(process):
+                    continue
+                if (not isinstance(client.get("workspace"), dict)
+                        or client["workspace"].get("name") != "special:ghost"):
+                    raise SessionError("Owned native window left the agent workspace")
+                if (not re.fullmatch(r"0x[0-9a-fA-F]+", str(client.get("address", "")))
+                        or not isinstance(client.get("stableId"), str)
+                        or not re.fullmatch(r"[0-9a-f]{1,16}", client["stableId"])):
+                    raise SessionError("Compositor returned invalid target identifiers")
+                size = client.get("size")
+                if (not isinstance(size, list) or len(size) != 2
+                        or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in size)):
+                    raise SessionError("Native target has invalid surface size")
+                self._check_target(client["address"] + "@" + client["stableId"] + "@" + app.unit)
+                key = (app_id, client["stableId"], process)
+                window_id = next((value for value, target in self.windows.items() if target["key"] == key), None)
+                if window_id is None:
+                    window_id = uuid.uuid4().hex
+                    self.windows[window_id] = {"key": key, "address": client["address"], "size": size, "pointer": None}
+                elif self.windows[window_id]["address"] != client["address"]:
+                    raise SessionError("Native target address changed for a retained identity")
+                self.windows[window_id]["size"] = size
+                pointer = self.windows[window_id]["pointer"]
+                if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
+                    self.windows[window_id]["pointer"] = None
+                result.append({"windowId": window_id, "appId": app_id, "title": str(client.get("title", ""))[:160],
+                               "width": size[0], "height": size[1]})
+            return result
 
     def _check_target(self, address):
         action_response("ghost-target-check", self.transport._exchange("ghost-target-check " + address))
