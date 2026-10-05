@@ -124,6 +124,24 @@ export function createMcpServer(socket: string) {
       profileKey: id.optional(), accountName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
     },
   }, params => invoke("session.create", params));
+  server.registerTool("orbit_handoff_candidates", {
+    description: "List existing window identities on the person's explicitly selected workspace, without capture or input. Handoff covers the selected window's entire Wayland client, which may include other windows. XWayland handoff is unavailable.",
+    inputSchema: { workspace: z.number().int().min(1).max(2147483647) },
+  }, params => invoke("native.candidates", params));
+  server.registerTool("orbit_handoff", {
+    description: "Continue work in an already-open application explicitly handed over by the person. Preserves its current state. Select a workspace with exactly one candidate, or provide address and stableId from orbit_handoff_candidates. Grants the whole Wayland client, not one browser tab. The person must use a different application while this session acts. stop hands control back and never closes the application. Native owner controls and the session policy still apply.",
+    inputSchema: {
+      workspace: z.number().int().min(1).max(2147483647),
+      address: z.string().regex(/^0x[0-9a-f]{1,16}$/).optional(),
+      stableId: z.string().regex(/^[0-9a-f]{1,16}$/).optional(),
+      agentName: z.string().min(1).max(80).optional(), taskName: z.string().min(1).max(80).optional(),
+      policy: z.object({ mode: z.enum(["supervised", "autonomous"]).optional(), origins: z.literal("any").optional(),
+        allow: z.array(z.enum(["read", "navigate", "write", "irreversible"])).max(4).optional(),
+        deny: z.array(z.enum(["read", "navigate", "write", "irreversible"])).max(4).optional() }).optional(),
+    },
+  }, ({ workspace, address, stableId, ...options }) => invoke("session.create", {
+    backend: "native", handoff: { workspace, ...(address === undefined ? {} : { address }), ...(stableId === undefined ? {} : { stableId }) }, ...options,
+  }));
   server.registerTool("orbit_act", {
     description: "For experimental native sessions, launch accepts argv, windows accepts appId, and cursor/move/click/scroll/text/key/state/hide-cursor require generated appId and windowId. close-application accepts appId. The agent cannot choose the compositor or change owner protected/full controls. Coordinates are logical window coordinates. Do one thing in an Orbit session. On a browser session: navigate to a URL, click, fill a form field, upload local files to a file input or the chooser a button opens (irreversible, so the session policy must allow it), read text from a selector, scroll, open a tab with open-tab, switch or close a tab, resize the surface. On a private desktop: launch an application, or use launch-app for a private VS Code Default Profile snapshot with selected extensions and an optional shared file or folder. The VS Code snapshot copies settings, not login state. Codex launch-app with profile active requires a running Desktop owner with private shared authority sockets and attach support. Its private client has a read-only gate for limited account status, project names and conversation titles. Opening conversation bodies, model turns, host commands and owner profile writes are denied. It uses an empty private home, never falls back to a profile snapshot and does not grant host project directories. Zen launch-app copies the locally active Zen profile into the private display. Zen starts offline by default; set network to public-web explicitly to reach public internet addresses through its private proxy. The optional sharedFiles list grants its private Zen up to 16 exact host files at /orbit/shared, with live in-place file writes. It does not grant directories or safe-save through rename. Move the pointer, scroll, type, paste Unicode, press a shortcut, resize the display and manage windows. Actions run in order, and reusing a requestId prevents duplicate execution when a retry is uncertain.",
     inputSchema: { sessionId: id, requestId: id, action: orbitActionSchema },
@@ -131,7 +149,7 @@ export function createMcpServer(socket: string) {
   const descriptions = {
     pause: "Pause one Orbit session so a person can take over in the viewer. Rejects new actions and waits for accepted work to drain before acknowledging.",
     resume: "Resume a paused Orbit session after its pause acknowledgement.",
-    stop: "Close one Orbit session and its owned browser or private desktop, invalidating pending work. Other sessions keep running.",
+    stop: "Stop one Orbit session, invalidating pending work. A handed-off application is returned to the person and remains open. An owned browser or private desktop is closed. Other sessions keep running.",
     journal: "Read back every decision one Orbit session made: the policy it was judged against, what was allowed, refused or referred to an advisor, the origins a page reached for and the lease refused, whether a page has spoken to the session yet, and the restore points it holds. Identifies actions by class, type, destination origin and the size of what they carried; quotes no typed text and no page content.",
   };
   for (const [operation, description] of Object.entries(descriptions)) {

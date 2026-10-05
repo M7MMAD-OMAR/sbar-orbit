@@ -5,7 +5,7 @@ import { AccountLease } from "./profiles";
 import { join } from "node:path";
 import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
-import { NativeBackend } from "./hyprland";
+import { NativeBackend, parseHandoff } from "./hyprland";
 import { nativeOptionsFromEnv, type NativeOptions } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
@@ -147,7 +147,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid, preferenceSnapshot: session.backend.preferenceSnapshot, busServices: session.backend.busServices } : {}) }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...(session.backend instanceof NativeBackend && session.backend.handoff ? { handoff: session.backend.handoff } : {}), ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid, preferenceSnapshot: session.backend.preferenceSnapshot, busServices: session.backend.busServices } : {}) }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.updateLease && this.updateLease.expires > Date.now())
       return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
@@ -166,11 +166,14 @@ export class Sessions {
     if (!["browser", "fedora", "native"].includes(requested)) throw new OrbitError("UNSUPPORTED", "Unknown backend");
     if (requested === "native") {
       if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured the native broker backend");
-      const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey"]);
+      const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff"]);
       if (Object.keys(input).some(key => !allowed.has(key)))
         throw new OrbitError("INVALID_REQUEST", "Native session options cannot select host paths, profiles or a viewport");
     }
     input = { ...input, backend: requested };
+    if (input.handoff !== undefined && requested !== "native")
+      throw new OrbitError("INVALID_REQUEST", "Existing application handoff requires the native backend");
+    const handoff = input.handoff === undefined ? undefined : parseHandoff(input.handoff);
     if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
@@ -258,7 +261,7 @@ export class Sessions {
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
         if (requested === "native") {
           if (!this.native) throw new OrbitError("UNSUPPORTED", "Native backend is not configured");
-          return await NativeBackend.create(join(profile, "native-worker"), this.native);
+          return await NativeBackend.create(join(profile, "native-worker"), this.native, handoff);
         }
         return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins)
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
@@ -610,6 +613,10 @@ export class Sessions {
       // only, since it is systemd units that drift this way.
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
+    if (request.method === "native.candidates") {
+      if (!this.native) throw new OrbitError("UNSUPPORTED", "Native handoff is not configured");
+      return NativeBackend.candidates(this.native, parseHandoff(params));
+    }
     /*
      * Which of the person's own browser profiles this session could start from, and for each one it
      * cannot, the measured reason why.
@@ -709,14 +716,21 @@ export class Sessions {
     if (request.method === "session.pause") {
       if (!session.paused) {
         session.state = "pausing";
-        session.paused = session.tail.then(() => {
-          this.ensureOpen(session); session.state = "paused"; return this.info(session);
-        });
+        session.paused = session.tail.then(async () => {
+          this.ensureOpen(session);
+          if (session.backend instanceof NativeBackend) await session.backend.pauseLease();
+          this.ensureOpen(session);
+          session.state = "paused"; return this.info(session);
+        }).catch(error => { session.paused = undefined; throw error; });
       }
       return session.paused;
     }
     if (request.method === "session.resume") {
       if (session.state === "pausing") throw new OrbitError("PAUSED", "Wait for pause acknowledgement before resuming");
+      if (session.backend instanceof NativeBackend) await session.backend.resumeLease();
+      this.ensureOpen(session);
+      // Other requests can change the state while the native response is pending.
+      if ((session.state as State) === "pausing") throw new OrbitError("PAUSED", "A newer pause is awaiting acknowledgement");
       session.state = "running"; session.paused = undefined;
       return this.info(session);
     }

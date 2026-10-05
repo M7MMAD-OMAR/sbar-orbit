@@ -47,7 +47,8 @@ class ReplyCache:
         self.metadata_bytes += self.size(response)
 
 
-def main(directory, control_directory, plan_path):
+def main(directory, control_directory, plan_path, session_type=None):
+    session_type = NativeSession if session_type is None else session_type
     require_budget()
     directory = private_directory(directory)
     private_directory(control_directory)
@@ -55,7 +56,7 @@ def main(directory, control_directory, plan_path):
     requests = ReplyCache()
     with ActionControl(control_directory) as control:
         try:
-            session = NativeSession(read_plan(plan_path), directory, control)
+            session = session_type(read_plan(plan_path), directory, control)
             for raw in iter(lambda: sys.stdin.buffer.readline(65537), b""):
                 if len(raw) > 65536 or not raw.endswith(b"\n"):
                     raise SessionError("Invalid native request framing")
@@ -85,6 +86,10 @@ def main(directory, control_directory, plan_path):
                             result = session.launch(params.get("argv"), params.get("configuration"))
                         elif method == "act":
                             result = session.execute(params)
+                        elif method in ("claim", "candidates") and session_type is not NativeSession:
+                            result = getattr(session, method)(params)
+                        elif method in ("pause", "resume") and not params and session_type is not NativeSession:
+                            result = session.set_paused(method == "pause")
                         elif method == "close-application" and set(params) == {"appId"}:
                             session.close_application(params["appId"])
                             result = {"closed": True}
@@ -98,7 +103,8 @@ def main(directory, control_directory, plan_path):
                         traceback.print_exception(error, file=sys.stderr)
                         code = ("APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
                                 else "INVALID_REQUEST" if isinstance(error, SessionError) else "NATIVE_FAILED")
-                        response = {"ok": False, "error": {"code": code, "message": "Native request failed; see the private worker log"}}
+                        message = str(error)[:300] if session_type is not NativeSession and isinstance(error, SessionError) else "Native request failed; see the private worker log"
+                        response = {"ok": False, "error": {"code": code, "message": message}}
                     requests.retain(request_id, fingerprint, response)
                 sys.stdout.write(json.dumps({"requestId": request_id, **response}) + "\n")
                 sys.stdout.flush()

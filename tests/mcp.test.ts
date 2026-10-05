@@ -27,7 +27,7 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     const a = await connect();
     const b = await connect();
     expect(a.getServerVersion()).toEqual({ name: "sbar-orbit", version });
-    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_diagnostics", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_profiles", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop", "orbit_usage"]);
+    expect((await a.listTools()).tools.map(t => t.name).sort()).toEqual(["orbit_act", "orbit_create", "orbit_diagnostics", "orbit_handoff", "orbit_handoff_candidates", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause", "orbit_profiles", "orbit_restore", "orbit_resume", "orbit_status", "orbit_stop", "orbit_usage"]);
     // The capability an agent could not find. `cloneOf` has existed on session.create since the
     // clone path closed, and the adapter exposed neither it nor any way to learn a profile path,
     // so an agent asked whether Orbit could use the person's own browser answered no. Both halves

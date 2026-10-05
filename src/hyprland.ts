@@ -12,6 +12,20 @@ type Target = { appId: string; windowId: string };
 type NativeAction = { type: string; [key: string]: unknown };
 type Window = Target & { title: string; width: number; height: number };
 
+export type HandoffSelection = { workspace: number; address?: string; stableId?: string };
+export function parseHandoff(value: unknown): HandoffSelection {
+  const input = record(value);
+  if (Object.keys(input).some(key => !["workspace", "address", "stableId"].includes(key))
+      || typeof input.workspace !== "number" || !Number.isInteger(input.workspace)
+      || input.workspace < 1 || input.workspace > 2147483647
+      || (input.address === undefined) !== (input.stableId === undefined))
+    throw new OrbitError("INVALID_REQUEST", "Handoff requires a workspace and optionally an exact window address with stableId");
+  if (input.address !== undefined && (typeof input.address !== "string" || !/^0x[0-9a-f]{1,16}$/.test(input.address)
+      || typeof input.stableId !== "string" || !/^[0-9a-f]{1,16}$/.test(input.stableId)))
+    throw new OrbitError("INVALID_REQUEST", "Invalid existing window identity");
+  return { workspace: input.workspace, ...(input.address === undefined ? {} : { address: String(input.address), stableId: String(input.stableId) }) };
+}
+
 function identifier(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9]{32}$/.test(value))
     throw new OrbitError("INVALID_REQUEST", "Native targets require generated application/window identifiers");
@@ -33,10 +47,13 @@ export class NativeBackend {
   private scales = new Map<string, { x: number; y: number }>();
 
   private closing?: Promise<void>;
+  handoff?: { appId: string; selectedWindowId: string; scope: string; windows: Window[] };
   private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions,
-    private appearance: Readonly<Record<string, string>>) {}
+    private appearance: Readonly<Record<string, string>>, readonly borrowed = false) {
+    if (borrowed) this.capabilities = this.capabilities.filter(value => value !== "launch");
+  }
 
-  static async create(_profile: string, options: NativeOptions) {
+  static async create(_profile: string, options: NativeOptions, handoff?: HandoffSelection) {
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
@@ -45,22 +62,55 @@ export class NativeBackend {
     let appearance: Readonly<Record<string, string>> = Object.freeze({});
     try {
       if (options.appearanceDirectory !== undefined) appearance = await loadNativeAppearance(options.appearanceDirectory);
-      worker = await NativeWorker.create(join(directory, "worker"), options);
+      worker = await NativeWorker.create(join(directory, "worker"), options,
+        handoff === undefined ? undefined : ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
     }
     catch (error) {
       try { await rm(directory, { recursive: true, force: true }); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and directory cleanup failed"); }
       throw error;
     }
-    const backend = new NativeBackend(worker, directory, options, appearance);
+    const backend = new NativeBackend(worker, directory, options, appearance, handoff !== undefined);
     try {
       const response = record(await worker.request("status", {}));
       if (response.ready !== true) throw new OrbitError("BACKEND_ERROR", "Native worker did not become ready");
+      if (handoff !== undefined) {
+        const claimed = record(await worker.request("claim", handoff));
+        const appId = identifier(claimed.appId);
+        if (claimed.scope !== "entire-wayland-client" || !Array.isArray(claimed.windows))
+          throw new OrbitError("BACKEND_ERROR", "Invalid application handoff acknowledgement");
+        backend.applications.add(appId);
+        const windows = claimed.windows.map(value => {
+          const window = record(value), identity = target(window);
+          if (identity.appId !== appId || typeof window.title !== "string" || typeof window.width !== "number" || typeof window.height !== "number")
+            throw new OrbitError("BACKEND_ERROR", "Invalid handed-off window metadata");
+          return { ...identity, title: window.title, width: window.width, height: window.height };
+        });
+        for (const window of windows) backend.windows.set(window.windowId, window);
+        const selectedWindowId = identifier(claimed.selectedWindowId);
+        if (!backend.windows.has(selectedWindowId)) throw new OrbitError("BACKEND_ERROR", "Selected handoff window was not acknowledged");
+        backend.selected = { appId, windowId: selectedWindowId };
+        backend.handoff = { appId, selectedWindowId, scope: "entire-wayland-client", windows };
+      }
       return backend;
     } catch (error) {
       try { await worker.close(); await rm(directory, { recursive: true, force: true }); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and cleanup failed"); }
       throw error;
+    }
+  }
+
+  static async candidates(options: NativeOptions, selection: HandoffSelection) {
+    await requireResourceBudget();
+    const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
+    let worker: NativeWorker | undefined;
+    try {
+      worker = await NativeWorker.create(join(directory, "worker"), options,
+        ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
+      return await worker.request("candidates", selection);
+    } finally {
+      if (worker) await worker.close();
+      await rm(directory, { recursive: true, force: true });
     }
   }
 
@@ -107,6 +157,7 @@ export class NativeBackend {
     if (!allowed || Object.keys(input).some(key => key !== "type" && !allowed.includes(key)))
       throw new OrbitError("INVALID_REQUEST", "Unknown native action or unexpected fields");
     if (input.type === "launch") {
+      if (this.borrowed) throw new OrbitError("UNSUPPORTED", "A handed-off session cannot launch applications");
       if (!Array.isArray(input.argv) || !input.argv.length || input.argv.some(value => typeof value !== "string" || value.includes("\0")))
         throw new OrbitError("INVALID_REQUEST", "Native launch requires an argv array");
     } else {
@@ -165,6 +216,9 @@ export class NativeBackend {
   }
 
   control(value: unknown) { return this.act(value); }
+
+  async pauseLease() { if (this.borrowed) await this.worker.request("pause", {}); }
+  async resumeLease() { if (this.borrowed) await this.worker.request("resume", {}); }
 
   async presence() {
     const entries = [...this.windows.values()];

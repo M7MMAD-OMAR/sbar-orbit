@@ -66,7 +66,14 @@ FIXTURE = r'''
 template<typename T> using SP = std::shared_ptr<T>;
 static std::set<wl_client*> admitted;
 static bool agentClient(wl_client* client) { return admitted.contains(client); }
-static int ownerPrimary = 0, ownerClipboard = 0;
+static int ownerPrimary = 0, ownerClipboard = 0, ownerDrag = 0;
+struct Lease {};
+static Lease lease;
+static std::set<wl_client*> leased;
+static Lease* applicationLeaseForClient(wl_client* client) { return leased.contains(client) ? &lease : nullptr; }
+static std::vector<wl_client*> privatePrimaryRecipients, privateClipboardRecipients;
+static std::string applicationFailure;
+static void recordApplicationFailure(wl_client*, const char* error) { applicationFailure = error; }
 struct CZwpPrimarySelectionDeviceV1 {
     wl_resource* handle;
     struct { std::function<void(CZwpPrimarySelectionDeviceV1*, wl_resource*, uint32_t)> setSelection; } requests;
@@ -76,7 +83,10 @@ struct CZwpPrimarySelectionDeviceV1 {
 };
 struct CWlDataDevice {
     wl_resource* handle;
-    struct { std::function<void(CWlDataDevice*, wl_resource*, uint32_t)> setSelection; } requests;
+    struct {
+        std::function<void(CWlDataDevice*, wl_resource*, uint32_t)> setSelection;
+        std::function<void(CWlDataDevice*, wl_resource*, wl_resource*, wl_resource*, uint32_t)> startDrag;
+    } requests;
     wl_resource* resource() { return handle; }
     wl_client* client() { return wl_resource_get_client(handle); }
     template<typename F> void setSetSelection(F callback) { requests.setSelection = callback; }
@@ -85,6 +95,15 @@ struct CWLDataSourceResource {
     static SP<CWLDataSourceResource> fromResource(wl_resource*) { return std::make_shared<CWLDataSourceResource>(); }
     void markUsed() {}
 };
+struct CPrimarySelectionSource {
+    static SP<CPrimarySelectionSource> fromResource(wl_resource*) { return std::make_shared<CPrimarySelectionSource>(); }
+};
+static void sendPrivatePrimarySelection(wl_client* client, SP<CPrimarySelectionSource>) { privatePrimaryRecipients.push_back(client); }
+static void sendPrivateClipboardSelection(wl_client* client, SP<CWLDataSourceResource>) { privateClipboardRecipients.push_back(client); }
+struct CZwlrDataControlDeviceV1 {};
+struct CExtDataControlDeviceV1 {};
+static std::map<wl_resource*, int> wlrGuards, extGuards;
+template<typename T> static void guardDataControl(T*, std::map<wl_resource*, int>&) { throw std::runtime_error("unexpected data-control fixture request"); }
 template<typename T> struct Device {
     SP<T> m_resource;
     wl_client* client() { return m_resource->client(); }
@@ -106,7 +125,9 @@ using PrimaryHandler = std::function<void(CZwpPrimarySelectionDeviceV1*, wl_reso
 struct SPrimaryGuard { CZwpPrimarySelectionDeviceV1* device; PrimaryHandler original; wl_listener destroy{}; };
 static std::map<wl_resource*, SPrimaryGuard> primaryGuards;
 using ClipboardHandler = std::function<void(CWlDataDevice*, wl_resource*, uint32_t)>;
-struct SClipboardGuard { CWlDataDevice* device; ClipboardHandler original; wl_listener destroy{}; };
+struct SClipboardGuard { CWlDataDevice* device; ClipboardHandler original;
+    std::function<void(CWlDataDevice*, wl_resource*, wl_resource*, wl_resource*, uint32_t)> originalStartDrag;
+    wl_listener destroy{}; };
 static std::map<wl_resource*, SClipboardGuard> clipboardGuards;
 static std::map<wl_client*, wl_listener> selectionClients;
 '''
@@ -122,6 +143,8 @@ template<typename T> static SP<T> device(wl_client* client) {
         if constexpr (std::is_same_v<T, CWlDataDevice>) ++ownerClipboard;
         else ++ownerPrimary;
     });
+    if constexpr (std::is_same_v<T, CWlDataDevice>)
+        raw->requests.startDrag = [](CWlDataDevice*, wl_resource*, wl_resource*, wl_resource*, uint32_t) { ++ownerDrag; };
     auto wrapper = std::make_shared<Device<T>>(); wrapper->m_resource = raw;
     if constexpr (std::is_same_v<T, CWlDataDevice>) PROTO::data->m_devices.push_back(wrapper);
     else PROTO::primarySelection->m_devices.push_back(wrapper);
@@ -142,9 +165,28 @@ int main(int argc, char** argv) {
     auto primary = device<CZwpPrimarySelectionDeviceV1>(agent); auto clipboard = device<CWlDataDevice>(agent);
     auto ownerDevice = device<CWlDataDevice>(owner);
     const std::string test = argv[1];
+    if (test == "lease" || test == "lease-drag") leased.insert(agent);
     if (test == "before-first") { guardPrimarySelection(agent); guardClipboard(agent); }
     else { request(primary); request(clipboard); }
     if (ownerPrimary || ownerClipboard) { std::cerr << "admitted selection reached owner handler"; return 4; }
+    if (test == "lease" || test == "lease-drag") {
+        if (privatePrimaryRecipients != std::vector<wl_client*>{agent} ||
+            privateClipboardRecipients != std::vector<wl_client*>{agent} || !PROTO::data->offers.empty()) {
+            std::cerr << "leased selection did not use private recipients"; return 14;
+        }
+        if (test == "lease-drag") {
+            clipboard->requests.startDrag(clipboard.get(), nullptr, nullptr, nullptr, 7);
+            if (ownerDrag || applicationFailure.empty()) { std::cerr << "leased drag escaped guard"; return 15; }
+        }
+        restoreSelectionGuards(primaryGuards); restoreSelectionGuards(clipboardGuards); clearSelectionClients();
+        clipboard->requests.startDrag(clipboard.get(), nullptr, nullptr, nullptr, 7);
+        if (ownerDrag != 1) { std::cerr << "unload did not restore drag callback"; return 16; }
+        wl_client_destroy(agent); wl_client_destroy(owner); close(agentSockets[1]); close(ownerSockets[1]); wl_display_destroy(display);
+        return 0;
+    }
+    if (!privatePrimaryRecipients.empty() || !privateClipboardRecipients.empty()) {
+        std::cerr << "owned client without lease entered lease-only selection path"; return 17;
+    }
     admitted.erase(agent);
     if (test == "existing") {
         request(primary); request(clipboard);
@@ -221,6 +263,8 @@ class SelectionGuardTest(unittest.TestCase):
 
     def test_unknown_owner_and_offers_are_unchanged(self):
         self.check("owner")
+        self.check("lease")
+        self.check("lease-drag")
 
     def test_destroy_and_unload_clear_retained_resources(self):
         self.check("lifetime")

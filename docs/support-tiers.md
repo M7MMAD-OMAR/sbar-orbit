@@ -40,6 +40,17 @@ column. That is the evidence column doing its job, not a sixth tier.
 
 ## Fedora 44, wlroots, cgroup delegation
 
+Existing application handoff on Hyprland 0.56.2 is **Limited**. A disposable headless
+compositor retained one already running GTK application, its window and unsaved text while
+a second application retained its focus, workspace and pointer. The final native candidate
+passed 13 controller checks, 7 broker RPC checks and a visible text marker capture within
+1.30 seconds. Pause, resume and handback preserved the original application process.
+Authority covers the entire selected Wayland client. Xwayland and independent helper clients
+are unsupported; other toolkits, the person's desktop and performance improvement are
+not measured. The contract checks are in `tests/native-existing.test.ts`; the private runtime
+measurement and usage limits are described in [existing application handoff](existing-application-handoff.md).
+This result does not upgrade the platform rows below. Recorded 5 October 2026.
+
 The only class with rows that are not reasoning. Measured from `0.1.0-alpha.1` onward; each row carries its own date. On 28 September 2026 the latest native suite after the Codex local history snapshot ran **571 tests across 117 files: 544 pass, 27 skip, 0 fail**. An earlier standard suite after the Zen Sync and core filter corrections ran 544 tests across 112 files: 500 pass, 44 skip, 0 fail. An earlier run after the native socket policy and public web proxy changes ran 533 tests across 110 files: 489 pass, 44 skip, 0 fail. A prior run after the private bus and egress corrections read 516 tests across 106 files: 473 pass, 43 skip, 0 fail. On 20 September 2026 two runs read **458 pass, 0 fail, 27 skip** on the 485-test revision, and a later run on the revision that adds the workspace-sweep regression read 458 pass, 27 skip and one failure in `tests/viewer-layout.test.ts`. Both that failure and an earlier one in `tests/native-viewer-scroll.test.ts` happen only while another agent is working in the same slice: they passed alone in 16.66 s and 4.72 s. Without `ORBIT_TEST_NATIVE=1` the same suite read 444 pass, 41 skip, 0 fail. At `6a802f5` with native tests it read 143.85 s on an idle host. The failures are retained rather than retried into silence, see [validation](validation.md). On 22 September 2026, at the routing fix revision, one run with `ORBIT_TEST_NATIVE=1` read 468 pass, 27 skip, 0 fail and one without read 454 pass, 41 skip, 0 fail.
 
 | Capability | Tier | Evidence | Date |
