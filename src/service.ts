@@ -11,6 +11,7 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
  * for exactly this, against product code that is correct on a Mac.
  */
 import { OrbitError } from "./errors";
+import { autostartPaths } from "./autostart";
 
 /**
  * How much processor everything Orbit owns may use together, as a hard ceiling. A quarter of the
@@ -238,11 +239,21 @@ function installedExecutable(unit: string): string | undefined {
   } catch { return undefined; }
 }
 
-export function serviceUnit(launcher: string) {
+export function serviceUnit(launcher: string, unitDirectory = autostartPaths().units) {
+  const home = process.env.HOME || homedir();
+  const config = resolve(process.env.XDG_CONFIG_HOME || join(home, ".config"));
+  const environmentFile = join(config, "sbar-orbit/broker.env");
+  // EnvironmentFile uses a literal path, with percent specifiers but without shell unquoting.
+  if (/[\r\n\0]/.test(environmentFile))
+    throw new OrbitError("CONFIG_REQUIRED", "Broker configuration path must not contain line breaks or NUL");
+  // The user manager need not share the installing shell's paths. Carry only these selected values.
+  const environment = Object.entries({ HOME: home, XDG_CONFIG_HOME: config, ORBIT_UNIT_DIR: resolve(unitDirectory) })
+    .map(([key, value]) => `Environment=${JSON.stringify(`${key}=${value}`).replace(/%/g, "%%")}`);
   return ["[Unit]", "Description=Sbar Orbit local broker", "", "[Service]", "Type=simple",
     `ExecStart=${unitExecutable(launcher)} serve --managed-socket`, "Slice=sbarorbit.slice",
     // Operator switches such as ORBIT_NATIVE_RENDERER live in a file the installer never rewrites.
-    "EnvironmentFile=-%h/.config/sbar-orbit/broker.env",
+    `EnvironmentFile=-${environmentFile.replace(/%/g, "%%")}`,
+    ...environment,
     "Restart=on-failure", "RestartSec=2", "Nice=10",
     // The broker owns browsers and private displays, so give it time to close them.
     "TimeoutStopSec=30", "KillMode=mixed", "", "[Install]", "WantedBy=default.target", ""].join("\n");
@@ -280,7 +291,7 @@ export async function installService(launcher: string, unitDirectory: string) {
   for (const [name, build] of Object.entries(units)) {
     const target = join(unitDirectory, name);
     const temporary = `${target}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temporary, build(source), { mode: 0o644 });
+    await writeFile(temporary, build(source, unitDirectory), { mode: 0o644 });
     await rename(temporary, target);
     written.push(target);
   }
@@ -338,10 +349,10 @@ export async function serviceUnitDrift(unitDirectory: string, launcher?: string)
     const needsLauncher = build.length > 0;
     const named = needsLauncher ? launcher ?? installedExecutable(installed) : "";
     if (named === undefined) { drifted.push({ unit: name, reason: "the installed unit has no ExecStart to compare against" }); continue; }
-    if (installed !== build(named)) {
+    if (installed !== build(named, unitDirectory)) {
       // Name the missing directives rather than printing two files, because that is what a person
       // needs to decide whether it matters before reinstalling.
-      const expected = build(named).split("\n").filter(line => line.includes("="));
+      const expected = build(named, unitDirectory).split("\n").filter(line => line.includes("="));
       const absent = expected.filter(line => !installed.includes(line));
       drifted.push({ unit: name, reason: absent.length
         ? `does not carry ${absent.join(", ")}`

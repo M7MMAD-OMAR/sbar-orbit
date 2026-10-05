@@ -8,8 +8,9 @@ import { OrbitError } from "./errors";
  * hybrid laptop that was the discrete one, the one that costs the person power. The environment is
  * the switch because it is per broker and per experiment, and never per session request: an agent
  * cannot ask for the person's GPU. A managed broker reads it from the unit's EnvironmentFile,
- * `~/.config/sbar-orbit/broker.env`. Errors are CONFIG_REQUIRED, the operator's to fix, and the
- * broker checks them once as it starts rather than on every session an agent asks for.
+ * `$XDG_CONFIG_HOME/sbar-orbit/broker.env`, defaulting to `$HOME/.config/sbar-orbit/broker.env`.
+ * Errors are CONFIG_REQUIRED, the operator's to fix, and the broker checks them once as it starts
+ * rather than on every session an agent asks for.
  */
 export type NativeRenderer = { renderer: "pixman" | "gles2" | "vulkan"; device?: string; env: Record<string, string> };
 

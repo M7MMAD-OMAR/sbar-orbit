@@ -49,14 +49,14 @@ test("a unit missing a directive this version writes is reported, and the direct
   try {
     // Exactly the shape found on the development host: the unit as it was written before
     // EnvironmentFile existed, which is a valid unit that starts a working broker.
-    const stale = serviceUnit(launcher).split("\n").filter(line => !line.startsWith("EnvironmentFile=")).join("\n");
+    const stale = serviceUnit(launcher, units).split("\n").filter(line => !line.startsWith("EnvironmentFile=")).join("\n");
     await writeFile(join(units, "sbar-orbit.service"), stale, { mode: 0o644 });
     const drift = await serviceUnitDrift(units);
     expect(drift.current).toBe(false);
     expect(drift.drifted.map(entry => entry.unit)).toEqual(["sbar-orbit.service"]);
     // Naming the missing directive is the whole value: "differs" tells a person nothing they can
     // act on, and this is the line whose absence changes behaviour.
-    expect(drift.drifted[0]!.reason).toContain("EnvironmentFile=-%h/.config/sbar-orbit/broker.env");
+    expect(drift.drifted[0]?.reason).toContain(serviceUnit(launcher, units).split("\n").filter(line => line.startsWith("EnvironmentFile=")).join("\n"));
     expect(drift.remedy).toContain("install.sh");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -92,7 +92,7 @@ test("a unit pointing at another checkout is compared against its own launcher, 
   // than no check: it trains a person to ignore the line.
   const { root, units } = await installed();
   try {
-    await writeFile(join(units, "sbar-orbit.service"), serviceUnit("/somewhere/else/sbar-orbit"), { mode: 0o644 });
+    await writeFile(join(units, "sbar-orbit.service"), serviceUnit("/somewhere/else/sbar-orbit", units), { mode: 0o644 });
     const drift = await serviceUnitDrift(units);
     expect(drift.drifted.map(entry => entry.unit)).not.toContain("sbar-orbit.service");
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -103,7 +103,7 @@ test("a caller that names a launcher gets that launcher enforced", async () => {
   // a unit naming a different one IS drift.
   const { root, units } = await installed();
   try {
-    await writeFile(join(units, "sbar-orbit.service"), serviceUnit("/somewhere/else/sbar-orbit"), { mode: 0o644 });
+    await writeFile(join(units, "sbar-orbit.service"), serviceUnit("/somewhere/else/sbar-orbit", units), { mode: 0o644 });
     const drift = await serviceUnitDrift(units, join(root, "sbar-orbit"));
     expect(drift.drifted.map(entry => entry.unit)).toContain("sbar-orbit.service");
   } finally { await rm(root, { recursive: true, force: true }); }

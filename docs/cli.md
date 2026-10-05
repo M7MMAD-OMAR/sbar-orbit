@@ -11,7 +11,12 @@ later commands. Missing IDs on usage commands are refused. See
 portable skill and host limitations. Client RPC commands default to the managed
 socket; `ORBIT_SOCKET` selects a different broker. `ORBIT_NATIVE_RENDERER` and
 `ORBIT_NATIVE_RENDER_DEVICE` opt the private display into a pinned GPU renderer, read once when the
-broker starts; a managed broker takes them from `~/.config/sbar-orbit/broker.env`. Pixman is the
+broker starts; a managed broker takes them from `$XDG_CONFIG_HOME/sbar-orbit/broker.env`,
+falling back to `$HOME/.config/sbar-orbit/broker.env` when XDG is unset. The installer preserves
+this user configuration file. The service records the selected `HOME`, `XDG_CONFIG_HOME` and
+unit directory so a user manager with a different environment still uses these paths, including
+an explicit `ORBIT_UNIT_DIR` or installer `unitDirectory` option. Reinstall after changing these
+paths. Only those three path variables are copied from the installing environment. Pixman is the
 default and the measured choice, see [fedora results](fedora-results.md).
 `ORBIT_CAPTURE_TIMEOUT_MS` sets how long a single frame capture may take, default 3000, floored at
 500 and capped at 120000, and it lives in the same file for the same reason: it is a property of the
