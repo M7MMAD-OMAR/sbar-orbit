@@ -134,9 +134,20 @@ the minimum was measured with three concurrent MCP adapters and a private browse
 Maintainers build the installable registry archive with
 `bun scripts/registry-package.ts output/registry`, then publish that `.tgz`
 explicitly. Do not publish the working directory directly. Bun 1.4.2 excludes root
-lockfiles even when `files` names them. The packaging helper retains Bun's file
-selection, adds the exact source `bun.lock`, and refuses to replace an existing
-archive. Tests inspect its contents and compare the archived lock byte for byte.
+lockfiles even when `files` names them. The packaging helper first copies only
+paths listed by `git ls-files --cached` and allowed by `isPublicSourcePath` into a
+private staging tree. The same public path rules protect the source release:
+private environment files, keys, and `docs/evidence` stay out even if tracked.
+It reads the current working tree bytes and permissions, including unstaged edits, rather than
+the indexed content. Bun then applies the package's `files` selection to that tree.
+The helper adds the exact tracked `bun.lock` and refuses to replace an existing
+archive. Untracked files never become package inputs, even inside listed directories.
+Allowed tracked symlinks and symlink parents are refused by name before their contents can
+be copied; submodule directories are not copied recursively. A checkout with Git
+metadata and a tracked lockfile is required to build the registry archive.
+Tests inspect its contents and compare the archived lock byte for byte. The isolated
+Git fixture also checks untracked files in `src` and `docs`, unstaged bytes,
+Windows command file bytes, executable permissions on POSIX, and symlink refusal.
 
 Linux managed installation, scheduling, upgrade and rollback are covered by the disposable systemd gate. macOS and Windows managed updates explicitly refuse. See [installation and migration](release-0.1.0.md) for the measured scope and commands.
 

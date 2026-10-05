@@ -1,15 +1,16 @@
 import { expect, test } from "bun:test";
-import { needsGitCheckout } from "./platform-support";
+import { needsCommand, needsGitCheckout, symlinkCapable } from "./platform-support";
 import { bareLineFeeds } from "../scripts/package-endings";
-import { mkdtemp, rm, readdir } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, readdir, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildNativeRuntime } from "../src/install";
+import { registryPackage } from "../scripts/registry-package";
 
 /**
  * What leaves this machine for the registry. The source archive in `scripts/package.ts` is built from
- * the git index, so nothing untracked can reach it; the npm tarball is built by `bun pm pack` from the
- * working tree against the `files` list in `package.json`, which is a second path with its own rules.
+ * the git index, so nothing untracked can reach it; the registry tarball uses Git's tracked paths
+ * with current working tree bytes, then applies the `files` list through `bun pm pack`.
  * Nothing tested it, and `0.1.0-alpha.3` shipped six `__pycache__` files because of that.
  *
  * This packs with bun, which is the only packer this project uses. `npm pack --dry-run` was checked by
@@ -26,6 +27,106 @@ async function run(command: string[], cwd: string) {
   if (code !== 0) throw new Error(`${command[0]} failed: ${err.trim() || out.trim()}`);
   return out;
 }
+
+needsCommand("git", "the fixture creates its own Git index to select package inputs")(
+  "registry packaging excludes untracked fixture files while preserving current tracked bytes and modes", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "orbit-pack-fixture-"));
+  const source = join(fixture, "source");
+  const destination = join(fixture, "archives");
+  try {
+    await mkdir(source);
+    await run(["git", "init", "--quiet"], source);
+    const lock = await Bun.file(join(project, "bun.lock")).text();
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "orbit-pack-fixture", version: "1.0.0",
+        bin: { orbit: "bin/orbit" }, files: ["src", "docs", "bin", "install.cmd", "bun.lock"] }),
+      "bun.lock": lock,
+      "README.md": "tracked readme\n",
+      "LICENSE": "tracked license\n",
+      "src/tracked.ts": "export const value = 'indexed';\n",
+      "docs/tracked.md": "indexed docs\n",
+      "bin/orbit": "#!/bin/sh\nexit 0\n",
+      "bin/orbit.cmd": "@echo off\r\nexit /b 0\r\n",
+      "install.cmd": "@echo off\r\nexit /b 0\r\n",
+      "private.txt": "tracked but outside the package files list\n",
+      "src/.env": "tracked private environment\n",
+      "src/secret.key": "tracked private key\n",
+      "docs/evidence/private.md": "tracked private evidence\n",
+      "docs/superpowers/private.md": "tracked private notes\n",
+      "src/.env.example": "public environment example\n",
+    };
+    for (const [path, contents] of Object.entries(files)) {
+      await mkdir(resolve(source, path, ".."), { recursive: true });
+      await Bun.write(join(source, path), contents);
+    }
+    await chmod(join(source, "bin/orbit"), 0o755);
+    await run(["git", "add", "."], source);
+    // These edits are deliberately unstaged: Git supplies membership, not content.
+    await Bun.write(join(source, "src/tracked.ts"), "export const value = 'working tree';\n");
+    await Bun.write(join(source, "docs/tracked.md"), "working tree docs\n");
+    await Bun.write(join(source, "bun.lock"), `${lock}\n`);
+    await Bun.write(join(source, "src/untracked.ts"), "must not ship\n");
+    await Bun.write(join(source, "docs/untracked.md"), "must not ship\n");
+    // A private tracked path is filtered before filesystem inspection or copying.
+    if (symlinkCapable) {
+      await rm(join(source, "src/secret.key"));
+      await symlink(join(fixture, "absent-private-key"), join(source, "src/secret.key"));
+    }
+    const archive = await registryPackage(destination, source);
+    const shipped = (await run(["tar", "tzf", archive], fixture)).split(/\r?\n/).filter(Boolean);
+    expect(shipped).not.toContain("package/src/untracked.ts");
+    expect(shipped).not.toContain("package/docs/untracked.md");
+    expect(shipped).not.toContain("package/private.txt");
+    for (const path of ["src/.env", "src/secret.key", "docs/evidence/private.md", "docs/superpowers/private.md"])
+      expect(shipped).not.toContain(`package/${path}`);
+    expect(shipped).toContain("package/src/.env.example");
+    for (const path of ["src/tracked.ts", "docs/tracked.md", "bun.lock", "bin/orbit", "bin/orbit.cmd", "install.cmd"])
+      expect(await run(["tar", "xOf", archive, `package/${path}`], fixture))
+        .toBe(await Bun.file(join(source, path)).text());
+    const unpacked = join(fixture, "unpacked");
+    await mkdir(unpacked);
+    await run(["tar", "xzf", archive, "-C", unpacked], fixture);
+    // Windows has no POSIX executable permission bits; the shell entry point still ships there.
+    if (process.platform !== "win32")
+      expect((await stat(join(unpacked, "package/bin/orbit"))).mode & 0o111).toBe(0o111);
+    expect((await run(["git", "ls-files", "--others", "--exclude-standard", "-z"], source))
+      .split("\0").filter(Boolean).sort()).toEqual(["docs/untracked.md", "src/untracked.ts"]);
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+}, 60_000);
+
+// This fixture requires both Git and permission to create symlinks on the host.
+(Bun.which("git") && symlinkCapable ? test : test.skip)(
+  "registry packaging refuses a tracked file replaced by a symlink outside the source", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "orbit-pack-symlink-"));
+  const source = join(fixture, "source");
+  const destination = join(fixture, "archives");
+  try {
+    await mkdir(join(source, "src"), { recursive: true });
+    await run(["git", "init", "--quiet"], source);
+    await Bun.write(join(source, "package.json"), JSON.stringify({ name: "orbit-pack-symlink",
+      version: "1.0.0", files: ["src", "bun.lock"] }));
+    await Bun.write(join(source, "bun.lock"), await Bun.file(join(project, "bun.lock")).text());
+    const tracked = join(source, "src/tracked.ts");
+    await Bun.write(tracked, "tracked bytes\n");
+    await run(["git", "add", "."], source);
+    const outside = join(fixture, "outside.ts");
+    await Bun.write(outside, "outside bytes must not ship\n");
+    await rm(tracked);
+    await symlink(outside, tracked);
+    await expect(registryPackage(destination, source)).rejects
+      .toThrow("Registry packaging refuses tracked symlink: src/tracked.ts");
+    // Replacing a parent directory must be refused too, even when its file is ordinary.
+    await rm(join(source, "src"), { recursive: true });
+    const outsideDirectory = join(fixture, "outside");
+    await mkdir(outsideDirectory);
+    await Bun.write(join(outsideDirectory, "tracked.ts"), "outside directory bytes\n");
+    await symlink(outsideDirectory, join(source, "src"), process.platform === "win32" ? "junction" : "dir");
+    await expect(registryPackage(destination, source)).rejects
+      .toThrow("Registry packaging refuses tracked symlink: src/tracked.ts");
+    expect(await Bun.file(outside).text()).toBe("outside bytes must not ship\n");
+    expect(await readdir(fixture)).not.toContain("archives");
+  } finally { await rm(fixture, { recursive: true, force: true }); }
+}, 60_000);
 
 needsGitCheckout("git ls-files, which needs the repository and not just the binary")("the registry tarball carries tracked source and nothing the working tree happened to leave behind", async () => {
   const destination = await mkdtemp(join(tmpdir(), "orbit-pack-"));
