@@ -16,7 +16,7 @@ from .host import verify_host
 from .lease import NativeLease, process_identity
 
 
-CONFIG_FILES = frozenset({"kdeglobals", "gtk-3.0/settings.ini", "gtk-4.0/settings.ini"})
+CONFIG_FILES = frozenset({"kdeglobals", "gtk-3.0/settings.ini", "gtk-4.0/settings.ini", "color-scheme"})
 
 
 def private_directory(path):
@@ -36,6 +36,8 @@ def launch_arguments(argv, configuration):
     if (not isinstance(configuration, dict) or set(configuration) - CONFIG_FILES
             or any(not isinstance(value, str) for value in configuration.values())):
         raise RuntimeError("Only staged native appearance settings are accepted")
+    if "color-scheme" in configuration and configuration["color-scheme"] not in ("default", "prefer-dark", "prefer-light"):
+        raise RuntimeError("Invalid native color preference")
     payload = json.dumps({"argv": argv, "configuration": configuration}, sort_keys=True)
     if len(payload.encode()) > 60000:
         raise RuntimeError("Native launch arguments and staged settings are too large")
@@ -164,7 +166,8 @@ class NativeLauncher:
                 path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 with open(path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
                     output.write(content)
-            spec = {"host": self.plan, "unit": unit, "argv": argv}
+            spec = {"host": self.plan, "unit": unit, "argv": argv,
+                    "color_scheme": configuration.get("color-scheme")}
             with open(profile / "launch.json", "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
                 json.dump(spec, output)
             here = Path(__file__).resolve().parent

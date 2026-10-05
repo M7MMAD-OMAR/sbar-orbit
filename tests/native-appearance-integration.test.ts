@@ -1,11 +1,27 @@
 import { expect, test } from "bun:test";
 import { chmod, link, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadNativeAppearance } from "../src/native-appearance";
+import { loadNativeAppearance, stageNativeAppearance } from "../src/native-appearance";
 import { nativeOptionsFromEnv } from "../src/native-worker";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 
 const enabled = process.platform === "linux" ? test : test.skip;
+
+enabled("owner color preference is explicit, private and limited to fixed enums", async () => {
+  const directory = await createWorkspaceDirectory("appearance-color");
+  try {
+    const staged = await stageNativeAppearance(directory, directory, "prefer-dark");
+    expect(await loadNativeAppearance(staged.directory)).toEqual({ "color-scheme": "prefer-dark" });
+    expect(staged.copied).toContain("color-scheme");
+    const path = join(staged.directory, "color-scheme");
+    await writeFile(path, "prefer-dark\n", { mode: 0o600 });
+    await expect(loadNativeAppearance(staged.directory)).rejects.toThrow("color preference");
+    await writeFile(path, "prefer-light", { mode: 0o600 });
+    await chmod(path, 0o644);
+    await expect(loadNativeAppearance(staged.directory)).rejects.toThrow("private unlinked");
+    await expect(stageNativeAppearance(directory, directory, "system")).rejects.toThrow("color preference");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 enabled("owner appearance snapshots filter literal settings and freeze launch defaults", async () => {
   const directory = await createWorkspaceDirectory("appearance-integration");

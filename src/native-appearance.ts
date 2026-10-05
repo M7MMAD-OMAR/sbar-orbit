@@ -18,6 +18,7 @@ const effectKeys = new Set(["Enable", "ChangeSelectionColor", "Color", "ColorAmo
 const colorGroups = /^(Colors:(View|Window|Button|Selection|Tooltip|Complementary|Header))$/;
 const effectGroups = /^ColorEffects:(Disabled|Inactive)$/;
 const settingsFiles = ["gtk-3.0/settings.ini", "gtk-4.0/settings.ini", "kdeglobals"] as const;
+const colorSchemes = new Set(["default", "prefer-dark", "prefer-light"]);
 
 /** Literal visual properties only. Never carry KConfig expansion or lockdown suffixes. */
 export function filterNativeAppearance(text: string, toolkit: "gtk" | "kde"): string {
@@ -86,13 +87,19 @@ export async function loadNativeAppearance(source: string): Promise<Readonly<Rec
     const filtered = filterNativeAppearance(text, name === "kdeglobals" ? "kde" : "gtk");
     if (filtered) configuration[name] = filtered;
   }
+  const scheme = await readSettings(join(source, "color-scheme"), true);
+  if (scheme !== undefined) {
+    if (!colorSchemes.has(scheme)) throw new Error("Invalid native color preference");
+    configuration["color-scheme"] = scheme;
+  }
   if (Buffer.byteLength(JSON.stringify(configuration)) > 50_000)
     throw new Error("Appearance snapshot exceeds native launch configuration budget");
   return Object.freeze(configuration);
 }
 
 /** Preparation only: fresh private files, no environment changes or application launch. */
-export async function stageNativeAppearance(source: string, parent: string) {
+export async function stageNativeAppearance(source: string, parent: string, colorScheme?: string) {
+  if (colorScheme !== undefined && !colorSchemes.has(colorScheme)) throw new Error("Invalid native color preference");
   if (process.platform !== "linux" || typeof process.getuid !== "function") throw new Error("Native appearance staging requires Linux");
   const sourceInfo = await lstat(source);
   if (!sourceInfo.isDirectory()) throw new Error("Appearance source must be a directory, not a symlink");
@@ -109,6 +116,10 @@ export async function stageNativeAppearance(source: string, parent: string) {
       await mkdir(join(directory, dirname(name)), { recursive: true, mode: 0o700 });
       await writeFile(join(directory, name), filtered, { flag: "wx", mode: 0o600 });
       copied.push(name);
+    }
+    if (colorScheme !== undefined) {
+      await writeFile(join(directory, "color-scheme"), colorScheme, { flag: "wx", mode: 0o600 });
+      copied.push("color-scheme");
     }
     return { directory, copied, absent, empty, themeMatch: "not measured" as const,
       pending: ["CSS and assets", "GSettings and portal color scheme", "native application visual comparison"] };

@@ -85,7 +85,7 @@ export class NativeBackend {
       for (const entry of await readdir(join(this.directory, "worker"), { withFileTypes: true })) {
         if (!entry.isDirectory() || !entry.name.startsWith("native-app-")) continue;
         for (const file of await readdir(join(this.directory, "worker", entry.name))) {
-          if (file === "worker.log" || /^capture-[a-f0-9]{32}\.log$/.test(file))
+          if (file === "worker.log" || file === "color-scheme.json" || /^capture-[a-f0-9]{32}\.log$/.test(file))
             await save(join(this.directory, "worker", entry.name, file), entry.name + "-" + file);
         }
       }

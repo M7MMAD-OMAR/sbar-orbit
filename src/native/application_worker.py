@@ -24,6 +24,9 @@ def main(profile):
     profile = private_directory(profile)
     spec = read_plan(profile / "launch.json")
     unit = spec["unit"]
+    scheme = spec.get("color_scheme")
+    if scheme is not None and scheme not in ("default", "prefer-dark", "prefer-light"):
+        raise RuntimeError("Invalid native color preference")
     if not re.fullmatch(r"orbit-native-[0-9a-f]{32}\.scope", unit):
         raise RuntimeError("Invalid native application scope")
     transport = NativeTransport(spec["host"])
@@ -43,6 +46,8 @@ def main(profile):
     process = process_identity(os.getpid())
     token = transport._enroll(lease, process)
     environment = application_environment(profile, spec["host"], unit)
+    if scheme is not None:
+        environment["GSETTINGS_BACKEND"] = "dconf"
     environment["HL_EXEC_RULE_TOKEN"] = token
     if (profile / "config" / "kdeglobals").is_file():
         plugin = Path("/usr/lib64/qt6/plugins/platformthemes/KDEPlasmaPlatformTheme6.so")
@@ -119,6 +124,10 @@ def main(profile):
         if time.monotonic() >= deadline:
             raise TimeoutError("Private accessibility registry did not start")
         time.sleep(0.02)
+    if scheme is not None:
+        subprocess.run(["/usr/bin/python3", str(Path(__file__).with_name("color_scheme.py")),
+                        str(profile), unit, scheme], env=environment, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, timeout=8, check=True)
     lease.verify()
     report = {"unit": unit, "process": process, "token": token}
     temporary = profile / "application.pending"
