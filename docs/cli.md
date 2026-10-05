@@ -386,6 +386,19 @@ outstanding. The strict mapping check currently refuses the observed btrfs
 mapping-device discrepancy; private runtime storage passed the guarded lab
 proof. This command does not establish complete owner appearance or performance.
 
+The current prototype also exposes fixed `ghost-admission pause|resume` and
+read-only `ghost-unload-info` compositor commands. Paused admission refuses new
+enrollment while existing targets remain available for cleanup. Readiness
+requires paused admission, no live registered roots and empty retained cgroup
+subtrees. Retained scopes survive root-registration pruning, so live orphan
+descendants continue to prevent readiness. Any legacy unscoped registration
+prevents verified unload for that loaded generation. The prototype retains at
+most 128 distinct scope identities until unload. Missing population evidence
+is a refusal. These commands are not agent RPC operations; journaled owner
+unload is still pending integration into `native-plugin`. A ready result is
+cooperative registered-scope evidence, not a guarantee against hostile process
+migration or proof of complete owner acceptance.
+
 The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
 prepared private settings snapshot. The directory and GTK subdirectories must
 be canonical, user-owned and mode `0700`; files must be single-link regular

@@ -53,6 +53,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
+#include <linux/magic.h>
+#include <cerrno>
 #include <regex>
 #include <memory>
 
@@ -139,6 +142,89 @@ class ScopedProcess {
 };
 // Native scoped identity end.
 
+// Native unload scope identity begin. Compiled independently by the readiness probe.
+class RetainedScope {
+    int descriptor = -1;
+    struct stat identity{};
+
+  public:
+    explicit RetainedScope(const std::string& unit) {
+        if (!std::regex_match(unit, std::regex{"orbit-native-[0-9a-f]{32}\\.scope"}))
+            throw std::runtime_error("invalid retained scope");
+        const auto path = std::format("/sys/fs/cgroup/user.slice/user-{}.slice/user@{}.service/sbarorbit.slice/{}",
+                                      getuid(), getuid(), unit);
+        descriptor = open(path.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        struct statfs filesystem{};
+        if (descriptor < 0 || fstat(descriptor, &identity) || fstatfs(descriptor, &filesystem) ||
+            filesystem.f_type != CGROUP2_SUPER_MAGIC || !S_ISDIR(identity.st_mode)) {
+            if (descriptor >= 0)
+                close(descriptor);
+            throw std::runtime_error("cannot retain native cgroup identity");
+        }
+    }
+    RetainedScope(const RetainedScope&) = delete;
+    RetainedScope& operator=(const RetainedScope&) = delete;
+    ~RetainedScope() { close(descriptor); }
+    bool sameAs(const RetainedScope& other) const {
+        return identity.st_dev == other.identity.st_dev && identity.st_ino == other.identity.st_ino;
+    }
+    static bool populated(const std::string& data) {
+        std::istringstream lines(data);
+        std::string line;
+        int result = -1;
+        while (std::getline(lines, line)) {
+            std::istringstream record(line);
+            std::string key, value, extra;
+            if (!(record >> key >> value) || (record >> extra))
+                throw std::runtime_error("invalid native cgroup events");
+            if (key == "populated") {
+                if (result != -1 || (value != "0" && value != "1"))
+                    throw std::runtime_error("invalid native cgroup population");
+                result = value == "1";
+            }
+        }
+        if (result < 0)
+            throw std::runtime_error("native cgroup population missing");
+        return result == 1;
+    }
+    bool empty() const {
+        struct stat current{};
+        if (fstat(descriptor, &current) || current.st_dev != identity.st_dev || current.st_ino != identity.st_ino)
+            throw std::runtime_error("retained native scope identity unavailable");
+        if (current.st_nlink == 0)
+            return true;
+        const int events = openat(descriptor, "cgroup.events", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (events < 0) {
+            if (!fstat(descriptor, &current) && current.st_nlink == 0)
+                return true;
+            throw std::runtime_error("native cgroup population unavailable");
+        }
+        std::string data;
+        try {
+            char buffer[256];
+            for (;;) {
+                const auto count = read(events, buffer, sizeof(buffer));
+                if (count < 0 && errno == EINTR)
+                    continue;
+                if (count < 0 || data.size() + count > 1024)
+                    throw std::runtime_error("native cgroup events unavailable");
+                if (count == 0)
+                    break;
+                data.append(buffer, count);
+            }
+        } catch (...) {
+            close(events);
+            throw;
+        }
+        close(events);
+        const bool occupied = populated(data);
+        if (fstat(descriptor, &current) || current.st_dev != identity.st_dev || current.st_ino != identity.st_ino)
+            throw std::runtime_error("native cgroup population unverified");
+        return !occupied;
+    }
+};
+// Native unload scope identity end.
+
 inline HANDLE PHANDLE = nullptr;
 static const std::string AGENT_SPACE = "special:ghost";
 struct SCursor {
@@ -176,8 +262,22 @@ static wl_protocol_logger* selectionLogger = nullptr;
 static std::string selectionDiagnostic;
 static std::map<pid_t, int> registeredProcesses;
 static std::map<pid_t, std::unique_ptr<ScopedProcess>> scopedProcesses;
+static std::map<std::string, std::unique_ptr<RetainedScope>> retainedScopes;
+static bool admissionPaused = false;
+static bool legacyEnrollmentOccurred = false;
 static std::map<pid_t, SP<Desktop::Rule::CWindowRule>> launchRules;
 static CHyprSignalListener configReloadListener;
+
+static size_t liveRootCount() {
+    std::map<pid_t, bool> roots;
+    for (const auto& [pid, identity] : scopedProcesses)
+        if (identity->live())
+            roots[pid] = true;
+    for (const auto& [pid, descriptor] : registeredProcesses)
+        if (ScopedProcess::descriptorLive(descriptor))
+            roots[pid] = true;
+    return roots.size();
+}
 
 static void pruneLaunchRules() {
     for (auto it = launchRules.begin(); it != launchRules.end();) {
@@ -747,23 +847,47 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         [sourceStamp, HASH](eHyprCtlOutputFormat, std::string request) {
             if (request != "ghost-build-info")
                 return std::string{"refused: build-info takes no arguments"};
-            std::map<pid_t, bool> liveRoots;
+            size_t roots;
             try {
-                for (const auto& [pid, identity] : scopedProcesses)
-                    if (identity->live())
-                        liveRoots[pid] = true;
-                for (const auto& [pid, descriptor] : registeredProcesses)
-                    if (ScopedProcess::descriptorLive(descriptor))
-                        liveRoots[pid] = true;
+                roots = liveRootCount();
             } catch (const std::exception&) {
                 return std::string{"refused: registered root liveness unavailable"};
             }
             return std::string{"{\"schema\":1,\"source_sha256\":\""} + sourceStamp +
-                "\",\"abi_hash\":\"" + HASH + "\",\"live_roots\":" + std::to_string(liveRoots.size()) + "}";
+                "\",\"abi_hash\":\"" + HASH + "\",\"live_roots\":" + std::to_string(roots) + "}";
         }});
 #endif
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-admission", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            if (request == "ghost-admission pause")
+                admissionPaused = true;
+            else if (request == "ghost-admission resume")
+                admissionPaused = false;
+            else
+                return std::string{"refused: admission requires pause or resume"};
+            return std::string{admissionPaused ? "ok paused" : "ok running"};
+        }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-unload-info", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            if (request != "ghost-unload-info")
+                return std::string{"refused: unload-info takes no arguments"};
+            try {
+                const auto roots = liveRootCount();
+                bool empty = true;
+                for (const auto& [unit, scope] : retainedScopes)
+                    if (!scope->empty())
+                        empty = false;
+                const bool ready = admissionPaused && roots == 0 && empty && !legacyEnrollmentOccurred;
+                return std::format("{{\"schema\":1,\"admission_paused\":{},\"live_roots\":{},\"tracked_scopes\":{},\"scopes_empty\":{},\"legacy_enrollment\":{},\"ready\":{}}}",
+                                   admissionPaused, roots, retainedScopes.size(), empty, legacyEnrollmentOccurred, ready);
+            } catch (const std::exception& error) {
+                return std::string{"refused: unload readiness unavailable: "} + error.what();
+            }
+        }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-scope-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
+            if (admissionPaused)
+                return std::string{"refused: native admission is paused"};
             std::istringstream in(request);
             std::string command, unit, extra;
             pid_t pid = 0;
@@ -775,6 +899,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"native process registration limit reached"};
             try {
                 auto identity = std::make_unique<ScopedProcess>(pid, unit);
+                auto scope = std::make_unique<RetainedScope>(unit);
+                if (const auto old = retainedScopes.find(unit); old != retainedScopes.end()) {
+                    if (!old->second->sameAs(*scope))
+                        throw std::runtime_error("retained native scope was replaced");
+                } else {
+                    if (retainedScopes.size() >= 128)
+                        throw std::runtime_error("retained native scope limit reached");
+                    retainedScopes.emplace(unit, std::move(scope));
+                }
                 auto [rule, token] = prepareLaunchRule();
                 SP<Desktop::Rule::IRule> baseRule = rule;
                 Desktop::Rule::ruleEngine()->registerRule(std::move(baseRule));
@@ -789,6 +922,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
+            if (admissionPaused)
+                return std::string{"refused: native admission is paused"};
             std::istringstream in(request);
             std::string command, extra;
             pid_t pid = 0;
@@ -821,6 +956,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (auto existing = registeredProcesses.find(pid); existing != registeredProcesses.end())
                 close(existing->second);
             registeredProcesses[pid] = fd;
+            legacyEnrollmentOccurred = true;
             return std::string{"ok"};
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-selection-diagnostic", false,
@@ -970,4 +1106,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
         close(fd);
     registeredProcesses.clear();
     scopedProcesses.clear();
+    retainedScopes.clear();
+    admissionPaused = false;
+    legacyEnrollmentOccurred = false;
 }
