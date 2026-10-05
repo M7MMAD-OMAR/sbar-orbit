@@ -15,7 +15,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.budget import require_budget
@@ -153,6 +152,8 @@ def main():
             raise RuntimeError("Raw fixture was not fresh")
 
         def capture(name):
+            from PIL import Image
+
             frame = action("observe")
             pixels = base64.b64decode(frame["image"], validate=True)
             (retained / (name + ".png")).write_bytes(pixels)
