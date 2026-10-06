@@ -2,7 +2,7 @@ name: windows-witness-diagnostic
 
 on:
   push:
-    branches: [agents/orbit-witness-diagnostic-2026-10-06]
+    branches: [agents/orbit-witness-diagnostic-2026-10-06, agents/windows-identity-fix-2026-10-06]
   workflow_dispatch:
 
 permissions:
@@ -31,6 +31,11 @@ jobs:
         shell: pwsh
         run: |
           bun run verify tests/windows-witness-race.test.ts 2>&1 | Tee-Object -FilePath output/windows-witness-query/retained-identity-test.log
+          exit $LASTEXITCODE
+      - name: Require broker crash ownership and exit evidence
+        shell: pwsh
+        run: |
+          bun run verify tests/windows-crash-evidence.test.ts tests/browser-crash.test.ts 2>&1 | Tee-Object -FilePath output/windows-witness-query/browser-crash-test.log
           exit $LASTEXITCODE
       - name: Preserve successful, failed and unknown query evidence
         if: always()
