@@ -3,6 +3,7 @@ import { serviceSocketPath } from "./service";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
 import { observationOptions, saveObservation } from "./observation-output";
+import { writeCliOutput } from "./cli-output";
 
 /**
  * The action document for `act`, from an argument, a file, or standard input.
@@ -280,7 +281,7 @@ try {
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
     } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, profiles, native-candidates WORKSPACE, session handoff JSON|@FILE|-, preview, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
-    console.log(JSON.stringify({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result }));
+    await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }
 } catch (error) {
   // An OrbitError carries a message meant for a person. Anything else used to be reported as the bare
