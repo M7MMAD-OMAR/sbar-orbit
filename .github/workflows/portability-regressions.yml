@@ -1,0 +1,66 @@
+name: portability-regressions
+
+on:
+  push:
+    branches: [agents/external-install-portability]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  old-and-fixed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Prove registry and Zen regressions on old and fixed source
+        shell: python
+        run: |
+          import json, pathlib, subprocess
+          output = pathlib.Path('output/portability-regressions')
+          output.mkdir(parents=True, exist_ok=True)
+          cases = [
+              ('registry', 'src/runtime-paths.ts', 'tests/windows-host.test.ts',
+               'registry-only candidate has unsupported profile identity', 3),
+              ('zen', 'src/native-zen-launch.ts', 'tests/native-zen-launch.test.ts',
+               'Zen stable discovery handles', 1),
+          ]
+          evidence = []
+          for name, source, test, pattern, expected_failures in cases:
+              path = pathlib.Path(source)
+              fixed = path.read_bytes()
+              old = subprocess.check_output(['git', 'show', 'ea4a017f208a1ea121faabec31ead73301dec6f7:' + source])
+              try:
+                  path.write_bytes(old)
+                  command = ['bun', 'run', 'scripts/limited.ts', 'bun', 'test', test, '-t', pattern]
+                  red = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+                  (output / (name + '-old.log')).write_bytes(red.stdout)
+                  text = red.stdout.decode(errors='replace')
+                  if red.returncode == 0 or text.count('(fail)') != expected_failures:
+                      raise RuntimeError(name + ': old source did not produce the expected assertion failures')
+              finally:
+                  path.write_bytes(fixed)
+              green = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+              (output / (name + '-fixed.log')).write_bytes(green.stdout)
+              if green.returncode != 0:
+                  raise RuntimeError(name + ': fixed source failed')
+              evidence.append({'case': name, 'oldExit': red.returncode, 'fixedExit': green.returncode,
+                               'oldSource': 'ea4a017f208a1ea121faabec31ead73301dec6f7',
+                               'fixedSource': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(),
+                               'limit': 'injected path and registry fixtures on Ubuntu; real applications not measured'})
+              (output / 'results.json').write_text(json.dumps(evidence, indent=2) + '\n')
+      - name: Preserve old and fixed regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portability-regressions
+          path: output/portability-regressions/
+          if-no-files-found: error
