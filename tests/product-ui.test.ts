@@ -168,8 +168,14 @@ for (const language of ['en', 'ar']) {
   }, 30000);
 
   test(`public onboarding renders and keyboard navigation works in ${language}`, async () => {
-    const viewer = await openViewerPage('Private public onboarding fixture', { language, viewport: { width: 1440, height: 1000 } });
     const directory = join(import.meta.dir, '../website/dist');
+    for (const route of ['index.html', 'ar/index.html']) {
+      const file = Bun.file(join(directory, route));
+      if (!await file.exists() || file.size === 0) {
+        throw new Error(`Missing rendered onboarding fixture: website/dist/${route}. Install frozen website dependencies and run bun run scripts/limited.ts bun --cwd website run build before this suite.`);
+      }
+    }
+    const viewer = await openViewerPage('Private public onboarding fixture', { language, viewport: { width: 1440, height: 1000 } });
     const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
       const path = new URL(request.url).pathname;
       const file = Bun.file(join(directory, path.endsWith('/') ? `${path}index.html` : path));
@@ -200,15 +206,12 @@ for (const language of ['en', 'ar']) {
           await page.locator(`#${section}`).scrollIntoViewIfNeeded();
           await page.screenshot({ path: join(shots, `onboarding-${language}-${viewport.width}-${section}.png`), fullPage: section === 'top' });
         }
-        // A baseline fixture predates the platform choice. The separate source contract
-        // detects that absence; current renders must prove both commands after repair.
-        if (await page.locator('.install-platform').count()) {
-          await page.locator('.install-platform button').nth(1).click();
-          expect(await page.locator('.installation pre').textContent()).toContain('install.cmd');
-          expect(await page.locator('.installation pre').textContent()).not.toContain('./install.sh');
-          await page.locator('.install-platform button').first().click();
-          expect(await page.locator('.installation pre').textContent()).toContain('./install.sh');
-        }
+        expect(await page.locator('.install-platform button').count()).toBe(2);
+        await page.locator('.install-platform button').nth(1).click();
+        expect(await page.locator('.installation pre').textContent()).toContain('install.cmd');
+        expect(await page.locator('.installation pre').textContent()).not.toContain('./install.sh');
+        await page.locator('.install-platform button').first().click();
+        expect(await page.locator('.installation pre').textContent()).toContain('./install.sh');
         await page.locator('.copy-button').click();
         await page.waitForFunction(() => (document.querySelector('.copy-status')?.textContent || '').length > 0);
         evidence.push({ language, viewport, copy: await page.locator('.copy-status').textContent(), overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth) });
