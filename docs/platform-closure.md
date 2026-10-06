@@ -26,11 +26,19 @@ incomplete while the original startup cause and required acceptance gaps remain.
 The later documentation snapshot `449e4de` also passed all nine jobs in
 [run 37508929441](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37508929441).
 Draft candidates below remain outside that verified main source.
-Subsequent main `61ea92c` failed the Windows owned-process witness acquisition
+Earlier main `61ea92c` failed the Windows owned-process witness acquisition
 in [run 37507008661](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37507008661),
 with the other eight jobs passing. Error 87 is failed measurement, not proved
 cleanup; resolving the census/acquisition failure remains required for consolidation.
 The later green run does not establish its cause.
+Newer main documentation snapshot `d27debe` completed
+[run 37510883436](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37510883436)
+with seven jobs passing and Ubuntu and Windows suite failures. macOS passed.
+Ubuntu hit the saved-account fixture's 30-second deadline. Windows recorded ten
+exited Chrome witnesses plus an alive `PING.EXE` witness with a creation time
+older than its alleged parent and root, an inconsistent process attribution.
+The current main workflow is therefore not fully green; both failures require
+resolution before final integration acceptance.
 
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
@@ -63,7 +71,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at a734606; geometry/response-gate test corrections pass 45 focused tests and meaningful old-focus negative, platform CI in progress, current review unproven |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at a734606; 45 focused tests and meaningful old-focus negative pass locally; actual Mac product flows pass, but separate Mac capture and Windows restore failures keep CI incomplete; current review unproven |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |

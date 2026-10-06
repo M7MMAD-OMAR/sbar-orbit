@@ -7,17 +7,26 @@ passed all nine normal workflow jobs on that exact merge. PR 6 changes three hos
 evidence collector/comparator files, with 45 passing provenance controls; it does
 not change production runtime behavior. Historical evidence remains separately
 identified below.
-The latest verified documentation snapshot on official `main` is `449e4de`:
+The last main snapshot with all nine normal jobs passing is `449e4de`:
 [run 37508929441](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37508929441)
 passed all nine normal jobs. The isolated candidates below are not part of that
 tested main source.
-The subsequent main snapshot `61ea92c` failed its Windows suite in
+An earlier main snapshot `61ea92c` failed its Windows suite in
 [run 37507008661](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37507008661);
 the other eight jobs passed. `OpenProcess` returned error 87 while acquiring an
 owned process witness before the abrupt broker-death test. Failed acquisition
 remains unknown, not proof of exit or cleanup. The census/acquisition boundary
 is under investigation. The later green run recorded ten retained Chrome identities
 and confirmed their exits, but did not explain the earlier failed acquisition.
+The newer documentation snapshot `d27debe` completed
+[run 37510883436](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37510883436)
+with seven jobs passing and the Ubuntu and Windows suites failing. macOS passed.
+Ubuntu reached the saved-account fixture's unchanged 30-second deadline. Windows
+reported ten exited Chrome witnesses and an alive `PING.EXE` witness whose creation
+time predates both its alleged Chrome parent and the captured Chrome root. That birth-order
+inconsistency requires investigation of process attribution; it does not prove a
+Chrome survivor. Both failures remain open. The earlier green run does not prove
+the current main source passes its complete workflow.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -114,7 +123,16 @@ remain unchanged. The final helper failed specifically on lost settled focus usi
 the original `56fd8f3` viewer files, which were restored byte-for-byte afterward.
 The final correction passed 45 focused tests, TypeScript and the website build.
 [Run 37510346628](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37510346628)
-on that exact candidate is in progress; actual macOS success is not yet established.
+on that exact candidate completed with seven jobs passing and the macOS and
+Windows suites failing. The actual standalone, English and Arabic product flows
+passed on macOS, including pending disabled controls and settled selection focus.
+The source-bound geometry and input-readback assertions passed, but their exact
+successful pixel and input-event trace values were not retained in available logs.
+The separate macOS document-navigation capture test expected `BACKEND_FAILED` but
+received `TIMEOUT` at the unchanged 3000-millisecond deadline. Windows failed the
+stopping-session profile/restore fixture with `DEADLINE_EXCEEDED`. These failures
+remain open; passing product flows do not establish their causes or complete
+platform acceptance.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
 `d71850c3ff249195305bbe7e10ce2b1b63423a92`. It adds opt-in startup diagnostics
