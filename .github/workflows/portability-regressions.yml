@@ -21,17 +21,19 @@ jobs:
           bun-version: '1.3.14'
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Prove registry and Zen regressions on old and fixed source
+      - name: Prove service and package regressions on old and fixed source
         shell: python
         run: |
           import json, pathlib, re, subprocess
           output = pathlib.Path('output/portability-regressions')
           output.mkdir(parents=True, exist_ok=True)
           cases = [
-              ('registry', 'src/runtime-paths.ts', 'tests/windows-host.test.ts',
-               'registry-only candidate has unsupported profile identity', 3, 'expect(received)'),
-              ('zen', 'src/native-zen-launch.ts', 'tests/native-zen-launch.test.ts',
-               'Zen stable discovery handles', 1, 'Expected promise that rejects'),
+              ('service-paths', 'src/service.ts', 'tests/broker-environment.test.ts',
+               'broker and updater retain selected installer paths when the manager environment differs', 1, 'expect(received)'),
+              ('service-validation', 'src/service.ts', 'tests/broker-environment.test.ts',
+               'service path selection ignores empty and relative optional directories and refuses control characters', 1, 'expect(received)'),
+              ('package-assets', 'package.json', 'tests/packaging.test.ts',
+               'the registry tarball carries tracked source and nothing the working tree happened to leave behind', 1, 'expect(received)'),
           ]
           evidence = []
           for name, source, test, pattern, expected_failures, assertion_marker in cases:
@@ -58,6 +60,10 @@ jobs:
                                'fixedSource': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(),
                                'limit': 'injected path and registry fixtures on Ubuntu; real applications not measured'})
               (output / 'results.json').write_text(json.dumps(evidence, indent=2) + '\n')
+      - name: Check candidate types and focused publication contracts
+        run: |
+          bun run scripts/limited.ts bun run typecheck > output/portability-regressions/typecheck.log 2>&1
+          bun run verify tests/broker-environment.test.ts tests/unit-drift.test.ts tests/unit-directory.test.ts tests/packaging.test.ts tests/public-audit.test.ts tests/source-manifest.test.ts > output/portability-regressions/contracts.log 2>&1
       - name: Preserve old and fixed regression evidence
         if: always()
         uses: actions/upload-artifact@v4
