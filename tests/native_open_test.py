@@ -91,6 +91,34 @@ class OpenTests(unittest.TestCase):
             with self.assertRaisesRegex(SessionError, "absolute"):
                 validate_open({"workspace": 4, "argv": ["google-chrome-stable", "--user-data-dir=relative"]})
 
+    def test_relative_executable_is_resolved_before_approval(self):
+        with patch("src.native.owner_open.shutil.which", return_value="./owner-app"):
+            value = validate_open({"workspace": 4, "argv": ["./owner-app"]})
+        self.assertEqual(value["argv"][0], str(Path("./owner-app").absolute()))
+
+    def test_official_chrome_elf_pins_directory_and_checks_lock(self):
+        with patch("src.native.owner_open.shutil.which", return_value="/opt/google/chrome/chrome"):
+            value = validate_open({"workspace": 4, "argv": ["/opt/google/chrome/chrome"]})
+        self.assertIn("--user-data-dir=" + str(Path.home() / ".config/google-chrome"), value["argv"])
+        (self.directory / "SingletonLock").symlink_to("localhost-12345")
+        with patch("src.native.owner_open.process_identity", return_value=(12345, 1)):
+            with self.assertRaisesRegex(SessionError, "already running"):
+                check_browser_lock(["/opt/google/chrome/chrome", "--user-data-dir=" + str(self.directory)])
+
+    def test_browser_profile_switch_precedes_argument_terminator(self):
+        with patch("src.native.owner_open.shutil.which", return_value="/usr/bin/google-chrome-stable"):
+            value = validate_open({"workspace": 4, "argv": ["google-chrome-stable", "--", "about:blank",
+                                  "--user-data-dir=/positional-not-a-switch"]})
+        expected = "--user-data-dir=" + str(Path.home() / ".config/google-chrome")
+        self.assertIn(expected, value["argv"][:value["argv"].index("--")])
+        self.assertEqual(value["argv"][value["argv"].index("--") + 1:],
+                         ["about:blank", "--user-data-dir=/positional-not-a-switch"])
+        (self.directory / "SingletonLock").symlink_to("localhost-12345")
+        with patch("src.native.owner_open.process_identity", return_value=(12345, 1)):
+            with self.assertRaisesRegex(SessionError, "already running"):
+                check_browser_lock(["/usr/bin/google-chrome-stable", "--user-data-dir=" + str(self.directory),
+                                    "--", "--user-data-dir=/positional-not-a-switch"])
+
     def test_launch_receipt_is_complete_when_published(self):
         import time
         receipt = self.directory / "opened.json"

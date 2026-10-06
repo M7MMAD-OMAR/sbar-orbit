@@ -14,6 +14,20 @@ from .lease import process_identity
 from .session import SessionError
 
 
+def browser_profile_name(executable):
+    name = Path(executable).name
+    if name in ("google-chrome", "google-chrome-stable") or executable == "/opt/google/chrome/chrome":
+        return "google-chrome"
+    if name in ("chromium", "chromium-browser"):
+        return "chromium"
+    return None
+
+
+def browser_switches(argv):
+    # Chromium treats everything after the terminator as positional input.
+    return argv[1:argv.index("--")] if "--" in argv else argv[1:]
+
+
 def validate_open(value):
     if not isinstance(value, dict) or set(value) != {"workspace", "argv"}:
         raise SessionError("Opening requires workspace and argv")
@@ -28,34 +42,39 @@ def validate_open(value):
     executable = shutil.which(argv[0], path="/usr/bin:/bin")
     if executable is None:
         raise SessionError("Application executable was not found")
+    # which may preserve a relative path. The compositor helper has another cwd.
+    executable = str(Path(executable).absolute())
     arguments = [executable, *argv[1:]]
-    if Path(executable).name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+    browser = browser_profile_name(executable)
+    if browser:
         directories = []
-        for index, arg in enumerate(arguments[1:], 1):
+        switches = browser_switches(arguments)
+        for index, arg in enumerate(switches):
             if arg.startswith("--user-data-dir="):
                 directories.append(arg.split("=", 1)[1])
             elif arg == "--user-data-dir":
-                if index + 1 >= len(arguments):
+                if index + 1 >= len(switches):
                     raise SessionError("Browser data directory requires a value")
-                directories.append(arguments[index + 1])
+                directories.append(switches[index + 1])
         if len(directories) > 1 or any(not Path(item).is_absolute() for item in directories):
             raise SessionError("Browser requires one absolute data directory")
         if not directories:
-            browser = "google-chrome" if "chrome" in Path(executable).name else "chromium"
-            arguments.append("--user-data-dir=" + str(Path.home() / ".config" / browser))
+            insertion = arguments.index("--") if "--" in arguments else len(arguments)
+            arguments.insert(insertion, "--user-data-dir=" + str(Path.home() / ".config" / browser))
     return {"workspace": workspace, "argv": arguments}
 
 
 def check_browser_lock(argv):
-    name = Path(argv[0]).name
-    if name not in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+    browser = browser_profile_name(argv[0])
+    if not browser:
         return
-    directory = Path.home() / ".config" / ("google-chrome" if "chrome" in name else "chromium")
-    for index, arg in enumerate(argv[1:], 1):
+    directory = Path.home() / ".config" / browser
+    switches = browser_switches(argv)
+    for index, arg in enumerate(switches):
         if arg.startswith("--user-data-dir="):
             directory = Path(arg.split("=", 1)[1])
-        elif arg == "--user-data-dir" and index + 1 < len(argv):
-            directory = Path(argv[index + 1])
+        elif arg == "--user-data-dir" and index + 1 < len(switches):
+            directory = Path(switches[index + 1])
     lock = directory / "SingletonLock"
     if lock.is_symlink():
         pid = os.readlink(lock).rsplit("-", 1)[-1]
