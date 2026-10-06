@@ -15,7 +15,7 @@ not push official `main`, change support claims or bypass the native release hol
 ## Current execution
 
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6) is merged and official
-`main` is published at `886e319855ca65da741cf028cc5391e13e899ce8`.
+`main` includes merge `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Normal CI run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
 passed all nine jobs on that exact merge. Its three host evidence files extend
 provenance validation without changing the production runtime. The
@@ -23,6 +23,9 @@ provenance validation without changing the production runtime. The
 separately retains the earlier PR 4 platform counts and local combined-runtime result.
 This closes the verified publication portion only. Core checkpoint review remains
 incomplete while the original startup cause and required acceptance gaps remain.
+The later documentation snapshot `d901783` also passed all nine jobs in
+[run 37498925192](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37498925192).
+Draft candidates below remain outside that verified main source.
 
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
@@ -55,7 +58,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5; build corrected, Ubuntu initial-frame timeout and proved frame/metadata defect unresolved |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at ee8440e; 45 focused local tests pass, current macOS and Ubuntu CI fail, current review unproven |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |
@@ -109,6 +112,13 @@ Its other two patches are
 already equivalent to main. Both Windows branch patches are equivalent to
 integrated corrections, so reapplying them is unnecessary. The host provenance
 branch is now merged through PR 6; the product branch remains draft PR 5.
+The privacy-safe diagnostic candidate is published separately as
+[draft PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) at `440f7cc`.
+Its normal CI passed eight jobs and failed the Windows suite. Its three-job
+diagnostic run passed, but no failing startup was reproduced and browser binaries
+differed between isolated and full-suite measurements. Required independent reviews
+remain unproven. The [current snapshot](completion-status.md#remaining-workstream-snapshot)
+records the exact runs and limitations; neither draft closes the startup investigation.
 
 ## Current defect evidence
 

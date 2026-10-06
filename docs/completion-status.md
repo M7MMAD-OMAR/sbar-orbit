@@ -7,6 +7,10 @@ passed all nine normal workflow jobs on that exact merge. PR 6 changes three hos
 evidence collector/comparator files, with 45 passing provenance controls; it does
 not change production runtime behavior. Historical evidence remains separately
 identified below.
+The latest verified documentation snapshot on official `main` is `d901783`:
+[run 37498925192](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37498925192)
+passed all nine normal jobs. The isolated candidates below are not part of that
+tested main source.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -58,7 +62,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `e1ae3d809f8b64f72ef46953f7f70d0a18d8c17f`; it is not merged into main.
+at `ee8440ee14513f726969549eb962db4dccf86912`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -71,8 +75,33 @@ passed eight jobs, including the Windows and macOS suites, but failed the Ubuntu
 English viewer flow while waiting for its initial canvas. The earlier Windows
 selected-tab timeout remains unexplained despite succeeding in this later run.
 An actual unfixed-backend reproduction separately established that pixels can
-show the first page while returned metadata identifies the second tab. That
-defect is being repaired; it has not established the cause of either CI timeout.
+show the first page while returned metadata identifies the second tab. The current
+candidate repairs that mismatch, refuses captures from changed or closed documents,
+and bounds metadata observation without claiming cancellation of pending reads.
+Meaningful old-source regressions failed before these repairs. The final candidate
+passed 45 focused local tests without skips, TypeScript and the website build.
+Fresh independent review of this source remains unproven.
+[Run 37502263416](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37502263416)
+passed seven jobs, including Windows, but failed the macOS and Ubuntu suites.
+macOS has an initial tab-state timeout and two later manual-input readback failures;
+the traced tab-selection helpers did restore focus and enabled controls. Ubuntu
+again hit the original 30-second saved-account timeout. These failures do not
+establish the cause of the earlier initial-canvas or selected-tab timeouts.
+
+[PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
+`440f7cc081ac91d95376599d3c31d658ebcae47e`. It adds opt-in startup diagnostics
+with category-only stderr, selected fixture-root gating and shared-slice counters.
+Five focused local tests and TypeScript passed. Required independent reviews
+remain unproven. Its [normal run 37503614580](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503614580)
+passed eight jobs and failed the Windows suite; that failure remains under investigation.
+The [diagnostic run 37503759704](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503759704)
+passed all three jobs on that exact source. Its full suite reported 717 pass,
+95 skip and zero fail. Saved-account timings were 6.64 seconds isolated and
+7.96 seconds in the full suite. Source and instrumentation hashes matched, but
+Chrome versions differed, so this is not a controlled same-browser timing comparison.
+No failing startup was reproduced. Positive CPU throttling counters in passing
+launches do not prove the original timeout cause; unavailable I/O counters remain
+unavailable. These diagnostics do not constitute a startup repair or acceptance.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
