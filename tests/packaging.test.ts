@@ -157,6 +157,12 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     // the downloadable package, not merely in the development checkout.
     for (const required of ["install.sh", "install.cmd", "bin/sbar-orbit", "bin/sbar-orbit.cmd", "bunfig.toml"])
       expect(shipped).toContain(required);
+    // The shipped agent guide links the portable skill and instructs users to copy it.
+    // Support-tier links and the README image must also resolve from the extracted artifact.
+    for (const required of ["skills/orbit-usage/SKILL.md", "skills/orbit-usage/agents/openai.yaml",
+      "docs/agent-interface.md", "docs/fragments/installed-command-acceptance.md",
+      "docs/fragments/macos-keychain.md", "docs/images/viewer-window.jpg"])
+      expect(shipped).toContain(required);
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);
 

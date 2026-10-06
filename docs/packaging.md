@@ -148,6 +148,9 @@ metadata and a tracked lockfile is required to build the registry archive.
 Tests inspect its contents and compare the archived lock byte for byte. The isolated
 Git fixture also checks untracked files in `src` and `docs`, unstaged bytes,
 Windows command file bytes, executable permissions on POSIX, and symlink refusal.
+The registry archive includes the portable `skills/orbit-usage` directory linked
+by the agent guide, and public documentation assets and evidence fragments linked
+by the README and support-tier documents. Private path exclusions still apply.
 
 Linux managed installation, scheduling, upgrade and rollback are covered by the disposable systemd gate. macOS and Windows managed updates explicitly refuse. See [installation and migration](release-0.1.0.md) for the measured scope and commands.
 
