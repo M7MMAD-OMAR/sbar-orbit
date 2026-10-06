@@ -14,12 +14,13 @@ not push official `main`, change support claims or bypass the native release hol
 
 ## Current execution
 
-[PR 4](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/4) is merged and official
-`main` is published at `56fd8f318c5ec2aaded827a8be89387bf54579f1`. Its complete
-tree `68f03eff2e89fe7b5ff19eb691453f6d4de4b2ff` matches tested `333b92e`.
-[Normal CI run 37474272086](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37474272086)
-passed all nine jobs. The [completion evidence](completion-status.md#verified-official-main-integration)
-records exact platform counts and the local combined-runtime result.
+[PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6) is merged and official
+`main` is published at `886e319855ca65da741cf028cc5391e13e899ce8`.
+[Normal CI run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
+passed all nine jobs on that exact merge. Its three host evidence files extend
+provenance validation without changing the production runtime. The
+[completion evidence](completion-status.md#verified-official-main-integration)
+separately retains the earlier PR 4 platform counts and local combined-runtime result.
 This closes the verified publication portion only. Core checkpoint review remains
 incomplete while the original startup cause and required acceptance gaps remain.
 
@@ -52,7 +53,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5; CI fixture build repair and fresh validation pending |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5; build corrected, Ubuntu initial-frame timeout and proved frame/metadata defect unresolved |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |
@@ -93,6 +94,15 @@ Private untracked artifacts and dependency directories were preserved in place.
 
 No branch or worktree is deleted merely because its patches are integrated.
 Unique private research prototypes are not silently published or executed.
+
+The later remote inventory also inspected `agents/profile-timeout-repair` and
+`agents/windows-identity-fix-2026-10-06`. The profile branch has two additional
+diagnostic commits, `6a6e56b` and `cf73128`, for Chrome readiness and shared-slice
+counters; they are not proved startup repairs and require reconciliation with
+the isolated privacy-safe diagnostic workstream. Its other two patches are
+already equivalent to main. Both Windows branch patches are equivalent to
+integrated corrections, so reapplying them is unnecessary. The host provenance
+branch is now merged through PR 6; the product branch remains draft PR 5.
 
 ## Current defect evidence
 

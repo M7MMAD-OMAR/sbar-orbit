@@ -1,9 +1,12 @@
 # Completion status and evidence
 
-Snapshot: 6 October 2026. [PR 4](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/4)
-is merged into official `main` at `56fd8f318c5ec2aaded827a8be89387bf54579f1`.
-Its tree `68f03eff2e89fe7b5ff19eb691453f6d4de4b2ff` equals the tested integration
-`333b92e`. Historical evidence remains separately identified below.
+Snapshot: 6 October 2026. [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
+is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
+[Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
+passed all nine normal workflow jobs on that exact merge. PR 6 changes three host
+evidence collector/comparator files, with 45 passing provenance controls; it does
+not change production runtime behavior. Historical evidence remains separately
+identified below.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. Registry `latest`
@@ -51,17 +54,29 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `d3745811fcbb29851859985e1aa9506d10453731`; it is not merged into main.
+at `e1ae3d809f8b64f72ef46953f7f70d0a18d8c17f`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
 without running Vite or prerendering. A clean-output reproduction confirmed that
-behavior. Corrected command execution generated both routes locally; final source
-review and fresh platform CI are still required.
+behavior. The corrected build generates both routes. The reviewed repair passed
+41 focused local tests without skips, plus TypeScript and the actual website build.
+Later test diagnostics passed those same local checks but still require a fresh
+independent review. [Run 37495922444](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37495922444)
+passed eight jobs, including the Windows and macOS suites, but failed the Ubuntu
+English viewer flow while waiting for its initial canvas. The earlier Windows
+selected-tab timeout remains unexplained despite succeeding in this later run.
+An actual unfixed-backend reproduction separately established that pixels can
+show the first page while returned metadata identifies the second tab. That
+defect is being repaired; it has not established the cause of either CI timeout.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
-reviews are still required. These fixtures do not establish actual macOS service,
+reviews are still required after expanding source binding to include the invoked
+installer and service adapters. Fresh review creation is currently unavailable:
+agent contexts reached their limit, the configured Codex CLI model was rejected
+by the account, and Claude CLI authentication expired. Earlier reviews cannot
+prove the revised source. These fixtures do not establish actual macOS service,
 Windows task or published installation acceptance.
 
 Fresh actual Claude, API and CLI disposable browser reports each record seven
