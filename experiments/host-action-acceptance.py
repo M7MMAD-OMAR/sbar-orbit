@@ -417,6 +417,14 @@ def run(host, launcher, image_path):
                     if number:
                         try:
                             evidence['modelRequests'][-1]['latestToolOutput'] = trim_images(latest_tool_output(body, host))
+                            if host == 'codex':
+                                outputs = [v for v in body.get('input', []) if isinstance(v, dict) and v.get('type') == 'function_call_output']
+                                output_id = outputs[-1].get('call_id')
+                            else:
+                                outputs = [c for m in body.get('messages', []) for c in m.get('content', [])
+                                           if isinstance(c, dict) and c.get('type') == 'tool_result']
+                                output_id = outputs[-1].get('tool_use_id')
+                            evidence['modelRequests'][-1]['latestToolOutputId'] = output_id
                         except Exception:
                             evidence['modelRequests'][-1]['latestToolOutput'] = 'absent'
                     if number > len(sequence):
@@ -544,6 +552,9 @@ def run(host, launcher, image_path):
                     if app.returncode:
                         raise RuntimeError('Claude failed: ' + out.decode()[-1200:] + (root / 'host.log').read_text()[-1200:])
                 elif host in ('api', 'cli'):
+                    if host == 'cli':
+                        evidence['cliSource'] = {'path': str(PROJECT / 'src/cli.ts'),
+                            'sha256': hashlib.sha256((PROJECT / 'src/cli.ts').read_bytes()).hexdigest()}
                     sid = None
                     for index, (name, arguments) in enumerate(sequence):
                         if index:
@@ -557,9 +568,9 @@ def run(host, launcher, image_path):
                             assert status == 200 and body.get('ok'), body
                         else:
                             verb = method.split('.')[1]
-                            argv = ([bun, str(PROJECT / 'src/cli.ts'), 'act', sid, json.dumps(arguments['action'])]
+                            argv = ([launcher, str(PROJECT / 'src/cli.ts'), 'act', sid, json.dumps(arguments['action'])]
                                     if name == 'orbit_act' else
-                                    [bun, str(PROJECT / 'src/cli.ts'), 'session', verb, 'browser' if index == 0 else sid])
+                                    [launcher, str(PROJECT / 'src/cli.ts'), 'session', verb, 'browser' if index == 0 else sid])
                             child_env = {**env, 'ORBIT_REQUEST_ID': arguments.get('requestId', 'cli-create')}
                             child = subprocess.Popen(argv, cwd=root / 'work', env=child_env,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -571,6 +582,7 @@ def run(host, launcher, image_path):
                             stdout_path = image_path.with_suffix(f'.step-{index}.stdout')
                             stdout_path.write_bytes(out)
                             evidence.setdefault('cliOutput', []).append({'step': index, 'argv': argv[2:],
+                                'invocation': argv, 'requestId': child_env['ORBIT_REQUEST_ID'],
                                 'exit': child.returncode, 'stdoutBytes': len(out),
                                 'stdoutSha256': hashlib.sha256(out).hexdigest(), 'path': str(stdout_path),
                                 'stderr': err.decode()[:500]})
