@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { defaultChromeExecutable } from "../src/chrome";
 import { captureTimeoutMs } from "../src/browser";
 import { requireResourceBudget } from "../src/resource-budget";
+import { writeCaptureArmRecord } from "./capture-diagnostic-record";
 
 if (process.platform !== "darwin") throw new Error("This observation requires a disposable macOS runner");
 if (process.env.ORBIT_TEST_NATIVE === "1") throw new Error("Native preparation is outside this diagnostic");
@@ -17,6 +18,7 @@ const executable: string = selectedExecutable;
 const instrumentation = ["tests/capture-diagnostic.ts", "tests/capture-diagnostic.test.ts",
   "tests/mcp.test.ts", "tests/observe-policy.test.ts", "src/browser.ts", "src/chrome.ts",
   "experiments/macos-capture-diagnostic.ts", ".github/workflows/macos-capture-diagnostic.yml"];
+instrumentation.push("experiments/capture-diagnostic-record.ts", "tests/capture-diagnostic-record.test.ts");
 
 async function command(argv: string[]) {
   const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
@@ -81,9 +83,15 @@ for (const arm of ["isolated", "full-suite"]) {
   const invalid = timedOut || !sourceAndBrowserStable || !identityConfirmed ||
     !events.some(event => event.captureDiagnostic === "mcp.result") ||
     events.some(event => event.captureDiagnostic === "diagnostic.invalid" || event.captureDiagnostic === "capture.budget" && event.budgetMs !== 3000);
-  arms.push({ arm, argv, exitCode, timedOut, durationMs: performance.now() - started, cleanupConfirmed,
+  const armRecord = { arm, argv, exitCode, timedOut, durationMs: performance.now() - started, cleanupConfirmed,
     descendantCleanup: timedOut ? "not measured after owned launcher termination" : "fixture shutdown outcomes only; no survivor measurement",
-    sourceAndBrowserStable, identityConfirmed, invalid, events, scope: "actual instrumented fixture observations; no cause or survivor verdict" });
+    sourceAndBrowserStable, identityConfirmed, invalid, events, scope: "actual instrumented fixture observations; no cause or survivor verdict" };
+  arms.push(armRecord);
+  try {
+    writeCaptureArmRecord(armRecord, { sourceCommit: before.commit,
+      sourceManifestSha256: new Bun.CryptoHasher("sha256").update(JSON.stringify(before.files)).digest("hex"),
+      browserSha256: before.browser.sha256, browserVersion: version });
+  } catch {}
   await writeFile(join(output, "observations.json"), JSON.stringify({ arms }, null, 2) + "\n");
   if (exitCode || invalid || !cleanupConfirmed) overallExit = exitCode || 2;
   if (timedOut || invalid || !cleanupConfirmed) {
