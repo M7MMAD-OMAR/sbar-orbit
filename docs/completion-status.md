@@ -31,11 +31,14 @@ An earlier all-nine passing snapshot is `be8be0f`:
 [run 37513298533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37513298533)
 completed successfully on all three platforms. This later passing run does not
 explain the saved-account deadline or inconsistent process attribution above.
-Current published main snapshot `728bbd3` completed
+Published main snapshot `728bbd3` completed
 [run 37517456996](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37517456996)
 with all nine normal jobs passing. It publishes the diagnostic status documents;
 this passing workflow does not establish the causes of the earlier failures or
 close the isolated candidate investigations.
+Published documentation snapshot `937a230` also completed
+[run 37518837273](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37518837273)
+successfully. Its normal CI result does not close the remaining investigations.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -167,7 +170,7 @@ it does not identify the exact earlier runner stall. Production repair preparati
 is underway, with no new passing production or platform claim.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
-`fd7f5fb2d103a30b3f7629456ef4f492492fb9ea`. It adds opt-in startup diagnostics
+`607c8110772f5fdb01675c048d1c3b49218e4634`. It adds opt-in startup diagnostics
 with category-only stderr, selected fixture-root gating and shared-slice counters.
 Five focused local tests and TypeScript passed. Required independent reviews
 remain unproven. Its [normal run 37503614580](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503614580)
@@ -210,7 +213,7 @@ logs are retained in a separate immutable packet. No lost log is reconstructed
 or replaced by a later run.
 
 [PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8) is a separate draft at
-`a1f818c5b49d31a3e016ce94d3a7f4a0bc7a989f`. It prepares two private owned-child
+`5b469d81e10c801a68ad24492f39ceb9a68e2a17`. It prepares two private owned-child
 Windows trials comparing deferred acquisition with a handle retained while its
 original process is alive. Creator handles close before exit. TypeScript, three
 portable controls and the workflow structure check passed; those checks do not
@@ -238,7 +241,48 @@ is being prepared; it has not been measured on Windows.
 passed all nine jobs on actual merge `598556a5`, with Windows recording 495 pass,
 317 skip and zero fail. That normal run does not execute the separate acquisition
 trials or resolve the earlier process-attribution defect.
-Actual Windows trial evidence and independent review remain unproven.
+The published canonical-content guard passed two real clean CRLF file contrasts,
+TypeScript and three portable controls. New separate diagnostic
+[run 37519385304](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37519385304)
+completed successfully and its authentic archive digest was verified. Independent coordinator comparison verified all 972 raw content rows against the
+published Git tree with its actual attributes, with no omissions, duplicates or
+before/after changes. The actual row order differs from the promised ordinal
+order; this aggregate ordering contract remains open. The two private Bun-child
+trials demonstrated unknown acquisition after exit and a same-identity exit
+measured through a retained handle. This does not establish a production repair,
+Chrome survivor evidence or the cause of the earlier false ancestry.
+[Normal run 37519392994](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37519392994)
+also passed all nine jobs on merge `3bb3ad70`. Windows reported 495 pass, 317 skip
+and zero fail. Required independent review remains unproven.
+
+The current Mac diagnostic writes allowlisted nonthrowing arm records into the job
+log as well as artifacts. Its six local gates passed, including TypeScript and 16
+tests without failures or skips. Actual
+[run 37519219281](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37519219281)
+failed diagnostic provenance validation: both isolated and full fixture commands
+exited zero and the recorded captures completed within 3000 milliseconds, but the
+full arm connected first to Chrome 152.0.7977.83 and later to 154.0.8037.98 with
+different executable digests. The isolated arm's identity checks passed; the full
+arm is invalid for a same-browser comparison. This explains this diagnostic's
+exit 2, not the preceding unavailable diagnostic or original capture failures.
+[Current normal PR run 37519226341](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37519226341)
+completed with eight successful jobs and a Mac suite failure. It recorded a Mac
+capture timeout in the fixture
+that observes while waiting for an element. Its 514 pass, 305 skip and one failure
+belong to merge `86d6bd5` into `937a230`; that distinct timeout remains unexplained.
+
+A retained packet audit found ten copies of stale revision-29 `engine-status.json`
+used to enumerate later product snapshots. Their full formal-scope completeness
+and fresh-status claims are unsupported. Actual canonical check receipts, raw
+logs and the present files' digests remain separately retained evidence. No
+missing historical file bytes are reconstructed. A correction sidecar preserves
+the affected artifact identities; the current candidate snapshot independently
+matches all 59 current files. Its TypeScript, four real prompt-obsolete
+regressions, 49 focused tests, actual website build and stopping-session diagnostic
+passed without failures or skips. Current negative controls caught both original
+browser pending-observation defects and the original viewer settled-focus defect,
+then restored the current browser and all four viewer files exactly. Independent
+review and actual remote CI remain pending for this production candidate.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
