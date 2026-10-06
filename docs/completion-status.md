@@ -1,6 +1,20 @@
 # Completion status and evidence
 
-Snapshot: 7 October 2026. Official main snapshot `ce447d1` completed
+Latest evidence snapshot: 7 October 2026. Latest measured official-main snapshot is
+`83fc3f8`;
+[run 37538046122](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538046122)
+ended with eight successful jobs and one Windows suite failure. Draft PRs 9 and
+10 each passed all nine CI jobs, but neither is accepted or merged: PR 9 reviews
+were FAIL/FAIL; PR 10 reviews were FAIL/INVALID. The subsequent Mac repair review
+snapshot, revision 35 at source `312f67e`, is specification FAIL and standards
+PASS, so overall review remains FAIL; a narrow new repair is preparation only.
+The separate Windows old-source harness recorded nine cases, one setup PASS and
+eight intended semantic FAIL, without measuring a Windows runtime. Full platform
+acceptance, published release and registry parity, external acceptance and the
+unconditional native hold remain open. Detailed source-bound evidence and
+historical results follow.
+
+Historical publication sequence: official main snapshot `ce447d1` completed
 [run 37520632156](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37520632156)
 with all nine normal jobs passing. Candidate results below belong to separate
 branches and do not establish combined acceptance or a new release.
@@ -60,6 +74,25 @@ and [installed artifact packet](/var/tmp/orbit-consolidation-2026-10-06/main-60d
 retain complete suite logs, artifact identities and exact source comparison.
 The earlier `1a9c1e3` all-nine green result and `4089c50` Mac CDP failure remain
 historical evidence; none establishes the causes of these distinct failures.
+
+The later official-main snapshot `83fc3f8` completed
+[run 37538046122](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538046122)
+with eight successful jobs and a Windows suite failure: 490 pass, 317 skip and
+two fail across 809 tests in 176 files. The test failed the popup-following
+`observe` with a pixel-capture TIMEOUT at the unchanged 3000-millisecond deadline,
+before `window.close` was called. The delayed-pipe observation test received child exit 143 instead of
+zero under its 8000-millisecond child budget; the child's active phase and cause
+remain unknown. Ubuntu and Mac suites passed, with 714/95 and 504/305 pass/skip
+respectively and no failures. The installed Windows job separately passed eight
+checks: create 6230 milliseconds, observe 542 and stop 513. That Limited installed
+flow does not prove generation-aware cleanup or resolve the earlier endpoint
+timeout. Only these two documents changed from `60dc625`; all 965 other Git-tree
+mode/type/blob rows match. The
+[full terminal packet](/var/tmp/orbit-consolidation-2026-10-06/main-83fc-ci-37538046122-retained/evidence-packet.json)
+and [installed Windows packet](/var/tmp/orbit-consolidation-2026-10-06/main-83fc-ci-37538046122-retained/installed-windows-artifact-11448090150/evidence-packet.json)
+retain raw logs, actual artifact bytes and source bindings. The earlier all-nine
+green `1a9c1e3` and failed `4089c50` and `60dc625` results remain separate
+historical evidence; this documentation update is no runtime repair.
 
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
@@ -491,7 +524,8 @@ fail. Production and controlled diagnostic files match the direct candidate;
 nine documentation and host evidence files differ. The earlier timeout cause
 and both independent review axes remain unproven.
 
-A separate unpublished Mac interception diagnostic preparation passed TypeScript
+At the earlier local stage, a separate Mac interception diagnostic preparation
+passed TypeScript
 and 17 pure observer controls locally on Linux, without failures or skips. Five
 intentional observer mutants each failed its selected assertion: receiver
 preservation, duplicate-response history, unhandled asynchronous rejection,
@@ -503,7 +537,8 @@ and plan `220ee9ba8a75ab5902b2412cb7fff5557871a5996f9432d21f841de1a7c25f81`.
 The local [passing-check manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/manifest.json),
 [raw controls](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/controls-immutable/actual/raw.log)
 and [mutant manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/negative-check-14-immutable/manifest.json)
-retain the actual receipts and raw output. No actual Mac fixture ran;
+retain the actual receipts and raw output. At that local stage no actual Mac
+fixture ran;
 the Mac root cause, cleanup outcome and both independent review axes remain
 unproven. This prepares evidence collection without changing support or acceptance.
 
@@ -533,9 +568,9 @@ readiness, exact stop-attempt pairing and unknown attribution or cleanup states.
 The earlier matched membership negative/positive comparison remains separately
 retained. The matched R13 and R15 helper contrasts below now establish narrow
 historical discrimination; R19 typed metadata retention is also contrasted below.
-Actual installed Windows
-startup, lifecycle and cleanup remain `not measured`, as do both independent
-review axes. Executable hashing perturbs opt-in timing; its post-read threshold
+At that local stage actual installed Windows startup, lifecycle and cleanup
+remained `not measured`, as did both independent review axes. Executable hashing
+perturbs opt-in timing; its post-read threshold
 cannot interrupt file IO, and disk bytes do not prove mapped-image identity.
 The local [packet](/var/tmp/orbit-windows-installed-startup-2026-10-07/final-local-r25/packet.json)
 and [raw controls](/var/tmp/orbit-windows-installed-startup-2026-10-07/producer-bun-r20-controls-immutable/full.raw.log)
@@ -572,11 +607,83 @@ startup/cleanup and independent reviews remain unproven.
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
 reviews are still required after expanding source binding to include the invoked
-installer and service adapters. Fresh review creation is currently unavailable:
+installer and service adapters. Fresh review creation was unavailable at that
+earlier checkpoint:
 agent contexts reached their limit, the configured Codex CLI model was rejected
-by the account, and Claude CLI authentication expired. Earlier reviews cannot
+by the account, and Claude CLI authentication expired. That historical blocker
+no longer describes the current fresh contexts. Earlier reviews cannot
 prove the revised source. These fixtures do not establish actual macOS service,
 Windows task or published installation acceptance.
+
+Fresh independent review contexts have since been restored. Draft
+[PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9), exact candidate
+`e7be8fe07f8737748a9a42318c0f012063294bc3`, passed all nine jobs in
+[run 37538255624](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538255624)
+on merge checkout `63528067a3eef5a84f93766ad3092e78c174f234`. Its actual Mac
+diagnostic dropped 69 records and left the original non-awaited fixture-stop
+pending. Three target crash notices occurred during session-stop; they do not
+establish a browser-process crash or the historical CDP cause. Fresh specification
+and standards reviews both returned **FAIL**, each with a major finding: missing
+session-correlation defect discrimination and consumption of the original
+unhandled fixture-stop rejection. The
+[publication sidecar](/var/tmp/orbit-consolidation-2026-10-06/mac-interception-pr9-publication-sidecar.json)
+links the actual platform packet, review reports and retained rejection contrast.
+
+Draft [PR 10](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/10), exact candidate
+`0861b81fae6b0f0d6b6350a331cc52fbb26f57d7`, also passed all nine jobs in
+[run 37538794497](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538794497)
+on merge checkout `57db3c4992f324fb05ada0631dab78fbf22eec6c`. Actual installed
+Windows collection retained 102 records and reported endpoint readiness at
+10058 milliseconds. Its reported measured state is not accepted evidence:
+the fresh specification review returned **FAIL** for final-report write failure
+remaining measured and production membership being shortened before invalidation.
+The standards review is **INVALID** because a late sibling-summary exposure broke
+context separation. Its two independently identified pre-exposure findings,
+membership truncation and stale durable status after write failure, remain
+actionable; they do not constitute a valid independent pass. The
+[publication sidecar](/var/tmp/orbit-consolidation-2026-10-06/windows-installed-pr10-publication-sidecar.json)
+links the [actual Windows packet](/var/tmp/orbit-pr10-installed-windows-0861b81-2026-10-07/packet.json)
+and retained review reports. Neither PR is accepted or merged.
+
+The unpublished Mac review repair reached local revision 33 at source
+`312f67e6a4efbaf02666a4f131161e8ce486fb5236971e55c441c16f314a5d19`
+and plan `61e92c6cdd0550e7b7be124f03532a1b63122f5dc7ff80bfc8dcc8e39304e030`.
+TypeScript passed; 20 pure observer controls passed with 87 assertions, and
+seven defective variants each produced one intended failure, passing the negative
+gate. The original stopping fixture passed one Linux test with five assertions.
+The bounded trace retained 65 emissions, final sequence 293 and 37 drops; the
+original fixture-stop remained pending, so full chronology is not established. Its
+[frozen review-input packet](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fresh-review-33-immutable/packet-index.json)
+binds all 403 influential files and the actual raw receipts. The fresh repaired-source
+[specification review](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-specification/report.json)
+returned **FAIL** with one major I5 finding: a trace ending before an admitted
+`Browser.getVersion` reply omits browser identity instead of explicitly recording
+`not measured`. The [coverage report](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-specification/coverage.md)
+retains the satisfied requirements and measurement limits. The fresh
+[standards review](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-standards/report.json)
+returned **PASS** without findings, but overall review remains **FAIL**. Subsequent
+[old-source pure controls](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/root-browser-unknown-old33/receipt.json)
+produced zero passes and two intended failures with five assertions: final browser
+version was absent both without a reply and after an early failure. Original error
+identity was preserved and all 403 source bytes remained unchanged. This is pure
+unknown-state discrimination, not a Mac runtime or historical CDP reproduction.
+A narrow I5 repair is authorized for preparation only; no repaired-source checks
+or actual platform result are established by that authorization.
+
+The separate Windows old-source retention harness ran once in its own engine run,
+revision 4, while original source `b0a5bc9` and checkpoint 27 remained preserved.
+It ended **FAIL** across nine tests: one setup pass, eight intended semantic
+failures, 74 assertions and no skips. The
+[actual receipt](/var/tmp/orbit-windows-installed-startup-2026-10-07/retention-repair-preparation-r27/old-controls/old-actual/actual-receipt.json)
+and [full raw log](/var/tmp/orbit-windows-installed-startup-2026-10-07/retention-repair-preparation-r27/old-controls/old-actual/full.raw.log)
+retain final-report write failure, live and cleanup membership pre-truncation,
+and stale durable status after append or overflow failure. All 286 source bytes
+and modes remained unchanged. Reported absence of the owned local test group
+only concerns that harness; no Windows provider startup or generation-aware cleanup
+was measured. Collector and truncation repairs and a separate external seal-hook
+proposal are authorized for preparation only, without repair checks or runtime
+proof. These draft and local results do not close platform acceptance,
+published-artifact parity or the unconditional native hold.
 
 Fresh actual Claude, API and CLI disposable browser reports each record seven
 successful actions and empty owned-process cleanup lists. Independent reviews
