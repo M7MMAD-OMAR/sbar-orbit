@@ -423,3 +423,78 @@ records. Actual native opening, claim, cursor, focus, input, cleanup and perform
 remain `not measured`. Owner handoff release hold and rejected native preparation
 limitations remain active. This appended snapshot preserves earlier failures,
 skips, successes and unknowns; its current-source status applies only to `dcf8279`.
+
+## Corrected exit measurement and fresh Windows owned-tree cleanup evidence
+
+The polling correction was integrated into official `main` as
+`1e9e88e37d299fe6ea3aed6c51e4fa6142cdcb81`. It retains the existing 150 polls,
+30-millisecond spacing, 20-second test deadline and both strict empty-survivor
+assertions. The loop now waits for both the PID check and stable process witnesses
+to confirm exit. Runtime Windows job cleanup source did not change. The coordinator
+recorded typecheck success and 21 pure tests passing, zero failures, 64 assertions
+and 1156 milliseconds. The previous loop failed two added measurement regressions.
+
+[Official run 37415015766](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766)
+tested that exact source and finished with nine successful jobs on its first
+attempt. No unchanged-source rerun was dispatched. Earlier failed runs remain
+preserved and are not replaced by this result.
+
+| Runner | Pass | Skip | Fail | Test scope | Duration |
+| --- | ---: | ---: | ---: | --- | --- |
+| Ubuntu 24.04 x64 | 687 | 94 | 0 | 781 tests in 169 files | 339.67 seconds |
+| Windows x64 | 469 | 312 | 0 | 781 tests in 169 files | 241.93 seconds |
+| macOS arm64 | 480 | 301 | 0 | 781 tests in 169 files | 207.54 seconds |
+
+Ubuntu passed the original intentional EACCES close-notification fixture in
+1256.31 milliseconds. Windows passed `abrupt broker death reaps its browser tree
+and a fresh broker rejects stale sessions` in 11043.78 milliseconds.
+
+The Windows crash diagnostic identified broker PID 7232, Chrome root PID 1420 and
+ten stable `chrome.exe` witnesses with creation ticks and parent IDs before broker
+termination. The private owned job record listed exactly the same ten process IDs:
+1324, 1420, 1568, 6492, 8676, 8924, 9232, 9308, 9668 and 9732. No captured witness
+was outside the recorded job. The post-termination record retained every creation
+identity and reported every witness exited, with exit code 0 and a nonzero exit
+FILETIME. The original PID survivor list was empty. Reported reaping time was 31
+milliseconds over two polls.
+
+This is real Windows evidence that this measured owned ten-process tree exited
+after abrupt broker termination on this runner and exact source. It is bounded by
+the captured tree and this single run. It does not explain whether PID 7528 from
+the earlier `5c` failure was a live owned process or a reused PID, nor resolve the
+older startup readiness timeout. The `dcf` diagnostic failure remains preserved as
+a premature stable-witness measurement; no eventual survivor outcome was measured
+there. No broader repeatability, arbitrary browser tree or startup-failure cleanup
+claim follows from the new successful case.
+
+All six installed-browser and generated-host registration jobs passed on their
+first attempt. Windows installed-browser acceptance recorded doctor 528
+milliseconds, session creation 6059 milliseconds, stop response 781 milliseconds,
+and a nonempty 18101-byte JPEG. Navigation, read, pause refusal, resume and observe
+checks passed; the paused action returned expected exit code 1. Summed stage
+timings were 11151 milliseconds. This acceptance is separate from the stable
+abrupt-death exit evidence above.
+
+All installers completed dependencies, service, verification and host registration;
+native installation was skipped. All nine generated Claude, Codex and Hermes
+entries negotiated 16 MCP tools. Actual host CLIs were absent. Whole-runner CPU and
+memory resources do not establish usage attributed to Orbit, CPU throttling, guest
+steal, sustained reliability or arbitrary application workload performance.
+Skipped tests remain skipped.
+
+| Artifact | Link |
+| --- | --- |
+| installed-acceptance-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11390917418) |
+| installed-acceptance-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11390783114) |
+| verification-resources-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11390273781) |
+| verification-resources-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11390129517) |
+| verification-resources-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11389979212) |
+| installed-acceptance-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766/artifacts/11389938921) |
+
+The full Windows suite log retains the stable pre/post process and private job
+records. The independent reviewer checked their identity, membership intersection
+and exit fields. Actual native opening, claim, cursor, focus, input, cleanup and
+performance remain `not measured`; owner handoff release hold and rejected native
+preparation limitations remain active. This append preserves all earlier failures,
+skips and unknowns. Current-source CI success applies only to the exact `1e9e88e`
+runtime source and does not close the native release gate.
