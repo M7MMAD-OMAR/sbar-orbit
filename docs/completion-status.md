@@ -16,6 +16,15 @@ unchanged 15-second deadline and was reported still running. This establishes a
 startup failure, not its cause or a confirmed cleanup outcome. Investigation
 remains open.
 
+The next documentation snapshot `bdac974` completed
+[run 37527704505](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37527704505)
+with eight successful jobs and a Windows suite failure. All installation and
+registration jobs passed, as did Ubuntu and Mac suites. The Windows abrupt
+broker-death fixture reached its unchanged 20000-millisecond test deadline;
+its suite reported 491 pass, 317 skip and one fail. The retained job log does not
+locate the timed-out fixture phase or establish an owned-process survivor.
+The later installed-browser pass does not explain the earlier endpoint failure.
+
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
@@ -106,7 +115,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `d59ac6725b369b0d2cc1b93d4b6a5e242eba9a46`; it is not merged into main.
+at `8fee6ea7b80e9fe3a3efee406009ba015f89661d`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -348,13 +357,25 @@ do not distinguish capture delay from time spent intentionally holding real JPEG
 delivery while the tab and resize actions finish. All four prompt-obsolete controls
 passed. The Mac failure and independent reviews remain open.
 
-An unpublished one-file first-frame diagnostic follow-up passed all eleven
+The published one-file first-frame diagnostic follow-up `8fee6ea` passed all eleven
 planned local gates on its frozen 71-file snapshot. It traces actual backend
 creation, capture, held JPEG delivery, concurrent tab and resize actions,
 observation settlement and cleanup, preserving original promises, operations,
 assertions and deadlines. Both old-source controls failed at their intended
 boundaries and restored production bytes exactly. This validates instrumentation;
 it does not explain the earlier runner timeout or establish independent review.
+
+Actual [run 37527793374](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37527793374)
+on this candidate completed with eight successful jobs and a Mac suite failure.
+Its merge `feff5a80` into `bdac974` matches all 71 scoped files. Mac reported
+533 pass, 305 skip and one fail. The first-frame trace shows observation starting
+at 2710 milliseconds, actual JPEG ready at 4371, held delivery released at 5007,
+and observation failing at 5713. Delivery settled before the original capture
+deadline, so the retained trace narrows the remaining wait to post-release work;
+it does not identify the specific metadata operation or explain its delay.
+Owned backend close and profile removal finished with no pending diagnostic
+operations. Ubuntu and Windows suites passed. Further boundary evidence and
+independent review remain required; no capture deadline was increased.
 
 The newer Mac diagnostic candidate `ceca438` records phases from the actual
 concurrent preview fixture and actual source manifests before and after each arm.
