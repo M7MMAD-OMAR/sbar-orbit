@@ -1,6 +1,11 @@
 # Completion status and evidence
 
-Snapshot: 6 October 2026. [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
+Snapshot: 7 October 2026. Official main snapshot `ce447d1` completed
+[run 37520632156](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37520632156)
+with all nine normal jobs passing. Candidate results below belong to separate
+branches and do not establish combined acceptance or a new release.
+
+[PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
 passed all nine normal workflow jobs on that exact merge. PR 6 changes three host
@@ -90,7 +95,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `eb461a7224e8eb24aa9067189a07aed7c1abd1d2`; it is not merged into main.
+at `cf86ebee2fefea893ca2a8bff4ef0171005f7ee1`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -166,8 +171,9 @@ page navigated or closed. Both observations remained pending at known-obsolete
 boundaries, respectively 61.86 and 34.81 milliseconds after observation started,
 within the unchanged 3000-millisecond deadline. Both rejected `BACKEND_FAILED`
 only after delivery release. This demonstrates delayed known-obsolete rejection;
-it does not identify the exact earlier runner stall. Production repair preparation
-is underway, with no new passing production or platform claim.
+it does not identify the exact earlier runner stall. The later production repair
+synchronously invalidates pending observations on document commit or close,
+without claiming cancellation of browser work. Current results appear below.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
 `607c8110772f5fdb01675c048d1c3b49218e4634`. It adds opt-in startup diagnostics
@@ -282,7 +288,35 @@ regressions, 49 focused tests, actual website build and stopping-session diagnos
 passed without failures or skips. Current negative controls caught both original
 browser pending-observation defects and the original viewer settled-focus defect,
 then restored the current browser and all four viewer files exactly. Independent
-review and actual remote CI remain pending for this production candidate.
+review remains unproven. Actual
+[run 37520931996](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37520931996)
+on candidate `cf86ebe` completed with eight jobs passing and the Ubuntu suite
+failing. Its merge checkout `3ca2f574` into `ce447d1` matches all 59 scoped
+candidate files. All four new capture controls passed on every platform. Ubuntu
+passed all 49 focused cases; Mac and Windows passed 47 and skipped two existing
+Linux-only viewer cases. Full suites reported Mac 528 pass, 305 skip and zero
+fail; Windows 516 pass, 317 skip and zero fail; Ubuntu 736 pass, 95 skip and two
+failures. Ubuntu reached the unchanged saved-account 30000-millisecond deadline
+and the pure population-parser fixture's 5000-millisecond deadline. Their internal
+failure phases were not retained, so their causes remain unknown. The latter
+fixture compiles and runs a parser control; it does not operate a private display
+or authorize native preparation.
+
+The newer Mac diagnostic candidate `ceca438` records phases from the actual
+concurrent preview fixture and actual source manifests before and after each arm.
+TypeScript and 17 selected local tests passed with no failures or skips.
+[Run 37521638238](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37521638238)
+checked out that exact candidate and ended with diagnostic exit 2. Both fixture
+commands exited zero, capture fulfilled within the original 3000-millisecond
+deadline and fixture shutdown completed. Actual source manifests matched before
+and after both arms. The full arm again changed from Chrome 152.0.7977.83 to
+154.0.8037.98 with different executable digests, invalidating the comparison.
+No capture timeout was reproduced and the browser mutation cause remains unknown.
+These records were retained in the complete job log; the advertised archive was
+not downloaded. Normal CI on exact `ceca438` is `not measured`: commit queries
+returned only the diagnostic, while PR metadata still reported parent `607c811`
+despite the branch ref and diagnostic checkout identifying `ceca438`. Neither
+that discrepancy nor passing captures closes the earlier Mac failure.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
