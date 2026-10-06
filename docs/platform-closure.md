@@ -29,7 +29,7 @@ Five separate owned workstreams are actively investigating in isolated checkouts
 | --- | --- | --- |
 | Reliability and startup | Original saved-profile timeout, pre-CDP startup delay and recovery | Discriminating old-source failure, explained cause and reviewed repair |
 | Product architecture and UX | Product hierarchy, usable interfaces and English/Arabic onboarding | Rendered interaction, RTL, keyboard and state evidence |
-| Performance and restore | Failed 80.99 percent latency overhead against 20 percent target | Production repair with restore parity and matched comparisons |
+| Performance and restore | Latest owned-browser baseline fails at 42.942314 percent latency overhead against 20 percent target | Production repair with restore parity and matched comparisons |
 | Portability and managed lifecycle | Published installation, service/update scheduling and rollback | Source-bound actual managed mechanism and published artifact acceptance |
 | Actual hosts and acceptance | Missing host actions, image forwarding and external U1/T1 through U12/T12 | Authentic host/device evidence and explicit unmeasured limits |
 
@@ -43,12 +43,16 @@ Registry `latest` is `not measured`; package version alone does not establish
 published artifact parity. Release closure still requires matching artifacts and
 all required evidence.
 
+The [remaining workstream snapshot](completion-status.md#remaining-workstream-snapshot)
+records the newer isolated measurements and failed draft PR checks. These results
+do not extend the verified main runtime or close pending acceptance requirements.
+
 ## Dependency order and completion evidence
 
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Pending |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5; CI fixture build repair and fresh validation pending |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |

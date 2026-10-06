@@ -47,6 +47,43 @@ acceptance or the native hold. Five isolated workstreams are investigating the
 remaining scope under the [closure contract](platform-closure.md#current-execution).
 Their changes require coordinated review and fresh integration evidence.
 
+## Remaining workstream snapshot
+
+These results belong to isolated workstreams and do not establish a new combined
+runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
+at `d3745811fcbb29851859985e1aa9506d10453731`; it is not merged into main.
+[Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
+failed the rendered onboarding checks on all three platforms because the generated
+website routes were absent. The build step exited zero after printing Bun usage
+without running Vite or prerendering. A clean-output reproduction confirmed that
+behavior. Corrected command execution generated both routes locally; final source
+review and fresh platform CI are still required.
+
+The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
+and failed none; TypeScript exited zero. Independent specification and operational
+reviews are still required. These fixtures do not establish actual macOS service,
+Windows task or published installation acceptance.
+
+Fresh actual Claude, API and CLI disposable browser reports each record seven
+successful actions and empty owned-process cleanup lists. Independent reviews
+validated their actual receipts, images, source and launcher identities and 14
+recorded process creation witnesses per run. These checkpoints are accepted only
+at the Limited disposable browser fixture tier, with sampled cleanup coverage.
+The separately reviewed Codex run establishes its seven fixture actions only;
+model use of image pixels and external-user acceptance are not measured by those
+results.
+
+The corrected owned-browser performance baseline measured 42.942314 percent
+latency overhead, which fails the 20 percent target, and 5.523438 MiB idle overhead,
+which passes the 100 MiB target. Its source identity is
+`b19eea35f74d1ba522490735b3c6dfc41d8224a3d78e27b2383271afcf9e2635`;
+retained report SHA256 is
+`1f398e1f0ea0a919c9b369a0c7ecbc383acd37414c41a660a271238424ec0bf8`.
+This is a new measurement of unchanged production behavior, not a production
+optimization or an improvement claim relative to a different historical run.
+Attribution identifies snapshot child lifecycle as a large read cost; it does not
+prove a kernel-only limit. A safe production repair remains required.
+
 ## Historical completed evidence portions
 
 The earlier retained full workflow is
