@@ -121,14 +121,19 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
     brokerProcess.kill("SIGKILL");
     await brokerProcess.exited;
     let survivors: number[] = owned;
+    const reapingAt = Date.now();
+    let polls = 0;
     for (let i = 0; i < 150; i++) {
+      polls++;
       survivors = (await Promise.all(owned.map(async pid => await alive(pid) ? pid : null))).filter((pid): pid is number => pid !== null);
-      if (!survivors.length) break;
+      const witnessAlive = witnesses?.observe().some(item => item.state === "alive") ?? false;
+      if (!survivors.length && !witnessAlive) break;
       await Bun.sleep(30);
     }
     if (witnesses) {
       const measured = witnesses.observe();
-      console.error(JSON.stringify({ browserCrashEvidence: "after broker death", survivors, processes: measured }));
+      console.error(JSON.stringify({ browserCrashEvidence: "after broker death", survivors, processes: measured,
+        reapingMs: Date.now() - reapingAt, polls }));
       await drainErrors();
       const records = brokerStderr.split(/\r?\n/).filter(line => line.includes('"ownedBrowser":"crash evidence"'));
       for (const record of records.slice(-2)) console.error(record);
