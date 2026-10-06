@@ -1,0 +1,36 @@
+name: windows-witness-diagnostic
+
+on:
+  push:
+    branches: [agents/orbit-witness-diagnostic-2026-10-06]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retained-handle-query:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Inspect disposable owned process before and after exit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force output/windows-witness-query | Out-Null
+          bun run scripts/limited.ts bun experiments/windows-witness-query-probe.ts 2>&1 | Tee-Object -FilePath output/windows-witness-query/probe.log
+          exit $LASTEXITCODE
+      - name: Preserve successful, failed and unknown query evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-witness-query
+          path: output/windows-witness-query/
+          if-no-files-found: error
