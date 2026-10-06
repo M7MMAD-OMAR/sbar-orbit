@@ -6,7 +6,10 @@ test("job-log projection rejects arbitrary private fields and values while retai
   const digest = "a".repeat(64), sourceCommit = "b".repeat(40);
   const record = { arm: "isolated", exitCode: 2, durationMs: 3001, timedOut: false, cleanupConfirmed: false,
     sourceAndBrowserStable: true, sourceChanged: false, browserChanged: true,
-    identityConfirmed: true, invalid: false, argv: [privateValue], message: privateValue,
+    identityConfirmed: true, invalid: false, selection: "owned app bundle copy",
+    bundleSha256: digest, bundleAfterSha256: digest, originalBundleChanged: true,
+    bundleResourceBytes: 123, bundleResourceFiles: 2, bundleResourceDirectories: 1, bundleResourceLinks: 0,
+    copiedPath: privateValue, argv: [privateValue], message: privateValue,
     events: [{ captureDiagnostic: "screenshot.settled", fixture: "mcp", status: "rejected", elapsedMs: 3000,
       code: "TIMEOUT", messageCategory: "capture timeout", messageSha256: digest, captureBudgetMs: 3000,
       message: privateValue, image: privateValue, executable: privateValue },
@@ -19,7 +22,8 @@ test("job-log projection rejects arbitrary private fields and values while retai
     sourceManifestAfterSha256: digest, browserAfterSha256: "c".repeat(64),
     browserVersion: "154.0.8037.97", executable: privateValue });
   expect(projected).toMatchObject({ arm: "isolated", exitCode: 2, sourceCommit, omittedEventCount: 1,
-    sourceChanged: false, browserChanged: true, sourceManifestAfterSha256: digest, browserAfterSha256: "c".repeat(64) });
+    selection: "owned app bundle copy", bundleSha256: digest, bundleAfterSha256: digest,
+    originalBundleChanged: true, bundleResourceBytes: 123, sourceChanged: false, browserChanged: true, sourceManifestAfterSha256: digest, browserAfterSha256: "c".repeat(64) });
   expect(projected.events).toEqual([
     { captureDiagnostic: "screenshot.settled", fixture: "mcp", status: "rejected", elapsedMs: 3000,
       code: "TIMEOUT", messageCategory: "capture timeout", messageSha256: digest, captureBudgetMs: 3000 },

@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/macos-capture-diagnostic.yml'
       - 'experiments/macos-capture-diagnostic.ts'
+      - 'experiments/capture-browser-copy.ts'
+      - 'experiments/capture-diagnostic-record.ts'
       - 'tests/**'
       - 'src/**'
       - 'scripts/limited.ts'
@@ -35,7 +37,10 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Check types
         run: bun run typecheck
-      - name: Observe unchanged capture budget on one disposable runner
+      - name: Observe unchanged capture budget with an owned fixture-only app bundle copy
+        env:
+          ORBIT_CAPTURE_CONTROLLED_BROWSER: '1'
+          ORBIT_TEST_NATIVE: '0'
         run: bun --smol run scripts/limited.ts bun --smol experiments/macos-capture-diagnostic.ts
       - name: Retain exact-source actual observations even when a fixture fails
         if: always()

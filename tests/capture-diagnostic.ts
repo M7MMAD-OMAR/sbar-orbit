@@ -1,12 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { BrowserBackend, captureTimeoutMs } from "../src/browser";
 import { defaultChromeExecutable } from "../src/chrome";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative } from "node:path";
+import { captureFactoryAdapter } from "../experiments/capture-browser-copy";
 import type { Sessions } from "../src/session";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 type Fixture = "mcp" | "observe-policy" | "preview-concurrent";
 type Entry = { fixture: Fixture; restore: (() => void)[]; pending: Map<string, string>; invalid: boolean;
-  cleanupConfirmed: boolean; active: boolean };
+  cleanupConfirmed: boolean; active: boolean; executable?: string };
 type Scope = { entry: Entry; request: string; observation?: string };
 const scope = new AsyncLocalStorage<Scope>();
 const entries = new Map<Sessions, Entry>();
@@ -141,30 +144,41 @@ function instrumentBackend(backend: BrowserBackend, current: Scope) {
 function installFactory() {
   if (restoreFactory) return;
   const original = BrowserBackend.create;
-  restoreFactory = replaceMethod(BrowserBackend, "create", function(this: typeof BrowserBackend, ...args: Parameters<typeof original>) {
-    const current = scope.getStore();
-    const promise = original.apply(this, args);
-    if (!current?.entry.active) return promise;
-    let executable: string | undefined;
-    try { executable = args[2]?.executable ?? defaultChromeExecutable(); }
-    catch { invalid(current); }
-    return observePromise(promise, backend => {
-      if (!current.entry.active) { emit(current, "backend.created.after-close"); return; }
-      instrumentBackend(backend, current);
-      if (!executable) { invalid(current); return; }
-      const digest = Bun.file(executable).arrayBuffer();
-      operation(current, "browser.identity", () => digest, bytes => emit(current, "browser.identity.bytes", {
-        executableSha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
-      }));
-    }, () => {}, () => invalid(current));
-  });
+  const adapter = captureFactoryAdapter<typeof BrowserBackend, Parameters<typeof original>, BrowserBackend, Scope>(
+    original, () => { const current = scope.getStore(); return current?.entry.active ? current : undefined; },
+    current => current.entry.executable,
+    (promise, current, selectedArgs) => {
+      let executable: string | undefined;
+      try { executable = selectedArgs[2]?.executable ?? defaultChromeExecutable(); }
+      catch { invalid(current); }
+      return observePromise(promise, backend => {
+        if (!current.entry.active) { emit(current, "backend.created.after-close"); return; }
+        instrumentBackend(backend, current);
+        if (!executable) { invalid(current); return; }
+        const digest = Bun.file(executable).arrayBuffer();
+        operation(current, "browser.identity", () => digest, bytes => emit(current, "browser.identity.bytes", {
+          executableSha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"),
+        }));
+      }, () => {}, () => invalid(current));
+    }, current => invalid(current),
+  );
+  restoreFactory = replaceMethod(BrowserBackend, "create", adapter);
 }
 
 export function installCaptureDiagnostic(sessions: Sessions, fixture: Fixture): (cleanupConfirmed?: boolean) => void {
   if (!enabled()) return () => {};
+  const controlled = process.env.ORBIT_CAPTURE_COPY_EXECUTABLE;
+  if (controlled !== undefined) {
+    const owner = process.env.ORBIT_CAPTURE_COPY_OWNER;
+    if (process.env.GITHUB_ACTIONS !== "true" || process.env.ORBIT_TEST_NATIVE === "1" || !owner || !isAbsolute(owner) || !isAbsolute(controlled) ||
+      !basename(owner).startsWith("orbit-capture-owned-") || realpathSync(owner) !== owner ||
+      !/^ControlledChrome\.app\/Contents\/MacOS\/[^/]+$/.test(relative(owner, controlled)) ||
+      realpathSync(controlled) !== controlled || dirname(owner) !== realpathSync(process.env.RUNNER_TEMP ?? ""))
+      throw new Error("Controlled fixture selection requires the exact owned CI copy");
+  }
   const release = registrations.acquire(sessions, () => {
     installFactory();
-    const entry: Entry = { fixture, restore: [], pending: new Map(), invalid: false, cleanupConfirmed: false, active: true };
+    const entry: Entry = { fixture, restore: [], pending: new Map(), invalid: false, cleanupConfirmed: false, active: true, executable: controlled };
     entries.set(sessions, entry);
     const original = sessions.dispatch;
     entry.restore.push(replaceMethod(sessions, "dispatch", function(this: Sessions, ...args: Parameters<typeof original>) {
