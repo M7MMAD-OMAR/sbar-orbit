@@ -14,19 +14,38 @@ not push official `main`, change support claims or bypass the native release hol
 
 ## Current execution
 
-Latest evidence snapshot: 7 October 2026. Latest measured official-main snapshot is
-`83fc3f8`;
-[run 37538046122](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538046122)
-ended with eight successful jobs and one Windows suite failure. Draft PRs 9 and
-10 each passed all nine CI jobs, but neither is accepted or merged: PR 9 reviews
-were FAIL/FAIL; PR 10 reviews were FAIL/INVALID. The subsequent Mac repair review
-snapshot, revision 35 at source `312f67e`, is specification FAIL and standards
-PASS, so overall review remains FAIL; a narrow new repair is preparation only.
-The separate Windows old-source harness recorded nine cases, one setup PASS and
-eight intended semantic FAIL, without measuring a Windows runtime. Full platform
-acceptance, published release and registry parity, external acceptance and the
-unconditional native hold remain open. Detailed source-bound evidence and
-historical results follow.
+Latest integration snapshot: 7 October 2026, official main `a4572ba`.
+[PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9) is merged. Its corrected
+observer source `abb784a` passed four local gates and fresh independent
+specification and standards reviews; checkpoint revision 51 is locally accepted.
+[Run 37544177128](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37544177128)
+passed all nine jobs on the exact integration tree now in main: Mac 530 pass,
+305 skip, zero fail; Windows 518 pass, 317 skip, zero fail; Ubuntu 740 pass,
+95 skip, zero fail. Each suite ran 835 tests across 177 files. Skips remain
+not measured. [Official-main run 37545015395](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37545015395)
+also passed all nine jobs on exact `a4572ba`, with the same suite counts.
+Both complete log and artifact sets are retained separately.
+
+The actual current Mac stopping fixture passed with protocol version
+Chrome/154.0.8037.98 from a matched existing response. Executable identity,
+the historical interception failure cause, asynchronous fixture-stop completion
+and detached-owner cleanup remain unconfirmed. The PR run trace dropped 71
+records; the official-main trace dropped 73. Both retained the original
+unawaited fixture stop as pending. The
+observer is diagnostic instrumentation, not a claimed repair of that cause.
+
+PR 10 remains a draft. Its collector/cardinality and finite-window retention
+repairs are being integrated with current main; current repair checks and
+fresh review remain pending. Portable capture/pipe diagnostics are also in
+preparation. The retained Windows old-source harness has nine actual cases,
+one setup pass and eight intended semantic failures; it is pure regression
+evidence, not a Windows runtime measurement. Product PR 5, startup PR 7 and
+Windows census PR 8 remain drafts with their required independent review
+unproven. Performance, managed lifecycle, published release and registry
+parity, external U1/T1 through U12/T12 acceptance and the unconditional native
+hold remain open. Detailed entries below describe their named historical
+source snapshots and do not supersede this integration snapshot.
+
 
 ### Historical publication sequence
 
