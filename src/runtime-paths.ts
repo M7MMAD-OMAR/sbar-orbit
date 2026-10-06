@@ -24,7 +24,7 @@ export const chromeExecutables = Object.values(linuxBrowserExecutables).flat();
  * Chrome before Edge, because a profile is tied to the branding that wrote it and Chrome is what
  * Orbit's other measurements were taken against.
  */
-export type WindowsBrowser = { id: string; executable: string; profileDirectory: string };
+export type WindowsBrowser = { id: string; executable: string; profileDirectory: string | null };
 
 /** Spawning `reg` is injected so the rule can be pinned from a host that has no registry. */
 export type RegistryProbe = (exe: string) => string | undefined;
@@ -40,17 +40,19 @@ export function windowsBrowserInstalls(env = process.env, registry: RegistryProb
   const found: WindowsBrowser[] = [];
   const claimed = new Set<string>();
   for (const candidate of known) {
-    const executable = roots.map(root => join(root, candidate.leaf)).find(path => Bun.file(path).size > 0)
-      ?? registry(candidate.exe);
-    if (!executable) continue;
-    // App Paths is keyed by FILE NAME, and Chrome and Chromium both ship `chrome.exe`, so the
-    // registry cannot tell the two brandings apart. Without this, a Chrome installed outside the
-    // three install roots was reported twice: once correctly, and once as a `chromium` install that
-    // does not exist, carrying Chrome's binary and Chromium's profile directory. First candidate
-    // wins, which is the same Chrome before Chromium order the install roots already use.
-    if (claimed.has(executable.toLowerCase())) continue;
+    const executable = roots.map(root => join(root, candidate.leaf)).find(path => Bun.file(path).size > 0);
+    if (!executable || claimed.has(executable.toLowerCase())) continue;
     claimed.add(executable.toLowerCase());
     found.push({ id: candidate.id, executable, profileDirectory: candidate.data });
+  }
+  // App Paths establishes an executable candidate, not its product identity. An arbitrary
+  // chrome.exe can be Chromium, another fork or a renamed launcher. Keep fresh-session
+  // discovery available without claiming a branded profile from the registry filename.
+  for (const [exe, id] of [["chrome.exe", "unverified-chromium"], ["msedge.exe", "unverified-edge"]] as const) {
+    const executable = registry(exe);
+    if (!executable || claimed.has(executable.toLowerCase())) continue;
+    claimed.add(executable.toLowerCase());
+    found.push({ id, executable, profileDirectory: null });
   }
   return found;
 }

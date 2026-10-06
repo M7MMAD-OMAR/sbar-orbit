@@ -76,3 +76,12 @@ machine. The regression suites are
 [workspace storage](../tests/workspace-storage.test.ts).
 See the current validation results before claiming a capability is measured on
 another host.
+
+## Windows registry identity
+
+An App Paths filename is an executable launch candidate, not product metadata.
+Registry-only `chrome.exe` and `msedge.exe` entries receive generic identifiers
+and `profileDirectory: null`; Orbit does not infer the person's branded profile
+from a path suffix. Known installation roots retain their existing mapping.
+The new injected registry regressions are not measured until remote CI runs.
+Real arbitrary or renamed registry launchers remain not measured.

@@ -61,19 +61,21 @@ test("browser discovery reports nothing when no install root and no registry ans
  * cannot tell the two brandings apart. A Chrome installed outside the three install roots used to be
  * reported twice: once correctly, and once as a `chromium` install that does not exist.
  */
-test("a registry answer for chrome.exe is one install, not two brandings", () => {
+test("a registry answer for chrome.exe preserves launch discovery without claiming a branded profile", () => {
   const installs = windowsBrowserInstalls(
     { ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" },
     exe => exe === "chrome.exe" ? "D:\\Custom\\Chrome\\chrome.exe" : undefined);
-  expect(installs.map(install => install.id)).toEqual(["google-chrome"]);
-  expect(installs[0]!.executable).toBe("D:\\Custom\\Chrome\\chrome.exe");
+  expect(installs.map(install => install.id)).toEqual(["unverified-chromium"]);
+  expect(installs[0]?.profileDirectory).toBeNull();
+  expect(installs[0]?.executable).toBe("D:\\Custom\\Chrome\\chrome.exe");
 });
 
 test("a machine with only Edge registered reports only Edge", () => {
   const installs = windowsBrowserInstalls(
     { ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" },
     exe => exe === "msedge.exe" ? "C:\\Edge\\msedge.exe" : undefined);
-  expect(installs.map(install => install.id)).toEqual(["microsoft-edge"]);
+  expect(installs.map(install => install.id)).toEqual(["unverified-edge"]);
+  expect(installs[0]?.profileDirectory).toBeNull();
 });
 
 /**
@@ -93,3 +95,12 @@ test("the App Paths probe spawns an absolute reg.exe rather than resolving one t
   expect(probe).toContain("SystemRoot");
   expect(probe).toContain("reg.exe");
 });
+
+for (const executable of ["D:\\Chromium\\Application\\chrome.exe", "D:\\Google\\Chrome\\Application\\chrome.exe", "D:\\Renamed\\chrome.exe"]) {
+  test(`registry-only candidate has unsupported profile identity: ${executable}`, () => {
+    const installs = windowsBrowserInstalls(
+      { ProgramFiles: "/nonexistent", LOCALAPPDATA: "/nonexistent" },
+      exe => exe === "chrome.exe" ? executable : undefined);
+    expect(installs).toEqual([{ id: "unverified-chromium", executable, profileDirectory: null }]);
+  });
+}

@@ -232,6 +232,8 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
   const secretService = await secretServiceState();
   const notes: string[] = [];
   if (windows) notes.push("The browser backend runs here and the private display does not. Measured on one Windows 11 guest, so this is a Limited tier: see docs/support-tiers.md.");
+  if (windows && windowsInstalls.some(install => install.profileDirectory === null))
+    notes.push("Registry-only browser executables have unsupported product and profile identity. They are candidates for fresh sessions only.");
   if (windows) notes.push("A session cannot start from your own browser profile on Windows. App Bound Encryption refuses any non default user data directory, so the clone would start signed out.");
   if (darwin) notes.push("The browser backend runs here and the private display does not: macOS has no second GUI session for one user, so there is nowhere private to put a native application. See docs/support-tiers.md.");
   if (darwin) notes.push("The resource budget here is advisory, not a kernel ceiling. macOS has no cgroup and no job object, so Orbit measures its own process groups and refuses to start work that would not fit, rather than stopping work that is already over.");
@@ -264,7 +266,8 @@ export async function detectPlatform(home = homedir()): Promise<PlatformCapabili
     // platform too, before anything is read.
     browsers: linux ? await detectBrowsers(home)
       : darwin ? darwinInstalls.map(install => ({ ...install, packaging: "system" as const, keyringItem: "", keyringApplication: "" }))
-      : windowsInstalls.map(install => ({ ...install, packaging: "system" as const, keyringItem: "", keyringApplication: "" })),
+      : windowsInstalls.flatMap(install => install.profileDirectory === null ? []
+        : [{ ...install, profileDirectory: install.profileDirectory, packaging: "system" as const, keyringItem: "", keyringApplication: "" }]),
     notes,
   };
 }
