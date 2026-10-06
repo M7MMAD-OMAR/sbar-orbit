@@ -1,9 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { admitInstalledStartup, installedStartupProjection, InstalledStartupWriter,
-  prepareInstalledStartup, taskEnvironmentMatches, observeInstalledStop, installedTraceRetentionComplete, installedStartupAttribution, installedExecutableIdentity, installedProducerBinding } from "../src/installed-startup-diagnostic";
+  prepareInstalledStartup, taskEnvironmentMatches, observeInstalledStop, installedTraceRetentionComplete, installedStartupAttribution, installedExecutableIdentity, installedProducerBinding, installedStartupCompletion, createInstalledStartupWindow } from "../src/installed-startup-diagnostic";
 import { brokerTaskXml } from "../src/windows-autostart";
 import { needsSymlink } from "./platform-support";
 
@@ -120,11 +122,13 @@ test("runtime-only retention is genuine partial metadata, never startup or clean
   const lines: string[] = [], writer = new InstalledStartupWriter(line => lines.push(line), () => {});
   writer.emit({ phase: "runtime", browserSha256: "a".repeat(64), bunSha256: "b".repeat(64), runtimeSha256: "c".repeat(64) });
   const rows = lines.map(line => JSON.parse(line).installedStartup);
-  expect(installedTraceRetentionComplete(rows, writer.status, writer.status.bytes)).toBe(true);
+  expect(writer.status).toMatchObject({ sealed: false, writeFailed: false, overflow: false, records: rows.length });
+  expect(installedTraceRetentionComplete(rows, writer.status, writer.status.bytes)).toBe(false);
   expect(installedStartupAttribution(rows)).toEqual({ startupAttributionReady: false, cleanupAttemptObserved: false, cleanupAttributionReady: false, cleanupConfirmed: false });
   writer.emit({ phase: "assigned", rootPid: 42 }); writer.emit({ phase: "stop confirmed", rootPid: 42 });
   const incomplete = lines.map(line => JSON.parse(line).installedStartup);
-  expect(installedTraceRetentionComplete(incomplete, writer.status, writer.status.bytes)).toBe(true);
+  expect(writer.status).toMatchObject({ sealed: false, writeFailed: false, overflow: false, records: incomplete.length });
+  expect(installedTraceRetentionComplete(incomplete, writer.status, writer.status.bytes)).toBe(false);
   expect(installedStartupAttribution(incomplete)).toEqual({ startupAttributionReady: false, cleanupAttemptObserved: false, cleanupAttributionReady: false, cleanupConfirmed: false });
 });
 
@@ -144,7 +148,8 @@ function evaluateProtocol(values: unknown[]) {
   const lines: string[] = [], writer = new InstalledStartupWriter(line => lines.push(line), () => {});
   for (const value of values) writer.emit(value);
   const rows = lines.map(line => JSON.parse(line).installedStartup);
-  expect(installedTraceRetentionComplete(rows, writer.status, writer.status.bytes)).toBe(true);
+  expect(writer.status).toMatchObject({ sealed: false, writeFailed: false, overflow: false, records: rows.length });
+  expect(installedTraceRetentionComplete(rows, writer.status, writer.status.bytes)).toBe(false);
   return installedStartupAttribution(rows);
 }
 test("ordered assigned endpoint and latest confirmed cleanup provide protocol readiness", () => {
@@ -216,7 +221,8 @@ function projectProducer(values: unknown[]) {
   const lines: string[] = [], writer = new InstalledStartupWriter(line => lines.push(line), () => {});
   for (const row of values) writer.emit(row);
   const records = lines.map(line => JSON.parse(line).installedStartup);
-  expect(installedTraceRetentionComplete(records, writer.status, writer.status.bytes)).toBe(true);
+  expect(writer.status).toMatchObject({ sealed: false, writeFailed: false, overflow: false, records: records.length });
+  expect(installedTraceRetentionComplete(records, writer.status, writer.status.bytes)).toBe(false);
   return installedProducerBinding(records);
 }
 test("selected producer binding accepts stable actual-schema Bun identity independently of collector", () => {
@@ -268,4 +274,234 @@ test("bounded executable hash read absence byte or chunk overflow and observed o
   let observedAt = 0;
   expect(installedExecutableIdentity(executable, undefined, () => { const now = observedAt; observedAt += 1001; return now; }))
     .toMatchObject({ complete: false, slow: true, elapsedMs: 1001, closeFailed: false });
+});
+
+// Finite-window transport controls use real shared functions and owned durable text only.
+const hash = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
+const token = "a".repeat(64), launch = "b".repeat(64);
+const confirmed = { phase: "stop confirmed", origin: "owned stop", rootPid: 42, stopAttempt: 1,
+  cleanup: { members: [], confirmed: true, handleClosed: true, rootExitCode: 1 } };
+function assignedFixture() {
+  return { phase: "assigned", rootPid: 42, members: [42], budget: { memoryBytes: 2147483648, cpuCycleSharePercent: 2500, activeProcesses: 512 },
+    accounting: { userMs: 0, kernelMs: 0, activeProcesses: 1, peakJobMemoryBytes: 1024 } };
+}
+function protocol() {
+  return [
+    { phase: "runtime" },
+    assignedFixture(),
+    { phase: "poll", origin: "startup snapshot", rootPid: 42, endpointState: "published", elapsedMs: 10, waitMs: 15000, polls: 1, maxPollGapMs: 10 },
+    { phase: "before stop", origin: "startup snapshot", rootPid: 42, endpointState: "published", elapsedMs: 20, waitMs: 15000, polls: 2, maxPollGapMs: 10 },
+    { phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 1 },
+    confirmed,
+    { ...confirmed, origin: "startup snapshot" },
+    { phase: "stderr ended", rootPid: 42, stderrEnded: true, stderrFailed: false, stderrBytes: 0, stderrChunks: 0, stderrSha256: hash("") },
+  ];
+}
+function lifecycle() {
+  const sealed: any[] = [];
+  return { sealed, state: installedStartupCompletion((proof: unknown) => sealed.push(proof)) };
+}
+test("shared actual completion state waits for outer startup completion, close and EOF", () => {
+  const { state, sealed } = lifecycle();
+  for (const row of protocol()) state.record(row);
+  state.closeComplete(); state.stderrComplete(false); expect(sealed).toHaveLength(0);
+  state.startupComplete(); expect(sealed).toHaveLength(1);
+  expect(sealed[0]).toMatchObject({ rootPid: 42, stopAttempt: 1, pendingStops: 0, startupCompleted: true, closeCompleted: true, stderrSettled: true, stderrFailed: false });
+});
+test("shared actual completion state missing or failed EOF never seals", () => {
+  for (const failed of [false, true]) {
+    const { state, sealed } = lifecycle();
+    for (const row of protocol()) state.record(row);
+    state.startupComplete(); state.closeComplete();
+    if (failed) state.stderrComplete(true);
+    expect(sealed).toHaveLength(0);
+  }
+});
+test("shared actual completion state latest pending or incomplete retry defeats older confirmation", () => {
+  for (const terminal of [false, true]) {
+    const { state, sealed } = lifecycle();
+    for (const row of protocol()) state.record(row);
+    state.record({ phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 2 });
+    if (terminal) state.record({ phase: "stop incomplete", origin: "owned stop", rootPid: 42, stopAttempt: 2,
+      cleanup: { members: [42], confirmed: false, handleClosed: false, rootExitCode: null } });
+    state.startupComplete(); state.closeComplete(); state.stderrComplete(false);
+    expect(sealed).toHaveLength(0);
+  }
+});
+test("shared actual completion state refuses overlapping or conflicting-root attempts", () => {
+  for (const rootPid of [42, 99]) {
+    const { state, sealed } = lifecycle();
+    state.record(assignedFixture());
+    state.record({ phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 1 });
+    state.record({ phase: "before stop", origin: "owned stop", rootPid, stopAttempt: 2 });
+    state.record({ ...confirmed, rootPid, stopAttempt: 2 }); state.record(confirmed);
+    state.startupComplete(); state.closeComplete(); state.stderrComplete(false);
+    expect(sealed).toHaveLength(0);
+  }
+});
+test("closed shared lifecycle accepts no later attempt as part of its earlier finite window", () => {
+  const { state, sealed } = lifecycle();
+  for (const row of protocol()) state.record(row);
+  state.startupComplete(); state.closeComplete(); state.stderrComplete(false);
+  expect(state.closed()).toBe(true); expect(sealed).toHaveLength(1);
+  const first = JSON.stringify(sealed[0]);
+  state.record({ phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 2 });
+  state.startupComplete(); state.closeComplete(); state.stderrComplete(true);
+  expect(sealed).toHaveLength(1); expect(JSON.stringify(sealed[0])).toBe(first);
+});
+
+function durable(mode: string, windowToken = token) {
+  let trace = "", status = "", ack = "", sealReturned = false;
+  const writer = new InstalledStartupWriter((value: string) => { trace += value; }, (value: string) => {
+    status = value;
+    if (mode === "seal-after-write" && JSON.parse(value).sealed === true) throw new Error("seal write rejected after bytes");
+    if (JSON.parse(value).sealed === true) sealReturned = true;
+  }, { records: 1024, bytes: 1048576 }, (value: string) => {
+    if (mode === "ack-before-write") throw new Error("ack write rejected before bytes");
+    ack = value;
+    if (mode === "ack-after-write") throw new Error("ack write rejected after bytes");
+  });
+  for (const [index, row] of protocol().entries()) writer.emit({ ...row, sequence: index + 1, windowToken, launchId: launch, producerPid: 17 });
+  return { writer, seal: () => writer.complete({ startupCompleted: true, closeCompleted: true, stderrSettled: true, stderrFailed: false, pendingStops: 0,
+      windowToken, launchId: launch, producerPid: 17, rootPid: 42, stopAttempt: 1, finalSequence: protocol().length }),
+    retained: (expected = windowToken) => installedTraceRetentionComplete(trace.trim().split("\n").map(line => JSON.parse(line).installedStartup), JSON.parse(status), Buffer.byteLength(trace), ack ? JSON.parse(ack) : undefined, expected, Buffer.from(trace), Buffer.from(status)),
+    bytes: () => ({ trace, status, ack }), sealReturned: () => sealReturned };
+}
+test("post-success acknowledgement binds actual earlier seal return and closed trace bytes", () => {
+  const fixture = durable("success"); fixture.seal();
+  expect(fixture.sealReturned()).toBe(true); expect(fixture.retained()).toBe(true);
+  expect(JSON.parse(fixture.bytes().ack)).toMatchObject({ attests: "prior seal persistence returned", windowToken: token, launchId: launch, rootPid: 42, stopAttempt: 1 });
+});
+function consumed(fixture: ReturnType<typeof durable>, trace: string, status: string) {
+  return installedTraceRetentionComplete(trace.trim().split("\n").map(line => JSON.parse(line).installedStartup), JSON.parse(status), Buffer.byteLength(trace), JSON.parse(fixture.bytes().ack), token, Buffer.from(trace), Buffer.from(status));
+}
+test("actual consumed status whitespace rejects unchanged parsed seal values", () => {
+  const fixture = durable("success"); fixture.seal();
+  const { trace, status } = fixture.bytes(), changed = JSON.stringify(JSON.parse(status), null, 2);
+  expect(fixture.retained()).toBe(true); expect(JSON.parse(changed)).toEqual(JSON.parse(status));
+  expect(hash(changed)).not.toBe(hash(status)); expect(consumed(fixture, trace, changed)).toBe(false);
+});
+test("actual consumed status key order rejects equal-length unchanged parsed seal values", () => {
+  const fixture = durable("success"); fixture.seal();
+  const { trace, status } = fixture.bytes(), changed = JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(status)).reverse()));
+  expect(fixture.retained()).toBe(true); expect(JSON.parse(changed)).toEqual(JSON.parse(status));
+  expect(Buffer.byteLength(changed)).toBe(Buffer.byteLength(status)); expect(hash(changed)).not.toBe(hash(status));
+  expect(consumed(fixture, trace, changed)).toBe(false);
+});
+test("actual consumed trace equal-length whitespace rejects unchanged parsed records", () => {
+  const fixture = durable("success"); fixture.seal();
+  const { trace, status } = fixture.bytes(); expect(trace.endsWith("\n")).toBe(true);
+  const changed = " " + trace.slice(0, -1);
+  const rows = (value: string) => value.trim().split("\n").map(line => JSON.parse(line));
+  expect(fixture.retained()).toBe(true); expect(rows(changed)).toEqual(rows(trace));
+  expect(Buffer.byteLength(changed)).toBe(Buffer.byteLength(trace)); expect(hash(changed)).not.toBe(hash(trace));
+  expect(consumed(fixture, changed, status)).toBe(false);
+});
+test("seal write complete bytes then throw creates no post-success acknowledgement", () => {
+  const fixture = durable("seal-after-write"); fixture.seal();
+  expect(JSON.parse(fixture.bytes().status).sealed).toBe(true);
+  expect(fixture.sealReturned()).toBe(false); expect(fixture.bytes().ack).toBe(""); expect(fixture.retained()).toBe(false);
+});
+test("ack write before bytes leaves prior seal return known internally but no consumer witness", () => {
+  const fixture = durable("ack-before-write"); fixture.seal();
+  expect(fixture.sealReturned()).toBe(true); expect(fixture.writer.acknowledgementWriteFailed).toBe(true);
+  expect(fixture.bytes().ack).toBe(""); expect(fixture.retained()).toBe(false);
+});
+test("ack bytes then throw attest only earlier seal return, never ack persistence return", () => {
+  const fixture = durable("ack-after-write"); fixture.seal();
+  expect(fixture.sealReturned()).toBe(true); expect(fixture.writer.acknowledgementWriteFailed).toBe(true);
+  expect(fixture.retained()).toBe(true);
+  expect(JSON.parse(fixture.bytes().ack).acknowledgementPersistenceReturn).toBeUndefined();
+});
+test("stale previous-window files cannot attest a fresh expected caller token", () => {
+  const fixture = durable("success"); fixture.seal(); expect(fixture.retained()).toBe(true);
+  const before = fixture.bytes();
+  // A failed next admission/init makes no durable mutations. The caller expectation still differs.
+  expect(fixture.retained("c".repeat(64))).toBe(false); expect(fixture.bytes()).toEqual(before);
+});
+test("terminal writer mutations are refused and remain outside the acknowledged finite window", () => {
+  const fixture = durable("success"); fixture.seal(); const before = fixture.bytes();
+  fixture.writer.emit({ phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 2 });
+  fixture.seal(); expect(fixture.bytes()).toEqual(before); expect(fixture.retained()).toBe(true);
+});
+test("earlier append plus status or overflow plus status failure prevents any final acknowledgement", () => {
+  for (const overflow of [false, true]) {
+    let trace = "", status = "", ack = "", reject = false;
+    const writer = new InstalledStartupWriter((value: string) => { if (reject) throw new Error("owned append failed"); trace += value; },
+      (value: string) => { if (reject) throw new Error("owned status failed"); status = value; },
+      { records: overflow ? 8 : 1024, bytes: 1048576 }, (value: string) => { ack = value; });
+    for (const [index, row] of protocol().entries()) writer.emit({ ...row, sequence: index + 1, windowToken: token, launchId: launch, producerPid: 17 });
+    const before = { trace, status }; reject = true;
+    writer.emit({ phase: "before stop", origin: "owned stop", rootPid: 42, stopAttempt: 2 });
+    expect(writer.status.writeFailed).toBe(true); if (overflow) expect(writer.status.overflow).toBe(true);
+    writer.complete({ startupCompleted: true, closeCompleted: true, stderrSettled: true, stderrFailed: false, pendingStops: 0,
+      windowToken: token, launchId: launch, producerPid: 17, rootPid: 42, stopAttempt: 1, finalSequence: 8 });
+    expect({ trace, status }).toEqual(before); expect(ack).toBe("");
+    expect(installedTraceRetentionComplete(trace.trim().split("\n").map(line => JSON.parse(line).installedStartup), JSON.parse(status), Buffer.byteLength(trace), undefined, token, Buffer.from(trace), Buffer.from(status))).toBe(false);
+  }
+});
+test("completion status and acknowledgement preserve only fixed typed proof fields", () => {
+  let status = "", ack = "";
+  const writer = new InstalledStartupWriter(() => {}, (value: string) => { status = value; }, { records: 1024, bytes: 1048576 }, (value: string) => { ack = value; });
+  writer.emit({ phase: "runtime", sequence: 1 });
+  writer.complete({ startupCompleted: true, closeCompleted: true, stderrSettled: true, stderrFailed: false, pendingStops: 0,
+    windowToken: token, launchId: launch, producerPid: 17, rootPid: 42, stopAttempt: 1, finalSequence: 1, privateMessage: "private arbitrary payload" });
+  expect(status.includes("private arbitrary payload")).toBe(false); expect(ack.includes("private arbitrary payload")).toBe(false);
+});
+
+test("actual collector after-expression refuses failed current-window publication and stale previous-window reports", () => {
+  const source = readFileSync(new URL("../src/installed-startup-diagnostic.ts", import.meta.url), "utf8");
+  const expressions = Array.from(source.matchAll(/report\.invalid = (!window\.tokenWriteReturned[^;]+);/g));
+  expect(expressions).toHaveLength(1);
+  const expression = expressions[0]?.[1];
+  if (expression === undefined) throw new Error("Actual collector invalidity expression missing");
+  const invalid = new Function("report", "before", "window", "attribution", "producer", "return (" + expression + ");");
+  const report = { retentionComplete: true, actualRuntimeBound: true, sourceChanged: false, browserChanged: false, collectorBunChanged: false, taskChanged: false, taskEnvironmentPresent: true };
+  const before = { metadataBound: true, expectedWindowToken: token };
+  const current = { token, tokenWriteReturned: true, beforeReportWriteReturned: true };
+  const attribution = { startupAttributionReady: true, cleanupAttributionReady: true, cleanupConfirmed: true }, producer = { producerIdentityChanged: false };
+  expect(invalid(report, before, current, attribution, producer)).toBe(false);
+  expect(invalid(report, before, { ...current, token: "c".repeat(64) }, attribution, producer)).toBe(true);
+  expect(invalid(report, before, { ...current, tokenWriteReturned: false }, attribution, producer)).toBe(true);
+  expect(invalid(report, before, { ...current, beforeReportWriteReturned: false }, attribution, producer)).toBe(true);
+});
+test("same operation payload receives distinct fresh caller windows and failed new admission cannot replay prior acknowledgement", () => {
+  const first = createInstalledStartupWindow(), next = createInstalledStartupWindow();
+  expect(first.token).toMatch(/^[a-f0-9]{64}$/); expect(next.token).toMatch(/^[a-f0-9]{64}$/); expect(first.token).not.toBe(next.token);
+  expect(next).toMatchObject({ tokenWriteReturned: false, beforeReportWriteReturned: false, afterStarted: false });
+  const fixture = durable("success", first.token); fixture.seal(); expect(fixture.retained(first.token)).toBe(true);
+  const previous = fixture.bytes();
+  // Identical operation schema and root/attempt payload, no new file mutation or producer invocation.
+  expect(fixture.retained(next.token)).toBe(false); expect(fixture.bytes()).toEqual(previous);
+});
+test("existing actual stop observer preserves its original fulfilled promise and EOF gating", async () => {
+  const { state, sealed } = lifecycle(); state.record(assignedFixture()); state.startupComplete();
+  let settle: (() => void) | undefined;
+  const original = new Promise<void>(resolve => { settle = () => resolve(); });
+  const stop = observeInstalledStop(() => original, (phase: string, stopAttempt: number) => state.record({
+    phase, stopAttempt, origin: "owned stop", rootPid: 42,
+    cleanup: { members: phase === "stop confirmed" ? [] : [42], confirmed: phase === "stop confirmed", handleClosed: phase === "stop confirmed", rootExitCode: phase === "stop confirmed" ? 1 : null },
+  }));
+  expect(stop()).toBe(original); expect(sealed).toHaveLength(0);
+  if (!settle) throw new Error("Owned promise resolver missing"); settle(); await original;
+  state.closeComplete(); expect(sealed).toHaveLength(0);
+  state.stderrComplete(false); expect(sealed).toHaveLength(1); expect(sealed[0].stopAttempt).toBe(1);
+});
+test("existing actual stop observer preserves rejection and a genuine distinct retry cannot seal before settlement", async () => {
+  const { state, sealed } = lifecycle(); state.record(assignedFixture()); state.startupComplete(); state.stderrComplete(false);
+  const failure = new Error("original owned operation error");
+  let reject: ((reason: unknown) => void) | undefined, resolve: (() => void) | undefined;
+  const first = new Promise<void>((_, rejected) => { reject = rejected; });
+  const next = new Promise<void>(fulfilled => { resolve = () => fulfilled(); });
+  let attempts = 0;
+  const stop = observeInstalledStop(() => ++attempts === 1 ? first : next, (phase: string, stopAttempt: number) => state.record({
+    phase, stopAttempt, origin: "owned stop", rootPid: 42,
+    cleanup: { members: phase === "stop confirmed" ? [] : [42], confirmed: phase === "stop confirmed", handleClosed: phase === "stop confirmed", rootExitCode: phase === "stop confirmed" ? 1 : null },
+  }));
+  expect(stop()).toBe(first); if (!reject) throw new Error("Owned rejection callback missing"); reject(failure);
+  let observed: unknown; try { await first; } catch (error) { observed = error; }
+  expect(observed).toBe(failure); expect(sealed).toHaveLength(0);
+  expect(stop()).toBe(next); expect(sealed).toHaveLength(0);
+  if (!resolve) throw new Error("Owned retry resolver missing"); resolve(); await next;
+  state.closeComplete(); expect(sealed).toHaveLength(1); expect(sealed[0].stopAttempt).toBe(2);
 });

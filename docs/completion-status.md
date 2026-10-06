@@ -1,6 +1,20 @@
 # Completion status and evidence
 
-Snapshot: 7 October 2026. Official main snapshot `ce447d1` completed
+Latest evidence snapshot: 7 October 2026. Latest measured official-main snapshot is
+`83fc3f8`;
+[run 37538046122](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538046122)
+ended with eight successful jobs and one Windows suite failure. Draft PRs 9 and
+10 each passed all nine CI jobs, but neither is accepted or merged: PR 9 reviews
+were FAIL/FAIL; PR 10 reviews were FAIL/INVALID. The subsequent Mac repair review
+snapshot, revision 35 at source `312f67e`, is specification FAIL and standards
+PASS, so overall review remains FAIL; a narrow new repair is preparation only.
+The separate Windows old-source harness recorded nine cases, one setup PASS and
+eight intended semantic FAIL, without measuring a Windows runtime. Full platform
+acceptance, published release and registry parity, external acceptance and the
+unconditional native hold remain open. Detailed source-bound evidence and
+historical results follow.
+
+Historical publication sequence: official main snapshot `ce447d1` completed
 [run 37520632156](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37520632156)
 with all nine normal jobs passing. Candidate results below belong to separate
 branches and do not establish combined acceptance or a new release.
@@ -15,6 +29,70 @@ platform suites passed. The installed `session create` command returned
 unchanged 15-second deadline and was reported still running. This establishes a
 startup failure, not its cause or a confirmed cleanup outcome. Investigation
 remains open.
+
+The next documentation snapshot `bdac974` completed
+[run 37527704505](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37527704505)
+with eight successful jobs and a Windows suite failure. All installation and
+registration jobs passed, as did Ubuntu and Mac suites. The Windows abrupt
+broker-death fixture reached its unchanged 20000-millisecond test deadline;
+its suite reported 491 pass, 317 skip and one fail. The retained job log does not
+locate the timed-out fixture phase or establish an owned-process survivor.
+The later installed-browser pass does not explain the earlier endpoint failure.
+
+The later official-main snapshot `4089c50` completed
+[run 37528913748](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37528913748)
+with eight successful jobs and a Mac suite failure. All installation and
+registration jobs and the Ubuntu and Windows suites passed. Mac reported
+503 pass, 305 skip and one fail. The profile-and-restore removal fixture reported
+`Invalid InterceptionId` from Playwright's CDP response dispatcher after
+1395.35 milliseconds. The retained log does not identify the active fixture phase,
+response method or process outcome. This is a distinct failure from the earlier
+frame and Windows deadlines; its cause and cleanup outcome remain unmeasured.
+
+Official main snapshot `1a9c1e3` subsequently completed
+[run 37531549547](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37531549547)
+with all nine normal jobs passing. Ubuntu reported 714 pass and 95 skip; Windows
+492 pass and 317 skip; Mac 504 pass and 305 skip, all with zero failures. This
+result belongs to the exact official documentation snapshot. It does not explain
+the retained `4089c50` CDP failure or close its cause and cleanup evidence gaps.
+
+The subsequent official-main snapshot `60dc625` completed
+[run 37535432220](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37535432220)
+with eight jobs passing and the Windows installed-browser job failing. All three
+suites passed: Ubuntu 714 pass and 95 skip, Windows 492 pass and 317 skip, Mac
+504 pass and 305 skip, each with zero failures across 809 tests in 176 files.
+Only these two status documents changed from `1a9c1e3`; all 965 other Git-tree
+mode/type/blob rows match. The installed `session create` command failed after
+15753 milliseconds with the unchanged 15-second endpoint timeout. Its verified
+2811-byte artifact contains installer state, empty installer stderr and two
+command timings; no diagnostic JSON, screenshot, smoke report, process identity
+or cleanup receipt exists in that archive. Installation and task state do not
+establish a Chrome survivor, exit or cleanup outcome. The startup cause and
+cleanup remain `not measured`. The local
+[terminal packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-ci-37535432220-terminal-retained/evidence-packet.json)
+and [installed artifact packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-installed-artifact-11445627442/evidence-packet.json)
+retain complete suite logs, artifact identities and exact source comparison.
+The earlier `1a9c1e3` all-nine green result and `4089c50` Mac CDP failure remain
+historical evidence; none establishes the causes of these distinct failures.
+
+The later official-main snapshot `83fc3f8` completed
+[run 37538046122](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538046122)
+with eight successful jobs and a Windows suite failure: 490 pass, 317 skip and
+two fail across 809 tests in 176 files. The test failed the popup-following
+`observe` with a pixel-capture TIMEOUT at the unchanged 3000-millisecond deadline,
+before `window.close` was called. The delayed-pipe observation test received child exit 143 instead of
+zero under its 8000-millisecond child budget; the child's active phase and cause
+remain unknown. Ubuntu and Mac suites passed, with 714/95 and 504/305 pass/skip
+respectively and no failures. The installed Windows job separately passed eight
+checks: create 6230 milliseconds, observe 542 and stop 513. That Limited installed
+flow does not prove generation-aware cleanup or resolve the earlier endpoint
+timeout. Only these two documents changed from `60dc625`; all 965 other Git-tree
+mode/type/blob rows match. The
+[full terminal packet](/var/tmp/orbit-consolidation-2026-10-06/main-83fc-ci-37538046122-retained/evidence-packet.json)
+and [installed Windows packet](/var/tmp/orbit-consolidation-2026-10-06/main-83fc-ci-37538046122-retained/installed-windows-artifact-11448090150/evidence-packet.json)
+retain raw logs, actual artifact bytes and source bindings. The earlier all-nine
+green `1a9c1e3` and failed `4089c50` and `60dc625` results remain separate
+historical evidence; this documentation update is no runtime repair.
 
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
@@ -106,7 +184,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `d59ac6725b369b0d2cc1b93d4b6a5e242eba9a46`; it is not merged into main.
+at `efab0eae7e0bed576bba81bc179b8ce148edf399`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -288,6 +366,22 @@ production collector repair or the cause of the earlier process attribution fail
 also completed successfully. Fresh independent review and production witness
 repair remain open.
 
+A separate unpublished Windows debug-provider feasibility preparation reached
+local R5 engine revision 10. TypeScript passed and 12 pure portable controls passed
+without failures or skips on Linux. Its formal source hash is
+`3bf50ae0d52608cdb69836b63f66b59615d77effadb037e26a50f391d1ec2b5d`;
+all 399 influential files remained unchanged. The controls cover exact creator
+handoff, distinct assignment/observation rights, missing and inflight transfer
+seals, third-generation refusal, exception dispatch and retryable handle ownership.
+The earlier R4 typecheck failure is retained. These checks do not measure the
+native `DEBUG_PROCESS` producer or demonstrate an old native regression. Actual
+Windows Bun feasibility, nested-job compatibility, complete unchanged Chrome
+coverage and performance remain `not measured`; both independent review axes
+remain unproven. The production collector is unchanged. The local
+[packet](/var/tmp/orbit-windows-debug-provider-feasibility-2026-10-07/revision-5/execution-1/final-packet.json)
+and [raw controls](/var/tmp/orbit-windows-debug-provider-feasibility-2026-10-07/revision-5/execution-1/controls.full-bun-raw.log)
+retain the source bindings and measurements.
+
 The current Mac diagnostic writes allowlisted nonthrowing arm records into the job
 log as well as artifacts. Its six local gates passed, including TypeScript and 16
 tests without failures or skips. Actual
@@ -348,13 +442,44 @@ do not distinguish capture delay from time spent intentionally holding real JPEG
 delivery while the tab and resize actions finish. All four prompt-obsolete controls
 passed. The Mac failure and independent reviews remain open.
 
-An unpublished one-file first-frame diagnostic follow-up passed all eleven
+The published one-file first-frame diagnostic follow-up `8fee6ea` passed all eleven
 planned local gates on its frozen 71-file snapshot. It traces actual backend
 creation, capture, held JPEG delivery, concurrent tab and resize actions,
 observation settlement and cleanup, preserving original promises, operations,
 assertions and deadlines. Both old-source controls failed at their intended
 boundaries and restored production bytes exactly. This validates instrumentation;
 it does not explain the earlier runner timeout or establish independent review.
+
+Actual [run 37527793374](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37527793374)
+on this candidate completed with eight successful jobs and a Mac suite failure.
+Its merge `feff5a80` into `bdac974` matches all 71 scoped files. Mac reported
+533 pass, 305 skip and one fail. The first-frame trace shows observation starting
+at 2710 milliseconds, actual JPEG ready at 4371, held delivery released at 5007,
+and observation failing at 5713. Delivery settled before the original capture
+deadline, so the retained trace narrows the remaining wait to post-release work;
+it does not identify the specific metadata operation or explain its delay.
+Owned backend close and profile removal finished with no pending diagnostic
+operations. Ubuntu and Windows suites passed. Further boundary evidence and
+independent review remain required; no capture deadline was increased.
+
+The next one-file first-frame diagnostic follow-up `efab0ea` passed all eleven
+planned local gates on its frozen 71-file snapshot. It adds boundaries around
+actual presence, pointer binding, page title and the existing cached pointer
+operation, preserving their original receiver, arguments and returned promises.
+The wrappers are removed during cleanup; exact private method and map-entry
+identity after backend close is not directly measured.
+
+Actual [run 37530252584](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37530252584)
+completed all nine normal jobs successfully. All three suite logs checked out
+merge `bbd332c8` into official `4089c50`; all 71 scoped candidate files match
+`efab0ea`. Ubuntu reported 744 pass, 95 skip and zero fail; Windows 522 pass,
+317 skip and zero fail; Mac 534 pass, 305 skip and zero fail. Skips are not measured
+capabilities. The current Mac first-frame trace records held JPEG release at
+1951 milliseconds, title completion at 1957, cached pointer and observation
+completion at 1959, and final cleanup with no pending diagnostic operations.
+This passing candidate does not explain the earlier post-release delay or the
+official-main CDP assertion. Both independent review axes remain unproven;
+there is no combined acceptance, official-main merge or new release.
 
 The newer Mac diagnostic candidate `ceca438` records phases from the actual
 concurrent preview fixture and actual source manifests before and after each arm.
@@ -399,14 +524,166 @@ fail. Production and controlled diagnostic files match the direct candidate;
 nine documentation and host evidence files differ. The earlier timeout cause
 and both independent review axes remain unproven.
 
+At the earlier local stage, a separate Mac interception diagnostic preparation
+passed TypeScript
+and 17 pure observer controls locally on Linux, without failures or skips. Five
+intentional observer mutants each failed its selected assertion: receiver
+preservation, duplicate-response history, unhandled asynchronous rejection,
+absent-callback data access and callable `call` property access. These are mutant
+controls, not reproduction of the historical Mac CDP failure. All 403 influential
+files were restored or unchanged. Pure-check engine revision 14 binds source
+`cd755832d7ac78dbc7c009c09e233c2675489b6f75049079b30c4fafb259981d`
+and plan `220ee9ba8a75ab5902b2412cb7fff5557871a5996f9432d21f841de1a7c25f81`.
+The local [passing-check manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/manifest.json),
+[raw controls](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/controls-immutable/actual/raw.log)
+and [mutant manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/negative-check-14-immutable/manifest.json)
+retain the actual receipts and raw output. At that local stage no actual Mac
+fixture ran;
+the Mac root cause, cleanup outcome and both independent review axes remain
+unproven. This prepares evidence collection without changing support or acceptance.
+
+The later source-bound Linux instrumentation fixture passed one selected test
+with five assertions and no failures or skips. It admitted private POSIX connection
+1 at 1994 milliseconds and observed the existing `Browser.getVersion` reply,
+Chrome 154.0.8037.97, at 2020 milliseconds. Producer, observer, fixture, lock and
+Playwright 1.63.0 core-bundle identities were retained; all 403 influential files
+remained unchanged at the same source and plan hashes. The final trace reached
+sequence 293 with 37 dropped records and no refusals, observer errors or sink
+errors. Session-stop and broker-close settled, but fixture-stop remained pending
+at its `before` boundary because the original fixture stop promise was not awaited.
+This is bounded partial Linux chronology, not HTTP server cleanup, broader owned
+process cleanup, actual Mac behavior or evidence of the Mac failure's cause.
+The local [fixture manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fixture-check-16-immutable/manifest.json)
+and [trace classification](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fixture-check-16-immutable/trace-classification.json)
+retain actual raw JSON and receipts; the actual launched browser binary identity
+remains `not measured`.
+
+The separate installed-Windows startup diagnostic reached local engine revision
+25 with TypeScript passing and 25 pure protocol/filesystem controls passing on
+Linux, without failures or skips. All 286 influential source files remained
+unchanged; its formal source hash is
+`b0a5bc9acfb0277297fc93f772a8a189312ac889dfc95e7f2860207c78d23b09`.
+The controls retain selected Bun producer identity, ordered endpoint/assignment
+readiness, exact stop-attempt pairing and unknown attribution or cleanup states.
+The earlier matched membership negative/positive comparison remains separately
+retained. The matched R13 and R15 helper contrasts below now establish narrow
+historical discrimination; R19 typed metadata retention is also contrasted below.
+At that local stage actual installed Windows startup, lifecycle and cleanup
+remained `not measured`, as did both independent review axes. Executable hashing
+perturbs opt-in timing; its post-read threshold
+cannot interrupt file IO, and disk bytes do not prove mapped-image identity.
+The local [packet](/var/tmp/orbit-windows-installed-startup-2026-10-07/final-local-r25/packet.json)
+and [raw controls](/var/tmp/orbit-windows-installed-startup-2026-10-07/producer-bun-r20-controls-immutable/full.raw.log)
+retain the exact measured scope. These diagnostic checks do not close the earlier
+15-second endpoint failure, published-artifact acceptance or the native hold.
+
+Subsequent matched pure-protocol controls now distinguish the historical R13
+readiness helper from current source: four intended old-helper failures and four
+current-helper passes used identical test SHA256
+`92a273222da6a884dfa652e84de6d48b5abe98ab3e181b49e74982fe5f9eed81`.
+R15 dual-origin binding separately produced two intended old-helper failures and
+two current-helper passes using identical test SHA256
+`fbd3e648005f24276e675cb8d935c1412ca16cf22795dd916e0ca47f77bb7cf1`.
+Neither matched run skipped tests. All 286 current source bytes and modes were
+restored or unchanged, preserving source `b0a5bc9` and the original R25 packet.
+These are helper counterfactuals, not full historical-source or Windows runtime
+measurements. The local
+[R13 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r13-current-immutable/packet.json)
+and [R15 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r15-current-immutable/packet.json)
+link their preserved old failures and full raw logs. Actual Windows startup/cleanup
+and both fresh review axes remain unproven.
+
+The matched R19 typed producer metadata retention comparison also recorded two
+intended old-helper failures and two current-helper passes without skips, using
+identical test SHA256
+`68a747c964d355d6ef1e72fefdfcd430bda8b7913eaf3fb480acf8c8335f8f5b`.
+The [local R19 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r19-current-immutable/packet.json)
+links both preserved raw results. Its scope is typed metadata retention only;
+it does not prove actual Bun selection/reference, the new identity gate or hash
+APIs through a historical comparison. Original R25 current-source positive
+identity/hash controls and source `b0a5bc9` remain unchanged. Actual Windows
+startup/cleanup and independent reviews remain unproven.
+
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
 reviews are still required after expanding source binding to include the invoked
-installer and service adapters. Fresh review creation is currently unavailable:
+installer and service adapters. Fresh review creation was unavailable at that
+earlier checkpoint:
 agent contexts reached their limit, the configured Codex CLI model was rejected
-by the account, and Claude CLI authentication expired. Earlier reviews cannot
+by the account, and Claude CLI authentication expired. That historical blocker
+no longer describes the current fresh contexts. Earlier reviews cannot
 prove the revised source. These fixtures do not establish actual macOS service,
 Windows task or published installation acceptance.
+
+Fresh independent review contexts have since been restored. Draft
+[PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9), exact candidate
+`e7be8fe07f8737748a9a42318c0f012063294bc3`, passed all nine jobs in
+[run 37538255624](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538255624)
+on merge checkout `63528067a3eef5a84f93766ad3092e78c174f234`. Its actual Mac
+diagnostic dropped 69 records and left the original non-awaited fixture-stop
+pending. Three target crash notices occurred during session-stop; they do not
+establish a browser-process crash or the historical CDP cause. Fresh specification
+and standards reviews both returned **FAIL**, each with a major finding: missing
+session-correlation defect discrimination and consumption of the original
+unhandled fixture-stop rejection. The
+[publication sidecar](/var/tmp/orbit-consolidation-2026-10-06/mac-interception-pr9-publication-sidecar.json)
+links the actual platform packet, review reports and retained rejection contrast.
+
+Draft [PR 10](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/10), exact candidate
+`0861b81fae6b0f0d6b6350a331cc52fbb26f57d7`, also passed all nine jobs in
+[run 37538794497](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37538794497)
+on merge checkout `57db3c4992f324fb05ada0631dab78fbf22eec6c`. Actual installed
+Windows collection retained 102 records and reported endpoint readiness at
+10058 milliseconds. Its reported measured state is not accepted evidence:
+the fresh specification review returned **FAIL** for final-report write failure
+remaining measured and production membership being shortened before invalidation.
+The standards review is **INVALID** because a late sibling-summary exposure broke
+context separation. Its two independently identified pre-exposure findings,
+membership truncation and stale durable status after write failure, remain
+actionable; they do not constitute a valid independent pass. The
+[publication sidecar](/var/tmp/orbit-consolidation-2026-10-06/windows-installed-pr10-publication-sidecar.json)
+links the [actual Windows packet](/var/tmp/orbit-pr10-installed-windows-0861b81-2026-10-07/packet.json)
+and retained review reports. Neither PR is accepted or merged.
+
+The unpublished Mac review repair reached local revision 33 at source
+`312f67e6a4efbaf02666a4f131161e8ce486fb5236971e55c441c16f314a5d19`
+and plan `61e92c6cdd0550e7b7be124f03532a1b63122f5dc7ff80bfc8dcc8e39304e030`.
+TypeScript passed; 20 pure observer controls passed with 87 assertions, and
+seven defective variants each produced one intended failure, passing the negative
+gate. The original stopping fixture passed one Linux test with five assertions.
+The bounded trace retained 65 emissions, final sequence 293 and 37 drops; the
+original fixture-stop remained pending, so full chronology is not established. Its
+[frozen review-input packet](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fresh-review-33-immutable/packet-index.json)
+binds all 403 influential files and the actual raw receipts. The fresh repaired-source
+[specification review](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-specification/report.json)
+returned **FAIL** with one major I5 finding: a trace ending before an admitted
+`Browser.getVersion` reply omits browser identity instead of explicitly recording
+`not measured`. The [coverage report](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-specification/coverage.md)
+retains the satisfied requirements and measurement limits. The fresh
+[standards review](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/mac-repair33-fresh-standards/report.json)
+returned **PASS** without findings, but overall review remains **FAIL**. Subsequent
+[old-source pure controls](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/root-browser-unknown-old33/receipt.json)
+produced zero passes and two intended failures with five assertions: final browser
+version was absent both without a reply and after an early failure. Original error
+identity was preserved and all 403 source bytes remained unchanged. This is pure
+unknown-state discrimination, not a Mac runtime or historical CDP reproduction.
+A narrow I5 repair is authorized for preparation only; no repaired-source checks
+or actual platform result are established by that authorization.
+
+The separate Windows old-source retention harness ran once in its own engine run,
+revision 4, while original source `b0a5bc9` and checkpoint 27 remained preserved.
+It ended **FAIL** across nine tests: one setup pass, eight intended semantic
+failures, 74 assertions and no skips. The
+[actual receipt](/var/tmp/orbit-windows-installed-startup-2026-10-07/retention-repair-preparation-r27/old-controls/old-actual/actual-receipt.json)
+and [full raw log](/var/tmp/orbit-windows-installed-startup-2026-10-07/retention-repair-preparation-r27/old-controls/old-actual/full.raw.log)
+retain final-report write failure, live and cleanup membership pre-truncation,
+and stale durable status after append or overflow failure. All 286 source bytes
+and modes remained unchanged. Reported absence of the owned local test group
+only concerns that harness; no Windows provider startup or generation-aware cleanup
+was measured. Collector and truncation repairs and a separate external seal-hook
+proposal are authorized for preparation only, without repair checks or runtime
+proof. These draft and local results do not close platform acceptance,
+published-artifact parity or the unconditional native hold.
 
 Fresh actual Claude, API and CLI disposable browser reports each record seven
 successful actions and empty owned-process cleanup lists. Independent reviews

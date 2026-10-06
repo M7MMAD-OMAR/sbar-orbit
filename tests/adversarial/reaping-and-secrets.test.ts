@@ -19,6 +19,10 @@ import { tmpdir } from "node:os";
 import { call } from "../../src/ipc";
 import { detectPlatform } from "../../src/platform";
 import { openBroker, startFixture, act, type JournalView } from "./probe";
+import { createHash } from "node:crypto";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { ChromeTransportObserver, type ChromeTraceProducer } from "../../src/chrome-transport-observer";
 
 const capabilities = await detectPlatform();
 const supported = capabilities.browserBackendSupported;
@@ -142,32 +146,65 @@ test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker kill
  * is gone, which is the question a reviewer of a finished run would ask.
  */
 test.skipIf(!supported)("stopping a session removes its profile and its restore store from the workspace", async () => {
-  const broker = await openBroker("adversarial-reaping");
-  const fixture = startFixture();
+  const producer: ChromeTraceProducer = await (async () => {
+    const digest = async (url: URL | string) => {
+      try { return createHash("sha256").update(await readFile(url)).digest("hex"); }
+      catch { return "not measured"; }
+    };
+    let coreBundle = "not measured", dependencyVersion = "not measured";
+    try {
+      const core = dirname(fileURLToPath(import.meta.resolve("playwright-core")));
+      coreBundle = await digest(join(core, "lib", "coreBundle.js"));
+      const pkg: unknown = JSON.parse(await readFile(join(core, "package.json"), "utf8"));
+      if (pkg !== null && typeof pkg === "object" && "version" in pkg && typeof pkg.version === "string") dependencyVersion = pkg.version;
+    } catch {}
+    return {
+      chrome: await digest(new URL("../../src/chrome.ts", import.meta.url)),
+      observer: await digest(new URL("../../src/chrome-transport-observer.ts", import.meta.url)),
+      fixture: await digest(new URL(import.meta.url)), lock: await digest(new URL("../../bun.lock", import.meta.url)),
+      coreBundle, dependencyVersion,
+    };
+  })();
+  const trace = new ChromeTransportObserver(producer, value => console.error(JSON.stringify(value)));
   try {
-    const origin = `http://127.0.0.1:${fixture.port}`;
-    const created = await broker.run("session.create", {
-      backend: "browser", agentName: "adversary", taskName: "teardown",
-      policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
-    }) as { sessionId: string };
-    await act(broker.run, created.sessionId, { type: "navigate", url: `${origin}/` });
+    const broker = await trace.observe("open-broker", () => openBroker("adversarial-reaping"));
+    trace.settled("open-broker");
+    const fixture = trace.observe("fixture-start", () => startFixture());
+    try {
+      await trace.scope(broker.workspace, async () => {
+        const origin = `http://127.0.0.1:${fixture.port}`;
+        const created = await trace.observe("session-create", () => broker.run("session.create", {
+          backend: "browser", agentName: "adversary", taskName: "teardown",
+          policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
+        })) as { sessionId: string };
+        trace.settled("session-create");
+        await trace.observe("navigate", () => act(broker.run, created.sessionId, { type: "navigate", url: `${origin}/` }));
+        trace.settled("navigate");
 
-    const during = await entriesOf(broker.workspace);
-    expect(during.filter(entry => entry.startsWith("profile-")).length).toBe(1);
+        const during = await trace.observe("during-inventory", () => entriesOf(broker.workspace));
+        trace.settled("during-inventory");
+        expect(during.filter(entry => entry.startsWith("profile-")).length).toBe(1);
 
-    await broker.run("session.stop", { sessionId: created.sessionId });
-    // Successful stop acknowledges actual removal, not a background deletion attempt.
-    const after = await entriesOf(broker.workspace);
-    expect(after.filter(entry => entry.startsWith("profile-"))).toEqual([]);
-    expect(after.filter(entry => entry.startsWith("restore-"))).toEqual([]);
-    // The journal deliberately SURVIVES: it is the record an autonomous run is reviewed from, and
-    // `session.forget` documents that it is kept. Asserted so the two are not confused with each other.
-    expect(after).toContain("journals");
-    expect(await entriesOf(join(broker.workspace, "journals"))).toEqual([`${created.sessionId}.jsonl`]);
-  } finally {
-    await broker.close();
-    fixture.stop(true);
-  }
+        await trace.observe("session-stop", () => broker.run("session.stop", { sessionId: created.sessionId }));
+        trace.settled("session-stop");
+        // Successful stop acknowledges actual removal, not a background deletion attempt.
+        const after = await trace.observe("after-inventory", () => entriesOf(broker.workspace));
+        trace.settled("after-inventory");
+        expect(after.filter(entry => entry.startsWith("profile-"))).toEqual([]);
+        expect(after.filter(entry => entry.startsWith("restore-"))).toEqual([]);
+        // The journal deliberately SURVIVES: it is the record an autonomous run is reviewed from, and
+        // `session.forget` documents that it is kept. Asserted so the two are not confused with each other.
+        expect(after).toContain("journals");
+        const journals = await trace.observe("journal-inventory", () => entriesOf(join(broker.workspace, "journals")));
+        trace.settled("journal-inventory");
+        expect(journals).toEqual([`${created.sessionId}.jsonl`]);
+      });
+    } finally {
+      await trace.observe("broker-close", () => broker.close());
+      trace.settled("broker-close");
+      trace.observe("fixture-stop", () => fixture.stop(true));
+    }
+  } finally { trace.finish(); }
 }, 120000);
 
 test.skipIf(!supported || !linux || process.getuid?.() === 0).each([false, true])("a persistent profile removal refusal cannot return a successful stop (release failure: %s)", async releaseFails => {

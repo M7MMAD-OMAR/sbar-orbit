@@ -12,6 +12,8 @@ import { inheritedBackgroundClass } from "./macos";
 import { defaultViewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
 
+import { currentChromeTransportObservation, forwardChromeSend, forwardChromeEvent } from "./chrome-transport-observer";
+
 export type ChromeLaunchOptions = {
   /**
    * The binary to run. A profile can only be decrypted by the install that owns it, because the
@@ -119,6 +121,8 @@ type OwnedBrowser = {
   assertContained: () => Promise<void>;
   startupEvidence?: () => Record<string, unknown>;
   recordStartup?: (record: Record<string, unknown>) => void;
+  finishStartupTrace?: () => void;
+  finishCloseTrace?: () => void;
 };
 
 /** Linux: the Python subreaper, exactly as it was, because it is the measured path. */
@@ -287,6 +291,8 @@ async function launchOnWindows(executable: string, profile: string, argv: string
   }
   const owned: OwnedBrowser = {
     recordStartup: trace?.emit,
+    finishStartupTrace: trace?.startupComplete,
+    finishCloseTrace: trace?.closeComplete,
     exitCode: () => child.exitCode,
     exited: child.exited,
     // A dead browser on Windows says nothing on stderr when the KERNEL is what killed it, and a job
@@ -308,10 +314,15 @@ async function launchOnWindows(executable: string, profile: string, argv: string
     startupEvidence: () => {
       const result: Record<string, unknown> = { rootPid: child.pid, rootExitCode: child.exitCode,
         budget, cpuCapEnforced: job.cpuCapEnforced, stderrBytes, stderrTailBytes: Buffer.byteLength(diagnostics),
-        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512) } };
+        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512),
+          ...(trace && evidence.members ? { membershipSourceRows: evidence.members.length } : {}) } };
       if (!job.isClosed) {
         try { result.accounting = job.accounting(); } catch { result.accountingError = "query failed"; }
-        try { result.members = job.processIds().slice(0, 512); } catch { result.membershipError = "query failed"; }
+        try {
+          const members = job.processIds();
+          result.members = members.slice(0, 512);
+          if (trace) result.membershipSourceRows = members.length;
+        } catch { result.membershipError = "query failed"; }
       } else result.membership = "not measured after handle closure";
       return result;
     },
@@ -526,6 +537,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
         for (const listener of listeners) listener();
       }
     }
+    try { owner.finishCloseTrace?.(); } catch {}
   });
   let endpointState = "not checked";
   const startupAt = Date.now();
@@ -572,11 +584,12 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       connected.onopen = () => { clearTimeout(timer); resolve(); };
       connected.onerror = () => { clearTimeout(timer); reject(new OrbitError("BACKEND_FAILED", "Local Chrome connection failed")); };
     });
+    const observation = currentChromeTransportObservation(profile);
     const transport: ConnectOverCDPTransport = {
-      send: message => connected.send(JSON.stringify(message)), close: () => connected.close(),
+      send: message => forwardChromeSend(observation, connected, connected.send, message), close: () => connected.close(),
     };
-    connected.onmessage = event => transport.onmessage?.(JSON.parse(String(event.data)));
-    connected.onclose = () => transport.onclose?.();
+    connected.onmessage = event => forwardChromeEvent(observation, transport, event);
+    connected.onclose = () => { try { observation?.close(); } catch {} return transport.onclose?.(); };
     // The same allowance as the socket above, and for the same reason. The handshake that follows
     // runs against a Chrome that is still starting on the shared budget, so a shorter deadline here
     // only moves the starvation failure one line down. Measured: a run with the host busy enough for
@@ -617,6 +630,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       }
       await close();
     }).catch(reportCleanup);
+    try { owner.finishStartupTrace?.(); } catch {}
     return {
       context, browser, page,
       close: () => { requested = true; return close(); },
@@ -627,9 +641,11 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     try { await close(); }
     catch (cleanup) {
       startupEvidence("stop incomplete");
+      try { owner.finishStartupTrace?.(); } catch {}
       throw new OwnedCleanupError(error, cleanup, close);
     }
     startupEvidence("stop confirmed");
+    try { owner.finishStartupTrace?.(); } catch {}
     throw error;
   }
 }

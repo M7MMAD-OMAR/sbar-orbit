@@ -2,7 +2,7 @@
 import { mkdir, mkdtemp, readdir, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { prepareInstalledStartup, collectInstalledStartup } from "../src/installed-startup-diagnostic";
+import { prepareInstalledStartup, collectInstalledStartup, createInstalledStartupWindow } from "../src/installed-startup-diagnostic";
 
 if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Requires a disposable GitHub Actions runner");
 const checkout = resolve(import.meta.dir, "..");
@@ -29,9 +29,11 @@ const source = join(root, "package");
 if (await Bun.file(join(source, "node_modules/playwright/package.json")).exists())
   throw new Error("Fresh package unexpectedly contains prepared dependencies");
 let diagnosticsAdmitted = false;
+let startupWindow: ReturnType<typeof createInstalledStartupWindow> | undefined;
 if (process.platform === "win32" && process.env.ORBIT_TEST_NATIVE !== "1") {
   try {
     Object.assign(env, await prepareInstalledStartup(root, source, prefix)); diagnosticsAdmitted = true;
+    startupWindow = createInstalledStartupWindow();
   } catch {
     try { console.log(JSON.stringify({ installedStartupCollection: { admitted: false, invalid: true, category: "admission failed" } })); } catch {}
   }
@@ -66,7 +68,7 @@ if (!Array.isArray(hosts) || hosts.length !== 3 || hosts.some(row => row.state !
   throw new Error("The one-command installation did not configure all three requested hosts");
 }
 const launcher = join(prefix, "bin", process.platform === "win32" ? "sbar-orbit.cmd" : "sbar-orbit");
-if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "before");
+if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "before", startupWindow);
 const smoke = Bun.spawn([process.execPath, "run", "scripts/limited.ts", process.execPath,
   "experiments/installed-browser-smoke.ts", launcher, join(output, "browser.jpg")],
   { cwd: checkout, env, stdout: "inherit", stderr: "inherit", timeout: 120000 });
@@ -78,5 +80,5 @@ console.log(JSON.stringify({ installed: true, registeredHosts: hosts.length, bro
 
 } finally {
   // Nonthrowing observation preserves the exact installer/smoke outcome and cleanup ordering.
-  if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "after");
+  if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "after", startupWindow);
 }
