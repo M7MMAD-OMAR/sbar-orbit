@@ -1,36 +1,57 @@
 # Completion status and evidence
 
-Latest integration snapshot: 7 October 2026, official main `a4572ba`.
-[PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9) is merged. Its corrected
-observer source `abb784a` passed four local gates and fresh independent
-specification and standards reviews; checkpoint revision 51 is locally accepted.
-[Run 37544177128](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37544177128)
-passed all nine jobs on the exact integration tree now in main: Mac 530 pass,
-305 skip, zero fail; Windows 518 pass, 317 skip, zero fail; Ubuntu 740 pass,
-95 skip, zero fail. Each suite ran 835 tests across 177 files. Skips remain
-not measured. [Official-main run 37545015395](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37545015395)
-also passed all nine jobs on exact `a4572ba`, with the same suite counts.
-Both complete log and artifact sets are retained separately.
+Latest integration snapshot: 7 October 2026, official main `e92afa3`.
+[PR 11](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/11) is merged. The installed
+Windows retention repair at source `420edc3` passed typecheck, 45 pure controls
+with 261 assertions and nine boundary controls with 98 assertions, all without
+skips. Two independent reviewers assessed the current source and actual installed
+Windows evidence; checkpoint revision 20 is locally accepted.
+[Run 37547644460](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37547644460)
+passed all nine jobs. Windows reported 563 pass and 317 skip; Mac 575 pass and
+305 skip; Ubuntu 785 pass and 95 skip, each with zero failures across 880 tests
+in 178 files. Skips remain not measured. The exact tested tree matches official
+merge `e92afa3`. Nine complete logs, six ZIPs and 20 artifact members are retained.
+[Official-main run 37548946722](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37548946722)
+started separately; its terminal evidence is not yet verified in this snapshot.
 
-The actual current Mac stopping fixture passed with protocol version
-Chrome/154.0.8037.98 from a matched existing response. Executable identity,
-the historical interception failure cause, asynchronous fixture-stop completion
-and detached-owner cleanup remain unconfirmed. The PR run trace dropped 71
-records; the official-main trace dropped 73. Both retained the original
-unawaited fixture stop as pending. The
-observer is diagnostic instrumentation, not a claimed repair of that cause.
+The actual installed Windows artifact retains 49 contiguous records in a sealed
+47177-byte window, with independently checked trace/status hashes and an
+acknowledgement of the earlier seal-write return. The endpoint published after
+4123 milliseconds within the unchanged 15000-millisecond budget. Stderr EOF and
+the latest owned stop are recorded. This is one disposable source-bound run;
+membership after handle closure, mapped executable image identity, acknowledgement
+own persistence return, general startup reliability and historical failure cause
+remain not measured. Diagnostic IO perturbs timing. The original unfixed nine-case
+harness and later negative mutant failures remain separately retained as failures.
 
-PR 10 remains a draft. Its collector/cardinality and finite-window retention
-repairs are being integrated with current main; current repair checks and
-fresh review remain pending. Portable capture/pipe diagnostics are also in
-preparation. The retained Windows old-source harness has nine actual cases,
-one setup pass and eight intended semantic failures; it is pure regression
-evidence, not a Windows runtime measurement. Product PR 5, startup PR 7 and
-Windows census PR 8 remain drafts with their required independent review
-unproven. Performance, managed lifecycle, published release and registry
-parity, external U1/T1 through U12/T12 acceptance and the unconditional native
-hold remain open. Detailed entries below describe their named historical
-source snapshots and do not supersede this integration snapshot.
+[PR 10](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/10) is also marked merged by
+GitHub through its inherited commit in the reviewed PR 11 integration. Its original
+candidate and measurements remain historical, not a separate acceptance of that
+unrepaired source.
+
+The earlier [PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9) observer
+integration remains accepted at checkpoint revision 51. Its
+[PR run 37544177128](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37544177128)
+and [main run 37545015395](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37545015395)
+passed all nine jobs, with 835 tests across 177 files per suite. Their Mac traces
+dropped 71 and 73 records respectively and retained pending fixture-stop. The
+new PR 11 Mac suite final observer JSON is partial at 65536 trace bytes. Windows and Ubuntu
+final summaries retain pending fixture-stop and dropped records. These diagnostic
+limits do not establish historical cause or whole-platform cleanup.
+
+Portable capture/pipe diagnostics remain unaccepted. Fresh standards review found
+that admission could pair an actual backend with an unrelated profile/workspace.
+A source-bound unfixed control genuinely recorded one valid baseline pass and two
+intended assertion failures through the real creation path with a mocked launcher.
+The provenance repair is in progress. Separately, eight actual local output
+observations retained complete 65535, 65536, 65537 and 98304-byte payloads; they did
+not reproduce CI loss. Bounded output framing is being prepared, not measured.
+
+Product PR 5, startup PR 7 and Windows census PR 8 remain drafts with their required
+independent review unproven. Performance, managed lifecycle, published release and
+registry parity, external U1/T1 through U12/T12 acceptance and the unconditional
+native hold remain open. Detailed entries below describe named historical source
+snapshots and do not supersede this integration snapshot.
 
 
 Historical publication sequence: official main snapshot `ce447d1` completed
