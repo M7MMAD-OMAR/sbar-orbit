@@ -92,11 +92,37 @@ function label(page: Page, title: string): string {
     return (url.protocol === "about:" ? "New tab" : `${url.host}${url.pathname === "/" ? "" : url.pathname}`).slice(0, 60);
   } catch { return "New tab"; }
 }
+
+/** Dimensions belong to the JPEG pixels, not a viewport that a concurrent action can resize. */
+function capturedDimensions(image: string): Viewport {
+  const bytes = Buffer.from(image, "base64");
+  if (bytes.length >= 2 && bytes.readUInt16BE(0) === 0xffd8) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length && bytes[offset] === 0xff) {
+      while (bytes[offset] === 0xff) offset++;
+      const marker = bytes[offset++];
+      if (marker === undefined || marker === 0xda || marker === 0xd9) break;
+      if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd8) continue;
+      if (offset + 2 > bytes.length) break;
+      const length = bytes.readUInt16BE(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && length >= 7) {
+        const height = bytes.readUInt16BE(offset + 3), width = bytes.readUInt16BE(offset + 5);
+        if (width && height) return { width, height };
+        break;
+      }
+      offset += length;
+    }
+  }
+  throw new OrbitError("BACKEND_FAILED", "The owned browser returned a JPEG without capture dimensions");
+}
 export class BrowserBackend {
   readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
   private captureSessions = new Map<Page, Promise<CDPSession>>();
+  private documentVersions = new Map<Page, number>();
+  private metadataFlights = new Map<Page, { documentVersion: number; promise: ReturnType<BrowserBackend["presenceOf"]> }>();
   private active: Page;
   onClose(listener: () => void) { this.owned.onClose(listener); }
   get surface(): Viewport { return this.size; }
@@ -179,9 +205,15 @@ export class BrowserBackend {
     void page.setViewportSize(this.size).catch(() => {});
   }
   private watch(page: Page) {
+    this.documentVersions.set(page, 0);
+    page.on("framenavigated", frame => {
+      if (frame === page.mainFrame()) this.documentVersions.set(page, (this.documentVersions.get(page) ?? 0) + 1);
+    });
     page.once("close", () => {
       this.pointers.delete(page);
       this.captureSessions.delete(page);
+      this.documentVersions.delete(page);
+      this.metadataFlights.delete(page);
       if (this.active !== page) return;
       const survivor = this.context.pages().filter(open => open !== page).at(-1);
       if (survivor) this.active = survivor;
@@ -300,7 +332,9 @@ export class BrowserBackend {
   }
   /** What the session is showing, without a frame. Cheap enough to poll from a desktop indicator. */
   async presence() {
-    const page = this.page;
+    return this.presenceOf(this.page);
+  }
+  private async presenceOf(page: Page) {
     try { await this.bindPointer(page); } catch {}
     const url = new URL(page.url());
     const location = url.protocol === "about:" ? "New page" : `${url.origin}${url.pathname}`;
@@ -312,9 +346,32 @@ export class BrowserBackend {
     return { title, location, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1, tabs,
       pointer: await (this.pointers.get(page) ?? (async () => null))() };
   }
+  private capturedPresence(page: Page, documentVersion: number) {
+    const existing = this.metadataFlights.get(page);
+    if (existing) {
+      if (existing.documentVersion !== documentVersion)
+        throw new OrbitError("BACKEND_FAILED", "Metadata for an obsolete document is still pending; request a fresh frame");
+      return existing.promise;
+    }
+    const flight = { documentVersion, promise: this.presenceOf(page) };
+    this.metadataFlights.set(page, flight);
+    // A timed out observer does not cancel Playwright metadata work. Retain its
+    // flight until settlement so later polls cannot accumulate pending reads.
+    void flight.promise.then(() => {
+      if (this.metadataFlights.get(page) === flight) this.metadataFlights.delete(page);
+    }, () => {
+      if (this.metadataFlights.get(page) === flight) this.metadataFlights.delete(page);
+    });
+    return flight.promise;
+  }
   async observe() {
     const capturedAt = Date.now();
     const page = this.page;
+    const documentVersion = this.documentVersions.get(page) ?? 0;
+    const requireCapturedDocument = () => {
+      if (page.isClosed() || (this.documentVersions.get(page) ?? 0) !== documentVersion)
+        throw new OrbitError("BACKEND_FAILED", "The captured page navigated or closed during observation; request a fresh frame");
+    };
     // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
     // which matters because every frame is captured, base64 encoded and decoded again per poll.
     //
@@ -322,7 +379,7 @@ export class BrowserBackend {
     // waits for web fonts and can fail on a usable page with one pending font. Capture directly
     // from this owned Chromium surface without changing the application's loading state.
     const budget = captureTimeoutMs();
-    const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
+    const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels and metadata). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
     let capture: CDPSession | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
@@ -336,15 +393,22 @@ export class BrowserBackend {
       capture = await attachment;
       // An attachment that settles after the deadline must not start a late capture.
       if (expired) { void capture.detach().catch(() => {}); throw timeout(); }
-      return (await capture.send("Page.captureScreenshot", {
+      const image = (await capture.send("Page.captureScreenshot", {
         format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
       })).data;
+      if (expired) throw timeout();
+      requireCapturedDocument();
+      const presence = await this.capturedPresence(page, documentVersion);
+      requireCapturedDocument();
+      return { mimeType: "image/jpeg", image, capturedAt, ...capturedDimensions(image), presence };
     })();
-    let image: string;
     try {
-      image = await Promise.race([operation, new Promise<never>((_, reject) => {
+      return await Promise.race([operation, new Promise<never>((_, reject) => {
         timer = setTimeout(() => { expired = true; reject(timeout()); }, budget);
       })]);
+    } catch (error) {
+      requireCapturedDocument();
+      throw error;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       if (expired) {
@@ -352,7 +416,6 @@ export class BrowserBackend {
         void capture?.detach().catch(() => {});
       }
     }
-    return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   async control(value: unknown) {
     const input = record(value);
