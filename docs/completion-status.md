@@ -4,6 +4,8 @@ Snapshot: 7 October 2026. Official main snapshot `ce447d1` completed
 [run 37520632156](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37520632156)
 with all nine normal jobs passing. Candidate results below belong to separate
 branches and do not establish combined acceptance or a new release.
+The later documentation snapshot `797a5ad` also passed all nine normal jobs in
+[run 37524553247](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37524553247).
 
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
@@ -95,7 +97,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `cf86ebee2fefea893ca2a8bff4ef0171005f7ee1`; it is not merged into main.
+at `d59ac6725b369b0d2cc1b93d4b6a5e242eba9a46`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -175,8 +177,8 @@ it does not identify the exact earlier runner stall. The later production repair
 synchronously invalidates pending observations on document commit or close,
 without claiming cancellation of browser work. Current results appear below.
 
-[PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
-`607c8110772f5fdb01675c048d1c3b49218e4634`. It adds opt-in startup diagnostics
+The earlier `607c8110772f5fdb01675c048d1c3b49218e4634` snapshot of draft
+[PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) adds opt-in startup diagnostics
 with category-only stderr, selected fixture-root gating and shared-slice counters.
 Five focused local tests and TypeScript passed. Required independent reviews
 remain unproven. Its [normal run 37503614580](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503614580)
@@ -318,6 +320,25 @@ failure phases were not retained, so their causes remain unknown. The latter
 fixture compiles and runs a parser control; it does not operate a private display
 or authorize native preparation.
 
+The later five-file diagnostic candidate `d59ac67` retains actual saved-account
+lease, browser creation, CDP, storage and close phases, plus population-parser
+compiler, probe, pipe and child-exit phases. Diagnostic wrappers preserve original
+promises and outcomes, restore only their own methods and prevent late registration
+after cleanup. All ten local gates passed on its exact 71-file snapshot, including
+six lifecycle controls and both affected fixtures. Capture and fixture deadlines
+remain unchanged. Actual
+[run 37525107763](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37525107763)
+completed with eight successful jobs and a Mac suite failure. Its merge `5bc166ff`
+into `797a5ad` matches all 71 scoped candidate files. Ubuntu reported 744 pass,
+95 skip and zero fail; Windows 522 pass, 317 skip and zero fail; Mac 533 pass,
+305 skip and one failure. Both previously failing Ubuntu fixtures passed with
+actual phases and no pending operations at final cleanup; these passes do not
+explain the preceding timeouts. Mac again reached the unchanged 3000-millisecond
+capture deadline in the first concurrent tab-and-resize frame case. Actual logs
+do not distinguish capture delay from time spent intentionally holding real JPEG
+delivery while the tab and resize actions finish. All four prompt-obsolete controls
+passed. The Mac failure and independent reviews remain open.
+
 The newer Mac diagnostic candidate `ceca438` records phases from the actual
 concurrent preview fixture and actual source manifests before and after each arm.
 TypeScript and 17 selected local tests passed with no failures or skips.
@@ -333,6 +354,21 @@ not downloaded. Normal CI on exact `ceca438` is `not measured`: commit queries
 returned only the diagnostic, while PR metadata still reported parent `607c811`
 despite the branch ref and diagnostic checkout identifying `ceca438`. Neither
 that discrepancy nor passing captures closes the earlier Mac failure.
+
+The newest separate Mac candidate is `fbf81d8`. Its controlled diagnostic uses a
+complete app-bundle copy in an owned disposable CI directory, with fixture-only
+default selection. Signed bundle metadata supplies the expected version without
+an extra copied-browser launch. Full resource, mode, internal-link and extended
+attribute inventories are checked before and after each arm; source and selected
+browser drift still invalidate the comparison. Explicit executable owners are
+refused, and ordinary production selection remains unchanged. This intervention
+is a controlled fixture measurement, not a repair of the ordinary resolver.
+All six local gates passed, including TypeScript and 21 selected tests without
+failures or skips; Linux leaves Mac instrumentation inert. The initial timer-type
+check failed and its original raw log and receipt remain retained separately.
+The corrected candidate matches all 442 current scoped files. Actual controlled
+Mac copying and capture outcomes remain `not measured` pending remote evidence;
+both independent review axes remain unproven.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
