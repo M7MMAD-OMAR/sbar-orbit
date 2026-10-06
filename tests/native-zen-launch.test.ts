@@ -82,6 +82,44 @@ for (const layout of ["xdg", "default", "empty-xdg", "relative-xdg", "user-overr
   });
 }
 
+for (const layout of ["ambiguous", "alias"] as const) {
+  nativeTest(`Zen stable discovery handles ${layout} system and user deployments`, async () => {
+    const f = await fixture("external user home");
+    try {
+      const dataHome = join(f.root, "external data directory");
+      const systemRoot = join(f.root, "system installation");
+      const userRoot = join(dataHome, "flatpak");
+      const architecture = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const deploymentPath = join("app/app.zen_browser.zen", architecture, "stable/active/files");
+      const systemFiles = join(systemRoot, deploymentPath);
+      await mkdir(join(systemFiles, "zen"), { recursive: true });
+      await writeFile(join(systemFiles, "zen/zen"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      await mkdir(dataHome);
+      if (layout === "alias") await symlink(systemRoot, userRoot);
+      else {
+        const userFiles = join(userRoot, deploymentPath);
+        await mkdir(join(userFiles, "zen"), { recursive: true });
+        await writeFile(join(userFiles, "zen/zen"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      }
+      await withFlatpakEnvironment({ XDG_DATA_HOME: dataHome, FLATPAK_SYSTEM_DIR: systemRoot }, async () => {
+        if (layout === "ambiguous") {
+          await expect(discoverZenInstallation({ home: f.home })).rejects.toMatchObject({
+            code: "UNSUPPORTED",
+            message: "Zen stable Flatpak deployment is ambiguous between system and user installations",
+          });
+        } else {
+          expect((await discoverZenInstallation({ home: f.home })).deploymentFiles).toBe(systemFiles);
+        }
+        expect((await discoverZenInstallation({ home: f.home, deploymentFiles: systemFiles })).deploymentFiles)
+          .toBe(systemFiles);
+      });
+    } finally {
+      await new Promise<void>(resolve => f.server.close(() => resolve()));
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
+}
+
 schemaTest("Zen launch-app accepts no caller paths or executable arguments", () => {
   expect(parseNativeAction({ type: "launch-app", app: "zen", profile: "active" }))
     .toEqual({ type: "launch-app", app: "zen", profile: "active" });

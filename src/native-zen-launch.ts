@@ -80,13 +80,18 @@ export async function discoverZenInstallation(location: ZenLocation = {}): Promi
     join(systemRoot, deploymentPath),
     join(userRoot, deploymentPath),
   ];
+  const deployments = new Set<string>();
   for (const candidate of candidates) {
     const files = await realpath(candidate).catch(() => "");
     if (!files) continue;
     const executable = await lstat(join(files, "zen/zen")).catch(() => undefined);
     if (executable?.isFile() && executable.mode & 0o111)
-      return { deploymentFiles: files, profile, appRoot };
+      deployments.add(files);
   }
+  if (deployments.size > 1)
+    throw new OrbitError("UNSUPPORTED", "Zen stable Flatpak deployment is ambiguous between system and user installations");
+  const deploymentFiles = deployments.values().next().value;
+  if (deploymentFiles) return { deploymentFiles, profile, appRoot };
   throw new OrbitError("UNSUPPORTED", "The installed Zen Flatpak ELF was not found");
 }
 
