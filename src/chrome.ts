@@ -507,8 +507,10 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     try {
       if (temporary) await rm(temporary, { recursive: true, force: true });
     } finally {
-      closed = true;
-      for (const listener of listeners) listener();
+      if (!closed) {
+        closed = true;
+        for (const listener of listeners) listener();
+      }
     }
   });
   let endpointState = "not checked";
