@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { access, constants, lstat, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { darwinBrowserInstalls, linuxBrowserExecutables, windowsBrowserInstalls } from "./runtime-paths";
 
 /**
@@ -91,18 +91,18 @@ const exists = async (path: string, executable = false) => {
  * only correct choice for a given profile is the install that owns it.
  */
 function browserCandidates(home: string, env: NodeJS.ProcessEnv): Omit<BrowserInstall, "executable">[] {
-  const config = env.XDG_CONFIG_HOME || join(home, ".config");
+  const config = env.XDG_CONFIG_HOME || posix.join(home, ".config");
   const chrome = { id: "google-chrome", keyringItem: "Chrome Safe Storage", keyringApplication: "chrome" };
   const chromium = { id: "chromium", keyringItem: "Chromium Safe Storage", keyringApplication: "chromium" };
   return [
-    { ...chrome, packaging: "system", profileDirectory: join(config, "google-chrome") },
-    { ...chromium, packaging: "system", profileDirectory: join(config, "chromium") },
+    { ...chrome, packaging: "system", profileDirectory: posix.join(config, "google-chrome") },
+    { ...chromium, packaging: "system", profileDirectory: posix.join(config, "chromium") },
     // A Flatpak browser keeps its profile inside its own application directory. It asked the Secret
     // portal rather than the session bus, but the portal proxies to the same login keyring item, so
     // a directly launchable browser of the same branding still decrypts it.
-    { ...chrome, packaging: "flatpak", profileDirectory: join(home, ".var", "app", "com.google.Chrome", "config", "google-chrome") },
-    { ...chromium, packaging: "flatpak", profileDirectory: join(home, ".var", "app", "org.chromium.Chromium", "config", "chromium") },
-    { ...chromium, packaging: "snap", profileDirectory: join(home, "snap", "chromium", "current", ".config", "chromium") },
+    { ...chrome, packaging: "flatpak", profileDirectory: posix.join(home, ".var", "app", "com.google.Chrome", "config", "google-chrome") },
+    { ...chromium, packaging: "flatpak", profileDirectory: posix.join(home, ".var", "app", "org.chromium.Chromium", "config", "chromium") },
+    { ...chromium, packaging: "snap", profileDirectory: posix.join(home, "snap", "chromium", "current", ".config", "chromium") },
   ];
 }
 
