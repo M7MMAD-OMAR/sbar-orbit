@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 /** Publish fixed stderr categories, never arbitrary browser or supervisor text. */
 export function startupDiagnosticStderr(stderr: string) {
@@ -27,7 +27,7 @@ export function startupDiagnosticBudgetRoot(cgroup: string) {
   const parts = group?.split("/");
   const at = parts?.indexOf("sbarorbit.slice");
   return parts && at !== undefined && at >= 0
-    ? join("/sys/fs/cgroup", ...parts.slice(0, at + 1)) : undefined;
+    ? posix.join("/sys/fs/cgroup", ...parts.slice(0, at + 1)) : undefined;
 }
 
 /** No timer, sampling or output without an explicit selected owned fixture root. */
