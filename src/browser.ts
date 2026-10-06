@@ -1,3 +1,4 @@
+import { OwnedCleanupError } from "./owned-cleanup";
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type CDPSession, type Page } from "playwright";
@@ -165,7 +166,8 @@ export class BrowserBackend {
       await backend.bindPointer(owned.page);
       return backend;
     } catch (error) {
-      await owned.close().catch(() => {});
+      try { await owned.close(); }
+      catch (cleanup) { throw new OwnedCleanupError(error, cleanup, owned.close); }
       throw error;
     }
   }

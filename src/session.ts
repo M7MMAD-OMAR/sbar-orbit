@@ -1,3 +1,4 @@
+import { OwnedCleanupError } from "./owned-cleanup";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
@@ -128,6 +129,7 @@ export class Sessions {
   // and several Chromes or compositors booting together on one core made each other time out
   // where one after another all start; the queue costs the later ones only the earlier ones' start.
   private creationTail: Promise<unknown> = Promise.resolve();
+  private pendingBrowserCleanup = new Map<string, () => Promise<void>>();
   private nativeOpens = new Map<string, { fingerprint: string; result: Promise<unknown> }>();
   private shuttingDown = false;
   /**
@@ -176,7 +178,7 @@ export class Sessions {
     if (input.handoff !== undefined && requested !== "native")
       throw new OrbitError("INVALID_REQUEST", "Existing application handoff requires the native backend");
     const handoff = input.handoff === undefined ? undefined : parseHandoff(input.handoff);
-    if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
+    if (this.sessions.size + this.creating.size + this.pendingBrowserCleanup.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
       if (typeof value !== "string" || !value.trim() || value.length > 80 || /[\x00-\x1f\x7f]/.test(value))
@@ -335,7 +337,24 @@ export class Sessions {
       const nativeCleanup: unknown[] = [];
       if (backendOwned instanceof NativeBackend) {
         try { await backendOwned.close(); } catch (cleanup) { nativeCleanup.push(cleanup); }
-      } else await backendOwned?.close().catch(() => {});
+      } else if (backendOwned) {
+        const retainedBackend = backendOwned;
+        try { await retainedBackend.close(); }
+        catch (cleanup) { error = new OwnedCleanupError(error, cleanup, () => retainedBackend.close()); }
+      }
+      if (error instanceof OwnedCleanupError) {
+        const retry = error.retry;
+        this.pendingBrowserCleanup.set(lease, async () => {
+          await retry();
+          await egressOwned?.close();
+          await cloneOwned?.close();
+          if (profileOwned) await this.removeProfile(profileOwned);
+          await account?.release();
+          this.leases.delete(lease);
+          this.pendingBrowserCleanup.delete(lease);
+        });
+        throw error;
+      }
       await egressOwned?.close().catch(() => {});
       await cloneOwned?.close().catch(() => {});
       if (profileOwned) {
@@ -579,7 +598,9 @@ export class Sessions {
       session.lastActivityAt = Date.now();
       return this.info(session);
     })();
-    return session.closing;
+    const closing = session.closing;
+    void closing.catch(() => { if (session.closing === closing) session.closing = undefined; });
+    return closing;
   }
   async dispatch(value: unknown): Promise<unknown> {
     if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.report") return this.diagnostics.report();
@@ -805,6 +826,13 @@ export class Sessions {
   async close() {
     this.shuttingDown = true;
     await Promise.allSettled([...this.creating]);
-    await Promise.all([...this.sessions.values()].map(session => this.stop(session)));
+    const results = await Promise.allSettled([
+      ...[...this.sessions.values()].map(session => this.stop(session)),
+      ...[...this.pendingBrowserCleanup.values()].map(retry => retry()),
+    ]);
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    const [only] = failures;
+    if (failures.length === 1) throw only;
+    if (failures.length) throw new AggregateError(failures, "Owned session cleanup remains incomplete");
   }
 }

@@ -1,3 +1,4 @@
+import { confirmedWindowsStop, OwnedCleanupError, retryableCleanup, type StopEvidence } from "./owned-cleanup";
 import { darwinTaskPolicy } from "./macos-scheduling";
 import { requireHeadroom, requireResourceBudget } from "./resource-budget";
 import { chromium, type Browser, type ConnectOverCDPTransport } from "playwright";
@@ -115,6 +116,7 @@ type OwnedBrowser = {
   diagnostics: () => string;
   /** Throws `RESOURCE_BOUNDARY_LOST` if the tree left its budget. Called once, after the handshake. */
   assertContained: () => Promise<void>;
+  startupEvidence?: () => Record<string, unknown>;
 };
 
 /** Linux: the Python subreaper, exactly as it was, because it is the measured path. */
@@ -249,20 +251,33 @@ async function launchOnWindows(executable: string, profile: string, argv: string
     activeProcesses: 512,
   };
   const job = new WindowsJob(budget);
-  const child = Bun.spawn([executable, ...argv], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
-  let diagnostics = "";
-  void (async () => {
-    try { for await (const chunk of child.stderr) diagnostics = (diagnostics + new TextDecoder().decode(chunk)).slice(-4096); }
-    catch {}
-  })();
-  try {
-    job.assign(child.pid);
-  } catch (error) {
-    child.kill();
-    job.close();
+  let child: Bun.Subprocess<"ignore", "ignore", "pipe">;
+  try { child = Bun.spawn([executable, ...argv], { env, stdin: "ignore", stdout: "ignore", stderr: "pipe" }); }
+  catch (error) {
+    try { job.close(); }
+    catch (cleanup) { throw new OwnedCleanupError(error, cleanup, async () => job.close()); }
     throw error;
   }
-  let stopped = false;
+  let diagnostics = "", stderrBytes = 0, stderrEnded = false, stderrFailed = false;
+  void (async () => {
+    try {
+      for await (const chunk of child.stderr) {
+        stderrBytes += chunk.byteLength;
+        diagnostics = (diagnostics + new TextDecoder().decode(chunk)).slice(-4096);
+      }
+      stderrEnded = true;
+    } catch { stderrFailed = true; }
+  })();
+  const evidence: StopEvidence = { rootExitCode: null, confirmed: false, handleClosed: false };
+  const stop = confirmedWindowsStop(job, { exitCode: () => child.exitCode }, evidence);
+  try { job.assign(child.pid); }
+  catch (error) {
+    // Assignment can fail before the root belongs to the job. Retain both cleanup paths.
+    const retry = retryableCleanup(async () => { child.kill(); await stop(); });
+    try { await retry(); }
+    catch (cleanup) { throw new OwnedCleanupError(error, cleanup, retry); }
+    throw error;
+  }
   return {
     exitCode: () => child.exitCode,
     exited: child.exited,
@@ -281,16 +296,19 @@ async function launchOnWindows(executable: string, profile: string, argv: string
       } catch {}
       return [charged, ...lines].filter(Boolean).join("; ");
     },
-    async stop() {
-      if (stopped) return;
-      stopped = true;
-      // Closing the job handle is the kill: the kernel terminates every process inside it, which is
-      // stronger than signalling the one pid we happen to know about.
-      job.close();
-      await Promise.race([child.exited, Bun.sleep(4000)]);
+    stop,
+    startupEvidence: () => {
+      const result: Record<string, unknown> = { rootPid: child.pid, rootExitCode: child.exitCode,
+        budget, cpuCapEnforced: job.cpuCapEnforced, stderrBytes, stderrTailBytes: Buffer.byteLength(diagnostics),
+        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512) } };
+      if (!job.isClosed) {
+        try { result.accounting = job.accounting(); } catch { result.accountingError = "query failed"; }
+        try { result.members = job.processIds().slice(0, 512); } catch { result.membershipError = "query failed"; }
+      } else result.membership = "not measured after handle closure";
+      return result;
     },
     async assertContained() {
-      if (stopped) return;
+      if (evidence.handleClosed) return;
       // Chrome keeps starting renderer, GPU and utility processes for the life of the session, so a
       // single check at launch can never see the process created afterwards. This asks the kernel
       // for the job's current membership instead.
@@ -475,15 +493,14 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     return cause ? `${message}: ${cause}` : message;
   };
   let browser: Browser | undefined;
-  let closing: Promise<void> | undefined;
   let closed = false;
   // Whether the CALLER asked for this shutdown, which is not the same question as whether a shutdown
-  // is under way. Every path that notices a dead browser also calls `close()`, so `closing` is set by
-  // the death itself and cannot tell a stop apart from a crash.
+  // is under way. Every path that notices a dead browser also calls `close()`, so pending cleanup
+  // alone cannot tell a requested stop apart from a crash.
   let requested = false;
   let socket: WebSocket | undefined;
   const listeners: (() => void)[] = [];
-  const close = () => closing ??= (async () => {
+  const close = retryableCleanup(async () => {
     await owner.stop();
     socket?.close();
     await browser?.close().catch(() => {});
@@ -493,7 +510,13 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       closed = true;
       for (const listener of listeners) listener();
     }
-  })();
+  });
+  let endpointState = "not checked";
+  const startupAt = Date.now();
+  const startupEvidence = (phase: string) => {
+    if (owner.startupEvidence) console.error(JSON.stringify({ ownedBrowser: "startup failure", phase,
+      elapsedMs: Date.now() - startupAt, waitMs: endpointWaitMs(), endpointState, ...owner.startupEvidence() }));
+  };
   try {
     const waitMs = endpointWaitMs();
     const deadline = Date.now() + waitMs;
@@ -501,9 +524,10 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     while (Date.now() < deadline && owner.exitCode() === null) {
       try {
         const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
+        endpointState = "invalid contents";
         const reachable = options.endpointPort ? String(options.endpointPort) : port;
-        if (port && /^\d+$/.test(port) && path?.startsWith("/devtools/browser/")) { endpoint = `ws://127.0.0.1:${reachable}${path}`; break; }
-      } catch {}
+        if (port && /^\d+$/.test(port) && path?.startsWith("/devtools/browser/")) { endpoint = `ws://127.0.0.1:${reachable}${path}`; endpointState = "published"; break; }
+      } catch (error) { endpointState = (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "read failed"; }
       await Bun.sleep(25);
     }
     // `exitCode` is a function on this interface, not a field. Comparing the function to null is
@@ -574,8 +598,13 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); },
     };
   } catch (error) {
+    startupEvidence("before stop");
     try { await close(); }
-    catch (cleanup) { throw new AggregateError([error, cleanup], "Chrome startup and cleanup failed"); }
+    catch (cleanup) {
+      startupEvidence("stop incomplete");
+      throw new OwnedCleanupError(error, cleanup, close);
+    }
+    startupEvidence("stop confirmed");
     throw error;
   }
 }

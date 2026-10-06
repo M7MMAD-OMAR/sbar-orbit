@@ -45,6 +45,7 @@ function kernel32Symbols() {
     IsProcessInJob: { args: [pointer, pointer, pointer], returns: bool },
     OpenProcess: { args: [u32, bool, u32], returns: pointer },
     TerminateProcess: { args: [pointer, u32], returns: bool },
+    TerminateJobObject: { args: [pointer, u32], returns: bool },
     CloseHandle: { args: [pointer], returns: bool },
     GetLastError: { args: [], returns: u32 },
   }).symbols;
@@ -263,14 +264,24 @@ export class WindowsJob {
     if (this.closed) throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "The job object is closed");
   }
 
-  /** Kill the tree. Idempotent, because both session stop and broker shutdown reach it. */
+  get isClosed() { return this.closed; }
+
+  /** End only this job's processes, retaining the handle for exit verification. */
+  terminate(): void {
+    this.requireOpen();
+    if (!this.api.TerminateJobObject(this.handle, 1))
+      throw new OrbitError("BACKEND_FAILED", `TerminateJobObject failed, error ${this.api.GetLastError()}`);
+  }
+
+  /** Checked handle closure. Direct callers still retain the kill-on-close fallback. */
   close(): void {
     if (this.closed) return;
     // Read the counters while the handle is still this job's, so a diagnostic written after the tree
     // is reaped still has the numbers. This is the only moment they exist.
     try { this.final = this.accounting(); } catch {}
+    if (!this.api.CloseHandle(this.handle))
+      throw new OrbitError("BACKEND_FAILED", `CloseHandle for the owned job failed, error ${this.api.GetLastError()}`);
     this.closed = true;
-    this.api.CloseHandle(this.handle);
   }
 }
 
