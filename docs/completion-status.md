@@ -7,6 +7,15 @@ branches and do not establish combined acceptance or a new release.
 The later documentation snapshot `797a5ad` also passed all nine normal jobs in
 [run 37524553247](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37524553247).
 
+The newer documentation snapshot `0a989b0` completed
+[run 37526680368](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37526680368)
+with eight successful jobs and a Windows installed-browser failure. All three
+platform suites passed. The installed `session create` command returned
+`BACKEND_FAILED`: owned Chrome did not publish its local endpoint within the
+unchanged 15-second deadline and was reported still running. This establishes a
+startup failure, not its cause or a confirmed cleanup outcome. Investigation
+remains open.
+
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
@@ -339,6 +348,14 @@ do not distinguish capture delay from time spent intentionally holding real JPEG
 delivery while the tab and resize actions finish. All four prompt-obsolete controls
 passed. The Mac failure and independent reviews remain open.
 
+An unpublished one-file first-frame diagnostic follow-up passed all eleven
+planned local gates on its frozen 71-file snapshot. It traces actual backend
+creation, capture, held JPEG delivery, concurrent tab and resize actions,
+observation settlement and cleanup, preserving original promises, operations,
+assertions and deadlines. Both old-source controls failed at their intended
+boundaries and restored production bytes exactly. This validates instrumentation;
+it does not explain the earlier runner timeout or establish independent review.
+
 The newer Mac diagnostic candidate `ceca438` records phases from the actual
 concurrent preview fixture and actual source manifests before and after each arm.
 TypeScript and 17 selected local tests passed with no failures or skips.
@@ -366,9 +383,21 @@ is a controlled fixture measurement, not a repair of the ordinary resolver.
 All six local gates passed, including TypeScript and 21 selected tests without
 failures or skips; Linux leaves Mac instrumentation inert. The initial timer-type
 check failed and its original raw log and receipt remain retained separately.
-The corrected candidate matches all 442 current scoped files. Actual controlled
-Mac copying and capture outcomes remain `not measured` pending remote evidence;
-both independent review axes remain unproven.
+The corrected candidate matches all 442 current scoped files. Actual
+[controlled run 37526278775](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37526278775)
+passed on exact `fbf81d8`. Both isolated and full-suite arms retained identical
+source, selected copied executable, resources and attributes; captures fulfilled
+within the unchanged deadline and owned copy removal was confirmed. The original
+bundle changed during the full arm while the selected copy remained Chrome
+152.0.7977.83. This measured intervention does not establish update causality or
+repair ordinary browser selection. The downloaded 283218-byte artifact matches
+its advertised SHA256 and both original arm records.
+[Normal run 37526285644](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37526285644)
+passed all nine jobs on merge `9b558b4b`. Ubuntu reported 729 pass, 95 skip and zero
+fail; Mac 519 pass, 305 skip and zero fail; Windows 507 pass, 317 skip and zero
+fail. Production and controlled diagnostic files match the direct candidate;
+nine documentation and host evidence files differ. The earlier timeout cause
+and both independent review axes remain unproven.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
