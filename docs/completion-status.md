@@ -35,6 +35,13 @@ registration jobs and the Ubuntu and Windows suites passed. Mac reported
 response method or process outcome. This is a distinct failure from the earlier
 frame and Windows deadlines; its cause and cleanup outcome remain unmeasured.
 
+Official main snapshot `1a9c1e3` subsequently completed
+[run 37531549547](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37531549547)
+with all nine normal jobs passing. Ubuntu reported 714 pass and 95 skip; Windows
+492 pass and 317 skip; Mac 504 pass and 305 skip, all with zero failures. This
+result belongs to the exact official documentation snapshot. It does not explain
+the retained `4089c50` CDP failure or close its cause and cleanup evidence gaps.
+
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
@@ -307,6 +314,22 @@ production collector repair or the cause of the earlier process attribution fail
 also completed successfully. Fresh independent review and production witness
 repair remain open.
 
+A separate unpublished Windows debug-provider feasibility preparation reached
+local R5 engine revision 10. TypeScript passed and 12 pure portable controls passed
+without failures or skips on Linux. Its formal source hash is
+`3bf50ae0d52608cdb69836b63f66b59615d77effadb037e26a50f391d1ec2b5d`;
+all 399 influential files remained unchanged. The controls cover exact creator
+handoff, distinct assignment/observation rights, missing and inflight transfer
+seals, third-generation refusal, exception dispatch and retryable handle ownership.
+The earlier R4 typecheck failure is retained. These checks do not measure the
+native `DEBUG_PROCESS` producer or demonstrate an old native regression. Actual
+Windows Bun feasibility, nested-job compatibility, complete unchanged Chrome
+coverage and performance remain `not measured`; both independent review axes
+remain unproven. The production collector is unchanged. The local
+[packet](/var/tmp/orbit-windows-debug-provider-feasibility-2026-10-07/revision-5/execution-1/final-packet.json)
+and [raw controls](/var/tmp/orbit-windows-debug-provider-feasibility-2026-10-07/revision-5/execution-1/controls.full-bun-raw.log)
+retain the source bindings and measurements.
+
 The current Mac diagnostic writes allowlisted nonthrowing arm records into the job
 log as well as artifacts. Its six local gates passed, including TypeScript and 16
 tests without failures or skips. Actual
@@ -448,6 +471,24 @@ fail; Mac 519 pass, 305 skip and zero fail; Windows 507 pass, 317 skip and zero
 fail. Production and controlled diagnostic files match the direct candidate;
 nine documentation and host evidence files differ. The earlier timeout cause
 and both independent review axes remain unproven.
+
+The separate installed-Windows startup diagnostic reached local engine revision
+25 with TypeScript passing and 25 pure protocol/filesystem controls passing on
+Linux, without failures or skips. All 286 influential source files remained
+unchanged; its formal source hash is
+`b0a5bc9acfb0277297fc93f772a8a189312ac889dfc95e7f2860207c78d23b09`.
+The controls retain selected Bun producer identity, ordered endpoint/assignment
+readiness, exact stop-attempt pairing and unknown attribution or cleanup states.
+The earlier matched membership negative/positive comparison remains separately
+retained. New readiness and Bun controls ran only on corrected current source;
+they do not establish their historical defect detection. Actual installed Windows
+startup, lifecycle and cleanup remain `not measured`, as do both independent
+review axes. Executable hashing perturbs opt-in timing; its post-read threshold
+cannot interrupt file IO, and disk bytes do not prove mapped-image identity.
+The local [packet](/var/tmp/orbit-windows-installed-startup-2026-10-07/final-local-r25/packet.json)
+and [raw controls](/var/tmp/orbit-windows-installed-startup-2026-10-07/producer-bun-r20-controls-immutable/full.raw.log)
+retain the exact measured scope. These diagnostic checks do not close the earlier
+15-second endpoint failure, published-artifact acceptance or the native hold.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational

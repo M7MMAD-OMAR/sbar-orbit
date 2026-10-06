@@ -61,6 +61,27 @@ on merge `bbd332c8`, with all 71 scoped files matching the tested candidate.
 That separate passing result does not explain the official-main assertion or
 close the pending independent reviews and full acceptance requirements.
 
+Official main snapshot `1a9c1e3` subsequently completed
+[run 37531549547](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37531549547)
+with all nine normal jobs passing. Ubuntu reported 714 pass and 95 skip; Windows
+492 pass and 317 skip; Mac 504 pass and 305 skip, all with zero failures. This
+result belongs to the exact official documentation snapshot. It does not explain
+the retained `4089c50` CDP failure or close its cause and cleanup evidence gaps.
+
+Two further diagnostic preparations have local source-bound gates only. The
+unpublished debug-provider R5 source passed TypeScript and 12 pure portable
+controls with 399 influential files unchanged. The installed-startup R25 source
+passed TypeScript and 25 pure protocol/filesystem controls with 286 files
+unchanged. Their exact hashes, local packets and raw logs are recorded in the
+[workstream snapshot](completion-status.md#remaining-workstream-snapshot).
+The debug preparation still requires actual Windows Bun feasibility, nested-job
+compatibility and full unchanged Chrome coverage/performance. The installed
+preparation still requires actual Windows startup/lifecycle/cleanup evidence;
+its new readiness and Bun controls have no discriminating old-source run.
+Both preparations require two fresh independent review axes. Neither is a
+production collector repair, startup cause, platform acceptance or release claim.
+The unconditional native hold and full external acceptance requirements remain.
+
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
 | Workstream | Current investigation | Integration requirement |
