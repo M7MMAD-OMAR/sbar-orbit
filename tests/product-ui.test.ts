@@ -4,6 +4,79 @@ import { join } from 'node:path';
 import { openViewerPage } from './viewer-page';
 import { startBroker, call } from '../src/ipc';
 
+function productBoundaryTrace(name: string) {
+  const started = performance.now();
+  const initial: unknown[] = [], recent: unknown[] = [];
+  const record = (phase: string, details: unknown = {}) => {
+    const entry = { elapsedMs: Math.round(performance.now() - started), phase, details };
+    if (initial.length < 24) initial.push(entry);
+    else { recent.push(entry); if (recent.length > 64) recent.shift(); }
+  };
+  const rpc: typeof call = async (socket, method, params) => {
+    const fields = params && typeof params === 'object' ? params as Record<string, unknown> : {};
+    record('broker-request', { method, params: { backend: fields.backend, sessionId: fields.sessionId,
+      requestId: fields.requestId, action: fields.action, input: fields.input } });
+    try {
+      const result = await call(socket, method, params);
+      const fields = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+      const summary = method === 'preview.open' ? { available: true }
+        : ['session.create', 'session.pause', 'session.resume'].includes(method)
+          ? { sessionId: fields.sessionId, state: fields.state, surface: fields.surface } : result;
+      record('broker-response', { method, result: summary });
+      return result;
+    } catch (error) { record('broker-error', { method, error: String(error) }); throw error; }
+  };
+  const fixtureScript = `<script>for(const name of ['pointerdown','input','keydown','submit']) document.addEventListener(name,event=>navigator.sendBeacon('/product-probe-events',JSON.stringify({event:name,trusted:event.isTrusted,x:event.clientX,y:event.clientY,key:event.key,target:event.target.tagName,active:document.activeElement.tagName,input:document.querySelector('input').value,output:document.querySelector('output').textContent,width:innerWidth,height:innerHeight,dpr:devicePixelRatio,path:location.pathname})),true);</script>`;
+  return {
+    record, rpc, fixtureScript,
+    async attach(page: Awaited<ReturnType<typeof openViewerPage>>['page']) {
+      await page.exposeBinding('productBoundaryEvent', (_, event) => record('viewer-event', event));
+      await page.addInitScript(() => {
+        document.addEventListener('click', event => {
+          const canvas = document.querySelector<HTMLCanvasElement>('#frame');
+          if (event.target === canvas) {
+            const send = (globalThis as unknown as { productBoundaryEvent: (event: unknown) => void }).productBoundaryEvent;
+            send({ type: 'frame-click', x: event.clientX, y: event.clientY,
+              rect: canvas?.getBoundingClientRect().toJSON(), width: canvas?.width, height: canvas?.height });
+          }
+        }, true);
+      });
+      const relevant = new Set(['session.list', 'session.observe', 'session.control', 'session.pause', 'session.resume']);
+      page.on('request', request => {
+        if (new URL(request.url()).pathname !== '/rpc') return;
+        const payload = request.postDataJSON();
+        if (relevant.has(payload?.method)) record('viewer-request', payload);
+      });
+      page.on('response', async response => {
+        if (new URL(response.url()).pathname !== '/rpc') return;
+        const method = response.request().postDataJSON()?.method;
+        if (!relevant.has(method)) return;
+        try {
+          const reply = await response.json();
+          const result = reply.result;
+          const metadata = method === 'session.observe' ? {
+            width: result?.width, height: result?.height, capturedAt: result?.capturedAt, presence: result?.presence,
+          } : method === 'session.list' && Array.isArray(result)
+            ? result.map(session => ({ sessionId: session.sessionId, state: session.state, activity: session.activity, surface: session.surface })) : undefined;
+          record('viewer-response', { method, status: response.status(), ok: reply.ok, metadata, error: reply.error });
+        } catch (error) { record('viewer-response-error', { method, error: String(error) }); }
+      });
+      record('viewer-attached');
+    },
+    async save(page: Awaited<ReturnType<typeof openViewerPage>>['page'], shots: string, failure: unknown) {
+      record('finally', await page.evaluate(() => ({ hidden: document.hidden,
+        state: document.querySelector('#state')?.getAttribute('data-state'), alert: document.querySelector('#error')?.textContent,
+        tabs: [...document.querySelectorAll<HTMLButtonElement>('#tabs button')].map(button => ({ current: button.getAttribute('aria-current'), disabled: button.disabled })),
+        canvas: { width: document.querySelector<HTMLCanvasElement>('#frame')?.width, height: document.querySelector<HTMLCanvasElement>('#frame')?.height },
+      })).catch(error => ({ error: String(error) })));
+      const evidence = { name, failure, initial, recent };
+      await mkdir(shots, { recursive: true });
+      await writeFile(join(shots, `product-boundary-${name}.json`), JSON.stringify(evidence, null, 2));
+      if (failure) console.error(JSON.stringify({ productBoundaryFailure: evidence }));
+    },
+  };
+}
+
 async function settleViewerViewport(page: Awaited<ReturnType<typeof openViewerPage>>['page'], viewport: { width: number; height: number }) {
   await page.setViewportSize(viewport);
   // Let the media query and ResizeObserver apply before inspecting active motion.
@@ -158,19 +231,25 @@ async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openVi
 }
 
 test('selected page restores keyboard focus after its command completes', async () => {
+  const diagnostics = productBoundaryTrace('selected-regression');
+  diagnostics.record('broker-start');
   const broker = await startBroker();
+  diagnostics.record('broker-ready');
   const viewer = await openViewerPage('Private settled page selection fixture', { viewport: { width: 1440, height: 1000 } });
+  diagnostics.record('viewer-ready');
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Private selection fixture</title><body>Private selection fixture</body></html>', { headers: { 'content-type': 'text/html' } }) });
   const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
+  let failure: unknown;
   try {
     await mkdir(shots, { recursive: true });
-    const preview = await call(broker.socket, 'preview.open') as { url: string };
+    const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
     const { page } = viewer;
+    await diagnostics.attach(page);
     await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
-    const session = await call(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
-    await call(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
-    await call(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
-    await call(broker.socket, 'session.pause', session);
+    const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
+    await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
+    await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
+    await diagnostics.rpc(broker.socket, 'session.pause', session);
     await page.waitForFunction(() => {
       const buttons = document.querySelectorAll('#tabs button');
       return document.querySelector('#state')?.getAttribute('data-state') === 'paused' && buttons.length === 2 &&
@@ -178,20 +257,35 @@ test('selected page restores keyboard focus after its command completes', async 
     });
     await verifySettledPageSelection(page, 'settled-regression', shots);
     expect(viewer.errors).toEqual([]);
-  } finally { await viewer.close(); await broker.close(); server.stop(true); }
+  } catch (error) { failure = String(error); throw error; }
+  finally {
+    await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
+    await viewer.close(); await broker.close(); server.stop(true);
+  }
 }, 30000);
 
 for (const language of ['en', 'ar']) {
   test(`session lifecycle and page selection preserve controls in ${language}`, async () => {
+    const diagnostics = productBoundaryTrace(language);
+    diagnostics.record('broker-start');
     const broker = await startBroker();
+    diagnostics.record('broker-ready');
     const viewer = await openViewerPage('Private lifecycle fixture', { language, viewport: { width: 1440, height: 1000 } });
-    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output></body></html>`, { headers: { 'content-type': 'text/html' } }) });
+    diagnostics.record('viewer-ready');
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      if (new URL(request.url).pathname === '/product-probe-events') {
+        diagnostics.record('target-event', await request.json()); return new Response('ok');
+      }
+      return new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output>${diagnostics.fixtureScript}</body></html>`, { headers: { 'content-type': 'text/html' } });
+    } });
     const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
     const evidence: Record<string, unknown> = { language };
+    let failure: unknown;
     try {
       await mkdir(shots, { recursive: true });
-      const preview = await call(broker.socket, 'preview.open') as { url: string };
+      const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
       const { page } = viewer;
+      await diagnostics.attach(page);
       const capture = async (state: string) => {
         for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
           await settleViewerViewport(page, viewport);
@@ -202,9 +296,9 @@ for (const language of ['en', 'ar']) {
       await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
       await page.locator('#empty').waitFor();
       await capture('empty');
-      const session = await call(broker.socket, 'session.create', { backend: 'browser', agentName: 'Codex', taskName: 'Private product task', conversationName: 'Fixture conversation', projectName: 'Disposable project' }) as { sessionId: string };
-      await call(broker.socket, 'session.act', { ...session, requestId: 'navigate', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}` } });
-      await call(broker.socket, 'session.act', { ...session, requestId: 'tab', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
+      const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser', agentName: 'Codex', taskName: 'Private product task', conversationName: 'Fixture conversation', projectName: 'Disposable project' }) as { sessionId: string };
+      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'navigate', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}` } });
+      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'tab', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
       await page.locator('#frame').waitFor();
       await capture('running');
       await page.route('**/rpc', async route => {
@@ -217,11 +311,15 @@ for (const language of ['en', 'ar']) {
       await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'paused');
       expect(await page.locator('#resume').evaluate(node => node === document.activeElement)).toBe(true);
       await page.unroute('**/rpc');
-      await expect(call(broker.socket, 'session.act', { ...session, requestId: 'refused', action: { type: 'read', selector: 'output' } })).rejects.toMatchObject({ code: 'PAUSED' });
+      await expect(diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'refused', action: { type: 'read', selector: 'output' } })).rejects.toMatchObject({ code: 'PAUSED' });
       await verifySettledPageSelection(page, language, shots);
       expect(await page.locator('#tabs button').first().getAttribute('aria-current')).toBe('page');
       if (language === 'ar') expect(await page.locator('#page-location').textContent()).not.toMatch(/tab|of/);
       await capture('takeover');
+      diagnostics.record('pre-input', await page.evaluate(() => ({
+        canvas: { width: document.querySelector<HTMLCanvasElement>('#frame')?.width, height: document.querySelector<HTMLCanvasElement>('#frame')?.height },
+        rect: document.querySelector('#frame')?.getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight },
+      })));
       const box = await page.locator('#frame').boundingBox();
       if (!box) throw new Error('Private viewer frame missing');
       await page.locator('#frame').click({ position: { x: box.width * 100 / 1280, y: box.height * 180 / 800 } });
@@ -236,7 +334,7 @@ for (const language of ['en', 'ar']) {
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'running');
       expect(await page.locator('#pause').evaluate(node => node === document.activeElement)).toBe(true);
-      evidence.readback = await call(broker.socket, 'session.act', { ...session, requestId: 'readback', action: { type: 'read', selector: 'output' } });
+      evidence.readback = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'readback', action: { type: 'read', selector: 'output' } });
       expect(evidence.readback).toEqual({ text: message });
       let failed = false;
       await page.route('**/rpc', async route => {
@@ -249,7 +347,7 @@ for (const language of ['en', 'ar']) {
       await page.locator('#error').waitFor({ state: 'hidden' });
       await page.unroute('**/rpc');
       await page.goto('about:blank');
-      evidence.afterViewerClose = await call(broker.socket, 'session.act', { ...session, requestId: 'viewer-closed', action: { type: 'read', selector: 'output' } });
+      evidence.afterViewerClose = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'viewer-closed', action: { type: 'read', selector: 'output' } });
       expect(evidence.afterViewerClose).toEqual({ text: message });
       await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
       await page.locator('#frame').waitFor();
@@ -270,7 +368,11 @@ for (const language of ['en', 'ar']) {
       evidence.pausedAgentRefusal = 'PAUSED'; evidence.captureRecovered = failed; evidence.closed = true;
       expect(viewer.errors).toEqual([]);
       await writeFile(join(shots, `session-${language}.json`), JSON.stringify(evidence, null, 2));
-    } finally { await viewer.close(); await broker.close(); server.stop(true); }
+    } catch (error) { failure = String(error); throw error; }
+    finally {
+      await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
+      await viewer.close(); await broker.close(); server.stop(true);
+    }
   }, 45000);
 
   test(`settings retry an unavailable connection in ${language}`, async () => {
