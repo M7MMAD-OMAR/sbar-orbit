@@ -24,7 +24,7 @@ jobs:
       - name: Prove registry and Zen regressions on old and fixed source
         shell: python
         run: |
-          import json, pathlib, subprocess
+          import json, pathlib, re, subprocess
           output = pathlib.Path('output/portability-regressions')
           output.mkdir(parents=True, exist_ok=True)
           cases = [
@@ -43,8 +43,9 @@ jobs:
                   command = ['bun', 'run', 'scripts/limited.ts', 'bun', 'test', test, '-t', pattern]
                   red = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
                   (output / (name + '-old.log')).write_bytes(red.stdout)
-                  text = red.stdout.decode(errors='replace')
-                  if red.returncode == 0 or text.count('(fail)') != expected_failures:
+                  text = re.sub(r'\x1b\[[0-9;]*m', '', red.stdout.decode(errors='replace'))
+                  failures = re.search(r'^\s*(\d+) fail\s*$', text, re.MULTILINE)
+                  if red.returncode == 0 or not failures or int(failures[1]) != expected_failures or 'expect(received)' not in text:
                       raise RuntimeError(name + ': old source did not produce the expected assertion failures')
               finally:
                   path.write_bytes(fixed)
