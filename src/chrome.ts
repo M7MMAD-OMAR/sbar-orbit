@@ -1,3 +1,4 @@
+import { createBrowserStartupDiagnostic } from "./browser-startup-diagnostic";
 import { confirmedWindowsStop, OwnedCleanupError, retryableCleanup, type StopEvidence } from "./owned-cleanup";
 import { darwinTaskPolicy } from "./macos-scheduling";
 import { requireHeadroom, requireResourceBudget } from "./resource-budget";
@@ -363,7 +364,15 @@ export function darwinChromeArguments(profile: string, common: string[], extra: 
 
 /** Own Chrome separately from its CDP connection, including failed startup. */
 export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
+  let traceOwner: OwnedBrowser | undefined;
+  const diagnostic = createBrowserStartupDiagnostic(profile, () => ({
+    exitCode: traceOwner?.exitCode(),
+    stderr: (traceOwner as (OwnedBrowser & { stderrTail?: string }) | undefined)?.stderrTail,
+  }));
+  const trace = (phase: string) => diagnostic?.record(phase);
+  trace("budget.start");
   await requireResourceBudget();
+  trace("budget.done");
   // Measured 13 September 2026 by sampling the scope's pids.current every 10 ms through a launch: the
   // fork burst peaks at 132 tasks, the endpoint is published at 139, and a session settles at 150 on
   // about:blank and 153 with a page. The check asks for the published figure, since what follows it
@@ -371,6 +380,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
   // measured: three settled sessions charged 1364 MB to the slice, about 455 MB each, and a launch
   // needs less than a settled session.
   await requireHeadroom({ tasks: 140, memoryBytes: 200 * 1048576 }, "A browser session");
+  trace("headroom.done");
   const executable = options.executable ?? defaultChromeExecutable();
   const windows = process.platform === "win32";
   const darwin = process.platform === "darwin";
@@ -475,6 +485,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     // when --disable-dev-shm-usage is enabled. Keep it short, private and on disk.
     temporary = await createWorkspaceDirectory("chrome", "/var/tmp/orbit-chrome-" + process.getuid?.());
     env.TMPDIR = temporary;
+    trace("temporary.ready");
     try {
       owner = launchOnLinux(executable, profile, [...common, "--disable-dev-shm-usage", "--no-sandbox",
         "--disable-crash-reporter",
@@ -486,6 +497,9 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       throw error;
     }
   }
+  traceOwner = owner;
+  trace("owner.spawned");
+  if (diagnostic) void owner.exited.then(() => trace("owner.exited"), () => trace("owner.exit-failed"));
   // The last of what Chrome said, kept for the failure message. Dropping it entirely was how a
   // refused fork spent a day reported as "did not publish its local endpoint": the cause was on
   // stderr and stderr went nowhere. Bounded, because a healthy Chrome logs D-Bus complaints forever.
@@ -522,6 +536,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     if (owner.startupEvidence) console.error(JSON.stringify({ ownedBrowser: "startup failure", phase,
       elapsedMs: Date.now() - startupAt, waitMs: endpointWaitMs(), endpointState, ...owner.startupEvidence() }));
   };
+  const traceTimer = diagnostic ? setInterval(() => trace("startup.sample"), 1000) : undefined;
   try {
     const waitMs = endpointWaitMs();
     const deadline = Date.now() + waitMs;
@@ -543,13 +558,15 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(code === null
       ? `Owned Chrome did not publish its local endpoint within ${waitMs / 1000} seconds and is still running`
       : `Owned Chrome exited with code ${code} before publishing its endpoint`));
+    trace("endpoint.published");
     socket = new WebSocket(endpoint);
+    trace("socket.created");
     const connected = socket;
     await new Promise<void>((resolve, reject) => {
       // Chrome has already published its endpoint by now; what remains is its own startup work,
       // which on the shared budget can take well over five seconds while other sessions start.
       const timer = setTimeout(() => { connected.close(); reject(new OrbitError("DEADLINE_EXCEEDED", "Local Chrome connection timed out")); }, 20000);
-      connected.onopen = () => { clearTimeout(timer); resolve(); };
+      connected.onopen = () => { trace("socket.open"); clearTimeout(timer); resolve(); };
       connected.onerror = () => { clearTimeout(timer); reject(new OrbitError("BACKEND_FAILED", "Local Chrome connection failed")); };
     });
     const transport: ConnectOverCDPTransport = {
@@ -572,6 +589,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       throw new OrbitError("BACKEND_FAILED", await explain(
         `Owned Chrome published its endpoint and then dropped the connection (exit code ${owner.exitCode() ?? "none, still running"}): ${(error as Error).message}`));
     }
+    trace("cdp.ready");
     const context = browser.contexts()[0];
     if (!context) throw new OrbitError("BACKEND_FAILED", "Owned Chrome has no default context");
     const page = context.pages()[0] ?? await context.newPage();
@@ -611,5 +629,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     }
     startupEvidence("stop confirmed");
     throw error;
+  } finally {
+    if (traceTimer) clearInterval(traceTimer);
   }
 }
