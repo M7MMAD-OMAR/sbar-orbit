@@ -56,6 +56,9 @@ class Compositor:
 
 class ExistingApplicationTests(unittest.TestCase):
     def setUp(self):
+        gate = patch("src.native.existing.require_owner_handoff")
+        gate.start()
+        self.addCleanup(gate.stop)
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.control = ActionControl(root / "control")

@@ -13,6 +13,9 @@ from src.native.plugin_bundle import fingerprint
 
 class OwnerPluginTests(unittest.TestCase):
     def setUp(self):
+        gate = patch.object(plugin_owner, "require_owner_handoff")
+        gate.start()
+        self.addCleanup(gate.stop)
         self.work = tempfile.TemporaryDirectory(prefix="orbit-owner-plugin-")
         self.directory = Path(self.work.name)
         binary = self.directory / "plugin.so"

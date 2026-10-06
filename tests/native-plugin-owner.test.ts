@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 (process.platform === "linux" ? test : test.skip).each([
   { output: "", exit: 137 },
@@ -13,8 +13,12 @@ import { join } from "node:path";
 ].flatMap(fixture => ["load", "unload", "resume"].map(operation => ({ ...fixture, operation }))))(
   "owner mutation keeps uncertainty when its child returns no verified outcome: %j", async ({ output: response, exit, operation }) => {
   const source = process.env.ORBIT_OWNER_COMMAND_TEST_SOURCE ?? join(import.meta.dir, "../src/native-prepare.ts");
+  // These component fixtures exercise uncertain child outcomes. The public release hold has its own unmocked tests.
+  const release = join(dirname(source), "native-handoff-release.ts");
   const script = `
-    import { nativePlugin } from ${JSON.stringify(source)};
+    import { mock } from "bun:test";
+    mock.module(${JSON.stringify(release)}, () => ({ requireOwnerHandoff() {} }));
+    const { nativePlugin } = await import(${JSON.stringify(source)});
     Bun.spawn = () => ({ stdout: new Response(${JSON.stringify(exit === 0 ? response : "")}).body,
       stderr: new Response(${JSON.stringify(exit !== 0 ? response : "")}).body,
       exited: Promise.resolve(${exit}), kill() {} });
