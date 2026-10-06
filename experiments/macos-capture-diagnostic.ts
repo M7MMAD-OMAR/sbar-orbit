@@ -16,7 +16,7 @@ const selectedExecutable = defaultChromeExecutable();
 if (!selectedExecutable) throw new Error("No selected disposable Chrome executable");
 const executable: string = selectedExecutable;
 const instrumentation = ["tests/capture-diagnostic.ts", "tests/capture-diagnostic.test.ts",
-  "tests/mcp.test.ts", "tests/observe-policy.test.ts", "src/browser.ts", "src/chrome.ts",
+  "tests/mcp.test.ts", "tests/observe-policy.test.ts", "tests/preview.test.ts", "src/browser.ts", "src/chrome.ts",
   "experiments/macos-capture-diagnostic.ts", ".github/workflows/macos-capture-diagnostic.yml"];
 instrumentation.push("experiments/capture-diagnostic-record.ts", "tests/capture-diagnostic-record.test.ts");
 
@@ -51,7 +51,8 @@ if (!before.browser.selectedMatches) throw new Error("Selected Chrome changed be
 const arms: Record<string, unknown>[] = [];
 let overallExit = 0;
 for (const arm of ["isolated", "full-suite"]) {
-  const args = arm === "isolated" ? ["tests/mcp.test.ts", "tests/observe-policy.test.ts"] : [];
+  const args = arm === "isolated" ? ["tests/mcp.test.ts", "tests/observe-policy.test.ts", "tests/preview.test.ts",
+    "-t", "MCP stdio negotiates|the adapter tells|a session whose policy allows|observation stays available while"] : [];
   const argv = [process.execPath, "--smol", "run", "scripts/limited.ts", process.execPath, "--smol", "test", ...args];
   const started = performance.now();
   const child = Bun.spawn(argv, { env: { ...process.env, ORBIT_TEST_CAPTURE_DIAGNOSTIC: "1", ORBIT_TEST_NATIVE: "0" },
@@ -70,27 +71,34 @@ for (const arm of ["isolated", "full-suite"]) {
     } catch {}
   }
   const closed = events.filter(event => event.captureDiagnostic === "registration.closed");
-  const cleanupConfirmed = !timedOut && ["mcp", "observe-policy"].every(fixture => closed.some(event => event.fixture === fixture)) &&
+  const cleanupConfirmed = !timedOut && ["mcp", "observe-policy", "preview-concurrent"].every(fixture => closed.some(event => event.fixture === fixture)) &&
     closed.every(event => event.cleanupConfirmed === true && event.invalid === false && Array.isArray(event.pending) && !event.pending.length);
   const identities = events.filter(event => event.captureDiagnostic === "browser.identity.bytes");
   const version = before.browser.version.match(/\d+(?:\.\d+)+/)?.[0];
   const connected = events.filter(event => event.captureDiagnostic === "browser.connected");
-  const identityConfirmed = identities.length >= 2 && identities.every(event => event.executableSha256 === before.browser.sha256) &&
-    connected.length >= 2 && connected.every(event => event.version === version);
+  const identityConfirmed = identities.length >= 3 && identities.every(event => event.executableSha256 === before.browser.sha256) &&
+    connected.length >= 3 && connected.every(event => event.version === version);
   const after = await snapshot();
   await writeFile(join(output, `${arm}.after.json`), JSON.stringify(after, null, 2) + "\n");
   const sourceAndBrowserStable = JSON.stringify(before) === JSON.stringify(after);
+  const sourceManifestSha256 = new Bun.CryptoHasher("sha256").update(JSON.stringify(before.files)).digest("hex");
+  const sourceManifestAfterSha256 = new Bun.CryptoHasher("sha256").update(JSON.stringify(after.files)).digest("hex");
+  const sourceChanged = sourceManifestSha256 !== sourceManifestAfterSha256 || before.commit !== after.commit ||
+    before.worktree !== after.worktree || before.productionTree !== after.productionTree;
+  const browserChanged = JSON.stringify(before.browser) !== JSON.stringify(after.browser);
   const invalid = timedOut || !sourceAndBrowserStable || !identityConfirmed ||
     !events.some(event => event.captureDiagnostic === "mcp.result") ||
     events.some(event => event.captureDiagnostic === "diagnostic.invalid" || event.captureDiagnostic === "capture.budget" && event.budgetMs !== 3000);
   const armRecord = { arm, argv, exitCode, timedOut, durationMs: performance.now() - started, cleanupConfirmed,
     descendantCleanup: timedOut ? "not measured after owned launcher termination" : "fixture shutdown outcomes only; no survivor measurement",
-    sourceAndBrowserStable, identityConfirmed, invalid, events, scope: "actual instrumented fixture observations; no cause or survivor verdict" };
+    sourceAndBrowserStable, sourceChanged, browserChanged, identityConfirmed, invalid, events,
+    sourceManifestSha256, sourceManifestAfterSha256, browserSha256: before.browser.sha256,
+    browserAfterSha256: after.browser.sha256, scope: "actual instrumented fixture observations; no cause or survivor verdict" };
   arms.push(armRecord);
   try {
     writeCaptureArmRecord(armRecord, { sourceCommit: before.commit,
-      sourceManifestSha256: new Bun.CryptoHasher("sha256").update(JSON.stringify(before.files)).digest("hex"),
-      browserSha256: before.browser.sha256, browserVersion: version });
+      sourceManifestSha256, sourceManifestAfterSha256, browserSha256: before.browser.sha256,
+      browserAfterSha256: after.browser.sha256, browserVersion: version });
   } catch {}
   await writeFile(join(output, "observations.json"), JSON.stringify({ arms }, null, 2) + "\n");
   if (exitCode || invalid || !cleanupConfirmed) overallExit = exitCode || 2;

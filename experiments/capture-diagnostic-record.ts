@@ -3,6 +3,8 @@ const phases = ["capture.budget", "observe.start", "observe.settled", "attachmen
   "screenshot.start", "screenshot.settled", "browser.identity.start", "browser.identity.settled",
   "browser.identity.bytes", "browser.connected", "backend.created.after-close", "registration.closed",
   "diagnostic.invalid", "mcp.result"];
+for (const phase of ["pending.action", "dispatch.observe", "session.stop", "session.create", "broker.close"])
+  phases.push(`${phase}.start`, `${phase}.settled`);
 const codes = ["TIMEOUT", "BACKEND_FAILED", "BACKEND_ERROR", "BROKER_UNAVAILABLE", "POLICY_DENIED",
   "SESSION_CLOSED", "SESSION_NOT_FOUND", "RESOURCE_LIMIT_REQUIRED", "USAGE_STATE_INVALID", "INVALID_REQUEST", "DEADLINE_EXCEEDED"];
 const categories = ["capture timeout", "broker unavailable", "other error message", "unreadable error metadata", "unparseable error"];
@@ -21,7 +23,7 @@ function event(value: unknown): Fields | undefined {
   const source = object(value), result: Fields = {};
   choice(result, source, "captureDiagnostic", phases);
   if (!result.captureDiagnostic) return;
-  choice(result, source, "fixture", ["mcp", "observe-policy"]);
+  choice(result, source, "fixture", ["mcp", "observe-policy", "preview-concurrent"]);
   choice(result, source, "status", ["fulfilled", "rejected"]);
   choice(result, source, "code", codes);
   choice(result, source, "messageCategory", categories);
@@ -32,7 +34,7 @@ function event(value: unknown): Fields | undefined {
     if (finite(source[key])) result[key] = source[key];
   for (const key of ["invalid", "cleanupConfirmed", "isError"])
     if (typeof source[key] === "boolean") result[key] = source[key];
-  if (Array.isArray(source.pending)) result.pending = source.pending.filter(v => typeof v === "string" && ["observe", "attachment", "screenshot", "browser.identity"].includes(v));
+  if (Array.isArray(source.pending)) result.pending = source.pending.filter(v => typeof v === "string" && ["observe", "attachment", "screenshot", "browser.identity", "pending.action", "dispatch.observe", "session.stop", "session.create", "broker.close"].includes(v));
   if (Array.isArray(source.contentTypes)) result.contentTypes = source.contentTypes.filter(v => typeof v === "string" && ["text", "image", "audio", "resource", "resource_link"].includes(v));
   return result;
 }
@@ -40,11 +42,11 @@ export function captureArmProjection(value: unknown, binding: unknown): Fields {
   const source = object(value), identity = object(binding), result: Fields = {};
   choice(result, source, "arm", ["isolated", "full-suite"]);
   patterned(result, identity, "sourceCommit", /^[a-f0-9]{40}$/);
-  for (const key of ["sourceManifestSha256", "browserSha256"]) patterned(result, identity, key, sha256);
+  for (const key of ["sourceManifestSha256", "sourceManifestAfterSha256", "browserSha256", "browserAfterSha256"]) patterned(result, identity, key, sha256);
   patterned(result, identity, "browserVersion", /^\d+(?:\.\d+)+$/);
   if (typeof source.exitCode === "number" && Number.isSafeInteger(source.exitCode)) result.exitCode = source.exitCode;
   if (finite(source.durationMs)) result.durationMs = source.durationMs;
-  for (const key of ["timedOut", "cleanupConfirmed", "sourceAndBrowserStable", "identityConfirmed", "invalid"])
+  for (const key of ["timedOut", "cleanupConfirmed", "sourceAndBrowserStable", "sourceChanged", "browserChanged", "identityConfirmed", "invalid"])
     if (typeof source[key] === "boolean") result[key] = source[key];
   choice(result, source, "descendantCleanup", ["not measured after owned launcher termination", "fixture shutdown outcomes only; no survivor measurement"]);
   const events = Array.isArray(source.events) ? source.events : [];

@@ -4,7 +4,7 @@ import { defaultChromeExecutable } from "../src/chrome";
 import type { Sessions } from "../src/session";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-type Fixture = "mcp" | "observe-policy";
+type Fixture = "mcp" | "observe-policy" | "preview-concurrent";
 type Entry = { fixture: Fixture; restore: (() => void)[]; pending: Map<string, string>; invalid: boolean;
   cleanupConfirmed: boolean; active: boolean };
 type Scope = { entry: Entry; request: string; observation?: string };
@@ -168,7 +168,17 @@ export function installCaptureDiagnostic(sessions: Sessions, fixture: Fixture): 
     entries.set(sessions, entry);
     const original = sessions.dispatch;
     entry.restore.push(replaceMethod(sessions, "dispatch", function(this: Sessions, ...args: Parameters<typeof original>) {
-      return scope.run({ entry, request: crypto.randomUUID() }, () => original.apply(this, args));
+      const current = { entry, request: crypto.randomUUID() };
+      return scope.run(current, () => {
+        const request = args[0];
+        const method = request !== null && typeof request === "object" && "method" in request && typeof request.method === "string"
+          ? request.method : undefined;
+        const phase = entry.fixture === "preview-concurrent"
+          ? method === "session.act" ? "pending.action" : method === "session.observe" ? "dispatch.observe"
+            : method === "session.stop" ? "session.stop" : method === "session.create" ? "session.create" : undefined
+          : undefined;
+        return phase ? operation(current, phase, () => original.apply(this, args)) : original.apply(this, args);
+      });
     }));
     return () => {
       const current = { entry, request: crypto.randomUUID() };
@@ -185,6 +195,12 @@ export function installCaptureDiagnostic(sessions: Sessions, fixture: Fixture): 
     if (entry) entry.cleanupConfirmed ||= cleanupConfirmed;
     release();
   };
+}
+
+export function observeCaptureCleanup<T>(sessions: Sessions, invoke: () => Promise<T>): Promise<T> {
+  const entry = enabled() ? entries.get(sessions) : undefined;
+  if (!entry?.active) return invoke();
+  return operation({ entry, request: crypto.randomUUID() }, "broker.close", invoke);
 }
 
 export function reportMcpObserve(result: CallToolResult) {
