@@ -74,3 +74,21 @@ installed-browser evidence do not raise that support claim. Native opening,
 handoff and performance remain `not measured`, and the unconditional native
 handoff release hold remains active. The rejected native preparation path is
 outside this audit and has not been retried or replaced.
+
+
+## Preserved integration CI fixture failure
+
+[Integration run 37427056029](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37427056029)
+on `3f8a731808f421f8c33873227dbce9d29dd65418` failed both new LaunchAgent
+path fixtures on macOS. Both selected the intended installer runtime and exited
+successfully. The strict argument assertions expected `/var/folders/...`, while
+the copied launcher correctly resolved `/private/var/folders/...`. This was a
+fixture path alias error, not an observed runtime selection failure.
+
+A disposable Linux `TMPDIR` symlink reproduced both exact assertion failures
+before correction. The fixtures now create their root through the existing
+`fixtureRoot` helper, which resolves platform temporary path aliases before
+creating expectations. Runtime selection, exact arguments, exit status and XML
+escaping assertions remain unchanged. The original macOS failure and local
+reproduction are retained; corrected CI must be measured separately. This does
+not establish actual macOS login activation or full external-user acceptance.

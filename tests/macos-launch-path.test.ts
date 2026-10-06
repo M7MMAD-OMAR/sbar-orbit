@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { brokerAgentPlist } from "../src/macos-autostart";
+import { fixtureRoot } from "./platform-support";
 
 // Executes only a copied launcher and recorder scripts. This models launchd's
 // minimal environment; it does not measure a Mac login or start a broker.
@@ -12,7 +12,7 @@ const decodeXml = (value: string) => value.replace(/&(amp|lt|gt|quot|apos);/g,
 
 for (const customLocation of ["custom runtime/bin", "runtime & tools/bin"]) {
   unixTest(`LaunchAgent keeps the installer Bun in ${customLocation}`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "orbit-launch-path-"));
+    const root = await fixtureRoot("orbit-launch-path-");
     try {
       const home = join(root, "account & spaces");
       const launcher = join(root, "source", "bin", "sbar-orbit");
