@@ -2,8 +2,9 @@ import { OwnedCleanupError } from "./owned-cleanup";
 import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type CDPSession, type Page } from "playwright";
-import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
+import { readUploadPayloads } from "./upload-payload";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
@@ -237,16 +238,7 @@ export class BrowserBackend {
   private async upload(page: Page, selector: string, files: string[]) {
     const resolved = await resolveUploads(files);
     // A confined browser cannot read host paths. Transfer only the files authorized by this action.
-    // Playwright's in-memory input payload supports up to 50 MiB in total.
-    const limit = 50 * 1024 * 1024;
-    if (resolved.reduce((total, file) => total + file.bytes, 0) > limit)
-      throw new OrbitError("INVALID_REQUEST", "Upload payload exceeds the 50 MiB in-memory limit");
-    const payloads = await Promise.all(resolved.map(async file => ({
-      name: basename(file.path), mimeType: Bun.file(file.path).type || "application/octet-stream",
-      buffer: await readFile(file.path),
-    })));
-    if (payloads.reduce((total, file) => total + file.buffer.length, 0) > limit)
-      throw new OrbitError("INVALID_REQUEST", "Upload payload exceeds the 50 MiB in-memory limit");
+    const payloads = await readUploadPayloads(resolved);
     const target = page.locator(selector);
     const isFileInput = await target.evaluate(element => element instanceof HTMLInputElement && element.type === "file");
     if (isFileInput) await target.setInputFiles(payloads);

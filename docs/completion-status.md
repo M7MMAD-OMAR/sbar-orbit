@@ -13,6 +13,11 @@ each capability; a completed fixture or CI portion does not close its full user 
 The governing bar is [acceptance.md](acceptance.md), U1/T1 through U12/T12 plus its
 performance and failure gates.
 
+The coordinated [platform closure contract](platform-closure.md) records branch
+reconciliation, the current defect investigations and the dependency order for
+the remaining product, performance, portability and external acceptance tasks.
+It preserves the full acceptance scope and the unconditional native hold.
+
 ## Latest completed evidence portions
 
 The latest retained full workflow is

@@ -10,7 +10,10 @@ import { expectPrivatePath } from "./private-path";
 
 test("saved account survives a fresh browser, has an exclusive lease and stays private", async () => {
   const started = performance.now();
-  const phase = (name: string) => console.error(JSON.stringify({ profilePhase: name, elapsedMs: Math.round(performance.now() - started) }));
+  const phase = (name: string) => {
+    if (process.env.ORBIT_PROFILE_TRACE === "1")
+      console.error(JSON.stringify({ profilePhase: name, elapsedMs: Math.round(performance.now() - started) }));
+  };
   const step = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
     phase(`${name}:start`);
     try { const result = await work(); phase(`${name}:done`); return result; }
