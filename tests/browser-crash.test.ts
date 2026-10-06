@@ -3,6 +3,9 @@ import { expectDeclaredImage } from "./frame-format";
 import { readFile, readdir } from "node:fs/promises";
 import { call, startBroker } from "../src/ipc";
 import { descendantsFromTable } from "../src/process-tree";
+import { captureProcessWitnesses, windowsWitnessApi, WitnessCaptureError } from "./windows-process-witness";
+
+const ownedParents = new Map<number, number>();
 
 /**
  * Every descendant of a process, per platform.
@@ -51,7 +54,15 @@ function windowsDescendants(root: number): number[] {
   // walk in the file without a guard and it recursed until the stack ended on the Windows runner.
   const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
     "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"]);
-  return descendantsFromTable(listed.stdout.toString().split(/\r?\n/), root);
+  if (listed.exitCode !== 0) throw new Error("Owned process parent snapshot failed");
+  const rows = listed.stdout.toString().split(/\r?\n/);
+  const owned = descendantsFromTable(rows, root);
+  ownedParents.clear();
+  for (const row of rows) {
+    const [pid, parent] = row.trim().split(/\s+/).map(Number);
+    if (pid !== undefined && parent !== undefined && owned.includes(pid)) ownedParents.set(pid, parent);
+  }
+  return owned;
 }
 
 /** Whether a process is still on the machine, asked the way each kernel answers it. */
@@ -65,9 +76,24 @@ async function alive(pid: number): Promise<boolean> {
 }
 
 test("abrupt broker death reaps its browser tree and a fresh broker rejects stale sessions", async () => {
-  const brokerProcess = Bun.spawn([process.execPath, "src/cli.ts", "serve"], { stdout: "pipe", stderr: "pipe" });
+  const brokerProcess = Bun.spawn([process.execPath, "src/cli.ts", "serve"], { stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, ORBIT_WINDOWS_CRASH_EVIDENCE: process.platform === "win32" ? "1" : "0" } });
   const reader = brokerProcess.stdout.getReader();
-  const errors = new Response(brokerProcess.stderr).text();
+  let brokerStderr = "";
+  const errors = (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of brokerProcess.stderr) brokerStderr = (brokerStderr + decoder.decode(chunk)).slice(-65536);
+  })();
+  const drainErrors = async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([errors, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Owned broker stderr evidence drain is unconfirmed")), 2000);
+      })]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  };
+  let witnesses: ReturnType<typeof captureProcessWitnesses> | undefined;
+  let closeWitnesses: (() => void) | undefined;
   try {
     let line = "";
     while (!line.includes("\n")) {
@@ -79,6 +105,19 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
     const session = await call(socket, "session.create", { backend: "browser" }) as { sessionId: string };
     const owned = await descendants(brokerProcess.pid);
     expect(owned.length).toBeGreaterThan(4);
+    if (process.platform === "win32") {
+      try { witnesses = captureProcessWitnesses(owned, await windowsWitnessApi()); }
+      catch (error) { if (error instanceof WitnessCaptureError) closeWitnesses = error.close; throw error; }
+      closeWitnesses = witnesses.close;
+      console.error(JSON.stringify({ browserCrashEvidence: "before broker death", brokerPid: brokerProcess.pid,
+        processes: witnesses.observe().map(item => {
+          const parentPid = ownedParents.get(item.pid);
+          if (parentPid === undefined) throw new Error(`Owned PID ${item.pid} parent identity is unmeasured`);
+          return { ...item, parentPid };
+        }) }));
+      // Refresh the private job membership while its only owning handle is still in the broker.
+      await call(socket, "session.observe", session);
+    }
     brokerProcess.kill("SIGKILL");
     await brokerProcess.exited;
     let survivors: number[] = owned;
@@ -86,6 +125,15 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
       survivors = (await Promise.all(owned.map(async pid => await alive(pid) ? pid : null))).filter((pid): pid is number => pid !== null);
       if (!survivors.length) break;
       await Bun.sleep(30);
+    }
+    if (witnesses) {
+      const measured = witnesses.observe();
+      console.error(JSON.stringify({ browserCrashEvidence: "after broker death", survivors, processes: measured }));
+      await drainErrors();
+      const records = brokerStderr.split(/\r?\n/).filter(line => line.includes('"ownedBrowser":"crash evidence"'));
+      for (const record of records.slice(-2)) console.error(record);
+      expect(records.length).toBeGreaterThan(0);
+      expect(measured.filter(item => item.state === "alive").map(item => item.pid)).toEqual([]);
     }
     expect(survivors).toEqual([]);
     await expect(call(socket, "session.observe", session)).rejects.toBeDefined();
@@ -98,9 +146,11 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
       expect(await call(fresh.socket, "session.stop", replacement)).toMatchObject({ state: "closed" });
     } finally { await fresh.close(); }
   } finally {
-    if (brokerProcess.exitCode === null) brokerProcess.kill("SIGKILL");
-    await brokerProcess.exited;
-    reader.releaseLock();
-    await errors;
+    try {
+      if (brokerProcess.exitCode === null) brokerProcess.kill("SIGKILL");
+      await brokerProcess.exited;
+      reader.releaseLock();
+      await drainErrors();
+    } finally { closeWitnesses?.(); }
   }
 }, 20000);

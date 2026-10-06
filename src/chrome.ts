@@ -312,7 +312,10 @@ async function launchOnWindows(executable: string, profile: string, argv: string
       // Chrome keeps starting renderer, GPU and utility processes for the life of the session, so a
       // single check at launch can never see the process created afterwards. This asks the kernel
       // for the job's current membership instead.
-      if (!job.processIds().includes(child.pid))
+      const members = job.processIds();
+      if (process.env.ORBIT_WINDOWS_CRASH_EVIDENCE === "1")
+        console.error(JSON.stringify({ ownedBrowser: "crash evidence", rootPid: child.pid, members: members.slice(0, 512) }));
+      if (!members.includes(child.pid))
         throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome is not inside its job object");
     },
   };
