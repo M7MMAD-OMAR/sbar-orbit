@@ -1,5 +1,18 @@
 name: macOS capture diagnostic
 on:
+  push:
+    branches: [agents/startup-reliability-c38c]
+    paths:
+      - '.github/workflows/macos-capture-diagnostic.yml'
+      - 'experiments/macos-capture-diagnostic.ts'
+      - 'tests/**'
+      - 'src/**'
+      - 'scripts/limited.ts'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+      - 'website/package.json'
+      - 'website/bun.lock'
   workflow_dispatch:
 permissions:
   contents: read
