@@ -7,8 +7,8 @@ passed all nine normal workflow jobs on that exact merge. PR 6 changes three hos
 evidence collector/comparator files, with 45 passing provenance controls; it does
 not change production runtime behavior. Historical evidence remains separately
 identified below.
-The latest verified documentation snapshot on official `main` is `6ce89c2`:
-[run 37505949562](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37505949562)
+The latest verified documentation snapshot on official `main` is `449e4de`:
+[run 37508929441](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37508929441)
 passed all nine normal jobs. The isolated candidates below are not part of that
 tested main source.
 The subsequent main snapshot `61ea92c` failed its Windows suite in
@@ -16,7 +16,8 @@ The subsequent main snapshot `61ea92c` failed its Windows suite in
 the other eight jobs passed. `OpenProcess` returned error 87 while acquiring an
 owned process witness before the abrupt broker-death test. Failed acquisition
 remains unknown, not proof of exit or cleanup. The census/acquisition boundary
-is under investigation; this failed run supersedes any claim of current all-green CI.
+is under investigation. The later green run recorded ten retained Chrome identities
+and confirmed their exits, but did not explain the earlier failed acquisition.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -68,7 +69,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `fb2b29f38b4ce8d64e4f345f65f79b5c360efc10`; it is not merged into main.
+at `a734606982f5d9f389130f40a140560104232910`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -105,6 +106,15 @@ test held its response while waiting for painted state; the viewer aborted after
 five seconds. This does not prove a backend selection failure. Ubuntu passed the
 product and saved-profile tests; its separate population-readiness fixture timed
 out. No native preparation is authorized by that result. Current reviews remain unproven.
+The current correction verifies a real green input pixel at the intended point
+before deriving click coordinates from intrinsic canvas dimensions. It releases
+the actual successful selection reply after asserting pending disabled controls,
+then checks selected paint and settled focus. All deadlines and readback assertions
+remain unchanged. The final helper failed specifically on lost settled focus using
+the original `56fd8f3` viewer files, which were restored byte-for-byte afterward.
+The final correction passed 45 focused tests, TypeScript and the website build.
+[Run 37510346628](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37510346628)
+on that exact candidate is in progress; actual macOS success is not yet established.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
 `d71850c3ff249195305bbe7e10ce2b1b63423a92`. It adds opt-in startup diagnostics
