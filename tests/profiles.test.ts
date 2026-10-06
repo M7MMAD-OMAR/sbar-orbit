@@ -20,64 +20,71 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     catch (error) { phase(`${name}:failed`); throw error; }
   };
   const root = await step("workspace", () => createWorkspaceDirectory("account-test"));
-  const accounts = join(root, "accounts");
-  const aRoot = await mkdtemp(join(root, "broker-a-"));
-  const bRoot = await mkdtemp(join(root, "broker-b-"));
-  const a = new Sessions(aRoot, accounts), b = new Sessions(bRoot, accounts);
-  const syntheticToken = crypto.randomUUID();
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => {
-    const url = new URL(req.url);
-    if (url.pathname === "/login") return new Response("ok", { headers: { "Set-Cookie": `fixture=${syntheticToken}; HttpOnly; SameSite=Strict; Path=/` } });
-    const authenticated = req.headers.get("cookie")?.includes(`fixture=${syntheticToken}`);
-    return new Response(`<h1>${authenticated ? "Signed in" : "Signed out"}</h1><button onclick="fetch('/login').then(()=>{localStorage.setItem('fixture-theme','blue');document.querySelector('h1').textContent='Signed in'})">Connect fixture</button><output></output><script>document.querySelector('output').textContent=localStorage.getItem('fixture-theme')||'none'</script>`, { headers: { "Content-Type": "text/html" } });
-  } });
-  let request = 0;
-  const run = (owner: Sessions, method: string, params: unknown = {}) => {
-    const value = params as { action?: { type?: string } };
-    return step(`${++request}:${owner === a ? "a" : "b"}:${method}${value.action?.type ? `:${value.action.type}` : ""}`,
-      () => owner.dispatch({ method, params }));
-  };
-  const act = (owner: Sessions, session: object, action: unknown) => run(owner, "session.act", { ...session, requestId: crypto.randomUUID(), action });
-  const nav = { type: "navigate", url: `http://127.0.0.1:${server.port}` };
+  const traceRoot = process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+  if (process.env.ORBIT_BROWSER_STARTUP_TRACE === "1") process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = root;
   try {
-    await expect(run(a, "session.create", { backend: "browser", accountName: "../outside" })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
-    const first = await run(a, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
-    await expect(run(b, "session.create", { backend: "browser", accountName: "fixture" })).rejects.toMatchObject({ code: "PROFILE_BUSY" });
-    await act(a, first, nav);
-    expect(await act(a, first, { type: "read", selector: "h1" })).toEqual({ text: "Signed out" });
-    await act(a, first, { type: "click", selector: "button" });
-    for (let i = 0; i < 50; i++) {
-      if ((await act(a, first, { type: "read", selector: "h1" }) as { text: string }).text === "Signed in") break;
-      await Bun.sleep(20);
+    const accounts = join(root, "accounts");
+    const aRoot = await mkdtemp(join(root, "broker-a-"));
+    const bRoot = await mkdtemp(join(root, "broker-b-"));
+    const a = new Sessions(aRoot, accounts), b = new Sessions(bRoot, accounts);
+    const syntheticToken = crypto.randomUUID();
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => {
+      const url = new URL(req.url);
+      if (url.pathname === "/login") return new Response("ok", { headers: { "Set-Cookie": `fixture=${syntheticToken}; HttpOnly; SameSite=Strict; Path=/` } });
+      const authenticated = req.headers.get("cookie")?.includes(`fixture=${syntheticToken}`);
+      return new Response(`<h1>${authenticated ? "Signed in" : "Signed out"}</h1><button onclick="fetch('/login').then(()=>{localStorage.setItem('fixture-theme','blue');document.querySelector('h1').textContent='Signed in'})">Connect fixture</button><output></output><script>document.querySelector('output').textContent=localStorage.getItem('fixture-theme')||'none'</script>`, { headers: { "Content-Type": "text/html" } });
+    } });
+    let request = 0;
+    const run = (owner: Sessions, method: string, params: unknown = {}) => {
+      const value = params as { action?: { type?: string } };
+      return step(`${++request}:${owner === a ? "a" : "b"}:${method}${value.action?.type ? `:${value.action.type}` : ""}`,
+        () => owner.dispatch({ method, params }));
+    };
+    const act = (owner: Sessions, session: object, action: unknown) => run(owner, "session.act", { ...session, requestId: crypto.randomUUID(), action });
+    const nav = { type: "navigate", url: `http://127.0.0.1:${server.port}` };
+    try {
+      await expect(run(a, "session.create", { backend: "browser", accountName: "../outside" })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+      const first = await run(a, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
+      await expect(run(b, "session.create", { backend: "browser", accountName: "fixture" })).rejects.toMatchObject({ code: "PROFILE_BUSY" });
+      await act(a, first, nav);
+      expect(await act(a, first, { type: "read", selector: "h1" })).toEqual({ text: "Signed out" });
+      await act(a, first, { type: "click", selector: "button" });
+      for (let i = 0; i < 50; i++) {
+        if ((await act(a, first, { type: "read", selector: "h1" }) as { text: string }).text === "Signed in") break;
+        await Bun.sleep(20);
+      }
+      await expect(run(a, "session.account.save", first)).rejects.toMatchObject({ code: "NOT_PAUSED" });
+      await run(a, "session.pause", first);
+      expect(await run(a, "session.account.save", first)).toEqual({ saved: true, accountName: "fixture" });
+      await expectPrivatePath(join(accounts, "fixture", "state.json"), 0o600);
+      await expectPrivatePath(join(accounts, "fixture"), 0o700);
+      await step("first-broker-close", () => a.close());
+      const second = await run(b, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
+      await act(b, second, nav);
+      expect(await act(b, second, { type: "read", selector: "h1" })).toEqual({ text: "Signed in" });
+      expect(await act(b, second, { type: "read", selector: "output" })).toEqual({ text: "blue" });
+      const blank = await run(b, "session.create", { backend: "browser", accountName: "other" }) as { sessionId: string };
+      await act(b, blank, nav);
+      expect(await act(b, blank, { type: "read", selector: "h1" })).toEqual({ text: "Signed out" });
+      // The first broker's session was stopped with it, and its profile went with the session: the
+      // account state had already been copied out, so nothing in the profile outlives it.
+      const profileA = (await readdir(aRoot)).filter(v => v.startsWith("profile-"));
+      const profileB = (await readdir(bRoot)).filter(v => v.startsWith("profile-"));
+      expect(profileA.length).toBe(0); expect(profileB.length).toBe(2);
+      await run(b, "session.stop", second);
+      expect((await readdir(bRoot)).filter(v => v.startsWith("profile-")).length).toBe(1);
+      await writeFile(join(accounts, "fixture", "state.json"), "invalid fixture state", { mode: 0o600 });
+      await expect(run(b, "session.create", { backend: "browser", accountName: "fixture" })).rejects.toMatchObject({ code: "ACCOUNT_STATE_INVALID" });
+      // A restore failure must release the lock for the next attempt.
+      await writeFile(join(accounts, "fixture", "state.json"), '{"cookies":[],"origins":[]}', { mode: 0o600 });
+      expect(await run(b, "session.create", { backend: "browser", accountName: "fixture" })).toMatchObject({ state: "running" });
+    } finally {
+      await step("final-broker-a-close", () => a.close());
+      await step("final-broker-b-close", () => b.close());
+      server.stop(true); phase("fixture-server-stopped");
     }
-    await expect(run(a, "session.account.save", first)).rejects.toMatchObject({ code: "NOT_PAUSED" });
-    await run(a, "session.pause", first);
-    expect(await run(a, "session.account.save", first)).toEqual({ saved: true, accountName: "fixture" });
-    await expectPrivatePath(join(accounts, "fixture", "state.json"), 0o600);
-    await expectPrivatePath(join(accounts, "fixture"), 0o700);
-    await step("first-broker-close", () => a.close());
-    const second = await run(b, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
-    await act(b, second, nav);
-    expect(await act(b, second, { type: "read", selector: "h1" })).toEqual({ text: "Signed in" });
-    expect(await act(b, second, { type: "read", selector: "output" })).toEqual({ text: "blue" });
-    const blank = await run(b, "session.create", { backend: "browser", accountName: "other" }) as { sessionId: string };
-    await act(b, blank, nav);
-    expect(await act(b, blank, { type: "read", selector: "h1" })).toEqual({ text: "Signed out" });
-    // The first broker's session was stopped with it, and its profile went with the session: the
-    // account state had already been copied out, so nothing in the profile outlives it.
-    const profileA = (await readdir(aRoot)).filter(v => v.startsWith("profile-"));
-    const profileB = (await readdir(bRoot)).filter(v => v.startsWith("profile-"));
-    expect(profileA.length).toBe(0); expect(profileB.length).toBe(2);
-    await run(b, "session.stop", second);
-    expect((await readdir(bRoot)).filter(v => v.startsWith("profile-")).length).toBe(1);
-    await writeFile(join(accounts, "fixture", "state.json"), "invalid fixture state", { mode: 0o600 });
-    await expect(run(b, "session.create", { backend: "browser", accountName: "fixture" })).rejects.toMatchObject({ code: "ACCOUNT_STATE_INVALID" });
-    // A restore failure must release the lock for the next attempt.
-    await writeFile(join(accounts, "fixture", "state.json"), '{"cookies":[],"origins":[]}', { mode: 0o600 });
-    expect(await run(b, "session.create", { backend: "browser", accountName: "fixture" })).toMatchObject({ state: "running" });
   } finally {
-    await step("final-broker-a-close", () => a.close());
-    await step("final-broker-b-close", () => b.close());
-    server.stop(true); phase("fixture-server-stopped");
+    if (traceRoot === undefined) delete process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+    else process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = traceRoot;
   }
 }, 30000);
