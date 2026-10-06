@@ -25,6 +25,16 @@ its suite reported 491 pass, 317 skip and one fail. The retained job log does no
 locate the timed-out fixture phase or establish an owned-process survivor.
 The later installed-browser pass does not explain the earlier endpoint failure.
 
+The later official-main snapshot `4089c50` completed
+[run 37528913748](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37528913748)
+with eight successful jobs and a Mac suite failure. All installation and
+registration jobs and the Ubuntu and Windows suites passed. Mac reported
+503 pass, 305 skip and one fail. The profile-and-restore removal fixture reported
+`Invalid InterceptionId` from Playwright's CDP response dispatcher after
+1395.35 milliseconds. The retained log does not identify the active fixture phase,
+response method or process outcome. This is a distinct failure from the earlier
+frame and Windows deadlines; its cause and cleanup outcome remain unmeasured.
+
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
@@ -115,7 +125,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `8fee6ea7b80e9fe3a3efee406009ba015f89661d`; it is not merged into main.
+at `efab0eae7e0bed576bba81bc179b8ce148edf399`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -376,6 +386,25 @@ it does not identify the specific metadata operation or explain its delay.
 Owned backend close and profile removal finished with no pending diagnostic
 operations. Ubuntu and Windows suites passed. Further boundary evidence and
 independent review remain required; no capture deadline was increased.
+
+The next one-file first-frame diagnostic follow-up `efab0ea` passed all eleven
+planned local gates on its frozen 71-file snapshot. It adds boundaries around
+actual presence, pointer binding, page title and the existing cached pointer
+operation, preserving their original receiver, arguments and returned promises.
+The wrappers are removed during cleanup; exact private method and map-entry
+identity after backend close is not directly measured.
+
+Actual [run 37530252584](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37530252584)
+completed all nine normal jobs successfully. All three suite logs checked out
+merge `bbd332c8` into official `4089c50`; all 71 scoped candidate files match
+`efab0ea`. Ubuntu reported 744 pass, 95 skip and zero fail; Windows 522 pass,
+317 skip and zero fail; Mac 534 pass, 305 skip and zero fail. Skips are not measured
+capabilities. The current Mac first-frame trace records held JPEG release at
+1951 milliseconds, title completion at 1957, cached pointer and observation
+completion at 1959, and final cleanup with no pending diagnostic operations.
+This passing candidate does not explain the earlier post-release delay or the
+official-main CDP assertion. Both independent review axes remain unproven;
+there is no combined acceptance, official-main merge or new release.
 
 The newer Mac diagnostic candidate `ceca438` records phases from the actual
 concurrent preview fixture and actual source manifests before and after each arm.

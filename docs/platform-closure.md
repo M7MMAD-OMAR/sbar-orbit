@@ -49,6 +49,18 @@ diagnostic, and draft [PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8)
 prepares a Windows acquisition-order counterexample. Neither is a production
 cause or repair claim; actual retained platform evidence and review are required.
 
+Newer official-main snapshot `4089c50` failed the Mac suite in
+[run 37528913748](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37528913748),
+with the other eight jobs passing. Its profile-and-restore removal fixture
+reported `Invalid InterceptionId` in Playwright's CDP dispatcher. The actual
+fixture phase and cause are unknown; the test name does not establish a failed
+stop or an owned-process survivor. Draft PR 5 at `efab0ea` subsequently passed
+all nine jobs in
+[run 37530252584](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37530252584)
+on merge `bbd332c8`, with all 71 scoped files matching the tested candidate.
+That separate passing result does not explain the official-main assertion or
+close the pending independent reviews and full acceptance requirements.
+
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
 | Workstream | Current investigation | Integration requirement |
@@ -80,7 +92,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at 8fee6ea; eleven local gates pass; current merge CI passes eight jobs but fails the Mac concurrent frame deadline after real JPEG delivery was released; independent review unproven |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at efab0ea; eleven local gates and all nine current merge CI jobs pass; earlier post-release Mac delay and official-main CDP failure remain unexplained; independent review unproven |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |
