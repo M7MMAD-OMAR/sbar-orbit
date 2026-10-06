@@ -1,0 +1,70 @@
+name: native data-control regression
+
+on:
+  push:
+    branches: [agents/external-install-portability]
+    paths:
+      - experiments/ghost-cursor/plugin/ghostinput.cpp
+      - tests/native_data_control_test.py
+      - .github/workflows/native-data-control-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-data-control-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-red-green:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Preserve the broken admission source
+        run: |
+          mkdir -p output/native-data-control
+          git show 2116c4b011add1a4ac2caa1d04f2d08fb36cea67:experiments/ghost-cursor/plugin/ghostinput.cpp > output/native-data-control/broken.cpp
+          g++ --version
+      - name: Require the broken source to fail on the null device fixture
+        run: |
+          set +e
+          ORBIT_DATA_CONTROL_SOURCE="$PWD/output/native-data-control/broken.cpp" bun run scripts/limited.ts /usr/bin/python3 tests/native_data_control_test.py > output/native-data-control/red.log 2>&1
+          red_status=$?
+          set -e
+          python3 - "$red_status" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path('output/native-data-control')
+          log = (root / 'red.log').read_text()
+          status = int(sys.argv[1])
+          verified = status == 1 and 'FAIL: test_device_lifetimes' in log and 'AssertionError: -11 != 0' in log
+          (root / 'red.json').write_text(json.dumps({'exit': status, 'verified_expected_null_device_failure': verified}))
+          if not verified:
+              print(log)
+              raise SystemExit('Broken source did not show the expected device dereference failure')
+          PY
+      - name: Require the corrected admission source to pass
+        run: |
+          bun run scripts/limited.ts /usr/bin/python3 tests/native_data_control_test.py > output/native-data-control/green.log 2>&1
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          root = pathlib.Path('output/native-data-control')
+          corrected = pathlib.Path('experiments/ghost-cursor/plugin/ghostinput.cpp')
+          result = {'scope': 'synthetic device admission fixtures', 'actual_compositor': 'not measured', 'Chrome_cursor_and_cleanup': 'not measured',
+                    'broken_source_sha256': hashlib.sha256((root / 'broken.cpp').read_bytes()).hexdigest(),
+                    'corrected_source_sha256': hashlib.sha256(corrected.read_bytes()).hexdigest(), 'green_exit': 0}
+          (root / 'result.json').write_text(json.dumps(result, indent=2))
+          PY
+      - name: Preserve source-bound regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-native-data-control-red-green
+          path: output/native-data-control/
+          if-no-files-found: error
