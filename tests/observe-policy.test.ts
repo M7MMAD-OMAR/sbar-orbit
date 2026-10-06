@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { Sessions } from "../src/session";
+import { installCaptureDiagnostic } from "./capture-diagnostic";
 
 /**
  * Observation is an action the policy decides, not a free read.
@@ -27,6 +28,7 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     try { return await sessions.dispatch({ method, params }); }
     finally { console.error(JSON.stringify({observePolicyPhase:method,status:"settled",elapsedMs:Math.round(performance.now()-started)})); }
   };
+  const restoreCaptureDiagnostic = installCaptureDiagnostic(sessions, "observe-policy");
   try {
     const origin = `http://127.0.0.1:${fixture.port}`;
     const created = await run("session.create", {
@@ -57,7 +59,8 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     // carries no page content. Losing it would blind the person rather than the agent.
     expect(await run("session.presence", session)).toMatchObject({ location: expect.any(String) });
   } finally {
-    await sessions.close();
-    fixture.stop(true);
+    let captureCleanupConfirmed = false;
+    try { await sessions.close(); fixture.stop(true); captureCleanupConfirmed = true; }
+    finally { restoreCaptureDiagnostic(captureCleanupConfirmed); }
   }
 }, 60000);
