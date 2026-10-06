@@ -225,7 +225,7 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#pause').click();
     await page.locator('#manual').waitFor({state:'visible'});
     await page.locator('#tabs button').nth(0).click();
-    await page.waitForFunction(()=>document.querySelector('#tabs button')?.getAttribute('aria-selected')==='true');
+    await page.waitForFunction(()=>document.querySelector('#tabs button')?.getAttribute('aria-current')==='page');
     const presence = await call(broker.socket,'session.presence',a) as {pageIndex:number};
     expect(presence.pageIndex).toBe(1);
     await page.locator('#resume').click();

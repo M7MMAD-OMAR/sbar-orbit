@@ -44,6 +44,8 @@ const arabic = {
   'Hand back': 'أعد التحكم',
   'Refresh the picture': 'تحديث الصورة',
   'Focus view': 'ملء الشاشة للصورة',
+  'Tab {n}': 'تبويب {n}',
+  'Tab {n} of {total}': 'تبويب {n} من {total}',
   'Exit focus': 'إنهاء وضع التركيز',
   'Fullscreen': 'شاشة كاملة',
   'Enter fullscreen': 'دخول الشاشة الكاملة',
@@ -464,16 +466,19 @@ function renderTabs(list) {
   tabs = list;
   tabStrip.hidden = list.length < 2;
   if (same) return;
+  const focused = tabStrip.contains(document.activeElement) ? document.activeElement.dataset.tab : undefined;
   tabStrip.replaceChildren(...list.map(entry => {
     const button = document.createElement('button');
-    button.type = 'button'; button.className = 'tab'; button.textContent = entry.label || `Tab ${entry.tab}`;
-    button.title = entry.label || `Tab ${entry.tab}`;
-    button.setAttribute('role', 'tab'); button.setAttribute('aria-selected', String(!!entry.active));
+    button.type = 'button'; button.className = 'tab'; button.dataset.tab = String(entry.tab);
+    button.textContent = entry.label || t('Tab {n}', { n: entry.tab });
+    button.title = button.textContent;
+    if (entry.active) button.setAttribute('aria-current', 'page');
     button.onclick = () => command('session.control', { input: backend === 'fedora'
       ? { type: 'window', command: 'focus', tab: entry.tab } : { type: 'select-tab', tab: entry.tab } });
     return button;
   }));
   controls();
+  if (focused) [...tabStrip.children].find(button => button.dataset.tab === focused)?.focus({ preventScroll: true });
 }
 async function refreshSessions() {
   // Newest first. `sort` is stable, so sessions the broker has no timestamp for keep the order it
@@ -544,10 +549,22 @@ function selectSession(id) {
 }
 async function command(method, params = {}) {
   if (busy || !selected) return;
+  const focused = document.activeElement;
+  const focusedTab = tabStrip.contains(focused) ? focused.dataset.tab : undefined;
+  const focusedId = focused?.id;
   busy = true; controls(); error('');
   try { await rpc(method, { sessionId: selected, ...params }); if (method === 'session.account.save') element('account-result').textContent = t(' Account state saved.'); await refreshSessions(); }
   catch (e) { error(e.message); }
-  finally { busy = false; controls(); }
+  finally {
+    busy = false; controls();
+    // Disabling a pending control moves focus to the page. Restore it only if the
+    // person has not moved elsewhere while waiting for the reply.
+    if (document.activeElement === document.body) {
+      const target = focusedTab ? [...tabStrip.children].find(button => button.dataset.tab === focusedTab)
+        : element(focusedId === 'pause' && state === 'paused' ? 'resume' : focusedId === 'resume' && state === 'running' ? 'pause' : focusedId);
+      if (target && !target.disabled) target.focus({ preventScroll: true });
+    }
+  }
 }
 element('surface').addEventListener('change', () => {
   const [width, height] = element('surface').value.split('x').map(Number);
@@ -620,7 +637,7 @@ async function poll() {
             element('page-title').textContent = presence?.title || t('Untitled page or application');
             // The size used to be repeated here; it is on the Screen size control, which is also where a
             // person can do something about it.
-            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount > 1 ? ` · tab ${presence.pageIndex || 1} of ${presence.pageCount}` : ''}`;
+            element('page-location').textContent = `${presence?.location || ''}${presence?.pageCount > 1 ? ` · ${t('Tab {n} of {total}', { n: presence.pageIndex || 1, total: presence.pageCount })}` : ''}`;
             renderTabs(Array.isArray(presence?.tabs) ? presence.tabs : []);
             const position = presence?.pointer;
             pointer.hidden = !position;
