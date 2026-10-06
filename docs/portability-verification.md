@@ -214,3 +214,66 @@ Actual native claim, cursor, focus, input, cleanup and performance remain
 `not measured`. The owner handoff release hold and the earlier rejected native
 preparation limitation remain. Later documentation-only commits do not claim a
 new tested runtime source.
+
+## Cleanup correction CI failure and preserved listener regression
+
+The cleanup-contract correction was integrated into official `main` as
+`0d86bd1e259d84014d459a2f2d5b162b888627af`. The coordinator recorded eight pure
+cleanup and retention regressions failing against the previous source and passing
+against the correction, with 26 assertions. These fixtures do not measure real
+Windows process survivors or native cleanup.
+
+[Official run 37412634848](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848)
+tested that exact SHA and finished with eight successful jobs and one failed job
+on its first attempt. This source remains CI-failed. No unchanged-source rerun was
+used to replace the failed result.
+
+| Runner | Pass | Skip | Fail | Test scope | Duration |
+| --- | ---: | ---: | ---: | --- | --- |
+| Ubuntu 24.04 x64 | 673 | 94 | 1 | 768 tests in 166 files | 270.93 seconds |
+| Windows x64 | 456 | 312 | 0 | 768 tests in 166 files | 291.40 seconds |
+| macOS arm64 | 467 | 301 | 0 | 768 tests in 166 files | 221.85 seconds |
+
+All eight added cleanup and retention fixtures passed on all three platforms.
+Ubuntu failed the existing `automatic Chrome exit still notifies listeners when
+temporary removal fails` regression at `tests/chrome-temporary-storage.test.ts:87`:
+expected two notifications, received three. Its temporary-directory removal EACCES
+is intentional test input. The automatic close first notifies an existing listener;
+a later explicit close retries failed cleanup; registering a late listener should
+produce only one additional notification. Source inspection shows that the new
+retryable cleanup still emits every existing listener in its `finally` block on
+each retry. This repeats a previous listener and breaks the existing exactly-once
+notification contract. The independent source reviewer owns the correction. The
+assertion has not been weakened. A later corrected SHA and fresh run are needed.
+
+All six installed-browser and generated-host registration jobs passed. The Windows
+installed-browser acceptance passed on its first attempt: doctor 457 milliseconds,
+session creation 6128 milliseconds, stop response 552 milliseconds, and a nonempty
+18348-byte JPEG. Navigation, read, pause refusal, resume and observe checks passed.
+The paused action returned the expected exit code 1. Summed stage timings were
+10249 milliseconds. This success does not explain the prior run's readiness
+failure, whose root cause remains unknown, and does not prove zero survivors after
+a startup failure. The new startup-failure diagnostic branch was not exercised by
+this successful Windows smoke.
+
+All installers reported installation, dependencies, service, verification and host
+registration complete; native installation was skipped. All nine generated
+Claude, Codex and Hermes entries negotiated 16 MCP tools. Actual host CLIs were
+absent on all three runners. Skips remain skips, never passes. Whole-runner resource
+artifacts do not measure Orbit-attributed CPU or memory, sustained reliability,
+native performance or arbitrary application workloads.
+
+| Artifact | Link |
+| --- | --- |
+| installed-acceptance-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11390185554) |
+| installed-acceptance-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11389518878) |
+| verification-resources-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11389499511) |
+| verification-resources-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11389409905) |
+| installed-acceptance-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11389134426) |
+| verification-resources-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37412634848/artifacts/11389129978) |
+
+Actual native opening, claim, cursor, focus, input, cleanup and performance remain
+`not measured`. The owner handoff release hold remains active. The earlier rejected
+native preparation path was not retried. This appended snapshot preserves all
+previous successes, failures and limitations; it supersedes earlier statements of
+the current CI status only for this exact source SHA.
