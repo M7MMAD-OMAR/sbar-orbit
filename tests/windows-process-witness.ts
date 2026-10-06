@@ -74,7 +74,9 @@ export async function windowsWitnessApi(): Promise<WitnessApi> {
       if (!created || !exited || !kernel || !user) throw new Error("Process time buffers missing");
       if (!api.GetProcessTimes(handle as Pointer, ptr(created), ptr(exited), ptr(kernel), ptr(user))) fail("GetProcessTimes");
       const image = new Uint8Array(32768 * 2), length = new Uint32Array([32768]);
-      if (!api.QueryFullProcessImageNameW(handle as Pointer, 0, ptr(image), ptr(length))) fail("QueryFullProcessImageNameW");
+      // Native paths remain queryable on retained handles after confirmed exit.
+      // Win32 path conversion can fail with ERROR_GEN_FAILURE at that point.
+      if (!api.QueryFullProcessImageNameW(handle as Pointer, 1, ptr(image), ptr(length))) fail("QueryFullProcessImageNameW");
       return { creationTicks: new DataView(created.buffer).getBigUint64(0, true).toString(),
         image: win32.basename(Buffer.from(image.subarray(0, (length[0] ?? 0) * 2)).toString("utf16le")) };
     },
