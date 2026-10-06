@@ -88,12 +88,24 @@ for (const change of ['navigate', 'close'] as const) {
     } });
     let backend: BrowserBackend | undefined;
     let release = () => {};
+    const started = performance.now();
+    const trace: Record<string, unknown>[] = [];
+    let capturedPage: Page | undefined;
+    const mark = (phase: string, details: Record<string, unknown> = {}) => {
+      if (trace.length < 32) trace.push({ elapsedMs: Math.round(performance.now() - started), phase,
+        documentVersion: capturedPage ? backend?.['documentVersions'].get(capturedPage) : undefined, ...details });
+    };
+    const committed = (frame: import('playwright').Frame) => {
+      if (frame === capturedPage?.mainFrame()) mark('main-frame-committed');
+    };
     try {
       backend = await BrowserBackend.create(profile, { width: 640, height: 480 });
       const url = `http://127.0.0.1:${server.port}/same`;
       await backend.act({ type: 'navigate', url });
       const page = backend.context.pages()[0];
       if (!page) throw new Error('Owned captured page is missing');
+      capturedPage = page;
+      page.on('framenavigated', committed);
       let captured = () => {};
       const bytesReady = new Promise<void>(resolve => { captured = resolve; });
       const gate = new Promise<void>(resolve => { release = resolve; });
@@ -103,39 +115,60 @@ for (const change of ['navigate', 'close'] as const) {
         const channel = await attach(target);
         const send = channel.send.bind(channel);
         channel.send = async (method, params) => {
+          if (method === 'Page.captureScreenshot') mark('capture-send-start');
           const result = await send(method, params);
           if (method === 'Page.captureScreenshot' && hold) {
+            mark('capture-raw-bytes-ready');
             hold = false; captured(); await gate;
+            mark('capture-delivery-released');
           }
           return result;
         };
         return channel;
       };
+      mark('observation-start');
       const observation = backend.observe().then(
-        frame => ({ status: 'fulfilled', presence: frame.presence }),
-        error => ({ status: 'rejected', code: error instanceof Error && 'code' in error ? error.code : undefined, error: String(error) }),
+        frame => { mark('observation-fulfilled'); return { status: 'fulfilled', presence: frame.presence }; },
+        error => {
+          const code = error instanceof Error && 'code' in error ? error.code : undefined;
+          mark(code === 'TIMEOUT' ? 'original-timeout-observed' : 'observation-rejected', { code });
+          return { status: 'rejected', code, error: String(error) };
+        },
       );
       await bytesReady;
       if (change === 'navigate') {
         // The URL remains identical, so a URL comparison alone cannot detect
         // that the pixels came from the document before this real navigation.
-        await backend.act({ type: 'navigate', url });
+        mark('navigation-start');
+        try { await backend.act({ type: 'navigate', url }); mark('navigation-settled'); }
+        catch (error) {
+          mark('navigation-rejected', { code: error instanceof Error && 'code' in error ? error.code : undefined });
+          throw error;
+        }
       } else {
         await backend.act({ type: 'open-tab', url: `${url}/survivor` });
         await backend.act({ type: 'close-tab', tab: 1 });
       }
+      mark('capture-gate-release');
       release();
       const outcome = await observation;
       const output = process.env.ORBIT_QA_OUTPUT ?? join(tmpdir(), 'orbit-frame-consistency');
       await mkdir(output, { recursive: true });
-      const evidence = { change, capturedPageClosed: page.isClosed(), current: await backend.presence(), outcome };
+      const evidence = { change, capturedPageClosed: page.isClosed(), current: await backend.presence(), outcome, trace };
       await writeFile(join(output, `browser-frame-${change}.json`), JSON.stringify(evidence, null, 2));
       console.log(JSON.stringify({ browserFrameLifecycle: evidence }));
       expect(outcome).toMatchObject({ status: 'rejected', code: 'BACKEND_FAILED' });
     } finally {
+      mark('finally-gate-release');
       release();
+      capturedPage?.off('framenavigated', committed);
       try { await backend?.close(); await rm(profile, { recursive: true }); }
-      finally { server.stop(true); }
+      finally {
+        server.stop(true);
+        const output = process.env.ORBIT_QA_OUTPUT ?? join(tmpdir(), 'orbit-frame-consistency');
+        await mkdir(output, { recursive: true }).then(() => writeFile(join(output, `browser-frame-${change}-phases.json`), JSON.stringify({ change, trace }, null, 2))).catch(() => {});
+        try { console.log(JSON.stringify({ browserFramePhases: { change, trace } })); } catch {}
+      }
     }
   }, 30000);
 }

@@ -142,22 +142,30 @@ test.skipIf(!supported || !linux || !capabilities.confinedEgress)("a broker kill
  * is gone, which is the question a reviewer of a finished run would ask.
  */
 test.skipIf(!supported)("stopping a session removes its profile and its restore store from the workspace", async () => {
-  const broker = await openBroker("adversarial-reaping");
+  const started = performance.now();
+  const trace: { elapsedMs: number; phase: string; code?: string }[] = [];
+  const mark = (phase: string, code?: string) => { if (trace.length < 24) trace.push({ elapsedMs: Math.round(performance.now() - started), phase, code }); };
+  const step = async <T>(phase: string, work: () => Promise<T>): Promise<T> => {
+    mark(`${phase}:start`);
+    try { const result = await work(); mark(`${phase}:settled`); return result; }
+    catch (error) { mark(`${phase}:rejected`, error instanceof Error && 'code' in error ? String(error.code) : undefined); throw error; }
+  };
+  const broker = await step("broker-open", () => openBroker("adversarial-reaping"));
   const fixture = startFixture();
   try {
     const origin = `http://127.0.0.1:${fixture.port}`;
-    const created = await broker.run("session.create", {
+    const created = await step("session-create", () => broker.run("session.create", {
       backend: "browser", agentName: "adversary", taskName: "teardown",
       policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
-    }) as { sessionId: string };
-    await act(broker.run, created.sessionId, { type: "navigate", url: `${origin}/` });
+    })) as { sessionId: string };
+    await step("navigate", () => act(broker.run, created.sessionId, { type: "navigate", url: `${origin}/` }));
 
-    const during = await entriesOf(broker.workspace);
+    const during = await step("workspace-before-stop", () => entriesOf(broker.workspace));
     expect(during.filter(entry => entry.startsWith("profile-")).length).toBe(1);
 
-    await broker.run("session.stop", { sessionId: created.sessionId });
+    await step("session-stop", () => broker.run("session.stop", { sessionId: created.sessionId }));
     // Successful stop acknowledges actual removal, not a background deletion attempt.
-    const after = await entriesOf(broker.workspace);
+    const after = await step("workspace-after-stop", () => entriesOf(broker.workspace));
     expect(after.filter(entry => entry.startsWith("profile-"))).toEqual([]);
     expect(after.filter(entry => entry.startsWith("restore-"))).toEqual([]);
     // The journal deliberately SURVIVES: it is the record an autonomous run is reviewed from, and
@@ -165,8 +173,8 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
     expect(after).toContain("journals");
     expect(await entriesOf(join(broker.workspace, "journals"))).toEqual([`${created.sessionId}.jsonl`]);
   } finally {
-    await broker.close();
-    fixture.stop(true);
+    try { await step("broker-close", () => broker.close()); }
+    finally { fixture.stop(true); try { console.log(JSON.stringify({ stoppingSessionPhases: trace })); } catch {} }
   }
 }, 120000);
 
