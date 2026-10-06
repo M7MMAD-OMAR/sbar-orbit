@@ -29,7 +29,7 @@
 
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { OrbitError } from "./errors";
 
 export const BROKER_LABEL = "com.sbar.orbit.broker";
@@ -73,10 +73,13 @@ function xml(value: string) {
  * long lived broker for the crime of staying alive while permitting a saturated core for minutes.
  * No value does both jobs, and docs/porting.md records the decision to delete it.
  */
-export function brokerAgentPlist(launcher: string, socket: string, home = homedir()) {
+export function brokerAgentPlist(launcher: string, socket: string, home = homedir(), bunDirectory = dirname(process.execPath)) {
   const entries: [string, string][] = [
     ["HOME", home],
     ["ORBIT_SOCKET", socket],
+    // launchd does not inherit the installer's shell PATH or BUN_INSTALL. Keep
+    // the runtime that installed Orbit reachable, including custom Bun installs.
+    ["PATH", [bunDirectory, "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":")],
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
