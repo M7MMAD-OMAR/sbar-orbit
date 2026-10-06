@@ -264,3 +264,104 @@ test("protocol invocation never reads a callable own call property", () => {
   expect(forwardChromeProtocol(undefined, "receive", receiver, callback, [{ id: 8 }], { id: 8 })).toBe(result);
   expect([calls, propertyReads]).toEqual([1, 0]);
 });
+
+test("fixture unawaited stop rejection preserves baseline child failure", async () => {
+  for (const mode of ["fixture-baseline", "fixture-observed"]) {
+    const child = Bun.spawn([process.execPath, "run", fileURLToPath(new URL("./chrome-transport-observer-rejection-probe.ts", import.meta.url)), mode], { stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(code).not.toBe(0);
+    expect(stdout + stderr).toContain("owned-fixture-stop-original-rejection");
+  }
+});
+
+test("fixture observation preserves original promise identity without handlers", () => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  const original = new Promise<void>(() => {});
+  Object.defineProperty(original, "then", { get() { throw new Error("owned-original-then-getter"); } });
+  expect(observer.observe("fixture-stop", () => original)).toBe(original);
+  observer.finish();
+  const final = values.at(-1);
+  expect(object(final) && object(final.final) ? final.final.pending : undefined).toEqual(["fixture-stop"]);
+});
+
+test("fixture settled acknowledgment follows an existing await and stays inert after finish", async () => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  await observer.observe("open-broker", () => Promise.resolve());
+  observer.settled("open-broker");
+  observer.finish(); const count = values.length;
+  observer.settled("fixture-stop"); observer.finish(); expect(values.length).toBe(count);
+  const final = values.at(-1);
+  expect(object(final) && object(final.final) ? final.final.boundaries : undefined).toContainEqual({ phase: "open-broker", state: "settled" });
+});
+
+
+function finalOf(values: unknown[]) {
+  const value = values.at(-1);
+  return object(value) && object(value.final) ? value.final : undefined;
+}
+
+test.each([false, true])("browser version final is explicitly unknown without response, earlyThrow=%s", earlyThrow => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  if (earlyThrow) {
+    const original = new Error("owned early setup error"); let caught: unknown;
+    try { observer.observe("open-broker", () => { throw original; }); } catch (error) { caught = error; }
+    expect(caught).toBe(original);
+  }
+  observer.finish(); expect(finalOf(values)?.browserVersion).toBe("not measured");
+  expect(finalOf(values)?.browserVersionSource).toBe("not measured");
+});
+
+test("browser version final retains matched existing reply provenance", async () => owned(async (root, profile) => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  observer.scope(root, () => {
+    const connection = currentChromeTransportObservation(profile);
+    connection?.before("send", { id: 1, method: "Browser.getVersion" });
+    connection?.after("send", "returned", { id: 1 });
+    connection?.before("receive", { id: 1, result: { product: "Chrome/154.0.8037.98" } });
+    connection?.before("receive", { id: 1, result: { product: "Chrome/154.0.8037.98" } });
+  });
+  observer.finish(); expect(finalOf(values)?.browserVersion).toBe("Chrome/154.0.8037.98");
+  expect(finalOf(values)?.browserVersions).toEqual([{ connection: 1, browserVersion: "Chrome/154.0.8037.98", state: "matched existing response", requestId: 1, session: null }]);
+}));
+
+test("browser version ignores unmatched replies and rejects malformed failed sends", async () => owned(async (root, profile) => {
+  for (const mode of ["unmatched", "malformed", "send-threw", "error-response", "unknown-session"]) {
+    const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+    observer.scope(root, () => {
+      const connection = currentChromeTransportObservation(profile);
+      if (mode !== "unmatched") {
+        connection?.before("send", { id: 1, method: "Browser.getVersion" });
+        connection?.after("send", mode === "send-threw" ? "threw" : "returned", { id: 1 });
+      }
+      connection?.before("receive", { id: 1, ...(mode === "unknown-session" ? { sessionId: "foreign" } : {}),
+        ...(mode === "error-response" ? { error: { code: -32000, message: "owned response error" } } : {}),
+        result: { product: mode === "malformed" ? "owned-private-version-canary" : "Chrome/154.0.8037.98" } });
+    });
+    observer.finish(); expect(finalOf(values)?.browserVersion).toBe("not measured");
+    expect(JSON.stringify(values)).not.toContain("owned-private-version-canary");
+  }
+}));
+
+test("browser version conflicting matched replies remain explicitly unknown", async () => owned(async (root, profile) => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  observer.scope(root, () => {
+    const connection = currentChromeTransportObservation(profile);
+    for (const [id, version] of [[1, "Chrome/154.0.8037.98"], [2, "Chrome/154.0.8037.99"], [3, "Chrome/154.0.8037.98"]] as const) {
+      connection?.before("send", { id, method: "Browser.getVersion" }); connection?.after("send", "returned", { id });
+      connection?.before("receive", { id, result: { product: version } });
+    }
+  });
+  observer.finish(); expect(finalOf(values)?.browserVersion).toBe("not measured");
+  expect(finalOf(values)?.browserVersions).toEqual([{ connection: 1, browserVersion: "not measured", state: "conflicting matched responses", requestId: null, session: null }]);
+}));
+
+test("browser version aggregate preserves unknown separate connection evidence", async () => owned(async (root, profile) => {
+  const values: unknown[] = [], observer = new ChromeTransportObserver(producer, value => values.push(value));
+  observer.scope(root, () => {
+    const first = currentChromeTransportObservation(profile); currentChromeTransportObservation(profile);
+    first?.before("send", { id: 1, method: "Browser.getVersion" }); first?.after("send", "returned", { id: 1 });
+    first?.before("receive", { id: 1, result: { product: "Chrome/154.0.8037.98" } });
+  });
+  observer.finish(); expect(finalOf(values)?.browserVersion).toBe("not measured");
+  expect(finalOf(values)?.browserVersions).toContainEqual({ connection: 2, browserVersion: "not measured", state: "not observed", requestId: null, session: null });
+}));

@@ -168,6 +168,7 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
   const trace = new ChromeTransportObserver(producer, value => console.error(JSON.stringify(value)));
   try {
     const broker = await trace.observe("open-broker", () => openBroker("adversarial-reaping"));
+    trace.settled("open-broker");
     const fixture = trace.observe("fixture-start", () => startFixture());
     try {
       await trace.scope(broker.workspace, async () => {
@@ -176,23 +177,31 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
           backend: "browser", agentName: "adversary", taskName: "teardown",
           policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate", "write"] },
         })) as { sessionId: string };
+        trace.settled("session-create");
         await trace.observe("navigate", () => act(broker.run, created.sessionId, { type: "navigate", url: `${origin}/` }));
+        trace.settled("navigate");
 
         const during = await trace.observe("during-inventory", () => entriesOf(broker.workspace));
+        trace.settled("during-inventory");
         expect(during.filter(entry => entry.startsWith("profile-")).length).toBe(1);
 
         await trace.observe("session-stop", () => broker.run("session.stop", { sessionId: created.sessionId }));
+        trace.settled("session-stop");
         // Successful stop acknowledges actual removal, not a background deletion attempt.
         const after = await trace.observe("after-inventory", () => entriesOf(broker.workspace));
+        trace.settled("after-inventory");
         expect(after.filter(entry => entry.startsWith("profile-"))).toEqual([]);
         expect(after.filter(entry => entry.startsWith("restore-"))).toEqual([]);
         // The journal deliberately SURVIVES: it is the record an autonomous run is reviewed from, and
         // `session.forget` documents that it is kept. Asserted so the two are not confused with each other.
         expect(after).toContain("journals");
-        expect(await trace.observe("journal-inventory", () => entriesOf(join(broker.workspace, "journals")))).toEqual([`${created.sessionId}.jsonl`]);
+        const journals = await trace.observe("journal-inventory", () => entriesOf(join(broker.workspace, "journals")));
+        trace.settled("journal-inventory");
+        expect(journals).toEqual([`${created.sessionId}.jsonl`]);
       });
     } finally {
       await trace.observe("broker-close", () => broker.close());
+      trace.settled("broker-close");
       trace.observe("fixture-stop", () => fixture.stop(true));
     }
   } finally { trace.finish(); }
