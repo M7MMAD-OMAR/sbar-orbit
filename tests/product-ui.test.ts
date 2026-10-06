@@ -172,22 +172,26 @@ async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openVi
   let pending: unknown, settled: unknown;
   let releaseSelectionResponse = () => {};
   const selectionResponseGate = new Promise<void>(resolve => { releaseSelectionResponse = resolve; });
+  let completeSelection = (result: { status: number; ok: boolean; error?: string }) => {};
+  const selectionApplied = new Promise<{ status: number; ok: boolean; error?: string }>(resolve => { completeSelection = resolve; });
   await page.route('**/rpc', async route => {
     const request = route.request().postDataJSON();
     if (request?.method !== 'session.control' || request?.params?.input?.type !== 'select-tab') return route.continue();
-    // Apply the real broker action, then hold its reply so polling can expose
-    // the selected page while the viewer command is still pending.
+    // Hold the real successful reply only for the pending-controls assertion.
+    // Selected paint follows release and the command's actual refresh.
     record('control-fetch-start');
     try {
       const response = await route.fetch();
       const result = await response.json();
       record('control-fetch-complete', { status: response.status(), ok: result?.ok, error: result?.error?.code });
+      completeSelection({ status: response.status(), ok: result?.ok === true, error: result?.error?.code });
       await selectionResponseGate;
       record('control-fulfill-start');
       await route.fulfill({ response });
       record('control-fulfill-complete');
     } catch (error) {
       record('control-route-error', { error: String(error) });
+      completeSelection({ status: 0, ok: false, error: String(error) });
       throw error;
     }
   });
@@ -197,15 +201,23 @@ async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openVi
     record('focused', await snapshot());
     await page.keyboard.press('Enter');
     record('enter-pressed');
-    await page.waitForFunction(() => {
-      const button = document.querySelector('#tabs button');
-      return button?.getAttribute('aria-current') === 'page' || button?.getAttribute('aria-selected') === 'true';
-    });
-    pending = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    let acknowledgementTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const acknowledgement = await Promise.race([selectionApplied, new Promise<never>((_, reject) => {
+        acknowledgementTimer = setTimeout(() => reject(new Error('Selection acknowledgement exceeded 5000ms')), 5000);
+      })]);
+      expect(acknowledgement).toMatchObject({ status: 200, ok: true });
+    } finally { clearTimeout(acknowledgementTimer); }
+    const pendingControls = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    pending = pendingControls;
     record('pending', await snapshot());
+    expect(pendingControls.disabled).toBe(true);
     record('release-control-response');
     releaseSelectionResponse();
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#tabs button')?.disabled);
+    await page.waitForFunction(() => {
+      const button = document.querySelector<HTMLButtonElement>('#tabs button');
+      return button && !button.disabled && (button.getAttribute('aria-current') === 'page' || button.getAttribute('aria-selected') === 'true');
+    });
     const completed = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
     settled = completed;
     record('settled', await snapshot());
@@ -276,7 +288,7 @@ for (const language of ['en', 'ar']) {
       if (new URL(request.url).pathname === '/product-probe-events') {
         diagnostics.record('target-event', await request.json()); return new Response('ok');
       }
-      return new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output>${diagnostics.fixtureScript}</body></html>`, { headers: { 'content-type': 'text/html' } });
+      return new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui;background:#00ff00}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output>${diagnostics.fixtureScript}</body></html>`, { headers: { 'content-type': 'text/html' } });
     } });
     const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
     const evidence: Record<string, unknown> = { language };
@@ -316,13 +328,24 @@ for (const language of ['en', 'ar']) {
       expect(await page.locator('#tabs button').first().getAttribute('aria-current')).toBe('page');
       if (language === 'ar') expect(await page.locator('#page-location').textContent()).not.toMatch(/tab|of/);
       await capture('takeover');
-      diagnostics.record('pre-input', await page.evaluate(() => ({
-        canvas: { width: document.querySelector<HTMLCanvasElement>('#frame')?.width, height: document.querySelector<HTMLCanvasElement>('#frame')?.height },
-        rect: document.querySelector('#frame')?.getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight },
-      })));
+      const inputPoint = { x: 100, y: 180 };
+      const picture = await page.locator('#frame').evaluate((node, point) => {
+        const canvas = node as HTMLCanvasElement;
+        const pixel = canvas.getContext('2d')?.getImageData(point.x, point.y, 1, 1).data;
+        return { width: canvas.width, height: canvas.height, pixel: pixel ? [...pixel] : [], rect: canvas.getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight } };
+      }, inputPoint);
+      diagnostics.record('pre-input', { canvas: picture, inputPoint });
+      expect(Number.isInteger(picture.width) && Number.isInteger(picture.height)).toBe(true);
+      expect(picture.width).toBeGreaterThan(inputPoint.x);
+      expect(picture.height).toBeGreaterThan(inputPoint.y);
+      expect(picture.pixel).toHaveLength(4);
+      expect(picture.pixel[0] ?? 255).toBeLessThan(30);
+      expect(picture.pixel[1] ?? 0).toBeGreaterThan(230);
+      expect(picture.pixel[2] ?? 255).toBeLessThan(30);
+      expect(picture.pixel[3]).toBe(255);
       const box = await page.locator('#frame').boundingBox();
       if (!box) throw new Error('Private viewer frame missing');
-      await page.locator('#frame').click({ position: { x: box.width * 100 / 1280, y: box.height * 180 / 800 } });
+      await page.locator('#frame').click({ position: { x: box.width * inputPoint.x / picture.width, y: box.height * inputPoint.y / picture.height } });
       await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
       const message = language === 'ar' ? 'اختبار التحكم الخاص' : 'Private takeover verified';
       await page.locator('#text').fill(message);
