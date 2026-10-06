@@ -219,7 +219,7 @@ logs are retained in a separate immutable packet. No lost log is reconstructed
 or replaced by a later run.
 
 [PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8) is a separate draft at
-`5b469d81e10c801a68ad24492f39ceb9a68e2a17`. It prepares two private owned-child
+`6814b4dcc82feeb9d5649b9815365e4d4f025625`. It prepares two private owned-child
 Windows trials comparing deferred acquisition with a handle retained while its
 original process is alive. Creator handles close before exit. TypeScript, three
 portable controls and the workflow structure check passed; those checks do not
@@ -253,13 +253,29 @@ TypeScript and three portable controls. New separate diagnostic
 completed successfully and its authentic archive digest was verified. Independent coordinator comparison verified all 972 raw content rows against the
 published Git tree with its actual attributes, with no omissions, duplicates or
 before/after changes. The actual row order differs from the promised ordinal
-order; this aggregate ordering contract remains open. The two private Bun-child
+order; that snapshot does not satisfy the aggregate ordering contract. The two private Bun-child
 trials demonstrated unknown acquisition after exit and a same-identity exit
 measured through a retained handle. This does not establish a production repair,
 Chrome survivor evidence or the cause of the earlier false ancestry.
 [Normal run 37519392994](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37519392994)
 also passed all nine jobs on merge `3bb3ad70`. Windows reported 495 pass, 317 skip
 and zero fail. Required independent review remains unproven.
+
+The subsequent typed-sort workflow candidate `6814b4d` completed
+[diagnostic run 37523498184](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37523498184)
+successfully. Its actual archive contains the unmodified native Git path sequence
+and both sort results. On the same 972-path input, the old `System.Object[]` sort
+reproduced 39 adjacent order violations; the new `System.String[]` sort produced
+strict ordinal order with the same counted multiset. Actual before/after manifest
+bytes matched and contained all 972 paths in that order. Archive SHA256
+`1edb38022ae5630d6740f5a2e016236a8b67b324b3b54b1a12acdaa57ced52f1`
+matches its advertised digest; actual size is 121035 bytes. The initial REST
+download timed out with zero bytes; a different connector transport delivered the
+verified archive. This establishes the workflow ordering correction, not a
+production collector repair or the cause of the earlier process attribution failure.
+[Normal run 37523503415](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37523503415)
+also completed successfully. Fresh independent review and production witness
+repair remain open.
 
 The current Mac diagnostic writes allowlisted nonthrowing arm records into the job
 log as well as artifacts. Its six local gates passed, including TypeScript and 16
