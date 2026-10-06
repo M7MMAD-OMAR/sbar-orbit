@@ -61,6 +61,42 @@ async function settingsFixture(language: string, failLoad = false) {
 
 async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openViewerPage>>['page'], language: string, shots: string) {
   const first = page.locator('#tabs button').first();
+  const started = performance.now();
+  const trace: Record<string, unknown>[] = [];
+  const record = (phase: string, details: Record<string, unknown> = {}) => trace.push({ elapsedMs: Math.round(performance.now() - started), phase, ...details });
+  const snapshot = () => page.evaluate(() => ({
+    state: document.querySelector('#state')?.getAttribute('data-state'),
+    stripHidden: document.querySelector<HTMLElement>('#tabs')?.hidden,
+    activeElement: { tag: document.activeElement?.tagName, id: document.activeElement?.id, tab: (document.activeElement as HTMLElement | null)?.dataset.tab },
+    buttons: [...document.querySelectorAll<HTMLButtonElement>('#tabs button')].map(button => ({ current: button.getAttribute('aria-current'), selected: button.getAttribute('aria-selected'), disabled: button.disabled, focused: button === document.activeElement })),
+    alert: document.querySelector('[role="alert"]')?.textContent,
+  }));
+  let requestNumber = 0;
+  const requests = new Map<import('playwright').Request, { requestId: number; method: string }>();
+  const requestStarted = (request: import('playwright').Request) => {
+    if (!request.url().endsWith('/rpc')) return;
+    const payload = request.postDataJSON();
+    const details = { requestId: ++requestNumber, method: String(payload?.method) };
+    requests.set(request, details);
+    record('rpc-request', { ...details, inputType: payload?.params?.input?.type });
+  };
+  const responseReceived = (response: import('playwright').Response) => {
+    const details = requests.get(response.request());
+    if (details) record('rpc-response', { ...details, status: response.status() });
+  };
+  const requestFinished = (request: import('playwright').Request) => {
+    const details = requests.get(request);
+    if (details) record('rpc-finished', details);
+  };
+  const requestFailed = (request: import('playwright').Request) => {
+    const details = requests.get(request);
+    if (details) record('rpc-failed', { ...details, error: request.failure()?.errorText });
+  };
+  page.on('request', requestStarted);
+  page.on('response', responseReceived);
+  page.on('requestfinished', requestFinished);
+  page.on('requestfailed', requestFailed);
+  let pending: unknown, settled: unknown;
   let releaseSelectionResponse = () => {};
   const selectionResponseGate = new Promise<void>(resolve => { releaseSelectionResponse = resolve; });
   await page.route('**/rpc', async route => {
@@ -68,28 +104,56 @@ async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openVi
     if (request?.method !== 'session.control' || request?.params?.input?.type !== 'select-tab') return route.continue();
     // Apply the real broker action, then hold its reply so polling can expose
     // the selected page while the viewer command is still pending.
-    const response = await route.fetch();
-    await selectionResponseGate;
-    await route.fulfill({ response });
+    record('control-fetch-start');
+    try {
+      const response = await route.fetch();
+      const result = await response.json();
+      record('control-fetch-complete', { status: response.status(), ok: result?.ok, error: result?.error?.code });
+      await selectionResponseGate;
+      record('control-fulfill-start');
+      await route.fulfill({ response });
+      record('control-fulfill-complete');
+    } catch (error) {
+      record('control-route-error', { error: String(error) });
+      throw error;
+    }
   });
   try {
+    record('initial', await snapshot());
     await first.focus();
+    record('focused', await snapshot());
     await page.keyboard.press('Enter');
+    record('enter-pressed');
     await page.waitForFunction(() => {
       const button = document.querySelector('#tabs button');
       return button?.getAttribute('aria-current') === 'page' || button?.getAttribute('aria-selected') === 'true';
     });
-    const pending = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    pending = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    record('pending', await snapshot());
+    record('release-control-response');
     releaseSelectionResponse();
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#tabs button')?.disabled);
-    const settled = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
-    await writeFile(join(shots, `page-selection-race-${language}.json`), JSON.stringify({ language, pending, settled }, null, 2));
-    console.log(JSON.stringify({ pageSelectionRace: language, pending, settled }));
-    expect(settled.disabled).toBe(false);
-    expect(settled.focused).toBe(true);
+    const completed = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    settled = completed;
+    record('settled', await snapshot());
+    expect(completed.disabled).toBe(false);
+    expect(completed.focused).toBe(true);
+  } catch (error) {
+    record('failure', { error: String(error), ...await snapshot() });
+    throw error;
   } finally {
+    record('finally-release');
     releaseSelectionResponse();
-    await page.unroute('**/rpc');
+    try { await page.unroute('**/rpc'); }
+    finally {
+      record('finally', await snapshot());
+      page.off('request', requestStarted);
+      page.off('response', responseReceived);
+      page.off('requestfinished', requestFinished);
+      page.off('requestfailed', requestFailed);
+      await writeFile(join(shots, `page-selection-race-${language}.json`), JSON.stringify({ language, pending, settled, trace }, null, 2));
+      console.log(JSON.stringify({ pageSelectionRace: language, pending, settled, trace }));
+    }
   }
 }
 
