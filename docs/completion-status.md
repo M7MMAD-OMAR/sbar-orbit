@@ -42,6 +42,25 @@ with all nine normal jobs passing. Ubuntu reported 714 pass and 95 skip; Windows
 result belongs to the exact official documentation snapshot. It does not explain
 the retained `4089c50` CDP failure or close its cause and cleanup evidence gaps.
 
+The subsequent official-main snapshot `60dc625` completed
+[run 37535432220](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37535432220)
+with eight jobs passing and the Windows installed-browser job failing. All three
+suites passed: Ubuntu 714 pass and 95 skip, Windows 492 pass and 317 skip, Mac
+504 pass and 305 skip, each with zero failures across 809 tests in 176 files.
+Only these two status documents changed from `1a9c1e3`; all 965 other Git-tree
+mode/type/blob rows match. The installed `session create` command failed after
+15753 milliseconds with the unchanged 15-second endpoint timeout. Its verified
+2811-byte artifact contains installer state, empty installer stderr and two
+command timings; no diagnostic JSON, screenshot, smoke report, process identity
+or cleanup receipt exists in that archive. Installation and task state do not
+establish a Chrome survivor, exit or cleanup outcome. The startup cause and
+cleanup remain `not measured`. The local
+[terminal packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-ci-37535432220-terminal-retained/evidence-packet.json)
+and [installed artifact packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-installed-artifact-11445627442/evidence-packet.json)
+retain complete suite logs, artifact identities and exact source comparison.
+The earlier `1a9c1e3` all-nine green result and `4089c50` Mac CDP failure remain
+historical evidence; none establishes the causes of these distinct failures.
+
 [PR 6](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/6)
 is merged into official `main` at `886e319855ca65da741cf028cc5391e13e899ce8`.
 [Run 37497113691](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37497113691)
@@ -472,6 +491,38 @@ fail. Production and controlled diagnostic files match the direct candidate;
 nine documentation and host evidence files differ. The earlier timeout cause
 and both independent review axes remain unproven.
 
+A separate unpublished Mac interception diagnostic preparation passed TypeScript
+and 17 pure observer controls locally on Linux, without failures or skips. Five
+intentional observer mutants each failed its selected assertion: receiver
+preservation, duplicate-response history, unhandled asynchronous rejection,
+absent-callback data access and callable `call` property access. These are mutant
+controls, not reproduction of the historical Mac CDP failure. All 403 influential
+files were restored or unchanged. Pure-check engine revision 14 binds source
+`cd755832d7ac78dbc7c009c09e233c2675489b6f75049079b30c4fafb259981d`
+and plan `220ee9ba8a75ab5902b2412cb7fff5557871a5996f9432d21f841de1a7c25f81`.
+The local [passing-check manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/manifest.json),
+[raw controls](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/pure-checks-12-immutable/controls-immutable/actual/raw.log)
+and [mutant manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/negative-check-14-immutable/manifest.json)
+retain the actual receipts and raw output. No actual Mac fixture ran;
+the Mac root cause, cleanup outcome and both independent review axes remain
+unproven. This prepares evidence collection without changing support or acceptance.
+
+The later source-bound Linux instrumentation fixture passed one selected test
+with five assertions and no failures or skips. It admitted private POSIX connection
+1 at 1994 milliseconds and observed the existing `Browser.getVersion` reply,
+Chrome 154.0.8037.97, at 2020 milliseconds. Producer, observer, fixture, lock and
+Playwright 1.63.0 core-bundle identities were retained; all 403 influential files
+remained unchanged at the same source and plan hashes. The final trace reached
+sequence 293 with 37 dropped records and no refusals, observer errors or sink
+errors. Session-stop and broker-close settled, but fixture-stop remained pending
+at its `before` boundary because the original fixture stop promise was not awaited.
+This is bounded partial Linux chronology, not HTTP server cleanup, broader owned
+process cleanup, actual Mac behavior or evidence of the Mac failure's cause.
+The local [fixture manifest](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fixture-check-16-immutable/manifest.json)
+and [trace classification](/var/tmp/orbit-main-4089-macos-interception-2026-10-07/implementation/fixture-check-16-immutable/trace-classification.json)
+retain actual raw JSON and receipts; the actual launched browser binary identity
+remains `not measured`.
+
 The separate installed-Windows startup diagnostic reached local engine revision
 25 with TypeScript passing and 25 pure protocol/filesystem controls passing on
 Linux, without failures or skips. All 286 influential source files remained
@@ -480,8 +531,9 @@ unchanged; its formal source hash is
 The controls retain selected Bun producer identity, ordered endpoint/assignment
 readiness, exact stop-attempt pairing and unknown attribution or cleanup states.
 The earlier matched membership negative/positive comparison remains separately
-retained. New readiness and Bun controls ran only on corrected current source;
-they do not establish their historical defect detection. Actual installed Windows
+retained. The matched R13 and R15 helper contrasts below now establish narrow
+historical discrimination; R19 typed metadata retention is also contrasted below.
+Actual installed Windows
 startup, lifecycle and cleanup remain `not measured`, as do both independent
 review axes. Executable hashing perturbs opt-in timing; its post-read threshold
 cannot interrupt file IO, and disk bytes do not prove mapped-image identity.
@@ -489,6 +541,33 @@ The local [packet](/var/tmp/orbit-windows-installed-startup-2026-10-07/final-loc
 and [raw controls](/var/tmp/orbit-windows-installed-startup-2026-10-07/producer-bun-r20-controls-immutable/full.raw.log)
 retain the exact measured scope. These diagnostic checks do not close the earlier
 15-second endpoint failure, published-artifact acceptance or the native hold.
+
+Subsequent matched pure-protocol controls now distinguish the historical R13
+readiness helper from current source: four intended old-helper failures and four
+current-helper passes used identical test SHA256
+`92a273222da6a884dfa652e84de6d48b5abe98ab3e181b49e74982fe5f9eed81`.
+R15 dual-origin binding separately produced two intended old-helper failures and
+two current-helper passes using identical test SHA256
+`fbd3e648005f24276e675cb8d935c1412ca16cf22795dd916e0ca47f77bb7cf1`.
+Neither matched run skipped tests. All 286 current source bytes and modes were
+restored or unchanged, preserving source `b0a5bc9` and the original R25 packet.
+These are helper counterfactuals, not full historical-source or Windows runtime
+measurements. The local
+[R13 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r13-current-immutable/packet.json)
+and [R15 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r15-current-immutable/packet.json)
+link their preserved old failures and full raw logs. Actual Windows startup/cleanup
+and both fresh review axes remain unproven.
+
+The matched R19 typed producer metadata retention comparison also recorded two
+intended old-helper failures and two current-helper passes without skips, using
+identical test SHA256
+`68a747c964d355d6ef1e72fefdfcd430bda8b7913eaf3fb480acf8c8335f8f5b`.
+The [local R19 comparison](/var/tmp/orbit-windows-installed-startup-2026-10-07/counterfactual-r19-current-immutable/packet.json)
+links both preserved raw results. Its scope is typed metadata retention only;
+it does not prove actual Bun selection/reference, the new identity gate or hash
+APIs through a historical comparison. Original R25 current-source positive
+identity/hash controls and source `b0a5bc9` remain unchanged. Actual Windows
+startup/cleanup and independent reviews remain unproven.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational

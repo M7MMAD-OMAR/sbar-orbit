@@ -68,6 +68,25 @@ with all nine normal jobs passing. Ubuntu reported 714 pass and 95 skip; Windows
 result belongs to the exact official documentation snapshot. It does not explain
 the retained `4089c50` CDP failure or close its cause and cleanup evidence gaps.
 
+The subsequent official-main snapshot `60dc625` completed
+[run 37535432220](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37535432220)
+with eight jobs passing and the Windows installed-browser job failing. All three
+suites passed: Ubuntu 714 pass and 95 skip, Windows 492 pass and 317 skip, Mac
+504 pass and 305 skip, each with zero failures across 809 tests in 176 files.
+Only these two status documents changed from `1a9c1e3`; all 965 other Git-tree
+mode/type/blob rows match. The installed `session create` command failed after
+15753 milliseconds with the unchanged 15-second endpoint timeout. Its verified
+2811-byte artifact contains installer state, empty installer stderr and two
+command timings; no diagnostic JSON, screenshot, smoke report, process identity
+or cleanup receipt exists in that archive. Installation and task state do not
+establish a Chrome survivor, exit or cleanup outcome. The startup cause and
+cleanup remain `not measured`. The local
+[terminal packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-ci-37535432220-terminal-retained/evidence-packet.json)
+and [installed artifact packet](/var/tmp/orbit-consolidation-2026-10-06/main-60dc-installed-artifact-11445627442/evidence-packet.json)
+retain complete suite logs, artifact identities and exact source comparison.
+The earlier `1a9c1e3` all-nine green result and `4089c50` Mac CDP failure remain
+historical evidence; none establishes the causes of these distinct failures.
+
 Two further diagnostic preparations have local source-bound gates only. The
 unpublished debug-provider R5 source passed TypeScript and 12 pure portable
 controls with 399 influential files unchanged. The installed-startup R25 source
@@ -77,8 +96,25 @@ unchanged. Their exact hashes, local packets and raw logs are recorded in the
 The debug preparation still requires actual Windows Bun feasibility, nested-job
 compatibility and full unchanged Chrome coverage/performance. The installed
 preparation still requires actual Windows startup/lifecycle/cleanup evidence;
-its new readiness and Bun controls have no discriminating old-source run.
-Both preparations require two fresh independent review axes. Neither is a
+matched R13 helper controls recorded four intended failures versus four passes,
+and R15 recorded two intended failures versus two passes on identical test bytes.
+These helper counterfactuals preserve the original R25 source and establish pure
+protocol discrimination only. R19 also recorded two intended failures versus two
+passes using identical test bytes, limited to typed producer metadata retention.
+Actual Bun selection/reference and the new identity gate/hash APIs are not proved
+by that historical comparison; original R25 positive controls remain unchanged.
+A separate unpublished Mac interception preparation passed TypeScript and 17 pure
+observer controls; five intentional mutants each failed its selected assertion.
+All 403 influential files remained restored or unchanged at source `cd755832`
+and plan `220ee9ba`. A later Linux instrumentation fixture passed one selected test
+and retained private connection admission and the existing browser-version reply.
+Its final sequence 293 dropped 37 records; session-stop and broker-close settled,
+but the original non-awaited fixture-stop promise remained pending at its `before`
+boundary. This is bounded partial Linux chronology, not HTTP server or broader
+process cleanup. No actual Mac fixture ran and the historical CDP cause remains
+unproven. The [workstream snapshot](completion-status.md#remaining-workstream-snapshot)
+links the exact local receipts and raw output.
+All these preparations require two fresh independent review axes. None is a
 production collector repair, startup cause, platform acceptance or release claim.
 The unconditional native hold and full external acceptance requirements remain.
 
