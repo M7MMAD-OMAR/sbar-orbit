@@ -15,12 +15,25 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
   } });
   let backend: BrowserBackend | undefined;
   let releaseCapture = () => {};
+  let restorePointer = () => {};
   try {
     backend = await trace.observe('backend-create', BrowserBackend.create(profile, { width: 640, height: 480 }));
     const origin = `http://127.0.0.1:${server.port}`;
     await trace.observe('initial-navigate', backend.act({ type: 'navigate', url: `${origin}/first` }));
     const firstPage = backend.context.pages()[0];
     if (!firstPage) throw new Error('Owned first page is missing');
+    for (const method of ['capturedPresence', 'presenceOf', 'bindPointer'])
+      trace.method(backend, method, `metadata.${method}`);
+    trace.method(firstPage, 'title', 'metadata.captured-page-title');
+    const pointers = backend['pointers'];
+    const pointer = pointers.get(firstPage);
+    if (pointer) {
+      const wrapped: typeof pointer = function(this: unknown, ...args: Parameters<typeof pointer>) {
+        return trace.observe('metadata.cached-pointer', pointer.apply(this, args));
+      };
+      pointers.set(firstPage, wrapped);
+      restorePointer = () => { if (pointers.get(firstPage) === wrapped) pointers.set(firstPage, pointer); };
+    } else trace.phase('metadata.cached-pointer', 'unavailable');
     let captured = () => {};
     const capturedBytes = new Promise<void>(resolve => { captured = resolve; });
     const captureGate = new Promise<void>(resolve => { releaseCapture = resolve; });
@@ -87,7 +100,11 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
       await backend?.close();
       trace.phase('backend-close', 'done');
       await trace.observe('profile-remove', rm(profile, { recursive: true }));
-    } finally { server.stop(true); trace.phase('server-stop', 'done'); trace.finish(); }
+    } finally {
+      server.stop(true); trace.phase('server-stop', 'done');
+      try { restorePointer(); } catch {}
+      trace.finish();
+    }
   }
 }, 30000);
 
