@@ -14,7 +14,7 @@ The private compositor path remains available for verification on a separate mac
 | Owner compositor crash during claim | Confirmed by core trace |
 | Cause of invalid device entry | Not measured |
 | New device inventory guard | Synthetic old-source failure and corrected-source pass measured in [run 37403797681](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37403797681). Actual compositor ABI safety and owner claim remain not measured; the release hold remains active. |
-| New release gate tests | Prepared, not measured |
+| New release gate tests | Pure refusal fixtures measured in [run 37409928412](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412): `native-handoff-release.test.ts` checks refusal before worker creation and before owner plugin load or resume spawning; its Linux wrapper runs `native_handoff_release_test.py` for direct claim, input, existing lease resume and plugin mutation refusal before initialization. This does not measure real compositor safety or a completed owner claim; the release hold remains active. |
 | Corrected Chrome claim and visible cursor | Not measured |
 | Remote regression and cleanup | Not measured |
 

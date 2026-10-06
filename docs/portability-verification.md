@@ -277,3 +277,75 @@ Actual native opening, claim, cursor, focus, input, cleanup and performance rema
 native preparation path was not retried. This appended snapshot preserves all
 previous successes, failures and limitations; it supersedes earlier statements of
 the current CI status only for this exact source SHA.
+
+## Notification correction verified, Windows abrupt broker death failed
+
+The exactly-once close-notification correction was integrated into official `main`
+as `5c1193d830a11b3b63ad0483288363d0f764ec3d`. The coordinator recorded ten pure
+regressions passing, zero failures and 37 assertions, retaining cleanup retries and
+the original EACCES fixture assertion. Later documentation-only commits do not
+change the runtime source tested below.
+
+[Official run 37413339959](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959)
+tested that exact source and finished with eight successful jobs and one failed job
+on its first attempt. The current source remains CI-failed. No unchanged-source
+rerun was dispatched.
+
+| Runner | Pass | Skip | Fail | Test scope | Duration |
+| --- | ---: | ---: | ---: | --- | --- |
+| Ubuntu 24.04 x64 | 676 | 94 | 0 | 770 tests in 167 files | 345.54 seconds |
+| Windows x64 | 457 | 312 | 1 | 770 tests in 167 files | 233.79 seconds |
+| macOS arm64 | 469 | 301 | 0 | 770 tests in 167 files | 229.19 seconds |
+
+The original Ubuntu `automatic Chrome exit still notifies listeners when temporary
+removal fails` test passed in 1243.31 milliseconds. This verifies the correction
+against the real intentional EACCES fixture that failed on `0d86`; that earlier
+failed run remains preserved above. Windows and macOS skip this fixture. Pure
+notification regressions and the cleanup mocks do not replace real process cleanup
+evidence.
+
+Windows failed the existing `abrupt broker death reaps its browser tree and a fresh
+broker rejects stale sessions` test at `tests/browser-crash.test.ts:90`. Its
+survivor assertion expected an empty list and received PID `7528`; the test duration
+was 13076.12 milliseconds. The assertion is preserved and has not been weakened.
+The preceding `0d86` Windows suite passed this test, which is separate evidence,
+not a reason to erase the new failure or assume its cause.
+
+The retained log reports the PID check, but no executable identity, creation time,
+owned job membership or accounting at assertion time. The reviewer reports that
+the test snapshots the parent process tree, then checks PID liveness with signal
+zero. A live owned survivor versus PID reuse remains unknown from these artifacts.
+Abrupt broker termination bypasses graceful confirmed-stop cleanup. No source cause
+is asserted solely from this result. The new failure remains separate from the
+older installed-browser startup readiness failure, whose root cause is still
+unknown. A source investigation and justified fresh validation are required.
+
+All six installed-browser and generated-host registration jobs passed on their
+first attempt. Windows installed-browser acceptance recorded doctor 346
+milliseconds, session creation 7431 milliseconds, stop response 440 milliseconds,
+and a nonempty 18043-byte JPEG. Navigation, read, pause refusal, resume and observe
+checks passed; the paused action returned expected exit code 1. Summed stage
+timings were 10373 milliseconds. A successful graceful stop response does not
+prove zero survivors after abrupt broker death or a failed startup. The new startup
+failure diagnostic branch was not exercised by this successful smoke.
+
+All installers completed dependencies, service, verification and host registration;
+native installation was skipped. All nine generated Claude, Codex and Hermes
+entries negotiated 16 MCP tools. Actual host CLIs were absent. Skipped tests remain
+skipped. Resource artifacts describe whole-runner CPU and memory, not usage
+attributed to Orbit, job membership or process identity.
+
+| Artifact | Link |
+| --- | --- |
+| verification-resources-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11390680789) |
+| installed-acceptance-macos-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11390675135) |
+| installed-acceptance-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11390665360) |
+| installed-acceptance-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11390405777) |
+| verification-resources-windows-latest | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11390147013) |
+| verification-resources-ubuntu-24.04 | [retained run evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37413339959/artifacts/11389754968) |
+
+Actual native opening, claim, cursor, focus, input, cleanup and performance remain
+`not measured`. The owner handoff release hold and rejected native preparation
+limitation remain active. All previous failed attempts, successful limited checks,
+skips and unknown measurements are preserved. This appended snapshot supersedes
+current-source status statements only for the exact `5c1193d` runtime source.
