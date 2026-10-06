@@ -7,8 +7,8 @@ passed all nine normal workflow jobs on that exact merge. PR 6 changes three hos
 evidence collector/comparator files, with 45 passing provenance controls; it does
 not change production runtime behavior. Historical evidence remains separately
 identified below.
-The latest verified documentation snapshot on official `main` is `d901783`:
-[run 37498925192](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37498925192)
+The latest verified documentation snapshot on official `main` is `6ce89c2`:
+[run 37505949562](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37505949562)
 passed all nine normal jobs. The isolated candidates below are not part of that
 tested main source.
 The checkout declares package version `0.2.0`. The published
@@ -89,13 +89,17 @@ again hit the original 30-second saved-account timeout. These failures do not
 establish the cause of the earlier initial-canvas or selected-tab timeouts.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
-`440f7cc081ac91d95376599d3c31d658ebcae47e`. It adds opt-in startup diagnostics
+`d71850c3ff249195305bbe7e10ce2b1b63423a92`. It adds opt-in startup diagnostics
 with category-only stderr, selected fixture-root gating and shared-slice counters.
 Five focused local tests and TypeScript passed. Required independent reviews
 remain unproven. Its [normal run 37503614580](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503614580)
-passed eight jobs and failed the Windows suite; that failure remains under investigation.
+passed eight jobs and failed the Windows suite on preceding source `440f7cc`.
+The actual failure was a parser assertion: host-dependent path joining returned
+Windows separators for a Linux cgroup path. The current follow-up uses POSIX path
+joining and retains the existing assertions and sampling gates. Its five focused
+local tests and TypeScript passed. Corrected-source Windows CI remains pending.
 The [diagnostic run 37503759704](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503759704)
-passed all three jobs on that exact source. Its full suite reported 717 pass,
+passed all three jobs on preceding source `440f7cc`. Its full suite reported 717 pass,
 95 skip and zero fail. Saved-account timings were 6.64 seconds isolated and
 7.96 seconds in the full suite. Source and instrumentation hashes matched, but
 Chrome versions differed, so this is not a controlled same-browser timing comparison.

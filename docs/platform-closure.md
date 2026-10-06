@@ -23,8 +23,8 @@ provenance validation without changing the production runtime. The
 separately retains the earlier PR 4 platform counts and local combined-runtime result.
 This closes the verified publication portion only. Core checkpoint review remains
 incomplete while the original startup cause and required acceptance gaps remain.
-The later documentation snapshot `d901783` also passed all nine jobs in
-[run 37498925192](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37498925192).
+The later documentation snapshot `6ce89c2` also passed all nine jobs in
+[run 37505949562](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37505949562).
 Draft candidates below remain outside that verified main source.
 
 Five separate owned workstreams are actively investigating in isolated checkouts:
@@ -113,8 +113,10 @@ already equivalent to main. Both Windows branch patches are equivalent to
 integrated corrections, so reapplying them is unnecessary. The host provenance
 branch is now merged through PR 6; the product branch remains draft PR 5.
 The privacy-safe diagnostic candidate is published separately as
-[draft PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) at `440f7cc`.
-Its normal CI passed eight jobs and failed the Windows suite. Its three-job
+[draft PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) at `d71850c`.
+Normal CI on preceding source `440f7cc` passed eight jobs and failed a Windows
+parser assertion. The current POSIX path correction passed the existing focused
+local tests; corrected-source Windows CI remains pending. The preceding three-job
 diagnostic run passed, but no failing startup was reproduced and browser binaries
 differed between isolated and full-suite measurements. Required independent reviews
 remain unproven. The [current snapshot](completion-status.md#remaining-workstream-snapshot)
