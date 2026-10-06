@@ -1,3 +1,4 @@
+import { installedStartupTrace, observeInstalledStop } from "./installed-startup-diagnostic";
 import { confirmedWindowsStop, OwnedCleanupError, retryableCleanup, type StopEvidence } from "./owned-cleanup";
 import { darwinTaskPolicy } from "./macos-scheduling";
 import { requireHeadroom, requireResourceBudget } from "./resource-budget";
@@ -119,6 +120,9 @@ type OwnedBrowser = {
   /** Throws `RESOURCE_BOUNDARY_LOST` if the tree left its budget. Called once, after the handshake. */
   assertContained: () => Promise<void>;
   startupEvidence?: () => Record<string, unknown>;
+  recordStartup?: (record: Record<string, unknown>) => void;
+  finishStartupTrace?: () => void;
+  finishCloseTrace?: () => void;
 };
 
 /** Linux: the Python subreaper, exactly as it was, because it is the measured path. */
@@ -244,6 +248,7 @@ function launchOnDarwin(executable: string, profile: string, argv: string[], env
  * `assertContained` walks the job's real process list rather than trusting one check at launch.
  */
 async function launchOnWindows(executable: string, profile: string, argv: string[], env: Record<string, string>): Promise<OwnedBrowser> {
+  const trace = installedStartupTrace(executable);
   const { WindowsJob } = await import("./windows-job");
   const { cpuCores } = await import("./service");
   const budget = {
@@ -264,14 +269,18 @@ async function launchOnWindows(executable: string, profile: string, argv: string
   void (async () => {
     try {
       for await (const chunk of child.stderr) {
+        trace?.stderr(chunk, child.pid);
         stderrBytes += chunk.byteLength;
         diagnostics = (diagnostics + new TextDecoder().decode(chunk)).slice(-4096);
       }
       stderrEnded = true;
-    } catch { stderrFailed = true; }
+      trace?.end(child.pid, false);
+    } catch { stderrFailed = true; trace?.end(child.pid, true); }
   })();
   const evidence: StopEvidence = { rootExitCode: null, confirmed: false, handleClosed: false };
-  const stop = confirmedWindowsStop(job, { exitCode: () => child.exitCode }, evidence);
+  const originalStop = confirmedWindowsStop(job, { exitCode: () => child.exitCode }, evidence);
+  let recordStop: ((phase: string, attempt: number) => void) | undefined;
+  const stop = trace ? observeInstalledStop(originalStop, (phase, attempt) => recordStop?.(phase, attempt)) : originalStop;
   try { job.assign(child.pid); }
   catch (error) {
     // Assignment can fail before the root belongs to the job. Retain both cleanup paths.
@@ -280,7 +289,10 @@ async function launchOnWindows(executable: string, profile: string, argv: string
     catch (cleanup) { throw new OwnedCleanupError(error, cleanup, retry); }
     throw error;
   }
-  return {
+  const owned: OwnedBrowser = {
+    recordStartup: trace?.emit,
+    finishStartupTrace: trace?.startupComplete,
+    finishCloseTrace: trace?.closeComplete,
     exitCode: () => child.exitCode,
     exited: child.exited,
     // A dead browser on Windows says nothing on stderr when the KERNEL is what killed it, and a job
@@ -302,10 +314,15 @@ async function launchOnWindows(executable: string, profile: string, argv: string
     startupEvidence: () => {
       const result: Record<string, unknown> = { rootPid: child.pid, rootExitCode: child.exitCode,
         budget, cpuCapEnforced: job.cpuCapEnforced, stderrBytes, stderrTailBytes: Buffer.byteLength(diagnostics),
-        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512) } };
+        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512),
+          ...(trace && evidence.members ? { membershipSourceRows: evidence.members.length } : {}) } };
       if (!job.isClosed) {
         try { result.accounting = job.accounting(); } catch { result.accountingError = "query failed"; }
-        try { result.members = job.processIds().slice(0, 512); } catch { result.membershipError = "query failed"; }
+        try {
+          const members = job.processIds();
+          result.members = members.slice(0, 512);
+          if (trace) result.membershipSourceRows = members.length;
+        } catch { result.membershipError = "query failed"; }
       } else result.membership = "not measured after handle closure";
       return result;
     },
@@ -321,6 +338,9 @@ async function launchOnWindows(executable: string, profile: string, argv: string
         throw new OrbitError("RESOURCE_BOUNDARY_LOST", "Owned Chrome is not inside its job object");
     },
   };
+  recordStop = (phase, stopAttempt) => trace?.emit({ phase, origin: "owned stop", stopAttempt, ...owned.startupEvidence?.() });
+  if (trace) { try { trace.emit({ phase: "assigned", ...owned.startupEvidence?.() }); } catch {} }
+  return owned;
 }
 
 /**
@@ -517,18 +537,27 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
         for (const listener of listeners) listener();
       }
     }
+    try { owner.finishCloseTrace?.(); } catch {}
   });
   let endpointState = "not checked";
   const startupAt = Date.now();
-  const startupEvidence = (phase: string) => {
-    if (owner.startupEvidence) console.error(JSON.stringify({ ownedBrowser: "startup failure", phase,
-      elapsedMs: Date.now() - startupAt, waitMs: endpointWaitMs(), endpointState, ...owner.startupEvidence() }));
+  let polls = 0, maxPollGapMs = 0, lastPollAt = startupAt, lastSampleAt = startupAt;
+  const startupEvidence = (phase: string, log = true) => {
+    if (!owner.startupEvidence) return;
+    const record = { ownedBrowser: "startup failure", phase, elapsedMs: Date.now() - startupAt,
+      waitMs: endpointWaitMs(), endpointState, polls, maxPollGapMs, ...owner.startupEvidence() };
+    if (log) console.error(JSON.stringify(record));
+    owner.recordStartup?.({ ...record, origin: "startup snapshot" });
   };
   try {
     const waitMs = endpointWaitMs();
     const deadline = Date.now() + waitMs;
     let endpoint: string | undefined;
     while (Date.now() < deadline && owner.exitCode() === null) {
+      if (owner.recordStartup) {
+        const sampledAt = Date.now(); polls++; maxPollGapMs = Math.max(maxPollGapMs, sampledAt - lastPollAt); lastPollAt = sampledAt;
+        if (sampledAt - lastSampleAt >= 100) { try { startupEvidence("poll", false); } catch {} lastSampleAt = sampledAt; }
+      }
       try {
         const [port, path] = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).trim().split("\n");
         endpointState = "invalid contents";
@@ -545,6 +574,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     if (!endpoint) throw new OrbitError("BACKEND_FAILED", await explain(code === null
       ? `Owned Chrome did not publish its local endpoint within ${waitMs / 1000} seconds and is still running`
       : `Owned Chrome exited with code ${code} before publishing its endpoint`));
+    if (owner.recordStartup) { try { startupEvidence("poll", false); } catch {} }
     socket = new WebSocket(endpoint);
     const connected = socket;
     await new Promise<void>((resolve, reject) => {
@@ -600,6 +630,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       }
       await close();
     }).catch(reportCleanup);
+    try { owner.finishStartupTrace?.(); } catch {}
     return {
       context, browser, page,
       close: () => { requested = true; return close(); },
@@ -610,9 +641,11 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     try { await close(); }
     catch (cleanup) {
       startupEvidence("stop incomplete");
+      try { owner.finishStartupTrace?.(); } catch {}
       throw new OwnedCleanupError(error, cleanup, close);
     }
     startupEvidence("stop confirmed");
+    try { owner.finishStartupTrace?.(); } catch {}
     throw error;
   }
 }

@@ -1,11 +1,12 @@
 // Fresh managed installation on disposable CI hosts only. This changes user services.
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { prepareInstalledStartup, collectInstalledStartup, createInstalledStartupWindow } from "../src/installed-startup-diagnostic";
 
 if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Requires a disposable GitHub Actions runner");
 const checkout = resolve(import.meta.dir, "..");
-const root = await mkdtemp(join(tmpdir(), "orbit installed acceptance "));
+const root = await realpath(await mkdtemp(join(tmpdir(), "orbit installed acceptance ")));
 const prefix = join(root, "prefix");
 const output = join(checkout, "output/installed-acceptance");
 await mkdir(output, { recursive: true });
@@ -27,6 +28,17 @@ if (await extract.exited !== 0) throw new Error("Could not extract registry arch
 const source = join(root, "package");
 if (await Bun.file(join(source, "node_modules/playwright/package.json")).exists())
   throw new Error("Fresh package unexpectedly contains prepared dependencies");
+let diagnosticsAdmitted = false;
+let startupWindow: ReturnType<typeof createInstalledStartupWindow> | undefined;
+if (process.platform === "win32" && process.env.ORBIT_TEST_NATIVE !== "1") {
+  try {
+    Object.assign(env, await prepareInstalledStartup(root, source, prefix)); diagnosticsAdmitted = true;
+    startupWindow = createInstalledStartupWindow();
+  } catch {
+    try { console.log(JSON.stringify({ installedStartupCollection: { admitted: false, invalid: true, category: "admission failed" } })); } catch {}
+  }
+}
+try {
 const installer = join(source, process.platform === "win32" ? "install.cmd" : "install.sh");
 const installArgs = ["--prefix", prefix, "--connect", "claude,codex,hermes", "--json"];
 let installCommand = [installer, ...installArgs];
@@ -56,6 +68,7 @@ if (!Array.isArray(hosts) || hosts.length !== 3 || hosts.some(row => row.state !
   throw new Error("The one-command installation did not configure all three requested hosts");
 }
 const launcher = join(prefix, "bin", process.platform === "win32" ? "sbar-orbit.cmd" : "sbar-orbit");
+if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "before", startupWindow);
 const smoke = Bun.spawn([process.execPath, "run", "scripts/limited.ts", process.execPath,
   "experiments/installed-browser-smoke.ts", launcher, join(output, "browser.jpg")],
   { cwd: checkout, env, stdout: "inherit", stderr: "inherit", timeout: 120000 });
@@ -64,3 +77,8 @@ if (smokeExit !== 0) throw new Error(`Installed browser flow failed with exit ${
 console.log(JSON.stringify({ installed: true, registeredHosts: hosts.length, browserFlow: "passed",
   limit: "registry archive with no prepared project dependencies; Bun and browser provisioned on disposable runner" }));
 // Keep the prefix available for the managed service until the disposable runner is destroyed.
+
+} finally {
+  // Nonthrowing observation preserves the exact installer/smoke outcome and cleanup ordering.
+  if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "after", startupWindow);
+}
