@@ -1,0 +1,151 @@
+name: windows-census-counterexample
+
+on:
+  push:
+    branches: [agents/windows-census-witness-2026-10-06]
+    paths:
+      - .github/workflows/windows-census-counterexample.yml
+      - experiments/windows-census-counterexample.ts
+      - tests/windows-census-fixture.ts
+      - tests/windows-census-controls.test.ts
+      - tests/windows-process-witness.ts
+      - src/resource-budget.ts
+      - src/windows-job.ts
+      - scripts/limited.ts
+      - package.json
+      - bun.lock
+      - bunfig.toml
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact published prepared candidate commit SHA, no branch aliases
+        required: true
+        type: string
+      expected_manifest:
+        description: SHA256 of sorted tracked path, tab, lowercase SHA256, LF manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  owned-child-counterexample:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      EXPECTED_COMMIT: ${{ inputs.expected_commit || github.sha }}
+      EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+      EVIDENCE: ${{ runner.temp }}/orbit-windows-census-evidence
+    steps:
+      - name: Initialize failure evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:EVIDENCE -ErrorAction Stop | Out-Null
+          @{ state = 'not measured'; capability = 'unknown'; cleanup = 'unknown'; reason = 'Prerequisite or probe did not complete'; commit = $env:GITHUB_SHA } | ConvertTo-Json | Set-Content "$env:EVIDENCE/runner-result.json"
+      - name: Use canonical source bytes on disposable runner
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Require exact prepared candidate source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EXPECTED_COMMIT -cnotmatch '^[0-9a-f]{40}$' -or ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:EXPECTED_MANIFEST -cnotmatch '^[0-9a-f]{64}$')) { throw 'Exact commit and manifest inputs required' }
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:EXPECTED_COMMIT -or $head -cne $env:GITHUB_SHA) { throw 'Prepared candidate source commit mismatch' }
+          $paths = @(git ls-files)
+          [Array]::Sort($paths, [StringComparer]::Ordinal)
+          if ($LASTEXITCODE -ne 0 -or $paths.Count -eq 0) { throw 'Tracked source manifest unavailable' }
+          foreach ($path in $paths) {
+            $stage = (git ls-files -s -- $path).Trim()
+            if ($stage -notmatch '^[0-9]+ ([0-9a-f]{40}) 0	') { throw 'Published tracked source blob unavailable' }
+            $expectedBlob = $Matches[1]
+            if ($LASTEXITCODE -ne 0) { throw 'Published source blob unavailable' }
+            $actualBlob = (git hash-object --no-filters -- $path).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actualBlob -cne $expectedBlob) { throw 'Checkout bytes differ from published source blob' }
+          }
+          $rows = @($paths | ForEach-Object { "$_`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant())" })
+          $bytes = [Text.Encoding]::UTF8.GetBytes(($rows -join "`n") + "`n")
+          [IO.File]::WriteAllBytes("$env:EVIDENCE/source-before.txt", $bytes)
+          $digest = (Get-FileHash "$env:EVIDENCE/source-before.txt" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $env:EXPECTED_MANIFEST = $digest
+            "EXPECTED_MANIFEST=$digest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+          if ($digest -cne $env:EXPECTED_MANIFEST -or @(git status --porcelain).Count -ne 0) { throw 'Prepared candidate source manifest mismatch or dirty checkout' }
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Install frozen dependencies
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile --ignore-scripts *> "$env:EVIDENCE/install.log"
+          exit $LASTEXITCODE
+      - name: Run only the two disposable owned-child trials
+        shell: pwsh
+        env:
+          ORBIT_WINDOWS_CENSUS_PROBE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $result = @{ state = 'not measured'; capability = 'unknown'; cleanup = 'unknown'; commit = $env:GITHUB_SHA; manifest = $env:EXPECTED_MANIFEST; independentSourceVerification = 'pending root artifact comparison against exact published tree'; independentReview = 'unproven' }
+          $process = $null
+          try {
+            $before = [IO.File]::ReadAllBytes("$env:EVIDENCE/source-before.txt")
+            foreach ($line in [Text.Encoding]::UTF8.GetString($before).TrimEnd("`n").Split("`n")) {
+              $parts = $line.Split("`t")
+              if ($parts.Count -ne 2 -or (Get-FileHash -LiteralPath $parts[0] -Algorithm SHA256).Hash.ToLowerInvariant() -cne $parts[1]) { throw 'Source drift before probe' }
+            }
+            if (@(git status --porcelain).Count -ne 0) { throw 'Dirty source before probe' }
+            $reportPath = "$env:EVIDENCE/probe-report.json"
+            $bun = (Get-Command bun -ErrorAction Stop).Source
+            $argv = @('run', 'scripts/limited.ts', 'bun', 'run', 'experiments/windows-census-counterexample.ts', ('"' + $reportPath + '"'))
+            @{ executable = $bun; argv = $argv; timeoutMilliseconds = 20000; cleanupGraceMilliseconds = 4000 } | ConvertTo-Json -Depth 5 | Set-Content "$env:EVIDENCE/invocation.json"
+            $process = Start-Process -FilePath $bun -ArgumentList $argv -NoNewWindow -PassThru -RedirectStandardOutput "$env:EVIDENCE/probe-stdout.log" -RedirectStandardError "$env:EVIDENCE/probe-stderr.log"
+            if (-not $process.WaitForExit(20000)) {
+              $result.timeout = $true
+              try { $process.Kill($true); $result.launcherTerminationConfirmed = $process.WaitForExit(4000) } catch { $result.terminationError = $_.Exception.Message }
+              throw 'Probe deadline expired; owned fixture cleanup remains unknown'
+            }
+            $result.exitCode = $process.ExitCode
+            if ($process.ExitCode -ne 0) { throw 'Actual probe did not reproduce a valid counterexample' }
+            $report = Get-Content -Raw $reportPath | ConvertFrom-Json
+            $summary = Get-Content -Raw "$env:EVIDENCE/probe-stdout.log" | ConvertFrom-Json
+            if ($report.state -cne 'counterexample reproduced' -or $report.capability -cne 'unknown' -or $report.sourceUnchanged -ne $true -or $report.error -or $report.cleanupError -or $report.trials.Count -ne 2) { throw 'Invalid producer report' }
+            if ($summary.total -ne 2 -or $summary.failed -ne 0 -or $summary.skipped -ne 0 -or $summary.state -cne $report.state -or $summary.capability -cne 'unknown' -or $summary.output -cne $reportPath) { throw 'Invalid producer stdout counts or binding' }
+            $deferred = $report.trials[0]; $retained = $report.trials[1]
+            if ($deferred.mode -cne 'deferred' -or $deferred.state -cne 'unknown' -or -not $deferred.counterexample -or $deferred.acquisitionError -notmatch '^OpenProcess owned PID [0-9]+ failed, error [0-9]+$' -or $retained.mode -cne 'retained' -or $retained.state -cne 'same identity exit measured') { throw 'Actual acquisition contrast missing' }
+            foreach ($trial in $report.trials) {
+              if ($trial.cleanupConfirmed -ne $true -or $trial.live.creatorProcessClosed -ne $true -or $trial.live.creatorThreadClosed -ne $true -or $trial.live.creationTicks -notmatch '^[1-9][0-9]*$' -or $trial.census.Count -ne 1 -or $trial.census[0].pid -ne $trial.live.pid -or $trial.census[0].parentPid -ne $trial.live.parentPid) { throw 'Owned identity, census or cleanup evidence incomplete' }
+            }
+            $item = $retained.measured[0]
+            if ($retained.measured.Count -ne 1 -or $item.pid -ne $retained.live.pid -or $item.creationTicks -cne $retained.live.creationTicks -or $item.image -cne $retained.live.image -or $item.state -cne 'exited' -or $item.exitCode -ne 0 -or $item.exitTicks -notmatch '^[1-9][0-9]*$') { throw 'Retained identity exit not measured' }
+            foreach ($property in $report.source.PSObject.Properties) {
+              if ((Get-FileHash -LiteralPath $property.Name -Algorithm SHA256).Hash.ToLowerInvariant() -cne $property.Value) { throw 'Producer source binding mismatch' }
+            }
+            $result.state = 'counterexample reproduced'; $result.cleanup = 'producer confirmed both owned trials'
+          } catch { $result.error = $_.Exception.Message }
+          finally {
+            try {
+            $paths = @(git ls-files)
+            [Array]::Sort($paths, [StringComparer]::Ordinal)
+            $rows = @($paths | ForEach-Object { "$_`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant())" })
+            [IO.File]::WriteAllBytes("$env:EVIDENCE/source-after.txt", [Text.Encoding]::UTF8.GetBytes(($rows -join "`n") + "`n"))
+            if ((Get-FileHash "$env:EVIDENCE/source-after.txt" -Algorithm SHA256).Hash.ToLowerInvariant() -cne $env:EXPECTED_MANIFEST -or @(git status --porcelain).Count -ne 0) { throw 'Source drift after probe' }
+              $result.sourceUnchanged = $true
+            } catch {
+              $result.sourceUnchanged = $false; $result.sourceError = $_.Exception.Message; $result.state = 'not measured'; $result.cleanup = 'unknown'
+            }
+            if ($process) { $process.Dispose() }
+            $result | ConvertTo-Json -Depth 8 | Set-Content "$env:EVIDENCE/runner-result.json"
+          }
+          if ($result.state -cne 'counterexample reproduced') { exit 1 }
+      - name: Retain actual, failed and unknown evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-census-counterexample-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE }}/
+          if-no-files-found: error
