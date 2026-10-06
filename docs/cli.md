@@ -16,7 +16,14 @@ falling back to `$HOME/.config/sbar-orbit/broker.env` when XDG is unset. The ins
 this user configuration file. The service records the selected `HOME`, `XDG_CONFIG_HOME` and
 unit directory so a user manager with a different environment still uses these paths, including
 an explicit `ORBIT_UNIT_DIR` or installer `unitDirectory` option. Reinstall after changing these
-paths. Only those three path variables are copied from the installing environment. Pixman is the
+paths. The broker and update services also preserve explicitly selected absolute
+`XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `FLATPAK_USER_DIR`,
+`FLATPAK_SYSTEM_DIR` and `BUN_INSTALL`. Their `PATH` starts with the installing Bun's
+directory and preserves absolute application search directories, with standard system
+directories as fallbacks. Relative search entries and unrelated environment variables
+are not copied. `broker.env` values override these recorded defaults. `XDG_RUNTIME_DIR`
+comes from the user manager so a temporary installer runtime directory is not persisted.
+Pixman is the
 default and the measured choice, see [fedora results](fedora-results.md).
 `ORBIT_CAPTURE_TIMEOUT_MS` sets how long a single frame capture may take, default 3000, floored at
 500 and capped at 120000, and it lives in the same file for the same reason: it is a property of the
