@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import uuid
 
 from .application import private_directory
+from .handoff_release import require_owner_handoff
 from .budget import require_budget
 from .session import NativeSession, SessionError, identifier
 from .transport import NativeTransport, action_response
@@ -80,6 +81,7 @@ class ExistingApplicationSession(NativeSession):
         return reply
 
     def claim(self, value):
+        require_owner_handoff()
         require_budget()
         with self.lock:
             if self.closed or self.lease_id is not None:
@@ -162,10 +164,13 @@ class ExistingApplicationSession(NativeSession):
         return result
 
     def execute(self, value):
+        require_owner_handoff()
         with self.lock:
             return super().execute(value)
 
     def set_paused(self, paused):
+        if not paused:
+            require_owner_handoff()
         require_budget()
         with self.lock:
             if self.closed or self.lease_id is None:

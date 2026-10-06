@@ -12,6 +12,7 @@ import uuid
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.native.handoff_release import require_owner_handoff
 from src.native.budget import require_budget
 from src.native.host import verify_host
 from src.native.plugin_bundle import input_file, unchanged, unique_fields, verify_staged_plugin
@@ -280,6 +281,8 @@ class OwnerJournal:
 def operate(operation, directory):
     if operation not in ("status", "load", "unload", "resume"):
         raise ValueError("Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY")
+    if operation in ("load", "resume"):
+        require_owner_handoff()
     require_budget()
     bundle = PreparedPlugin(directory)
     journal = None

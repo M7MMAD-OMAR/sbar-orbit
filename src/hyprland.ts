@@ -1,4 +1,5 @@
 import { OrbitError, record } from "./errors";
+import { requireOwnerHandoff } from "./native-handoff-release";
 import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
@@ -54,6 +55,7 @@ export class NativeBackend {
   }
 
   static async create(_profile: string, options: NativeOptions, handoff?: HandoffSelection) {
+    if (handoff !== undefined) requireOwnerHandoff();
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.

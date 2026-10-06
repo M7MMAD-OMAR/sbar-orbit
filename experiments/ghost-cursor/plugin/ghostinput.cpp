@@ -445,7 +445,24 @@ class CPrivateOffers {
 static CPrivateOffers<CWLDataOfferResource> privateClipboardOffers;
 static CPrivateOffers<CPrimarySelectionOffer> privatePrimaryOffers;
 
+// Avoid the upstream lookup, whose predicate dereferences empty device entries.
+template <typename Protocol>
+static bool clientHasDataControlDevice(const Protocol& protocol, wl_client* client) {
+    if (!client) throw std::runtime_error("application client is unavailable");
+    if (!protocol) return false;
+    bool found = false;
+    for (const auto& device : protocol->m_devices) {
+        if (!device) throw std::runtime_error("data-control device inventory contains an unavailable device");
+        auto owner = device->client();
+        if (!owner) throw std::runtime_error("data-control device client is unavailable");
+        found = found || owner == client;
+    }
+    return found;
+}
+
 static void sendPrivateClipboardSelection(wl_client* client, SP<IDataSource> source) {
+    if (!client || !PROTO::data) throw std::runtime_error("private clipboard protocol is unavailable");
+    clientHasDataControlDevice(PROTO::data, client);
     const auto devices = std::ranges::count_if(PROTO::data->m_devices,
         [client](const auto& device) { return device->client() == client; });
     if (source && privateClipboardOffers.available() < static_cast<size_t>(devices))
@@ -459,6 +476,8 @@ static void sendPrivateClipboardSelection(wl_client* client, SP<IDataSource> sou
     }
 }
 static void sendPrivatePrimarySelection(wl_client* client, SP<IDataSource> source) {
+    if (!client || !PROTO::primarySelection) throw std::runtime_error("private primary selection protocol is unavailable");
+    clientHasDataControlDevice(PROTO::primarySelection, client);
     const auto devices = std::ranges::count_if(PROTO::primarySelection->m_devices,
         [client](const auto& device) { return device->client() == client; });
     if (source && privatePrimaryOffers.available() < static_cast<size_t>(devices))
@@ -602,6 +621,8 @@ static void restoreSelectionGuards(Guards& guards) {
 }
 
 static void guardPrimarySelection(wl_client* client) {
+    if (!client || !PROTO::primarySelection) throw std::runtime_error("primary selection admission is unavailable");
+    clientHasDataControlDevice(PROTO::primarySelection, client);
     if (!privateSelectionClient(client))
         return;
     for (const auto& device : PROTO::primarySelection->m_devices) {
@@ -625,6 +646,8 @@ static void guardPrimarySelection(wl_client* client) {
 }
 
 static void guardClipboard(wl_client* client) {
+    if (!client || !PROTO::data) throw std::runtime_error("clipboard admission is unavailable");
+    clientHasDataControlDevice(PROTO::data, client);
     if (!privateSelectionClient(client))
         return;
     for (const auto& device : PROTO::data->m_devices) {
@@ -715,6 +738,7 @@ static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_
         }
         return;
     }
+    try {
     const auto interface = wl_resource_get_class(message->resource);
     if (std::strcmp(interface, "zwlr_data_control_device_v1") == 0)
         guardDataControl(static_cast<CZwlrDataControlDeviceV1*>(wl_resource_get_user_data(message->resource)), wlrGuards);
@@ -724,6 +748,8 @@ static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_
         guardPrimarySelection(client);
     else if (std::strcmp(interface, "wl_data_device") == 0)
         guardClipboard(client);
+    } catch (const std::exception& error) { recordApplicationFailure(client, error.what()); }
+    catch (...) { recordApplicationFailure(client, "selection admission failed"); }
 }
 
 
@@ -749,6 +775,8 @@ static void restoreClientSelectionGuards(Guards& guards, wl_client* client) {
 }
 
 static void handbackApplication(const std::string& id) {
+    if (!g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
+        throw std::runtime_error("application handback protocols are unavailable; lease retained");
     const auto found = applicationLeases.find(id);
     if (found == applicationLeases.end())
         throw std::runtime_error("application lease is unavailable");
@@ -887,14 +915,18 @@ static std::string claimApplication(const std::string& address, const std::strin
     if (!selected || !selected->m_isMapped || !selected->m_workspace || !surface || selected->m_isX11)
         throw std::runtime_error("existing application target is unavailable or unsupported");
     auto client = surface->client();
+    if (!client || !g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
+        throw std::runtime_error("application handoff requires a live client and selection protocols");
+    clientHasDataControlDevice(PROTO::data, client);
+    clientHasDataControlDevice(PROTO::primarySelection, client);
     auto keyboard = g_pSeatManager->m_state.keyboardFocus.lock();
     auto pointer = g_pSeatManager->m_state.pointerFocus.lock();
     if ((keyboard && keyboard->client() == client) || (pointer && pointer->client() == client))
         throw std::runtime_error("switch to another application before handoff");
     if (g_pSeatManager->m_seatGrab || PROTO::data->dndActive())
         throw std::runtime_error("handoff is unsupported during a grab or drag");
-    if ((PROTO::dataWlr && PROTO::dataWlr->dataDeviceForClient(client)) ||
-        (PROTO::extDataDevice && PROTO::extDataDevice->dataDeviceForClient(client)))
+    if (clientHasDataControlDevice(PROTO::dataWlr, client) ||
+        clientHasDataControlDevice(PROTO::extDataDevice, client))
         throw std::runtime_error("existing application uses unsupported data-control devices");
     if (sourceBelongsToClient(g_pSeatManager->m_selection.currentSelection.lock(), client) ||
         sourceBelongsToClient(g_pSeatManager->m_selection.currentPrimarySelection.lock(), client))
@@ -1140,6 +1172,10 @@ struct STarget {
 
 static STarget resolve(const std::string& address, bool wake = true) {
     STarget t;
+    if (!g_pSeatManager || !PROTO::data || !PROTO::primarySelection) {
+        t.error = "refused: native input requires seat and selection protocols";
+        return t;
+    }
     std::string want = address;
     std::string stable, unit;
     if (const auto separator = want.find('@'); separator != std::string::npos) {
@@ -1182,8 +1218,8 @@ static STarget resolve(const std::string& address, bool wake = true) {
         return t;
     }
     t.surface = t.window->resource();
-    if (!t.surface) {
-        t.error = "window has no surface";
+    if (!t.surface || !t.surface->client()) {
+        t.error = "window has no live surface client";
         return t;
     }
     if (applicationLeaseForClient(t.surface->client()) && !applicationTarget) {
@@ -1223,6 +1259,8 @@ static STarget resolve(const std::string& address, bool wake = true) {
     if (!t.seat)
         t.error = "client has no seat";
     else if (wake) {
+      try {
+        clientHasDataControlDevice(PROTO::data, t.surface->client());
         guardPrimarySelection(t.surface->client());
         // Background rendering requires the client to keep processing paint events.
         auto xdg = t.window->m_xdgSurface.lock();
@@ -1231,6 +1269,8 @@ static STarget resolve(const std::string& address, bool wake = true) {
                 xdg->m_toplevel->m_pendingApply.states.end())
             awakeWindows[address] = t.window;
         t.window->setSuspended(false);
+      } catch (const std::exception& error) { t.error = std::string{"refused: native selection admission: "} + error.what(); }
+      catch (...) { t.error = "refused: native selection admission failed"; }
     }
     return t;
 }
@@ -1469,6 +1509,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addNotification(PHANDLE, "[ghostinput] built for another Hyprland, refusing", CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
         throw std::runtime_error("[ghostinput] version mismatch");
     }
+    if (!g_pSeatManager || !g_pHyprRenderer || !PROTO::data || !PROTO::primarySelection)
+        throw std::runtime_error("[ghostinput] mandatory native protocols are unavailable");
     agentKeyboard = makeShared<CAgentKeyboard>();
     const auto context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     const xkb_rule_names names{.rules = "evdev", .model = "pc105", .layout = "us,ara", .variant = "", .options = ""};
@@ -1745,6 +1787,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     if (!applicationLeases.empty())
         throw std::runtime_error("active application leases must be handed back before unload");
+    if (!g_pSeatManager || !g_pHyprRenderer || !PROTO::data || !PROTO::primarySelection)
+        throw std::runtime_error("native cleanup protocols are unavailable; cleanup remains incomplete");
     removeApplicationHooks();
     privateClipboardOffers.retire(nullptr, PROTO::data->m_offers);
     privatePrimaryOffers.retire(nullptr, PROTO::primarySelection->m_offers);

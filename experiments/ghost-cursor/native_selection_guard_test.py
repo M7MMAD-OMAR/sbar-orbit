@@ -226,6 +226,8 @@ class SelectionGuardTest(unittest.TestCase):
         directory = Path(cls.work.name)
         source = Path(os.environ.get("ORBIT_SELECTION_TEST_SOURCE", str(Path(__file__).with_name("plugin") / "ghostinput.cpp"))).read_text()
         functions = []
+        if "static bool clientHasDataControlDevice(" in source:
+            functions.append("template <typename Protocol>\n" + function(source, "static bool clientHasDataControlDevice("))
         for signature in ("static bool privateSelectionClient(", "static void clearSelectionClients("):
             if signature in source:
                 functions.append(function(source, signature))
