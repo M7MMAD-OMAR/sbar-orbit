@@ -77,3 +77,58 @@ Each inspected installer report says `installed: true`, dependencies done, hosts
 7. Keep the isolated, uncommitted native application-opening feature separate from this evidence. It has not been accepted or measured by these CI runs.
 
 Future CI commands come from the workflow: frozen Bun dependency installation, `bun run typecheck`, `bun experiments/verify-with-resources.ts`, and the two bounded installed/registration commands listed above. The installed acceptance program requires `GITHUB_ACTIONS=true` and a disposable runner. Full Fedora validation is blocked: the separate native preparation task stopped with `This content was flagged for possible cybersecurity risk`, with no tool or operation identity in the rejection metadata. Its uncommitted Docker/probe prototypes were not executed, and no Fedora workflow was written. No alternate agent or execution path is authorized to bypass that rejection. Actual Fedora claim/cursor remains `not measured`, and the owner handoff hold remains. A separately reviewed disposable native environment would be required after the external blocking condition is resolved. These are reproduction requirements, not commands executed while preparing this ledger.
+
+## Official main verification after native opening integration
+
+This section supersedes the earlier snapshot's current-source and uncommitted-feature
+statements while preserving every earlier failed baseline and corrected regression.
+PR #3 was merged at `c9960faba29f9a7a66650befdfe1c99fcff298c3`. The 12-path native
+opening feature was then integrated into official `main` as
+`e5e9a8db5c2394627d3101b48da89e4c94bfaf4c`. That is the exact tested source of
+[official run 37409928412](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412),
+which completed successfully with all nine jobs passing. Later documentation-only
+commits do not claim that a new runtime source was tested.
+
+| Runner and runtime | Pass | Skip | Fail | Test scope | Duration |
+| --- | ---: | ---: | ---: | --- | --- |
+| Ubuntu 24.04 x64, Bun 1.3.14 | 666 | 94 | 0 | 760 tests in 164 files | 300.41 seconds |
+| Windows x64, Bun 1.4.2 | 448 | 312 | 0 | 760 tests in 164 files | 228.46 seconds |
+| macOS arm64, Bun 1.3.14 | 459 | 301 | 0 | 760 tests in 164 files | 228.90 seconds |
+
+All six installed-browser and registered-hosts jobs passed. Each of the nine
+generated Claude, Codex and Hermes entries negotiated 16 MCP tools, compared with
+15 at the earlier revisions. Actual Claude, Codex and Hermes CLIs were absent on
+all three runners; all nine real CLI probes remain `not measured`. The three
+installed acceptance reports say `installed: true`, with dependencies, service,
+connector, verify and hosts done, and native skipped. Their scope remains a fresh
+checkout-built registry archive on runners with provisioned Bun/browser
+prerequisites, not acceptance of a published release on every external device.
+
+The coordinator also recorded bounded local typecheck success and four passing
+pure `native-open.test.ts` tests, zero failures, 15 assertions and 1074 milliseconds
+on the merged source. In the official remote suites, that file passed all four
+fixtures on Ubuntu; Windows and macOS each passed three and skipped the Linux
+worker fixture. The fixtures cover literal argv/workspace handling, delivery
+deduplication, retry after approval denial, fake-worker protected controls, and
+retaining approval denial after worker cleanup failure. They do not measure real
+native application opening or a real compositor.
+
+| Official run artifact | Link |
+| --- | --- |
+| installed-acceptance-ubuntu-24.04 | [installer and browser evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11388918382) |
+| installed-acceptance-windows-latest | [installer and browser evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11388194493) |
+| installed-acceptance-macos-latest | [installer and browser evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11389013041) |
+| verification-resources-ubuntu-24.04 | [runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11389315256) |
+| verification-resources-windows-latest | [runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11388492919) |
+| verification-resources-macos-latest | [runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412/artifacts/11388592734) |
+
+Resource evidence covers whole-runner CPU/memory, not Orbit-attributed usage.
+Throttling, guest steal, native performance, sustained reliability and arbitrary
+application workloads remain unmeasured. Skipped tests remain skipped, never passes.
+
+Older official run 37409577640 at `c9960fa` was superseded, and same-source run
+37409910488 was cancelled. Supersession or cancellation is not a source failure.
+Actual native claim, cursor, focus, input and cleanup remain `not measured`; the
+owner handoff release hold remains active. The native preparation task's content
+rejection and its lack of a specific tool/operation identity remain recorded above.
+No rejected Fedora prototype was executed by this verification task.
