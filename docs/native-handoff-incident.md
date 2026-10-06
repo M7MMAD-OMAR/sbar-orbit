@@ -13,7 +13,7 @@ The private compositor path remains available for verification on a separate mac
 | Real Chrome opening on workspace 4 | Observed before the incident |
 | Owner compositor crash during claim | Confirmed by core trace |
 | Cause of invalid device entry | Not measured |
-| New device inventory guard | Prepared, not measured |
+| New device inventory guard | Synthetic old-source failure and corrected-source pass measured in [run 37403797681](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37403797681). Actual compositor ABI safety and owner claim remain not measured; the release hold remains active. |
 | New release gate tests | Prepared, not measured |
 | Corrected Chrome claim and visible cursor | Not measured |
 | Remote regression and cleanup | Not measured |
