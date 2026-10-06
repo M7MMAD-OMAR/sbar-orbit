@@ -11,6 +11,8 @@ import { inheritedBackgroundClass } from "./macos";
 import { defaultViewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
 
+import { currentChromeTransportObservation, forwardChromeSend, forwardChromeEvent } from "./chrome-transport-observer";
+
 export type ChromeLaunchOptions = {
   /**
    * The binary to run. A profile can only be decrypted by the install that owns it, because the
@@ -552,11 +554,12 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
       connected.onopen = () => { clearTimeout(timer); resolve(); };
       connected.onerror = () => { clearTimeout(timer); reject(new OrbitError("BACKEND_FAILED", "Local Chrome connection failed")); };
     });
+    const observation = currentChromeTransportObservation(profile);
     const transport: ConnectOverCDPTransport = {
-      send: message => connected.send(JSON.stringify(message)), close: () => connected.close(),
+      send: message => forwardChromeSend(observation, connected, connected.send, message), close: () => connected.close(),
     };
-    connected.onmessage = event => transport.onmessage?.(JSON.parse(String(event.data)));
-    connected.onclose = () => transport.onclose?.();
+    connected.onmessage = event => forwardChromeEvent(observation, transport, event);
+    connected.onclose = () => { try { observation?.close(); } catch {} return transport.onclose?.(); };
     // The same allowance as the socket above, and for the same reason. The handshake that follows
     // runs against a Chrome that is still starting on the shared budget, so a shorter deadline here
     // only moves the starvation failure one line down. Measured: a run with the host busy enough for
