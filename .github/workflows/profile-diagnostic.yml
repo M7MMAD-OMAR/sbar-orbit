@@ -1,0 +1,54 @@
+name: profile diagnostic
+
+on:
+  push:
+    branches: [agents/orbit-profile-diagnostic-2026-10-06]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check types
+        run: bun run typecheck
+      - name: Record exact source and unchanged production bytes
+        run: |
+          mkdir -p output/profile-diagnostic
+          git rev-parse HEAD > output/profile-diagnostic/commit.txt
+          git diff --exit-code 0fe18e3f90ffc424957ffcccce085449e41093e2 -- src package.json bun.lock bunfig.toml scripts/limited.ts
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-before.sha256
+      - name: Observe one saved-account lifecycle
+        run: |
+          if timeout --signal=TERM --kill-after=5s 45s bun run scripts/limited.ts bun test --preload ./experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/profile.log 2>&1
+          then
+            result=0
+          else
+            result=$?
+          fi
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-after.sha256
+          printf '%s\n' "$result" > output/profile-diagnostic/exit-code.txt
+          cat output/profile-diagnostic/profile.log
+          exit "$result"
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-diagnostic-${{ github.run_id }}
+          path: output/profile-diagnostic/
+          if-no-files-found: error

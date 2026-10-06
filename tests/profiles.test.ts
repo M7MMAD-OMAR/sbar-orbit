@@ -9,7 +9,14 @@ import { Sessions } from "../src/session";
 import { expectPrivatePath } from "./private-path";
 
 test("saved account survives a fresh browser, has an exclusive lease and stays private", async () => {
-  const root = await createWorkspaceDirectory("account-test");
+  const started = performance.now();
+  const phase = (name: string) => console.error(JSON.stringify({ profilePhase: name, elapsedMs: Math.round(performance.now() - started) }));
+  const step = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
+    phase(`${name}:start`);
+    try { const result = await work(); phase(`${name}:done`); return result; }
+    catch (error) { phase(`${name}:failed`); throw error; }
+  };
+  const root = await step("workspace", () => createWorkspaceDirectory("account-test"));
   const accounts = join(root, "accounts");
   const aRoot = await mkdtemp(join(root, "broker-a-"));
   const bRoot = await mkdtemp(join(root, "broker-b-"));
@@ -21,7 +28,12 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     const authenticated = req.headers.get("cookie")?.includes(`fixture=${syntheticToken}`);
     return new Response(`<h1>${authenticated ? "Signed in" : "Signed out"}</h1><button onclick="fetch('/login').then(()=>{localStorage.setItem('fixture-theme','blue');document.querySelector('h1').textContent='Signed in'})">Connect fixture</button><output></output><script>document.querySelector('output').textContent=localStorage.getItem('fixture-theme')||'none'</script>`, { headers: { "Content-Type": "text/html" } });
   } });
-  const run = (owner: Sessions, method: string, params: unknown = {}) => owner.dispatch({ method, params });
+  let request = 0;
+  const run = (owner: Sessions, method: string, params: unknown = {}) => {
+    const value = params as { action?: { type?: string } };
+    return step(`${++request}:${owner === a ? "a" : "b"}:${method}${value.action?.type ? `:${value.action.type}` : ""}`,
+      () => owner.dispatch({ method, params }));
+  };
   const act = (owner: Sessions, session: object, action: unknown) => run(owner, "session.act", { ...session, requestId: crypto.randomUUID(), action });
   const nav = { type: "navigate", url: `http://127.0.0.1:${server.port}` };
   try {
@@ -40,7 +52,7 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     expect(await run(a, "session.account.save", first)).toEqual({ saved: true, accountName: "fixture" });
     await expectPrivatePath(join(accounts, "fixture", "state.json"), 0o600);
     await expectPrivatePath(join(accounts, "fixture"), 0o700);
-    await a.close();
+    await step("first-broker-close", () => a.close());
     const second = await run(b, "session.create", { backend: "browser", accountName: "fixture" }) as { sessionId: string };
     await act(b, second, nav);
     expect(await act(b, second, { type: "read", selector: "h1" })).toEqual({ text: "Signed in" });
@@ -60,5 +72,9 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     // A restore failure must release the lock for the next attempt.
     await writeFile(join(accounts, "fixture", "state.json"), '{"cookies":[],"origins":[]}', { mode: 0o600 });
     expect(await run(b, "session.create", { backend: "browser", accountName: "fixture" })).toMatchObject({ state: "running" });
-  } finally { await a.close(); await b.close(); server.stop(true); }
+  } finally {
+    await step("final-broker-a-close", () => a.close());
+    await step("final-broker-b-close", () => b.close());
+    server.stop(true); phase("fixture-server-stopped");
+  }
 }, 30000);
