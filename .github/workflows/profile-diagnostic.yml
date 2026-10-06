@@ -38,11 +38,12 @@ jobs:
         run: |
           mkdir -p output/profile-diagnostic
           git rev-parse HEAD > output/profile-diagnostic/commit.txt
-          git diff --exit-code 0fe18e3f90ffc424957ffcccce085449e41093e2 -- src package.json bun.lock bunfig.toml scripts/limited.ts
+          git ls-tree -r HEAD src package.json bun.lock bunfig.toml scripts/limited.ts > output/profile-diagnostic/source-tree.txt
           sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-before.sha256
       - name: Observe saved-account boundaries with the verification runtime
         env:
           PROBE: ${{ matrix.probe }}
+          ORBIT_BROWSER_STARTUP_TRACE: '1'
         run: |
           if [ "$PROBE" = isolated ]; then
             set -- tests/profiles.test.ts
