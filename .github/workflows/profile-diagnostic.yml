@@ -1,0 +1,67 @@
+name: profile diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        probe: [isolated, full-suite]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install website test dependencies
+        working-directory: website
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check types
+        run: bun run typecheck
+      - name: Record exact source and production tree identity
+        run: |
+          mkdir -p output/profile-diagnostic
+          git rev-parse HEAD > output/profile-diagnostic/commit.txt
+          git ls-tree -r HEAD -- src package.json bun.lock bunfig.toml scripts/limited.ts > output/profile-diagnostic/production-tree.txt
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-before.sha256
+      - name: Observe saved-account boundaries with the verification runtime
+        env:
+          PROBE: ${{ matrix.probe }}
+          ORBIT_PROFILE_TRACE: '1'
+        run: |
+          if [ "$PROBE" = isolated ]; then
+            set -- tests/profiles.test.ts
+          else
+            set --
+          fi
+          if timeout --signal=TERM --kill-after=5s 900s bun --smol run scripts/limited.ts bun --smol test --preload ./experiments/profile-diagnostic-preload.ts "$@" > output/profile-diagnostic/profile.log 2>&1
+          then
+            result=0
+          else
+            result=$?
+          fi
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-after.sha256
+          printf '%s\n' "$result" > output/profile-diagnostic/exit-code.txt
+          cat output/profile-diagnostic/profile.log
+          exit "$result"
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-diagnostic-${{ matrix.probe }}-${{ github.run_id }}
+          path: output/profile-diagnostic/
+          if-no-files-found: error

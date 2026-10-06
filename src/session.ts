@@ -315,13 +315,13 @@ export class Sessions {
         // a read only snapshot inside the profile would stop the profile itself being removed.
         session.releasing ??= (async () => {
           const failures: unknown[] = [];
-          try {
-            await session.tail;
-            await account?.release();
-            await session.releaseClone?.();
-            await session.egress.close();
-            if (session.restoreStore) await clearRestorePoints(session.restoreStore);
-          } catch (error) { failures.push(error); }
+          await session.tail;
+          // Each resource must get its release attempt even when an earlier release fails.
+          try { await account?.release(); } catch (error) { failures.push(error); }
+          try { await session.releaseClone?.(); } catch (error) { failures.push(error); }
+          try { await session.egress.close(); } catch (error) { failures.push(error); }
+          try { if (session.restoreStore) await clearRestorePoints(session.restoreStore); }
+          catch (error) { failures.push(error); }
           try { await this.removeProfile(profile); } catch (error) { failures.push(error); }
           if (failures.length === 1) throw failures[0];
           if (failures.length > 1) throw new AggregateError(failures, "Owned session resource release and profile removal failed");
@@ -474,9 +474,9 @@ export class Sessions {
       if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
       return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
     }
-    // Consulting takes as long as the advisor takes, so it happens before the action is queued and
-    // the session's own ordering is untouched by it.
-    return (async () => {
+    // Accepted advisor work belongs to the same queue that pause drains. Otherwise a late allow
+    // could apply input after pause has acknowledged that no agent work remains.
+    return this.enqueue(session, async () => {
       const pending = journalEntry({
         sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
         actionType: action.type, decision, url: destination,
@@ -485,10 +485,11 @@ export class Sessions {
       const answer = await consultAdvisor(session.policy.advisor!, {
         pending, tail: session.journal.slice(-20), reason: decision.reason, ruleId: decision.ruleId,
       });
+      this.ensureOpen(session);
       if (answer.decision.outcome === "deny") return refuse(answer.decision, answer.decidedBy);
       record(answer.decision, answer.decidedBy);
-      return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
-    })();
+      return this.track(session, "agent", action.type, () => this.guarded(session, action));
+    });
   }
   /**
    * Take a restore point before the action, where one would mean anything. Nothing is taken before a
@@ -709,7 +710,12 @@ export class Sessions {
       const id = text(params.sessionId, "sessionId");
       const known = this.sessions.get(id);
       if (known && known.state !== "closed") throw new OrbitError("SESSION_OPEN", "End the session before removing it from the list");
-      if (known) this.sessions.delete(id);
+      if (known) {
+        // A backend exit marks it closed before asynchronous resource release finishes.
+        // Keep the entry if cleanup fails so stop and broker shutdown still report it.
+        await known.releasing;
+        this.sessions.delete(id);
+      }
       return { sessionId: id, forgotten: known !== undefined };
     }
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow", "session.restore"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");

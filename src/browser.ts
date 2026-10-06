@@ -3,7 +3,8 @@ import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type CDPSession, type Page } from "playwright";
 import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
+import { readUploadPayloads } from "./upload-payload";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
@@ -236,15 +237,16 @@ export class BrowserBackend {
    */
   private async upload(page: Page, selector: string, files: string[]) {
     const resolved = await resolveUploads(files);
-    const paths = resolved.map(file => file.path);
+    // A confined browser cannot read host paths. Transfer only the files authorized by this action.
+    const payloads = await readUploadPayloads(resolved);
     const target = page.locator(selector);
     const isFileInput = await target.evaluate(element => element instanceof HTMLInputElement && element.type === "file");
-    if (isFileInput) await target.setInputFiles(paths);
+    if (isFileInput) await target.setInputFiles(payloads);
     else {
       const [chooser] = await Promise.all([page.waitForEvent("filechooser"), target.click()]);
-      await chooser.setFiles(paths);
+      await chooser.setFiles(payloads);
     }
-    return { applied: true, via: isFileInput ? "input" : "chooser", files: resolved.map(file => ({ name: basename(file.path), bytes: file.bytes })) };
+    return { applied: true, via: isFileInput ? "input" : "chooser", files: payloads.map(file => ({ name: file.name, bytes: file.buffer.length })) };
   }
   private select(tab: number): Page {
     const pages = this.context.pages();

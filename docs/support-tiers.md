@@ -6,12 +6,31 @@ This file exists so that a person installing Orbit on a machine this project has
 tell, before they file anything, whether they have found a bug or have simply become the first person
 to run it there. Those are different reports and they go to different forms.
 
-**Orbit is measured on exactly one host class: Fedora 44, wlroots, cgroup delegation.** Every row
-below that names another platform is reasoning about vendor documentation, not a test, except: the
-Linux rows marked `Limited`, which since 14 September 2026 come from containers of those families run
-on the measured host; the Windows rows, which since 16 September 2026 come from a Windows 11 guest;
-and the macOS rows, which since 18 September 2026 come from a GitHub `macos-26-arm64` runner that ran
-Orbit's own suite, install, broker and containment experiment.
+**Evidence snapshot, 6 October 2026, documentation base `0faa05c`.** Fedora 44,
+wlroots and cgroup delegation carry the named local browser and native measurements.
+Other evidence is narrower: Linux-family containers, a Windows 11 guest and hosted
+Ubuntu, Windows and macOS runners. Their executed rows retain their stated limits;
+remaining platform arguments are `Reasoned`. No host-class match, installation or
+package version upgrades a capability tier.
+
+The checkout declares `0.2.0`, without establishing a current registry `latest` or tag.
+The latest retained full CI run is 37415015766 on exact runtime source `1e9e88e`:
+Ubuntu 687 pass / 94 skip, Windows 469 pass / 312 skip, macOS 480 pass / 301 skip,
+zero failures, all nine jobs successful. Native installation was skipped; nine
+generated Claude, Codex and Hermes entries negotiated 16 MCP tools, while actual
+host CLIs were absent. These are **Limited** disposable installed-browser and
+registration checks, not full portable acceptance. See the
+[latest source-bound ledger](portability-verification.md#corrected-exit-measurement-and-fresh-windows-owned-tree-cleanup-evidence)
+and [completion matrix](completion-status.md). Historical rows below keep their dates
+and scope; the snapshot adds evidence without silently replacing failed results.
+
+**Owner desktop handoff remains held unconditionally after the 6 October crash.**
+Corrected real Chrome claim, cursor, focus, clipboard isolation, ABI safety and
+cleanup remain `not measured`. Pure refusal and synthetic inventory tests are
+Limited supporting evidence. There is no runtime override. The
+[incident contract](native-handoff-incident.md) sets the exact release requirements.
+The [rejected native preparation](portability-verification.md#unfinished-acceptance-gates)
+is externally blocked and must not be continued through an alternate agent or path.
 
 Run `sbar-orbit doctor --report` before reading further. It is local, it needs no broker, and the
 `tier.assigned` it prints is the row that applies to you. It is safe to paste into a public issue, and
@@ -25,7 +44,7 @@ is the file the tracker is judged against.
 
 | Tier | Exact promise |
 |---|---|
-| **Measured** | A named test in [validation.md](validation.md) ran on a host of this class and passed, and the command that reproduces it is in this repository |
+| **Measured** | A named test in [validation.md](validation.md) or the [portability ledger](portability-verification.md) ran on a host of this class and passed, and the command that reproduces it is in this repository |
 | **Limited** | It ran here and passed inside a stated limit: a fixture rather than the real thing, or a subset of the capability. The limit is printed beside the tier, never omitted |
 | **Failed** | It ran here and did not pass. The result is preserved, not retried into silence |
 | **Reasoned** | The platform documents the primitive. No host of this class is in this project's reach and no test has run on one. Installing here produces a test report, not a bug report |
@@ -33,14 +52,16 @@ is the file the tracker is judged against.
 
 `Measured` is never awarded by a probe. The most a capability probe can say is that your host is the
 same class as the one the measurements were taken on, which is a reason to expect a test report rather
-than a bug report. `bun run verify` is how a host earns anything stronger.
+than a bug report. Executed capability checks such as `bun run verify` supply evidence; a passing suite only covers
+the tests that actually ran and does not establish every capability in this table.
 
 A `Measured` row resting on one external host prints `Measured, 1 host, issue #N` in its evidence
 column. That is the evidence column doing its job, not a sixth tier.
 
 ## Fedora 44, wlroots, cgroup delegation
 
-Existing application handoff on Hyprland 0.56.2 is **Limited**. A disposable headless
+Historical existing application handoff on Hyprland 0.56.2 was **Limited**, recorded on 5 October.
+It does not authorize current owner handoff or resolve the 6 October crash and hold above. A disposable headless
 compositor retained one already running GTK application, its window and unsaved text while
 a second application retained its focus, workspace and pointer. The final native candidate
 passed 13 controller checks, 7 broker RPC checks and a visible text marker capture within
@@ -51,7 +72,7 @@ not measured. The contract checks are in `tests/native-existing.test.ts`; the pr
 measurement and usage limits are described in [existing application handoff](existing-application-handoff.md).
 This result does not upgrade the platform rows below. Recorded 5 October 2026.
 
-The only class with rows that are not reasoning. Measured from `0.1.0-alpha.1` onward; each row carries its own date. On 28 September 2026 the latest native suite after the Codex local history snapshot ran **571 tests across 117 files: 544 pass, 27 skip, 0 fail**. An earlier standard suite after the Zen Sync and core filter corrections ran 544 tests across 112 files: 500 pass, 44 skip, 0 fail. An earlier run after the native socket policy and public web proxy changes ran 533 tests across 110 files: 489 pass, 44 skip, 0 fail. A prior run after the private bus and egress corrections read 516 tests across 106 files: 473 pass, 43 skip, 0 fail. On 20 September 2026 two runs read **458 pass, 0 fail, 27 skip** on the 485-test revision, and a later run on the revision that adds the workspace-sweep regression read 458 pass, 27 skip and one failure in `tests/viewer-layout.test.ts`. Both that failure and an earlier one in `tests/native-viewer-scroll.test.ts` happen only while another agent is working in the same slice: they passed alone in 16.66 s and 4.72 s. Without `ORBIT_TEST_NATIVE=1` the same suite read 444 pass, 41 skip, 0 fail. At `6a802f5` with native tests it read 143.85 s on an idle host. The failures are retained rather than retried into silence, see [validation](validation.md). On 22 September 2026, at the routing fix revision, one run with `ORBIT_TEST_NATIVE=1` read 468 pass, 27 skip, 0 fail and one without read 454 pass, 41 skip, 0 fail.
+The primary local native measurement class. Other sections carry executed evidence at their stated tiers. Measured from `0.1.0-alpha.1` onward; each row carries its own date. On 28 September 2026 the latest native suite after the Codex local history snapshot ran **571 tests across 117 files: 544 pass, 27 skip, 0 fail**. An earlier standard suite after the Zen Sync and core filter corrections ran 544 tests across 112 files: 500 pass, 44 skip, 0 fail. An earlier run after the native socket policy and public web proxy changes ran 533 tests across 110 files: 489 pass, 44 skip, 0 fail. A prior run after the private bus and egress corrections read 516 tests across 106 files: 473 pass, 43 skip, 0 fail. On 20 September 2026 two runs read **458 pass, 0 fail, 27 skip** on the 485-test revision, and a later run on the revision that adds the workspace-sweep regression read 458 pass, 27 skip and one failure in `tests/viewer-layout.test.ts`. Both that failure and an earlier one in `tests/native-viewer-scroll.test.ts` happen only while another agent is working in the same slice: they passed alone in 16.66 s and 4.72 s. Without `ORBIT_TEST_NATIVE=1` the same suite read 444 pass, 41 skip, 0 fail. At `6a802f5` with native tests it read 143.85 s on an idle host. The failures are retained rather than retried into silence, see [validation](validation.md). On 22 September 2026, at the routing fix revision, one run with `ORBIT_TEST_NATIVE=1` read 468 pass, 27 skip, 0 fail and one without read 454 pass, 41 skip, 0 fail.
 
 | Capability | Tier | Evidence | Date |
 |---|---|---|---|
@@ -176,7 +197,7 @@ person at them, and one of the two has no Chrome, only Edge.
 | The documented agent install (`docs/agent-install.md`) | Limited | `install.cmd` is the Windows door into the same `scripts/install.ts`, because the contract called itself cross platform while naming only `./install.sh`. Run on the guest as the contract instructs: exit 0, valid JSON, `installed: true`, `browserSessions: true`, launcher at `bin\sbar-orbit.cmd`. The first run emitted three unactionable Fedora remedies on Windows, now 0, and `nativePrerequisitesFound` is stated false rather than inherited from an empty check list |
 | The source tree itself | Limited | On the guest, re-measured 18 September 2026 from the PUBLISHED archive in a clean directory: `bun install --frozen-lockfile` exit 0 with 100 packages, `bun run typecheck` exit 0, and `bun test` **270 pass, 0 fail, 113 skip** on the guest at that revision and **373 pass, 118 skip, 0 fail** on the Windows CI runner at `78e8a7b` (run 35505546868, 20 September 2026), having been **368 pass, 118 skip, 0 fail** at `9f48b96` and one failure at `f77b22d`, which was the cyclic process table and is fixed: every test that can run on Windows does and passes, though a skip is not a pass and the rest are Linux and macOS capabilities. Six rounds were needed to get there and the failures were read one at a time, not by pattern: eight in the first round were `~/.cache` fixtures, 8.3 short path comparisons and a 5000 ms budget against a 330 ms process spawn; one round measured a torn git index rather than the platform; six more were darwin path builders using the host's separator, which is product code, now `posix.join`. Two product defects came out of it, `claimSocket` deleting a path it could not inspect and an unused `windowsChromeArguments` that had drifted from the launcher it documented. See [windows-measured.md](windows-measured.md) sections 27 to 29 |
 | Leaving the person's own browser alone | Limited | Measured on the guest with a real second browser running first, not headless and with its own window: Orbit took 12 processes in its own profile rather than handing off to the singleton, reused none of the person's 14, stayed headless, never named their profile, drove its own page, and left all 14 processes and their window intact after closing its own. `tests/person-browser.test.ts` runs on both platforms and was shown to FAIL when pointed at the other browser's profile |
-| Reaping an owned browser when the broker dies | Limited | Measured through a real broker death on the guest, not in isolation: 12 browser processes with a live session, broker killed with `taskkill /F` so no cleanup handler runs, **0 survivors after 236ms** and 0 `msedge` left on the machine. A fresh broker then answered `SESSION_NOT_FOUND` for the dead one's session and rendered a new one. `tests/browser-crash.test.ts` enumerates through `Win32_Process` on Windows rather than being skipped, and passes there on the same assertions Linux runs |
+| Reaping an owned browser when the broker dies | Limited: captured trees on named guest/runner cases | Historical guest: 12 browser processes, broker killed with `taskkill /F`, zero survivors after 236 ms; fresh broker rejected the stale session. On 6 October, run 37415015766 at `1e9e88e` captured ten stable Chrome creation identities, all matching the private job membership; all exited with nonzero exit times, original PID survivor list empty, 31 ms over two polls. This proves that captured tree in one run. Earlier PID `7528` identity and startup readiness failure remain unresolved; `dcf8279` prematurely sampled witnesses without measuring eventual exit. Broader repeatability and startup-failure cleanup are not measured. See [retained source-bound evidence](portability-verification.md#corrected-exit-measurement-and-fresh-windows-owned-tree-cleanup-evidence). |
 | Private storage for a person's data | Limited | Measured on the guest through the real `Diagnostics` code: the journal file's ACL is exactly `NT AUTHORITY\SYSTEM`, `BUILTIN\Administrators` and the owning user, with no Everyone, no ANONYMOUS LOGON and no `BUILTIN\Users`, the same set the broker socket inherits. Windows ignores the `mode` argument Orbit passes, so `tests/private-path.ts` asserts the ACL there and the POSIX mode on Linux, and it was shown to REFUSE a file granted `Everyone:(R)` before being trusted. Secrets were never in the journal to begin with: it records method, trace ID and timestamp, never params |
 | Policy advisor (`consult` decisions) | Limited | Every branch of the contract run on the guest against real `.cmd` advisors: allow, deny, non zero exit, unparsable output, and a hang denied on the clock at 1517ms against a 1500ms timeout. Every failure mode is a deny. `parsePolicy` accepts a Windows absolute path, refuses a relative one, and refuses a UNC path so a policy cannot consult a program across the network. Before this the POSIX-only `startsWith("/")` test made an advisor impossible to configure on Windows at all |
 | Atomic version switching (`src/update.ts`) | Limited | The symlink swap does not port: measured unelevated on the guest, `symlink(dir)` is EPERM and `rename` over a live junction is EPERM. The cause is not reparse points, because `rename` over an empty PLAIN directory is EPERM too while the same call succeeds on Linux. Windows now records the current version in a pointer file swapped by rename, which is atomic there: on the guest it activated, recorded a rollback target, survived a reader holding the pointer open across a swap, and kept the rollback target through a prune, with no symlink created. Linux keeps its symlink unchanged |

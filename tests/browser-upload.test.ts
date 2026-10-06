@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { call, startBroker } from "../src/ipc";
 import { classify } from "../src/policy";
+import { detectPlatform } from "../src/platform";
+
+const confinable = (await detectPlatform()).confinedEgress;
 
 // A page with the two shapes real upload pages use: a plain file input, and a styled button that opens
 // the chooser of a hidden one. Whatever the page receives is read back into #got.
@@ -36,14 +39,15 @@ test("upload is irreversible, so a default session refuses it", async () => {
   } finally { await broker.close(); fixture.stop(true); await rm(dir, { recursive: true, force: true }); }
 }, 30000);
 
-test("a session allowed irreversible actions hands files to an input or to the chooser a button opens", async () => {
+for (const confined of [false, ...(confinable ? [true] : [])]) test(`an authorized ${confined ? "confined" : "ordinary"} session delivers file bytes to an input and a chooser`, async () => {
   const fixture = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(page, { headers: { "Content-Type": "text/html" } }) });
   const dir = await mkdtemp(join(tmpdir(), "orbit-upload-"));
   const broker = await startBroker();
   try {
     const a = join(dir, "a.txt"), b = join(dir, "b.txt"), link = join(dir, "link.txt");
     await writeFile(a, "alpha"); await writeFile(b, "beta"); await symlink(a, link);
-    const session = await call(broker.socket, "session.create", { backend: "browser", policy: { origins: "any", allow: ["read", "navigate", "write", "irreversible"], deny: [] } }) as { sessionId: string };
+    const session = await call(broker.socket, "session.create", { backend: "browser", policy: { origins: confined ? [`http://127.0.0.1:${fixture.port}`] : "any", allow: ["read", "navigate", "write", "irreversible"], deny: [] } }) as { sessionId: string; egressTier: string };
+    if (confined) expect(session.egressTier).toBe("namespace");
     const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
     const got = async () => { for (let i = 0; i < 60; i++) { const r = await act({ type: "read", selector: "#got" }) as { text: string }; if (r.text) return r.text; await Bun.sleep(25); } return ""; };
     await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/` });
