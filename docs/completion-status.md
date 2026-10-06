@@ -7,7 +7,7 @@ passed all nine normal workflow jobs on that exact merge. PR 6 changes three hos
 evidence collector/comparator files, with 45 passing provenance controls; it does
 not change production runtime behavior. Historical evidence remains separately
 identified below.
-The last main snapshot with all nine normal jobs passing is `449e4de`:
+An earlier main snapshot with all nine normal jobs passing is `449e4de`:
 [run 37508929441](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37508929441)
 passed all nine normal jobs. The isolated candidates below are not part of that
 tested main source.
@@ -27,6 +27,10 @@ time predates both its alleged Chrome parent and the captured Chrome root. That 
 inconsistency requires investigation of process attribution; it does not prove a
 Chrome survivor. Both failures remain open. The earlier green run does not prove
 the current main source passes its complete workflow.
+The most recent recorded all-nine passing snapshot is `be8be0f`:
+[run 37513298533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37513298533)
+completed successfully on all three platforms. This later passing run does not
+explain the saved-account deadline or inconsistent process attribution above.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -78,7 +82,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `a734606982f5d9f389130f40a140560104232910`; it is not merged into main.
+at `eb461a7224e8eb24aa9067189a07aed7c1abd1d2`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -133,9 +137,25 @@ received `TIMEOUT` at the unchanged 3000-millisecond deadline. Windows failed th
 stopping-session profile/restore fixture with `DEADLINE_EXCEEDED`. These failures
 remain open; passing product flows do not establish their causes or complete
 platform acceptance.
+The current test-only follow-up retains actual capture, navigation-commit,
+document-generation and stopping-session phase order without changing the
+operations, assertions or deadlines. Its 45 focused tests, TypeScript, website
+build, one stopping-session test and meaningful old-viewer focus negative passed
+on the final source, with the original viewer files restored exactly afterward.
+[Current run 37514795212](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37514795212)
+completed with seven jobs passing, including Windows, and macOS and Ubuntu suites
+failing. Its actual checkout was merge `b170c582` into main `be8be0f`, with the
+selected product/runtime/test bytes identical to the candidate; the complete
+trees differ in six documents and three host evidence files. Navigation and
+stopping-session phase cases passed on all platforms. macOS separately hit the
+tab-and-resize frame deadline. Ubuntu's initial English canvas remained hidden
+after a concurrent document change correctly invalidated an observation. The
+existing cost-based polling backoff scheduled recovery after the test's initial
+wait ended; this is not evidence of a permanently stopped poll loop. These
+remaining failures require discriminating evidence and repair, not weaker waits.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
-`d71850c3ff249195305bbe7e10ce2b1b63423a92`. It adds opt-in startup diagnostics
+`fd7f5fb2d103a30b3f7629456ef4f492492fb9ea`. It adds opt-in startup diagnostics
 with category-only stderr, selected fixture-root gating and shared-slice counters.
 Five focused local tests and TypeScript passed. Required independent reviews
 remain unproven. Its [normal run 37503614580](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503614580)
@@ -160,6 +180,39 @@ Chrome versions differed, so this is not a controlled same-browser timing compar
 No failing startup was reproduced. Positive CPU throttling counters in passing
 launches do not prove the original timeout cause; unavailable I/O counters remain
 unavailable. These diagnostics do not constitute a startup repair or acceptance.
+The current follow-up adds owned-session capture phase diagnostics, sanitized
+actual MCP error metadata and explicit shutdown outcome checks. Fourteen local
+tests across five checks and TypeScript passed on its final source, with no
+failures or skips. Linux tests leave the Mac instrumentation inert. Its direct
+same-runner Mac diagnostic failed with runner exit code 2 in
+[run 37515340231](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37515340231),
+while [normal CI 37515345686](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37515345686)
+passed all nine jobs on merge `b7582008`. That merge's production and capture
+files match the candidate; six documents and three host evidence files differ.
+The diagnostic artifact was advertised but could not be downloaded, so actual
+phase, source-drift and browser-identity classification remains unavailable.
+Actual Mac attribution and both independent reviews remain unproven. Earlier
+full raw logs were overwritten through reused paths; original engine receipts
+remain historical, but those missing raw bytes cannot be verified. Final-source
+logs are retained in a separate immutable packet. No lost log is reconstructed
+or replaced by a later run.
+
+[PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8) is a separate draft at
+`a1f818c5b49d31a3e016ce94d3a7f4a0bc7a989f`. It prepares two private owned-child
+Windows trials comparing deferred acquisition with a handle retained while its
+original process is alive. Creator handles close before exit. TypeScript, three
+portable controls and the workflow structure check passed; those checks do not
+establish actual Windows behavior. The collector is unchanged, unknown acquisition
+is never promoted to cleanup success, and the birth-order attribution defect
+remains a separate investigation.
+[Run 37516200981](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37516200981)
+failed before any job started: GitHub rejected `runner.temp` in job-level `env`.
+No actual trial, process cleanup receipt or source manifest exists for that run.
+The current narrow correction initializes the evidence directory inside the
+runner step. Its structural check rejected the preserved failed workflow and
+accepted the current context usage; TypeScript and three portable controls
+passed again. The corrected workflow is published on the isolated draft branch.
+Actual Windows evidence and independent review remain unproven.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational

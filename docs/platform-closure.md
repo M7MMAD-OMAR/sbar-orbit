@@ -39,6 +39,13 @@ exited Chrome witnesses plus an alive `PING.EXE` witness with a creation time
 older than its alleged parent and root, an inconsistent process attribution.
 The current main workflow is therefore not fully green; both failures require
 resolution before final integration acceptance.
+The most recent recorded all-nine passing snapshot is `be8be0f` in
+[run 37513298533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37513298533).
+This later passing result does not explain either earlier failure or close the
+remaining acceptance gates. Draft PR 7 now carries the same-runner Mac capture
+diagnostic, and draft [PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8)
+prepares a Windows acquisition-order counterexample. Neither is a production
+cause or repair claim; actual retained platform evidence and review are required.
 
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
@@ -71,7 +78,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at a734606; 45 focused tests and meaningful old-focus negative pass locally; actual Mac product flows pass, but separate Mac capture and Windows restore failures keep CI incomplete; current review unproven |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at eb461a7; final local checks pass; current synthetic-merge CI passes seven jobs but fails Mac frame deadline and Ubuntu initial canvas recovery timing; current review unproven |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |
