@@ -1,3 +1,4 @@
+import { installedStartupEnvironment } from "./installed-startup-diagnostic";
 import { homedir } from "node:os";
 import { dirname, join, resolve, delimiter } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -299,7 +300,7 @@ export async function runInstall(options: InstallOptions = {}) {
     if (process.platform === "win32") {
       if (dryRun) return { state: "skipped", detail: `would register and start an account-specific Orbit logon task` };
       const { enableLogonTask } = await import("./windows-autostart");
-      const task = await enableLogonTask(launcher, { startNow: true });
+      const task = await enableLogonTask(launcher, { startNow: true, environment: installedStartupEnvironment(launcher) });
       const ready = task.registered && task.started;
       return {
         state: ready ? "done" : "failed",
