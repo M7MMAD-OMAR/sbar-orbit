@@ -239,21 +239,41 @@ function installedExecutable(unit: string): string | undefined {
   } catch { return undefined; }
 }
 
-export function serviceUnit(launcher: string, unitDirectory = autostartPaths().units) {
-  const home = process.env.HOME || homedir();
-  const config = resolve(process.env.XDG_CONFIG_HOME || join(home, ".config"));
+const optionalUnitPaths = ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "FLATPAK_USER_DIR", "FLATPAK_SYSTEM_DIR", "BUN_INSTALL"] as const;
+
+function unitEnvironment(unitDirectory: string, env: NodeJS.ProcessEnv, bunDirectory: string) {
+  const home = env.HOME || homedir();
+  const config = resolve(env.XDG_CONFIG_HOME || join(home, ".config"));
   const environmentFile = join(config, "sbar-orbit/broker.env");
   // EnvironmentFile uses a literal path, with percent specifiers but without shell unquoting.
   if (/[\r\n\0]/.test(environmentFile))
     throw new OrbitError("CONFIG_REQUIRED", "Broker configuration path must not contain line breaks or NUL");
-  // The user manager need not share the installing shell's paths. Carry only these selected values.
-  const environment = Object.entries({ HOME: home, XDG_CONFIG_HOME: config, ORBIT_UNIT_DIR: resolve(unitDirectory) })
+  const selected: Record<string, string> = { HOME: home, XDG_CONFIG_HOME: config, ORBIT_UNIT_DIR: resolve(unitDirectory) };
+  // Persist only selected installation paths, never credentials or arbitrary operator switches.
+  for (const key of optionalUnitPaths) {
+    const value = env[key];
+    if (value && posix.isAbsolute(value)) selected[key] = value;
+  }
+  // PATH is needed for custom Bun and application discovery. Pin the current Bun first,
+  // exclude relative entries, and deduplicate the launcher's repeated Bun prefix for drift checks.
+  selected.PATH = [...new Set([bunDirectory, ...(env.PATH || "").split(":").filter(value => posix.isAbsolute(value)),
+    "/usr/local/bin", "/usr/bin", "/bin"])].join(":");
+  for (const [key, value] of Object.entries(selected)) {
+    if (/[\r\n\0]/.test(value))
+      throw new OrbitError("CONFIG_REQUIRED", `Service path ${key} must not contain line breaks or NUL`);
+  }
+  // XDG_RUNTIME_DIR belongs to the user manager, not a possibly temporary installer session.
+  const environment = Object.entries(selected)
     .map(([key, value]) => `Environment=${JSON.stringify(`${key}=${value}`).replace(/%/g, "%%")}`);
+  // EnvironmentFile overrides Environment assignments, including operator-selected path overrides.
+  return [`EnvironmentFile=-${environmentFile.replace(/%/g, "%%")}`, ...environment];
+}
+
+export function serviceUnit(launcher: string, unitDirectory = autostartPaths().units, env = process.env, bunDirectory = dirname(process.execPath)) {
   return ["[Unit]", "Description=Sbar Orbit local broker", "", "[Service]", "Type=simple",
     `ExecStart=${unitExecutable(launcher)} serve --managed-socket`, "Slice=sbarorbit.slice",
     // Operator switches such as ORBIT_NATIVE_RENDERER live in a file the installer never rewrites.
-    `EnvironmentFile=-${environmentFile.replace(/%/g, "%%")}`,
-    ...environment,
+    ...unitEnvironment(unitDirectory, env, bunDirectory),
     "Restart=on-failure", "RestartSec=2", "Nice=10",
     // The broker owns browsers and private displays, so give it time to close them.
     "TimeoutStopSec=30", "KillMode=mixed", "", "[Install]", "WantedBy=default.target", ""].join("\n");
@@ -272,10 +292,11 @@ export function updateTimerUnit() {
     "OnCalendar=daily", "RandomizedDelaySec=4h", "Persistent=true", "", "[Install]", "WantedBy=timers.target", ""].join("\n");
 }
 
-export function updateServiceUnit(launcher: string) {
+export function updateServiceUnit(launcher: string, unitDirectory = autostartPaths().units, env = process.env, bunDirectory = dirname(process.execPath)) {
   return ["[Unit]", "Description=Sbar Orbit update check", "", "[Service]", "Type=oneshot",
     // Preparing a version downloads and unpacks, which is work like any other and belongs in the budget.
-    `ExecStart=${unitExecutable(launcher)} update run`, "Slice=sbarorbit.slice", "Nice=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
+    `ExecStart=${unitExecutable(launcher)} update run`, "Slice=sbarorbit.slice", ...unitEnvironment(unitDirectory, env, bunDirectory),
+    "Nice=15", "", "[Install]", "WantedBy=default.target", ""].join("\n");
 }
 
 const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit,
@@ -314,6 +335,28 @@ export async function uninstallService(unitDirectory: string) {
   return { removed, sourceAndDataRetained: true };
 }
 
+function installedPathDefaults(unit: string) {
+  const allowed = new Set<string>(["HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "PATH", ...optionalUnitPaths]);
+  const defaults: NodeJS.ProcessEnv = {};
+  for (const line of unit.split("\n").filter(line => line.startsWith("Environment="))) {
+    const assignment: unknown = JSON.parse(line.slice("Environment=".length).replace(/%%/g, "%"));
+    if (typeof assignment !== "string") throw new Error("Invalid service path assignment");
+    const separator = assignment.indexOf("="), key = assignment.slice(0, separator), value = assignment.slice(separator + 1);
+    if (separator < 1 || !allowed.has(key) || defaults[key] !== undefined || /[\r\n\0]/.test(value))
+      throw new Error("Invalid service path assignment");
+    if (key !== "PATH" && (!value || !(posix.isAbsolute(value) || win32.isAbsolute(value))))
+      throw new Error("Invalid service path directory");
+    defaults[key] = value;
+  }
+  for (const key of ["HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "PATH"]) {
+    if (!defaults[key]) throw new Error(`Missing service path assignment: ${key}`);
+  }
+  const bunDirectory = process.platform === "win32" ? dirname(process.execPath) : defaults.PATH?.split(":")[0];
+  if (!bunDirectory || !(posix.isAbsolute(bunDirectory) || win32.isAbsolute(bunDirectory)))
+    throw new Error("Invalid service Bun search directory");
+  return { defaults, bunDirectory };
+}
+
 /**
  * Whether the units on disk are the ones this version of Orbit writes.
  *
@@ -349,10 +392,20 @@ export async function serviceUnitDrift(unitDirectory: string, launcher?: string)
     const needsLauncher = build.length > 0;
     const named = needsLauncher ? launcher ?? installedExecutable(installed) : "";
     if (named === undefined) { drifted.push({ unit: name, reason: "the installed unit has no ExecStart to compare against" }); continue; }
-    if (installed !== build(named, unitDirectory)) {
+    let expectedUnit: string;
+    try {
+      // Compare recorded installation defaults, not effective broker.env overrides or a
+      // launcher-modified PATH. The builder still enforces the whitelist and every directive.
+      const snapshot = needsLauncher ? installedPathDefaults(installed) : undefined;
+      expectedUnit = build(named, unitDirectory, snapshot?.defaults, snapshot?.bunDirectory);
+    } catch {
+      drifted.push({ unit: name, reason: "missing or invalid recorded service path defaults" });
+      continue;
+    }
+    if (installed !== expectedUnit) {
       // Name the missing directives rather than printing two files, because that is what a person
       // needs to decide whether it matters before reinstalling.
-      const expected = build(named, unitDirectory).split("\n").filter(line => line.includes("="));
+      const expected = expectedUnit.split("\n").filter(line => line.includes("="));
       const absent = expected.filter(line => !installed.includes(line));
       drifted.push({ unit: name, reason: absent.length
         ? `does not carry ${absent.join(", ")}`

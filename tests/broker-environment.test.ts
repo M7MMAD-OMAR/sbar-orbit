@@ -1,13 +1,64 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { installService, serviceUnit, serviceUnitDrift } from "../src/service";
+import { installService, serviceUnit, serviceUnitDrift, updateServiceUnit } from "../src/service";
 
 const linuxTest = test.skipIf(process.platform !== "linux");
 const managerAvailable = process.platform === "linux" && !!process.env.XDG_RUNTIME_DIR
   && !!Bun.which("systemctl")
   && Bun.spawnSync(["systemctl", "--user", "show-environment"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+function assignments(unit: string): Record<string, string> {
+  return Object.fromEntries(unit.split("\n").filter(line => line.startsWith("Environment="))
+    .map(line => {
+      const value = JSON.parse(line.slice("Environment=".length).replace(/%%/g, "%")) as string;
+      const separator = value.indexOf("=");
+      return [value.slice(0, separator), value.slice(separator + 1)];
+    }));
+}
+
+linuxTest("broker and updater retain selected installer paths when the manager environment differs", () => {
+  const installer = {
+    HOME: "/fixture/home %u space", XDG_CONFIG_HOME: "/fixture/config %u space",
+    XDG_DATA_HOME: "/fixture/data space", XDG_CACHE_HOME: "/fixture/cache space", XDG_STATE_HOME: "/fixture/state space",
+    FLATPAK_USER_DIR: "/fixture/user flatpak", FLATPAK_SYSTEM_DIR: "/fixture/system flatpak",
+    BUN_INSTALL: "/fixture/custom bun", PATH: "/fixture/custom bun/bin:/fixture/custom apps:relative::/usr/bin:/usr/bin",
+    XDG_RUNTIME_DIR: "/fixture/temporary installer runtime", PRIVATE_FIXTURE_TOKEN: "fixture-only",
+    ORBIT_NATIVE_PLAN: "/fixture/unrequested operator plan",
+  };
+  for (const build of [serviceUnit, updateServiceUnit]) {
+    const unit = build("/fixture/launcher", "/fixture/units", installer);
+    const selected = assignments(unit);
+    for (const key of ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "FLATPAK_USER_DIR",
+      "FLATPAK_SYSTEM_DIR", "BUN_INSTALL", "HOME", "XDG_CONFIG_HOME"] as const)
+      expect(selected[key]).toBe(installer[key]);
+    expect(selected.ORBIT_UNIT_DIR).toBe("/fixture/units");
+    expect(selected.PATH?.split(":")[0]).toBe(dirname(process.execPath));
+    expect(selected.PATH?.split(":")).toContain("/fixture/custom apps");
+    expect(selected.PATH?.split(":")).not.toContain("relative");
+    expect(selected.PATH?.split(":")).not.toContain("");
+    expect(selected.XDG_RUNTIME_DIR).toBeUndefined();
+    expect(selected.PRIVATE_FIXTURE_TOKEN).toBeUndefined();
+    expect(selected.ORBIT_NATIVE_PLAN).toBeUndefined();
+    // The shell launcher prepends its Bun directory; repeated starts must not cause unit drift.
+    expect(build("/fixture/launcher", "/fixture/units", { ...installer, PATH: `${dirname(process.execPath)}:${selected.PATH}` }))
+      .toBe(unit);
+  }
+});
+
+linuxTest("service path selection ignores empty and relative optional directories and refuses control characters", () => {
+  const installer = { HOME: "/fixture/home", XDG_DATA_HOME: "relative", XDG_CACHE_HOME: "", XDG_STATE_HOME: "../state",
+    FLATPAK_USER_DIR: "relative", FLATPAK_SYSTEM_DIR: "", BUN_INSTALL: "relative" };
+  for (const build of [serviceUnit, updateServiceUnit]) {
+    const selected = assignments(build("/fixture/launcher", "/fixture/units", installer));
+    for (const key of ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "FLATPAK_USER_DIR", "FLATPAK_SYSTEM_DIR", "BUN_INSTALL"])
+      expect(selected[key]).toBeUndefined();
+    for (const value of ["/fixture/data\nnew-line", "/fixture/data\rreturn", "/fixture/data\0nul"])
+      expect(() => build("/fixture/launcher", "/fixture/units", { ...installer, XDG_DATA_HOME: value }))
+        .toThrow("Service path XDG_DATA_HOME must not contain line breaks or NUL");
+  }
+});
 
 async function configuration(xdg: boolean) {
   const root = await mkdtemp(join(tmpdir(), "orbit-broker-environment-"));
@@ -66,16 +117,27 @@ test.skipIf(!managerAvailable)("systemd loads broker.env from a redirected confi
     expect(process.env.XDG_RUNTIME_DIR).toBeTruthy();
     const environmentFile = join(box.config, "sbar-orbit/broker.env");
     await mkdir(join(box.config, "sbar-orbit"), { recursive: true, mode: 0o700 });
-    await writeFile(environmentFile, 'ORBIT_CAPTURE_TIMEOUT_MS=4321\nORBIT_NATIVE_PLAN="/fixture/owner plan"\nORBIT_NATIVE_CONTROL="/fixture/control"\n', { mode: 0o600 });
+    await writeFile(environmentFile, 'ORBIT_CAPTURE_TIMEOUT_MS=4321\nORBIT_NATIVE_PLAN="/fixture/owner plan"\nORBIT_NATIVE_CONTROL="/fixture/control"\n'
+      + `XDG_DATA_HOME="${join(box.root, "operator data")}"\n`, { mode: 0o600 });
+    const installer = { HOME: process.env.HOME, XDG_CONFIG_HOME: box.config,
+      XDG_DATA_HOME: join(box.root, "installer data"), XDG_CACHE_HOME: join(box.root, "installer cache"),
+      XDG_STATE_HOME: join(box.root, "installer state"), FLATPAK_USER_DIR: join(box.root, "installer flatpak user"),
+      FLATPAK_SYSTEM_DIR: join(box.root, "installer flatpak system"), BUN_INSTALL: join(box.root, "custom bun"),
+      XDG_RUNTIME_DIR: join(box.root, "temporary runtime"), PRIVATE_FIXTURE_TOKEN: "fixture-only",
+      PATH: `${join(box.root, "custom applications")}:${process.env.PATH || ""}` };
     await writeFile(probe, ["import json, os, sys", "with open(sys.argv[1], 'w') as stream:",
-      "    json.dump({key: os.environ.get(key) for key in ('ORBIT_CAPTURE_TIMEOUT_MS', 'ORBIT_NATIVE_PLAN', 'ORBIT_NATIVE_CONTROL', 'HOME', 'XDG_CONFIG_HOME', 'ORBIT_UNIT_DIR')}, stream)"].join("\n"));
-    const directive = serviceUnit("/fixture/sbar-orbit").split("\n").filter(line => line.startsWith("EnvironmentFile=") || line.startsWith("Environment=")).join("\n");
+      "    json.dump({key: os.environ.get(key) for key in ('ORBIT_CAPTURE_TIMEOUT_MS', 'ORBIT_NATIVE_PLAN', 'ORBIT_NATIVE_CONTROL', 'HOME', 'XDG_CONFIG_HOME', 'ORBIT_UNIT_DIR', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'FLATPAK_USER_DIR', 'FLATPAK_SYSTEM_DIR', 'BUN_INSTALL', 'PATH', 'XDG_RUNTIME_DIR', 'PRIVATE_FIXTURE_TOKEN')}, stream)"].join("\n"));
+    const generated = serviceUnit("/fixture/sbar-orbit", process.env.ORBIT_UNIT_DIR, installer);
+    const directive = generated.split("\n").filter(line => line.startsWith("EnvironmentFile=") || line.startsWith("Environment=")).join("\n");
     await mkdir(join(unitPath, ".."), { recursive: true });
     await writeFile(unitPath, `[Service]\n${directive}\nType=oneshot\nSlice=sbarorbit.slice\nExecStart=/usr/bin/python3 ${probe} ${output}\n`, { mode: 0o600, flag: "wx" });
     await command(["systemctl", "--user", "daemon-reload"]);
     await command(["systemctl", "--user", "start", unit]);
     expect(JSON.parse(await readFile(output, "utf8"))).toEqual({
       HOME: process.env.HOME, XDG_CONFIG_HOME: box.config, ORBIT_UNIT_DIR: process.env.ORBIT_UNIT_DIR,
+      XDG_DATA_HOME: join(box.root, "operator data"), XDG_CACHE_HOME: installer.XDG_CACHE_HOME, XDG_STATE_HOME: installer.XDG_STATE_HOME,
+      FLATPAK_USER_DIR: installer.FLATPAK_USER_DIR, FLATPAK_SYSTEM_DIR: installer.FLATPAK_SYSTEM_DIR, BUN_INSTALL: installer.BUN_INSTALL,
+      PATH: assignments(generated).PATH, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR, PRIVATE_FIXTURE_TOKEN: null,
       ORBIT_CAPTURE_TIMEOUT_MS: "4321", ORBIT_NATIVE_PLAN: "/fixture/owner plan", ORBIT_NATIVE_CONTROL: "/fixture/control",
     });
   } finally {

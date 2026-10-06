@@ -44,6 +44,50 @@ test("a fresh install reports no drift", async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("effective operator path overrides do not make unchanged installation defaults drift", async () => {
+  const previous = { data: process.env.XDG_DATA_HOME, cache: process.env.XDG_CACHE_HOME,
+    state: process.env.XDG_STATE_HOME, path: process.env.PATH };
+  let box: Awaited<ReturnType<typeof installed>> | undefined;
+  try {
+    process.env.XDG_DATA_HOME = "/fixture/installer data";
+    process.env.XDG_CACHE_HOME = "/fixture/installer cache";
+    process.env.XDG_STATE_HOME = "/fixture/installer state";
+    box = await installed();
+    // EnvironmentFile wins over Environment. Doctor sees these effective values,
+    // while the unit still correctly records the earlier installation defaults.
+    process.env.XDG_DATA_HOME = "/fixture/operator data";
+    process.env.XDG_CACHE_HOME = "/fixture/operator cache";
+    process.env.XDG_STATE_HOME = "/fixture/operator state";
+    process.env.PATH = "/fixture/operator bun/bin:/usr/bin:/bin";
+    expect(await serviceUnitDrift(box.units)).toMatchObject({ current: true, drifted: [], missing: [] });
+  } finally {
+    for (const [key, value] of [["XDG_DATA_HOME", previous.data], ["XDG_CACHE_HOME", previous.cache],
+      ["XDG_STATE_HOME", previous.state], ["PATH", previous.path]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    if (box) await rm(box.root, { recursive: true, force: true });
+  }
+});
+
+test("drift refuses malformed, duplicate or unrelated recorded environment assignments", async () => {
+  const { root, units, launcher } = await installed();
+  try {
+    const clean = serviceUnit(launcher, units);
+    for (const extra of ['Environment=null', 'Environment="HOME=/fixture/duplicate"', 'Environment="UNRELATED_FIXTURE=value"',
+      'Environment="XDG_DATA_HOME=relative"', 'Environment="XDG_DATA_HOME=/fixture/data\\nline"']) {
+      await writeFile(join(units, "sbar-orbit.service"), `${clean}${extra}\n`);
+      const drift = await serviceUnitDrift(units);
+      expect(drift.current).toBe(false);
+      expect(drift.drifted).toContainEqual({ unit: "sbar-orbit.service", reason: "missing or invalid recorded service path defaults" });
+    }
+    for (const key of ["HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "PATH"]) {
+      const incomplete = clean.split("\n").filter(line => !line.startsWith(`Environment="${key}=`)).join("\n");
+      await writeFile(join(units, "sbar-orbit.service"), incomplete);
+      expect((await serviceUnitDrift(units)).current).toBe(false);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("a unit missing a directive this version writes is reported, and the directive is named", async () => {
   const { root, units, launcher } = await installed();
   try {
