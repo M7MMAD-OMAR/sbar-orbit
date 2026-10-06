@@ -2,7 +2,12 @@
 
 **State, 6 October 2026, documentation base `0faa05c`.** The checkout declares package
 version `0.2.0`. This is source metadata, not proof of a published package, registry `latest`
-or a tag. The latest retained full workflow tested runtime source
+or a tag. Fresh [passive artifact inspection](published-artifact-identity.json)
+found registry `latest` serving `0.1.1` and production bytes different from main;
+GitHub `v0.2.0` points to `af37cc4`. Installed-artifact behavior remains
+`not measured`. Latest verified main run 37497113691 passed all nine jobs on
+`886e319`; the [completion matrix](completion-status.md) retains current failures,
+isolated work and limits. The historical retained full workflow tested runtime source
 `1e9e88e37d299fe6ea3aed6c51e4fa6142cdcb81` in run 37415015766: all nine jobs passed.
 Ubuntu recorded 687 pass and 94 skip, Windows 469 pass and 312 skip, macOS 480 pass
 and 301 skip, with zero failures on each. Skips remain unmeasured. The

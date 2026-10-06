@@ -1,6 +1,16 @@
 # Source releases
 
-**Current state, 22 September 2026.** `0.1.1` is published to the npm registry as `latest` and to
+**Current inspection, 6 October 2026.** The registry `latest` endpoint still serves
+`0.1.1`. Its downloaded archive matches both registry SHA512 integrity and SHA1,
+and SHA256 is `6a50331e5e5a7d9f7828489d596fbc871d462ebdeac66d2cba1774e84d7b9d42`.
+Its browser, session and launcher bytes differ from current main. The GitHub
+`v0.2.0` tag points to `af37cc4`, which also predates current fixes. This was a
+passive metadata/archive inspection without installing or executing package code;
+current installed behavior remains `not measured`. The retained
+[artifact identity report](published-artifact-identity.json) records the exact
+sampled file hashes and limits.
+
+**Historical publication, 22 September 2026.** `0.1.1` was published to the npm registry as `latest` and to
 [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.1), with an annotated tag on
 tested revision `7e9c6d7`, where all nine CI jobs passed. The published registry tarball was
 downloaded back and is byte identical to the one built here, SHA-256

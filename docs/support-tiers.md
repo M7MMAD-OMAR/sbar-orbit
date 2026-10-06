@@ -13,8 +13,15 @@ Ubuntu, Windows and macOS runners. Their executed rows retain their stated limit
 remaining platform arguments are `Reasoned`. No host-class match, installation or
 package version upgrades a capability tier.
 
-The checkout declares `0.2.0`, without establishing a current registry `latest` or tag.
-The latest retained full CI run is 37415015766 on exact runtime source `1e9e88e`:
+The checkout declares `0.2.0`. Fresh passive registry inspection found `latest`
+serving `0.1.1`, whose sampled production bytes differ from main; GitHub `v0.2.0`
+points to `af37cc4`. Current installed-artifact behavior remains `not measured`.
+The [artifact identity report](published-artifact-identity.json) retains hashes
+and scope. Latest verified main CI 37497113691 passed all nine jobs on `886e319`;
+see [completion status](completion-status.md) for current isolated failures and
+pending work. None of these results upgrades external or native acceptance.
+
+The historical retained full CI run 37415015766 tested runtime source `1e9e88e`:
 Ubuntu 687 pass / 94 skip, Windows 469 pass / 312 skip, macOS 480 pass / 301 skip,
 zero failures, all nine jobs successful. Native installation was skipped; nine
 generated Claude, Codex and Hermes entries negotiated 16 MCP tools, while actual

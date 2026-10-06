@@ -9,8 +9,12 @@ not change production runtime behavior. Historical evidence remains separately
 identified below.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
-points to `af37cc4` and does not include the current main fixes. Registry `latest`
-is `not measured`. The [roadmap](roadmap.md) retains historical gate detail.
+points to `af37cc4` and does not include the current main fixes. A fresh passive
+[registry archive inspection](published-artifact-identity.json) found `latest`
+serving `0.1.1`; its SHA512 integrity and SHA1 match the registry metadata, and
+its browser, session and launcher bytes differ from current main. Installed
+behavior of that artifact remains `not measured`. The [roadmap](roadmap.md)
+retains historical gate detail.
 
 **Full external-user acceptance is open. Native owner handoff is held unconditionally.**
 A successful installation is installation state. A skipped or unknown measurement

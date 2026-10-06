@@ -1,0 +1,38 @@
+{
+  "checkedAtUtc": "2026-10-06T16:49:18.893867+00:00",
+  "metadataHttpStatus": 200,
+  "metadataSource": "https://registry.npmjs.org/sbar-orbit/latest",
+  "registryLatestVersion": "0.1.1",
+  "tarball": "https://registry.npmjs.org/sbar-orbit/-/sbar-orbit-0.1.1.tgz",
+  "archiveSha256": "6a50331e5e5a7d9f7828489d596fbc871d462ebdeac66d2cba1774e84d7b9d42",
+  "registrySha512AndSha1Match": true,
+  "archivePackageVersion": "0.1.1",
+  "main": "b48557400d07cd079742c3e1d1433c2e196be337",
+  "comparisons": [
+    {
+      "path": "src/browser.ts",
+      "archiveSha256": "a21bb5aeb2716a05e593a88970c044acb164e65d0c84ace3c2488dedd1fb91a4",
+      "mainSha256": "05fce860d32211cb02746c81eb08be32035e87772e6fb439cb179fd71089daae",
+      "equal": false
+    },
+    {
+      "path": "src/session.ts",
+      "archiveSha256": "150b85c98526791eb94ae4d90fe0a1dc1ad3379f94ee3172c45702ea8a67ddab",
+      "mainSha256": "54ccb3f6cd6188d82eb22d3f545dd3f5ab43869709f451d57934cb99ee6a3cda",
+      "equal": false
+    },
+    {
+      "path": "src/local-install.ts",
+      "archiveSha256": "2838bc1c16fa88ea9b4a9dd1d15e154db3389df92d6ced7d638f0b2c35a17b93",
+      "mainSha256": "2838bc1c16fa88ea9b4a9dd1d15e154db3389df92d6ced7d638f0b2c35a17b93",
+      "equal": true
+    },
+    {
+      "path": "bin/sbar-orbit",
+      "archiveSha256": "94653e563a344ec909f223f65c385b7a5dd47cb89722b4f8a40fefb2be69baae",
+      "mainSha256": "a2b404ffe68bdfc9593bea74fe638f3a04dcb64c3a2e34098cfb17292417c35f",
+      "equal": false
+    }
+  ],
+  "limit": "Passive registry metadata and archive identity inspection only. No package code executed, installed release behavior and source of the old archive remain not measured. The sampled production files differ from current main."
+}

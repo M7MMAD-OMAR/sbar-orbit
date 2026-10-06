@@ -40,9 +40,11 @@ integration and publication. The full goal remains active; no stage is closed by
 creating a task or obtaining a green fixture.
 
 The existing GitHub `v0.2.0` release targets `af37cc4`, before these main fixes.
-Registry `latest` is `not measured`; package version alone does not establish
-published artifact parity. Release closure still requires matching artifacts and
-all required evidence.
+Fresh [passive registry inspection](published-artifact-identity.json) found
+`latest` serving `0.1.1`, with matching archive integrity and production bytes
+that differ from current main. Installed behavior remains `not measured`;
+package version alone does not establish published artifact parity. Release
+closure still requires matching artifacts and all required evidence.
 
 The [remaining workstream snapshot](completion-status.md#remaining-workstream-snapshot)
 records the newer isolated measurements and failed draft PR checks. These results
@@ -98,8 +100,12 @@ Unique private research prototypes are not silently published or executed.
 The later remote inventory also inspected `agents/profile-timeout-repair` and
 `agents/windows-identity-fix-2026-10-06`. The profile branch has two additional
 diagnostic commits, `6a6e56b` and `cf73128`, for Chrome readiness and shared-slice
-counters; they are not proved startup repairs and require reconciliation with
-the isolated privacy-safe diagnostic workstream. Its other two patches are
+counters; they are not proved startup repairs. Read-only reconciliation found
+their useful phases and fields already covered by the isolated privacy-safe
+diagnostic workstream, which replaces raw stderr with fixed categories and
+selects the actual shared slice. Do not import the old raw stderr tracing.
+This comparison does not prove a startup cause or accept the isolated repair.
+Its other two patches are
 already equivalent to main. Both Windows branch patches are equivalent to
 integrated corrections, so reapplying them is unnecessary. The host provenance
 branch is now merged through PR 6; the product branch remains draft PR 5.
