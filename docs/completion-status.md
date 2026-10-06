@@ -1,10 +1,13 @@
 # Completion status and evidence
 
-Snapshot: 6 October 2026. Historical CI evidence is based on
-`0faa05c64b70a553e665a2993a6da7957276261c`; the local integration below is newer.
-The checkout declares package version `0.2.0`; this does not establish a published
-release, registry `latest` or tag. This page reconciles retained repository evidence,
-with newer local measurements identified separately. The [roadmap](roadmap.md) retains historical gate detail.
+Snapshot: 6 October 2026. [PR 4](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/4)
+is merged into official `main` at `56fd8f318c5ec2aaded827a8be89387bf54579f1`.
+Its tree `68f03eff2e89fe7b5ff19eb691453f6d4de4b2ff` equals the tested integration
+`333b92e`. Historical evidence remains separately identified below.
+The checkout declares package version `0.2.0`. The published
+[GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
+points to `af37cc4` and does not include the current main fixes. Registry `latest`
+is `not measured`. The [roadmap](roadmap.md) retains historical gate detail.
 
 **Full external-user acceptance is open. Native owner handoff is held unconditionally.**
 A successful installation is installation state. A skipped or unknown measurement
@@ -18,9 +21,35 @@ reconciliation, the current defect investigations and the dependency order for
 the remaining product, performance, portability and external acceptance tasks.
 It preserves the full acceptance scope and the unconditional native hold.
 
-## Latest completed evidence portions
+## Verified official-main integration
 
-The latest retained full workflow is
+[Run 37474272086](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37474272086)
+completed all nine normal workflow jobs successfully on `333b92e`, whose complete
+tree matches merge `56fd8f3`. Each platform suite reported 809 tests in 176 files.
+
+| Runner | Pass | Skip | Fail |
+| --- | ---: | ---: | ---: |
+| Ubuntu 24.04 x64 | 714 | 95 | 0 |
+| Windows x64 | 492 | 317 | 0 |
+| macOS arm64 | 504 | 305 | 0 |
+
+The retained local combined-runtime suite passed 761 tests, skipped 49 and failed
+none: 810 tests in 176 files, 243.89 seconds. TypeScript exited zero. Local evidence
+is retained under `/var/tmp/orbit-consolidation-2026-10-06`; these runtime checks
+precede this documentation update. The different platform counts reflect executed
+coverage, not proof of skipped capabilities. Native acceptance is not established.
+
+Core checkpoint review remains incomplete because the original Ubuntu startup
+cause is unresolved. A diagnostic observed 29.123 seconds before CDP connection;
+it locates a delay boundary without explaining its cause. A successful normal
+suite does not close that investigation, the failed performance target, external
+acceptance or the native hold. Five isolated workstreams are investigating the
+remaining scope under the [closure contract](platform-closure.md#current-execution).
+Their changes require coordinated review and fresh integration evidence.
+
+## Historical completed evidence portions
+
+The earlier retained full workflow is
 [run 37415015766](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37415015766)
 on runtime source `1e9e88e37d299fe6ea3aed6c51e4fa6142cdcb81`. All nine jobs succeeded
 on their first attempt. Later documentation does not imply a newer runtime was tested.
@@ -49,7 +78,7 @@ retains logs and artifact links. Completed portions at **Limited** tier are:
   startup-failure cleanup. The polling fix first failed two added measurement
   regressions; runtime Windows job cleanup source did not change.
 
-## Current local integration
+## Integrated corrections and retained measurements
 
 Four corrections have been integrated after old-source regression failures and
 independent review: cleanup attempts every resource release and retains failures;
@@ -76,8 +105,8 @@ identified actual Btrfs snapshots on all 50 reads in that instrumented fixture.
 The isolated ioctl prototype is not a production optimization and has worse p95;
 no production latency improvement is claimed.
 
-The full workflow above predates these changes. Final combined-source checks and
-any newer CI run must be reported with their own source identity. Participant,
+The historical workflow above predates these changes. The verified main workflow
+now covers their combined tree at the executed fixture scope. Participant,
 external-device, published-artifact and native acceptance remain open.
 
 ## Requirement-to-evidence matrix

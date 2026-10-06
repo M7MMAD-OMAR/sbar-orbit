@@ -12,6 +12,37 @@ isolated checkouts. Independent reviewers inspect current source and evidence.
 Separate tasks must return scoped commits and source-bound test results; they must
 not push official `main`, change support claims or bypass the native release hold.
 
+## Current execution
+
+[PR 4](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/4) is merged and official
+`main` is published at `56fd8f318c5ec2aaded827a8be89387bf54579f1`. Its complete
+tree `68f03eff2e89fe7b5ff19eb691453f6d4de4b2ff` matches tested `333b92e`.
+[Normal CI run 37474272086](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37474272086)
+passed all nine jobs. The [completion evidence](completion-status.md#verified-official-main-integration)
+records exact platform counts and the local combined-runtime result.
+This closes the verified publication portion only. Core checkpoint review remains
+incomplete while the original startup cause and required acceptance gaps remain.
+
+Five separate owned workstreams are actively investigating in isolated checkouts:
+
+| Workstream | Current investigation | Integration requirement |
+| --- | --- | --- |
+| Reliability and startup | Original saved-profile timeout, pre-CDP startup delay and recovery | Discriminating old-source failure, explained cause and reviewed repair |
+| Product architecture and UX | Product hierarchy, usable interfaces and English/Arabic onboarding | Rendered interaction, RTL, keyboard and state evidence |
+| Performance and restore | Failed 80.99 percent latency overhead against 20 percent target | Production repair with restore parity and matched comparisons |
+| Portability and managed lifecycle | Published installation, service/update scheduling and rollback | Source-bound actual managed mechanism and published artifact acceptance |
+| Actual hosts and acceptance | Missing host actions, image forwarding and external U1/T1 through U12/T12 | Authentic host/device evidence and explicit unmeasured limits |
+
+Workstream code remains isolated. Implementers do not push official `main`.
+The coordinator grants the shared resource budget serially and owns each reviewed
+integration and publication. The full goal remains active; no stage is closed by
+creating a task or obtaining a green fixture.
+
+The existing GitHub `v0.2.0` release targets `af37cc4`, before these main fixes.
+Registry `latest` is `not measured`; package version alone does not establish
+published artifact parity. Release closure still requires matching artifacts and
+all required evidence.
+
 ## Dependency order and completion evidence
 
 | Stage | Required outcome | Evidence required | Current state |
@@ -36,7 +67,7 @@ Private untracked artifacts and dependency directories were preserved in place.
 
 - `agents/orbit-completion-2026-10-06` contains nine commits newer than the initial
   remote `main` at `0faa05c`. [PR 4](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/4)
-  is the integration vehicle.
+  merged into official `main` at `56fd8f3`, including the reviewed follow-up repairs.
 - Native application opening has four patch-equivalent commits already integrated.
   Zen ambiguity has one equivalent patch already integrated. Reapplying them is
   unnecessary and does not establish native owner acceptance.
@@ -45,7 +76,8 @@ Private untracked artifacts and dependency directories were preserved in place.
   must not be replaced with the old patches.
 - Upload commit `46a92d8` was unique and has been integrated as `30b4055`. The
   in-memory transfer fixes the confined browser's inability to read host paths.
-  Fresh integrated validation and bounded-read hardening are in progress.
+  Descriptor-bound bounded-read hardening and fresh integrated validation are now
+  included in the published main tree; broader acceptance remains open.
 - Windows diagnostic commits `1de01ed` and `51cb766` are retained through the
   integrated repair and probe. The focused fixed-source result below is separate
   from full combined-source CI.
@@ -76,9 +108,11 @@ owned browser witnesses exited, the survivor list was empty, and reaping was
 reported at 32 milliseconds over two polls. This is a bounded Windows measurement,
 not complete platform acceptance.
 
-The Ubuntu timeout root cause is not established. A successful isolated run does
-not explain a failed full-suite run. Boundary traces and the exact `--smol`
-execution mode are being compared without increasing the original test deadline.
+The Ubuntu timeout root cause is not established. A successful isolated or normal
+full-suite run does not explain the earlier failure. A diagnostic recorded 29.123
+seconds before CDP connection, identifying a delay boundary rather than its cause.
+Boundary traces and the exact `--smol` execution mode remain under investigation
+without increasing the original test deadline. Core checkpoint review is incomplete.
 
 The confined upload readback regression was run again against the unfixed browser
 source during consolidation. Ordinary upload and default refusal passed, while
@@ -86,7 +120,8 @@ the confined page received no readable content and failed its exact-content
 assertion. With byte transfer and bounded reads, the local focused run passed
 14 tests with one Windows-only skip, including actual confined input/chooser
 delivery and growth after a real descriptor read. That result is separate from
-the upcoming full combined-source suite and platform CI.
+the now-successful full combined-source suite and platform CI. Neither result
+closes broader external upload or product acceptance.
 
 ## Native and external acceptance limits
 
