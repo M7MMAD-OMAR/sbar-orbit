@@ -86,7 +86,7 @@ def main(directory, control_directory, plan_path, session_type=None):
                             result = session.launch(params.get("argv"), params.get("configuration"))
                         elif method == "act":
                             result = session.execute(params)
-                        elif method in ("claim", "candidates") and session_type is not NativeSession:
+                        elif method in ("claim", "candidates", "open") and session_type is not NativeSession:
                             result = getattr(session, method)(params)
                         elif method in ("pause", "resume") and not params and session_type is not NativeSession:
                             result = session.set_paused(method == "pause")

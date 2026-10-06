@@ -124,6 +124,11 @@ export function createMcpServer(socket: string) {
       profileKey: id.optional(), accountName: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
     },
   }, params => invoke("session.create", params));
+  server.registerTool("orbit_open", {
+    description: "Open a real application with its normal owner profile on an explicitly chosen desktop workspace. Does not switch the person's workspace or focus. Pass an executable and literal arguments, for example google-chrome-stable with --profile-directory=Profile 1, --new-window and --ozone-platform=wayland. Returns the exact new window identity. Owner handoff is unavailable under the compositor crash release hold; opening does not enable it. The application remains open after the worker exits. Owner protected/full controls apply. Reuse requestId on uncertain delivery; inspect candidates before starting another opening. Single-instance forwarding to an existing process is not verified and is never guessed as the launch target.",
+    inputSchema: { requestId: id, workspace: z.number().int().min(1).max(2147483647),
+      argv: z.array(z.string().max(4096)).min(1).max(64) },
+  }, params => invoke("native.open", params));
   server.registerTool("orbit_handoff_candidates", {
     description: "List existing window identities on the person's explicitly selected workspace, without capture or input. Handoff covers the selected window's entire Wayland client, which may include other windows. XWayland handoff is unavailable.",
     inputSchema: { workspace: z.number().int().min(1).max(2147483647) },
