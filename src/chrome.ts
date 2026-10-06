@@ -363,7 +363,9 @@ export function darwinChromeArguments(profile: string, common: string[], extra: 
 
 /** Own Chrome separately from its CDP connection, including failed startup. */
 export async function launchChrome(profile: string, size = defaultViewport, options: ChromeLaunchOptions = {}) {
-  const traceEnabled = process.platform === "linux" && process.env.ORBIT_BROWSER_STARTUP_TRACE === "1";
+  const traceRoot = process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+  const traceEnabled = process.platform === "linux" && process.env.ORBIT_BROWSER_STARTUP_TRACE === "1" &&
+    (!traceRoot || profile.startsWith(traceRoot + "/"));
   const traceAt = performance.now();
   let traceOwner: OwnedBrowser | undefined;
   const trace = (phase: string) => {

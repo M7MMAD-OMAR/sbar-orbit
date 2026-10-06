@@ -17,6 +17,8 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     catch (error) { phase(`${name}:failed`); throw error; }
   };
   const root = await step("workspace", () => createWorkspaceDirectory("account-test"));
+  const traceRoot = process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+  if (process.env.ORBIT_BROWSER_STARTUP_TRACE === "1") process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = root;
   const accounts = join(root, "accounts");
   const aRoot = await mkdtemp(join(root, "broker-a-"));
   const bRoot = await mkdtemp(join(root, "broker-b-"));
@@ -76,5 +78,7 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     await step("final-broker-a-close", () => a.close());
     await step("final-broker-b-close", () => b.close());
     server.stop(true); phase("fixture-server-stopped");
+    if (traceRoot === undefined) delete process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+    else process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = traceRoot;
   }
 }, 30000);

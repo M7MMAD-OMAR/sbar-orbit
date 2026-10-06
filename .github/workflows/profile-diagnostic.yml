@@ -44,6 +44,7 @@ jobs:
         env:
           PROBE: ${{ matrix.probe }}
           ORBIT_BROWSER_STARTUP_TRACE: '1'
+          ORBIT_BROWSER_STARTUP_TRACE_ROOT: '__diagnostic_saved_profile_only__'
         run: |
           if [ "$PROBE" = isolated ]; then
             set -- tests/profiles.test.ts
