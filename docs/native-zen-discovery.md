@@ -12,8 +12,16 @@ default user installation is `$XDG_DATA_HOME/flatpak`, with
 empty or relative. Absolute `FLATPAK_SYSTEM_DIR` and `FLATPAK_USER_DIR` values
 override the respective roots. These environment variables are documented
 in the [Flatpak command reference](https://docs.flatpak.org/en/latest/flatpak-command-reference.html#environment).
-Orbit retains its system-first search order and requires an executable
-`zen/zen` file under `app/app.zen_browser.zen/<architecture>/stable/active/files`.
+Orbit checks both roots and requires an executable `zen/zen` file under
+`app/app.zen_browser.zen/<architecture>/stable/active/files`. If both roots
+contain different canonical deployments, discovery refuses with `UNSUPPORTED`
+instead of choosing a version silently. Two roots resolving to the same
+deployment are treated as one installation. The internal fixture override
+`deploymentFiles` selects one exact deployment; it is not a caller option on
+`launch-app`.
+The current `profiles.ini` parser selects a profile directory from defaults;
+it does not map an installation section to a system or user deployment. A
+single selected profile therefore does not resolve this deployment ambiguity.
 
 The synthetic discovery tests use a disposable home whose name contains
 spaces and deployment roots outside that home. They do not read a person's
@@ -30,3 +38,9 @@ cases passed. After correcting the roots,
 `bun run verify tests/native-zen-launch.test.ts` ran 17 tests with 17 passes,
 zero failures and 86 assertions. The bounded TypeScript check also passed.
 No browser was started and the full native suite was not run for this change.
+
+The later source review added fixtures for two distinct deployments and two
+root aliases resolving to one deployment. These new fixtures are not measured
+locally. Their regression and type checks must run remotely. To establish the
+regression, run the new discovery tests against the parent revision before
+applying the discovery change, then run them against the changed revision.
