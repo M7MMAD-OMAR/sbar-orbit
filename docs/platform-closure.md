@@ -26,6 +26,10 @@ incomplete while the original startup cause and required acceptance gaps remain.
 The later documentation snapshot `6ce89c2` also passed all nine jobs in
 [run 37505949562](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37505949562).
 Draft candidates below remain outside that verified main source.
+Subsequent main `61ea92c` failed the Windows owned-process witness acquisition
+in [run 37507008661](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37507008661),
+with the other eight jobs passing. Error 87 is failed measurement, not proved
+cleanup; resolving the census/acquisition race remains required for consolidation.
 
 Five separate owned workstreams are actively investigating in isolated checkouts:
 
@@ -58,7 +62,7 @@ do not extend the verified main runtime or close pending acceptance requirements
 | Stage | Required outcome | Evidence required | Current state |
 | --- | --- | --- | --- |
 | Consolidation | Every branch/worktree classified; useful unique patches integrated; current core failures resolved; official branch updated | Git ancestry and patch IDs, preserved private work, discriminating regressions, local suite, independent review and matching three-platform CI | In progress |
-| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at ee8440e; 45 focused local tests pass, current macOS and Ubuntu CI fail, current review unproven |
+| Product | Clear architecture and product hierarchy; usable viewer and public onboarding in English and Arabic | Actual rendered flows at desktop and mobile sizes, RTL and keyboard interaction, error/busy/paused states, current design contract and independent review | Draft PR 5 at fb2b29f; 45 focused local tests pass, actual traces identify coordinate and response-gate boundaries, macOS and Ubuntu CI fail, current review unproven |
 | Performance | Production idle overhead below 100 MiB and action overhead below 20 percent | Five matched direct-Playwright pairs on the same source, median and p95, owned process-tree resource accounting, restore parity | Failed target, repair pending |
 | Portability and hosts | Published installation, real managed lifecycle, rollback and host parity on each claimed environment | Exact published artifact/version, fresh disposable external hosts, real owned service/task mechanisms, two actual agent integrations, explicit unsupported operations | Partial evidence, remaining work open |
 | Acceptance | U1/T1 through U12/T12 plus failure gates and native release requirements | Actual participants and appropriate devices, source-bound telemetry/results, no personal desktop test surface, independent review | Open; native preparation externally blocked |
@@ -116,7 +120,9 @@ The privacy-safe diagnostic candidate is published separately as
 [draft PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) at `d71850c`.
 Normal CI on preceding source `440f7cc` passed eight jobs and failed a Windows
 parser assertion. The current POSIX path correction passed the existing focused
-local tests; corrected-source Windows CI remains pending. The preceding three-job
+local tests. Corrected Windows and Ubuntu suites passed; macOS failed two
+observation checks. Their missing payload/phase evidence remains under investigation.
+The preceding three-job
 diagnostic run passed, but no failing startup was reproduced and browser binaries
 differed between isolated and full-suite measurements. Required independent reviews
 remain unproven. The [current snapshot](completion-status.md#remaining-workstream-snapshot)

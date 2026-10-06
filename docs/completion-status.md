@@ -11,6 +11,12 @@ The latest verified documentation snapshot on official `main` is `6ce89c2`:
 [run 37505949562](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37505949562)
 passed all nine normal jobs. The isolated candidates below are not part of that
 tested main source.
+The subsequent main snapshot `61ea92c` failed its Windows suite in
+[run 37507008661](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37507008661);
+the other eight jobs passed. `OpenProcess` returned error 87 while acquiring an
+owned process witness before the abrupt broker-death test. Failed acquisition
+remains unknown, not proof of exit or cleanup. The census/acquisition boundary
+is under investigation; this failed run supersedes any claim of current all-green CI.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -62,7 +68,7 @@ Their changes require coordinated review and fresh integration evidence.
 
 These results belong to isolated workstreams and do not establish a new combined
 runtime or release. [PR 5](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/5) is a draft
-at `ee8440ee14513f726969549eb962db4dccf86912`; it is not merged into main.
+at `fb2b29f38b4ce8d64e4f345f65f79b5c360efc10`; it is not merged into main.
 [Run 37490050966](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37490050966)
 failed the rendered onboarding checks on all three platforms because the generated
 website routes were absent. The build step exited zero after printing Bun usage
@@ -87,6 +93,18 @@ macOS has an initial tab-state timeout and two later manual-input readback failu
 the traced tab-selection helpers did restore focus and enabled controls. Ubuntu
 again hit the original 30-second saved-account timeout. These failures do not
 establish the cause of the earlier initial-canvas or selected-tab timeouts.
+The current test-only follow-up adds bounded actual RPC, frame geometry and
+trusted fixture input-event traces. Its 45 focused tests, TypeScript and website
+build passed locally. [Run 37507476227](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37507476227)
+passed seven jobs and failed macOS and Ubuntu. The actual English macOS click
+hit the heading because the test used fixed 1280 by 800 coordinate fractions
+while the captured canvas was 756 by 469. Whether the test assumptions or the
+production pixel/input contract requires correction remains under investigation.
+The Arabic backend selection completed successfully in 21 milliseconds, but the
+test held its response while waiting for painted state; the viewer aborted after
+five seconds. This does not prove a backend selection failure. Ubuntu passed the
+product and saved-profile tests; its separate population-readiness fixture timed
+out. No native preparation is authorized by that result. Current reviews remain unproven.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
 `d71850c3ff249195305bbe7e10ce2b1b63423a92`. It adds opt-in startup diagnostics
@@ -97,7 +115,15 @@ passed eight jobs and failed the Windows suite on preceding source `440f7cc`.
 The actual failure was a parser assertion: host-dependent path joining returned
 Windows separators for a Linux cgroup path. The current follow-up uses POSIX path
 joining and retains the existing assertions and sampling gates. Its five focused
-local tests and TypeScript passed. Corrected-source Windows CI remains pending.
+local tests and TypeScript passed.
+[Corrected run 37506862238](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37506862238)
+passed eight jobs and failed macOS. Windows reported 495 pass, 317 skip and zero
+fail, including the unchanged counter-scope assertion, establishing the narrow
+path repair against the earlier failure. macOS reported 505 pass, 305 skip and
+two failures: an MCP observation returned text where an image was expected,
+without retaining its actual text payload, and a frame capture reached its
+unchanged 3000-millisecond deadline. The logs do not distinguish attachment from
+screenshot delay; both failures remain under investigation.
 The [diagnostic run 37503759704](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37503759704)
 passed all three jobs on preceding source `440f7cc`. Its full suite reported 717 pass,
 95 skip and zero fail. Saved-account timings were 6.64 seconds isolated and
