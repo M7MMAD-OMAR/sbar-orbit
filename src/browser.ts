@@ -120,7 +120,8 @@ export class BrowserBackend {
   readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
-  private captureSessions = new Map<Page, Promise<CDPSession>>();
+  private captureSessions = new Map<Page, { documentVersion: number; promise: Promise<CDPSession>; released: boolean }>();
+  private observationInvalidations = new Map<Page, Set<() => void>>();
   private documentVersions = new Map<Page, number>();
   private metadataFlights = new Map<Page, { documentVersion: number; promise: ReturnType<BrowserBackend["presenceOf"]> }>();
   private active: Page;
@@ -207,9 +208,14 @@ export class BrowserBackend {
   private watch(page: Page) {
     this.documentVersions.set(page, 0);
     page.on("framenavigated", frame => {
-      if (frame === page.mainFrame()) this.documentVersions.set(page, (this.documentVersions.get(page) ?? 0) + 1);
+      if (frame === page.mainFrame()) {
+        this.documentVersions.set(page, (this.documentVersions.get(page) ?? 0) + 1);
+        for (const invalidate of this.observationInvalidations.get(page) ?? []) invalidate();
+      }
     });
     page.once("close", () => {
+      for (const invalidate of this.observationInvalidations.get(page) ?? []) invalidate();
+      this.observationInvalidations.delete(page);
       this.pointers.delete(page);
       this.captureSessions.delete(page);
       this.documentVersions.delete(page);
@@ -368,9 +374,10 @@ export class BrowserBackend {
     const capturedAt = Date.now();
     const page = this.page;
     const documentVersion = this.documentVersions.get(page) ?? 0;
+    const obsoleteError = () => new OrbitError("BACKEND_FAILED", "The captured page navigated or closed during observation; request a fresh frame");
     const requireCapturedDocument = () => {
       if (page.isClosed() || (this.documentVersions.get(page) ?? 0) !== documentVersion)
-        throw new OrbitError("BACKEND_FAILED", "The captured page navigated or closed during observation; request a fresh frame");
+        throw obsoleteError();
     };
     // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
     // which matters because every frame is captured, base64 encoded and decoded again per poll.
@@ -380,19 +387,37 @@ export class BrowserBackend {
     // from this owned Chromium surface without changing the application's loading state.
     const budget = captureTimeoutMs();
     const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels and metadata). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
-    let capture: CDPSession | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
+    let obsolete = false;
+    let rejectObsolete = (error: OrbitError) => {};
+    const invalidated = new Promise<never>((_, reject) => { rejectObsolete = reject; });
+    const invalidate = () => { obsolete = true; rejectObsolete(obsoleteError()); };
+    const callbacks = this.observationInvalidations.get(page) ?? new Set<() => void>();
+    callbacks.add(invalidate);
+    this.observationInvalidations.set(page, callbacks);
     let attachment = this.captureSessions.get(page);
-    if (!attachment) {
-      attachment = this.context.newCDPSession(page);
-      this.captureSessions.set(page, attachment);
-      void attachment.catch(() => { if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page); });
-    }
+    const releaseAttachment = (held: NonNullable<typeof attachment>) => {
+      if (this.captureSessions.get(page) === held) this.captureSessions.delete(page);
+      if (held.released) return;
+      held.released = true;
+      // Release this channel when its actual attachment settles. This does not
+      // claim cancellation of browser work or of a pending metadata operation.
+      void held.promise.then(channel => channel.detach()).catch(() => {});
+    };
     const operation = (async () => {
-      capture = await attachment;
-      // An attachment that settles after the deadline must not start a late capture.
-      if (expired) { void capture.detach().catch(() => {}); throw timeout(); }
+      if (attachment && attachment.documentVersion !== documentVersion) { releaseAttachment(attachment); attachment = undefined; }
+      if (!attachment) {
+        const held = { documentVersion, promise: this.context.newCDPSession(page), released: false };
+        attachment = held;
+        this.captureSessions.set(page, held);
+        void held.promise.catch(() => { if (this.captureSessions.get(page) === held) this.captureSessions.delete(page); });
+      }
+      const capture = await attachment.promise;
+      // Neither a late attachment nor a changed document may start a capture.
+      requireCapturedDocument();
+      if (expired) throw timeout();
+      if (obsolete) throw obsoleteError();
       const image = (await capture.send("Page.captureScreenshot", {
         format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
       })).data;
@@ -403,7 +428,7 @@ export class BrowserBackend {
       return { mimeType: "image/jpeg", image, capturedAt, ...capturedDimensions(image), presence };
     })();
     try {
-      return await Promise.race([operation, new Promise<never>((_, reject) => {
+      return await Promise.race([operation, invalidated, new Promise<never>((_, reject) => {
         timer = setTimeout(() => { expired = true; reject(timeout()); }, budget);
       })]);
     } catch (error) {
@@ -411,10 +436,9 @@ export class BrowserBackend {
       throw error;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
-      if (expired) {
-        if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page);
-        void capture?.detach().catch(() => {});
-      }
+      callbacks.delete(invalidate);
+      if (!callbacks.size && this.observationInvalidations.get(page) === callbacks) this.observationInvalidations.delete(page);
+      if ((expired || obsolete) && attachment) releaseAttachment(attachment);
     }
   }
   async control(value: unknown) {

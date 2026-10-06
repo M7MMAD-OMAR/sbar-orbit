@@ -151,7 +151,7 @@ test("frame age includes capture work", async () => {
   const page = { url: () => "about:blank", title: async () => "", isClosed: () => false };
   // Built on the real prototype so the active-tab getter is exercised rather than bypassed.
   const fake = Object.assign(Object.create(BrowserBackend.prototype), {
-    pointers: new Map(), captureSessions: new Map(), documentVersions: new Map(), metadataFlights: new Map(), active: page, size: { width: 1280, height: 800 }, context: {
+    pointers: new Map(), captureSessions: new Map(), observationInvalidations: new Map(), documentVersions: new Map(), metadataFlights: new Map(), active: page, size: { width: 1280, height: 800 }, context: {
       pages: () => [page], newCDPSession: async () => ({
         send: async () => { await Bun.sleep(80); return { data: image }; }, detach: async () => {},
       }),

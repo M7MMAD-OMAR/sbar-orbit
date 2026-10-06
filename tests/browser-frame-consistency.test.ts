@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BrowserBackend } from '../src/browser';
+import { BrowserBackend, captureTimeoutMs } from '../src/browser';
 import type { Page } from 'playwright';
 
 test('browser frame keeps its captured page and dimensions when tab actions finish concurrently', async () => {
@@ -234,6 +234,7 @@ test('browser observation bounds real pending pointer metadata without accumulat
       outcomes.push(boundary); mark('poll-boundary', { poll, boundary, titleCalls, pointerCalls });
       if (boundary.status === 'still-pending') { release(); await observing; break; }
     }
+    expect(backend['observationInvalidations'].size).toBe(0);
     const pendingCalls = { titleCalls, pointerCalls };
     release(); await navigating;
     const recovered = await backend.observe();
@@ -252,6 +253,210 @@ test('browser observation bounds real pending pointer metadata without accumulat
     release(); await navigating?.catch(() => {});
     if (previousBudget === undefined) delete process.env.ORBIT_CAPTURE_TIMEOUT_MS;
     else process.env.ORBIT_CAPTURE_TIMEOUT_MS = previousBudget;
+    try { await backend?.close(); await rm(profile, { recursive: true }); }
+    finally { server.stop(true); }
+  }
+}, 30000);
+
+for (const change of ['navigate', 'close'] as const) {
+  test(`browser promptly rejects known obsolete held pixels after ${change}`, async () => {
+    const profile = await mkdtemp(join(tmpdir(), 'orbit-prompt-obsolete-'));
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Owned prompt fixture</title><style>body{background:#ff0000}</style></html>', { headers: { 'content-type': 'text/html' } }) });
+    const started = performance.now();
+    const budget = captureTimeoutMs();
+    const trace: Record<string, unknown>[] = [];
+    const mark = (phase: string, details: Record<string, unknown> = {}) => { if (trace.length < 24) trace.push({ elapsedMs: Math.round(performance.now() - started), phase, ...details }); };
+    let backend: BrowserBackend | undefined;
+    let page: Page | undefined;
+    let release = () => {};
+    let observing: Promise<void> | undefined;
+    let promptOutcome: { status: string; code?: unknown } | undefined;
+    const readOutcome = (): { status: string; code?: unknown } | undefined => promptOutcome;
+    let atAssertion: Record<string, unknown> | undefined;
+    let deliveryReleased = false;
+    const committed = (frame: import('playwright').Frame) => { if (frame === page?.mainFrame()) mark('main-frame-committed', { documentVersion: page ? backend?.['documentVersions'].get(page) : undefined }); };
+    try {
+      backend = await BrowserBackend.create(profile, { width: 640, height: 480 });
+      const url = `http://127.0.0.1:${server.port}/same`;
+      await backend.act({ type: 'navigate', url });
+      if (change === 'close') { await backend.act({ type: 'open-tab', url: `${url}/survivor` }); await backend.act({ type: 'select-tab', tab: 1 }); }
+      page = backend.context.pages()[0];
+      if (!page) throw new Error('Owned captured page missing');
+      page.on('framenavigated', committed);
+      const originalVersion = backend['documentVersions'].get(page);
+      let bytesReady = () => {};
+      const captured = new Promise<void>(resolve => { bytesReady = resolve; });
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const attach = backend.context.newCDPSession.bind(backend.context);
+      let rawByteCount = 0, jpegSignatureValid = false, hold = true;
+      backend.context.newCDPSession = async target => {
+        const channel = await attach(target);
+        const send = channel.send.bind(channel);
+        channel.send = async (method, params) => {
+          const result = await send(method, params);
+          if (method === 'Page.captureScreenshot' && hold) {
+            hold = false;
+            if ('data' in result && typeof result.data === 'string') {
+              const bytes = Buffer.from(result.data, 'base64'); rawByteCount = bytes.length;
+              jpegSignatureValid = bytes[0] === 0xff && bytes[1] === 0xd8;
+            }
+            mark('real-jpeg-ready', { rawByteCount, jpegSignatureValid }); bytesReady();
+            await gate; deliveryReleased = true; mark('held-delivery-released');
+          }
+          return result;
+        };
+        return channel;
+      };
+      const observedAt = performance.now();
+      mark('observation-start', { originalVersion, budget });
+      observing = backend.observe().then(
+        () => { promptOutcome = { status: 'fulfilled' }; mark('observation-fulfilled'); },
+        error => { promptOutcome = { status: 'rejected', code: error instanceof Error && 'code' in error ? error.code : undefined }; mark('observation-rejected', promptOutcome); },
+      );
+      await captured;
+      expect(jpegSignatureValid).toBe(true);
+      if (change === 'navigate') await backend.act({ type: 'navigate', url });
+      else await backend.act({ type: 'close-tab', tab: 1 });
+      const currentVersion = backend['documentVersions'].get(page);
+      const knownObsolete = page.isClosed() || currentVersion !== originalVersion;
+      mark('actual-change-complete', { knownObsolete, currentVersion, closed: page.isClosed() });
+      await Bun.sleep(0);
+      const observationElapsedMs = performance.now() - observedAt;
+      if (!knownObsolete || observationElapsedMs >= budget || readOutcome()?.code === 'TIMEOUT') {
+        mark('inconclusive-boundary', { knownObsolete, observationElapsedMs, budget });
+        throw new Error('Prompt obsolete control inconclusive before the original capture deadline');
+      }
+      atAssertion = { knownObsolete, observationElapsedMs, budget, rawByteCount, jpegSignatureValid, deliveryReleased, outcome: readOutcome() ?? { status: 'pending' } };
+      mark('prompt-boundary', atAssertion);
+      expect(deliveryReleased).toBe(false);
+      expect(promptOutcome).toMatchObject({ status: 'rejected', code: 'BACKEND_FAILED' });
+      expect(backend['observationInvalidations'].size).toBe(0);
+    } finally {
+      release();
+      await observing;
+      page?.off('framenavigated', committed);
+      try { await backend?.close(); await rm(profile, { recursive: true }); }
+      finally {
+        server.stop(true);
+        const evidence = { change, atAssertion, trace };
+        const output = process.env.ORBIT_QA_OUTPUT ?? join(tmpdir(), 'orbit-frame-consistency');
+        await mkdir(output, { recursive: true }).then(() => writeFile(join(output, `browser-prompt-obsolete-${change}.json`), JSON.stringify(evidence, null, 2))).catch(() => {});
+        try { console.log(JSON.stringify({ browserPromptObsolete: evidence })); } catch {}
+      }
+    }
+  }, 30000);
+}
+
+test('browser obsolete metadata stays single-flight until real settlement and then recovers', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'orbit-obsolete-metadata-'));
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: request => new Response(`<html><title>${new URL(request.url).pathname}</title><body>Owned metadata fixture</body></html>`, { headers: { 'content-type': 'text/html' } }) });
+  let backend: BrowserBackend | undefined;
+  let release = () => {};
+  let observing: Promise<unknown> | undefined;
+  let calls = 0;
+  const trace: Record<string, unknown>[] = [];
+  const started = performance.now();
+  const mark = (phase: string, details = {}) => { if (trace.length < 24) trace.push({ phase, elapsedMs: Math.round(performance.now() - started), ...details }); };
+  try {
+    backend = await BrowserBackend.create(profile);
+    const origin = `http://127.0.0.1:${server.port}`;
+    await backend.act({ type: 'navigate', url: `${origin}/first` });
+    await backend.presence();
+    const page = backend.context.pages()[0];
+    if (!page) throw new Error('Owned metadata page missing');
+    const pointer = backend['pointers'].get(page);
+    if (!pointer) throw new Error('Owned pointer observer missing');
+    let ready = () => {};
+    const metadataReady = new Promise<void>(resolve => { ready = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let hold = true;
+    backend['pointers'].set(page, async () => {
+      calls++;
+      const value = await pointer();
+      if (hold) { hold = false; mark('real-pointer-result-held', { calls }); ready(); await gate; }
+      return value;
+    });
+    observing = backend.observe().then(() => ({ status: 'fulfilled' }), error => ({ status: 'rejected', code: error.code }));
+    await metadataReady;
+    const oldFlight = backend['metadataFlights'].get(page);
+    if (!oldFlight) throw new Error('Actual held metadata flight missing');
+    await backend.act({ type: 'navigate', url: `${origin}/second` });
+    expect(await observing).toMatchObject({ status: 'rejected', code: 'BACKEND_FAILED' });
+    expect(backend['observationInvalidations'].size).toBe(0);
+    expect(backend['metadataFlights'].get(page)).toBe(oldFlight);
+    expect(backend['documentVersions'].get(page)).not.toBe(oldFlight.documentVersion);
+    for (let poll = 0; poll < 2; poll++) {
+      const outcome = await backend.observe().then(() => ({ status: 'fulfilled' }), error => ({ status: 'rejected', code: error.code }));
+      mark('new-generation-boundary', { poll, outcome, calls });
+      expect(outcome).toMatchObject({ status: 'rejected', code: 'BACKEND_FAILED' });
+      expect(backend['metadataFlights'].get(page)).toBe(oldFlight);
+      expect(calls).toBe(1);
+      expect(backend['observationInvalidations'].size).toBe(0);
+    }
+    release(); await oldFlight.promise;
+    await Bun.sleep(0);
+    expect(backend['metadataFlights'].size).toBe(0);
+    const recovered = await backend.observe();
+    mark('recovered', { calls, title: recovered.presence.title });
+    expect(recovered.presence.title).toBe('/second');
+    expect(calls).toBe(2);
+    expect(backend['metadataFlights'].size).toBe(0);
+    expect(backend['observationInvalidations'].size).toBe(0);
+  } finally {
+    release(); await observing;
+    try { await backend?.close(); await rm(profile, { recursive: true }); }
+    finally { server.stop(true); try { console.log(JSON.stringify({ obsoleteMetadataFlight: trace })); } catch {} }
+  }
+}, 30000);
+
+test('browser obsolete late attachment releases its own channel without capturing or clearing a fresh one', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'orbit-obsolete-attachment-'));
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Owned attachment fixture</title></html>', { headers: { 'content-type': 'text/html' } }) });
+  let backend: BrowserBackend | undefined;
+  let release = () => {};
+  let observing: Promise<unknown> | undefined;
+  let oldCaptures = 0, detached = 0;
+  try {
+    backend = await BrowserBackend.create(profile);
+    const url = `http://127.0.0.1:${server.port}/same`;
+    await backend.act({ type: 'navigate', url });
+    const page = backend.context.pages()[0];
+    if (!page) throw new Error('Owned attachment page missing');
+    let attached = () => {}, detachDone = () => {};
+    const oldAttached = new Promise<void>(resolve => { attached = resolve; });
+    const oldDetached = new Promise<void>(resolve => { detachDone = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const attach = backend.context.newCDPSession.bind(backend.context);
+    let hold = true;
+    backend.context.newCDPSession = async target => {
+      const channel = await attach(target);
+      if (hold) {
+        hold = false;
+        const send = channel.send.bind(channel), detach = channel.detach.bind(channel);
+        channel.send = async (method, params) => { if (method === 'Page.captureScreenshot') oldCaptures++; return send(method, params); };
+        channel.detach = async () => { try { await detach(); detached++; } finally { detachDone(); } };
+        attached(); await gate;
+      }
+      return channel;
+    };
+    observing = backend.observe().then(() => ({ status: 'fulfilled' }), error => ({ status: 'rejected', code: error.code }));
+    await oldAttached;
+    await backend.act({ type: 'navigate', url });
+    expect(await observing).toMatchObject({ status: 'rejected', code: 'BACKEND_FAILED' });
+    expect(backend['observationInvalidations'].size).toBe(0);
+    const freshFrame = await backend.observe();
+    const freshAttachment = backend['captureSessions'].get(page);
+    if (!freshAttachment) throw new Error('Actual fresh capture attachment missing');
+    release(); await oldDetached;
+    expect(detached).toBe(1);
+    expect(oldCaptures).toBe(0);
+    expect(backend['captureSessions'].get(page)).toBe(freshAttachment);
+    expect(freshAttachment.released).toBe(false);
+    expect(freshFrame.presence.title).toBe('Owned attachment fixture');
+    expect(backend['observationInvalidations'].size).toBe(0);
+    try { console.log(JSON.stringify({ obsoleteLateAttachment: { detached, oldCaptures, freshAttachmentRetained: true } })); } catch {}
+  } finally {
+    release(); await observing;
     try { await backend?.close(); await rm(profile, { recursive: true }); }
     finally { server.stop(true); }
   }
