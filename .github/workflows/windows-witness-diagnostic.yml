@@ -27,6 +27,11 @@ jobs:
           New-Item -ItemType Directory -Force output/windows-witness-query | Out-Null
           bun run scripts/limited.ts bun experiments/windows-witness-query-probe.ts 2>&1 | Tee-Object -FilePath output/windows-witness-query/probe.log
           exit $LASTEXITCODE
+      - name: Require retained identity after confirmed exit
+        shell: pwsh
+        run: |
+          bun run verify tests/windows-witness-race.test.ts 2>&1 | Tee-Object -FilePath output/windows-witness-query/retained-identity-test.log
+          exit $LASTEXITCODE
       - name: Preserve successful, failed and unknown query evidence
         if: always()
         uses: actions/upload-artifact@v4
