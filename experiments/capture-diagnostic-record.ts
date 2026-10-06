@@ -43,6 +43,11 @@ export function captureArmProjection(value: unknown, binding: unknown): Fields {
   choice(result, source, "arm", ["isolated", "full-suite"]);
   patterned(result, identity, "sourceCommit", /^[a-f0-9]{40}$/);
   for (const key of ["sourceManifestSha256", "sourceManifestAfterSha256", "browserSha256", "browserAfterSha256"]) patterned(result, identity, key, sha256);
+  for (const key of ["bundleSha256", "bundleAfterSha256", "bundleAttributesSha256", "bundleAttributesAfterSha256"]) patterned(result, source, key, sha256);
+  choice(result, source, "selection", ["owned app bundle copy", "ordinary default"]);
+  for (const key of ["bundleResourceBytes", "bundleResourceFiles", "bundleResourceDirectories", "bundleResourceLinks"])
+    if (finite(source[key])) result[key] = source[key];
+  if (typeof source.originalBundleChanged === "boolean") result.originalBundleChanged = source.originalBundleChanged;
   patterned(result, identity, "browserVersion", /^\d+(?:\.\d+)+$/);
   if (typeof source.exitCode === "number" && Number.isSafeInteger(source.exitCode)) result.exitCode = source.exitCode;
   if (finite(source.durationMs)) result.durationMs = source.durationMs;
