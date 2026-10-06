@@ -37,11 +37,13 @@ with seven jobs passing and Ubuntu and Windows suite failures. macOS passed.
 Ubuntu hit the saved-account fixture's 30-second deadline. Windows recorded ten
 exited Chrome witnesses plus an alive `PING.EXE` witness with a creation time
 older than its alleged parent and root, an inconsistent process attribution.
-The current main workflow is therefore not fully green; both failures require
+That historical workflow was not fully green; both unexplained failures require
 resolution before final integration acceptance.
-The most recent recorded all-nine passing snapshot is `be8be0f` in
+An earlier all-nine passing snapshot is `be8be0f` in
 [run 37513298533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37513298533).
-This later passing result does not explain either earlier failure or close the
+Current published main `728bbd3` also passed all nine normal jobs in
+[run 37517456996](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37517456996).
+These later passing results do not explain either earlier failure or close the
 remaining acceptance gates. Draft PR 7 now carries the same-runner Mac capture
 diagnostic, and draft [PR 8](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/8)
 prepares a Windows acquisition-order counterexample. Neither is a production

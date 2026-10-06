@@ -25,12 +25,17 @@ Ubuntu reached the saved-account fixture's unchanged 30-second deadline. Windows
 reported ten exited Chrome witnesses and an alive `PING.EXE` witness whose creation
 time predates both its alleged Chrome parent and the captured Chrome root. That birth-order
 inconsistency requires investigation of process attribution; it does not prove a
-Chrome survivor. Both failures remain open. The earlier green run does not prove
-the current main source passes its complete workflow.
-The most recent recorded all-nine passing snapshot is `be8be0f`:
+Chrome survivor. Both failures remain open. That earlier green run alone does not establish
+the results of subsequent workflows.
+An earlier all-nine passing snapshot is `be8be0f`:
 [run 37513298533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37513298533)
 completed successfully on all three platforms. This later passing run does not
 explain the saved-account deadline or inconsistent process attribution above.
+Current published main snapshot `728bbd3` completed
+[run 37517456996](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37517456996)
+with all nine normal jobs passing. It publishes the diagnostic status documents;
+this passing workflow does not establish the causes of the earlier failures or
+close the isolated candidate investigations.
 The checkout declares package version `0.2.0`. The published
 [GitHub release v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
 points to `af37cc4` and does not include the current main fixes. A fresh passive
@@ -153,6 +158,13 @@ after a concurrent document change correctly invalidated an observation. The
 existing cost-based polling backoff scheduled recovery after the test's initial
 wait ended; this is not evidence of a permanently stopped poll loop. These
 remaining failures require discriminating evidence and repair, not weaker waits.
+Two new actual old-source controls retained real JPEG delivery while the captured
+page navigated or closed. Both observations remained pending at known-obsolete
+boundaries, respectively 61.86 and 34.81 milliseconds after observation started,
+within the unchanged 3000-millisecond deadline. Both rejected `BACKEND_FAILED`
+only after delivery release. This demonstrates delayed known-obsolete rejection;
+it does not identify the exact earlier runner stall. Production repair preparation
+is underway, with no new passing production or platform claim.
 
 [PR 7](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/7) is a separate draft at
 `fd7f5fb2d103a30b3f7629456ef4f492492fb9ea`. It adds opt-in startup diagnostics
@@ -212,7 +224,21 @@ The current narrow correction initializes the evidence directory inside the
 runner step. Its structural check rejected the preserved failed workflow and
 accepted the current context usage; TypeScript and three portable controls
 passed again. The corrected workflow is published on the isolated draft branch.
-Actual Windows evidence and independent review remain unproven.
+The corrected separate diagnostic
+[run 37517349298](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37517349298)
+then failed its published-source guard before Bun setup or either process trial.
+Its authenticated artifact contains only the initialized `not measured` fallback;
+no trial, cleanup or source manifest is established. The guard compares raw
+checkout bytes with Git blobs, while the repository explicitly checks out `.cmd`
+files with CRLF. Clean local `.cmd` files demonstrate that mismatch. The actual
+runner did not print the offending path, so its first mismatching row is unknown.
+A canonical Git-content comparison retaining all raw before/after manifest rows
+is being prepared; it has not been measured on Windows.
+[Normal PR run 37517355682](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37517355682)
+passed all nine jobs on actual merge `598556a5`, with Windows recording 495 pass,
+317 skip and zero fail. That normal run does not execute the separate acquisition
+trials or resolve the earlier process-attribution defect.
+Actual Windows trial evidence and independent review remain unproven.
 
 The current managed-lifecycle workstream fixtures executed 119 tests, skipped 20
 and failed none; TypeScript exited zero. Independent specification and operational
