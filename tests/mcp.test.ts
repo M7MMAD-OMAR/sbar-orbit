@@ -5,6 +5,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { startBroker, call } from "../src/ipc";
 import { loopbackAddress } from "./platform-support";
+import { installCaptureDiagnostic, reportMcpObserve } from "./capture-diagnostic";
 
 function payload(result: CallToolResult) {
   const block = result.content[0];
@@ -15,6 +16,7 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
   const broker = await startBroker();
   const fixture = Bun.serve({ hostname: loopbackAddress, port: 0, fetch: () => new Response('<input id="entry"><button onclick="document.querySelector(\'output\').textContent=document.querySelector(\'input\').value">Save</button><output>Empty</output>', { headers: { "Content-Type": "text/html" } }) });
   const clients: Client[] = [];
+  const restoreCaptureDiagnostic = installCaptureDiagnostic(broker.sessions, "mcp");
   const connect = async () => {
     const transport = new StdioClientTransport({ command: process.execPath, args: ["src/mcp.ts"], cwd: process.cwd(), env: { ORBIT_SOCKET: broker.socket }, stderr: "pipe" });
     const client = new Client({ name: "orbit-integration-harness", version: "1.0.0" });
@@ -23,6 +25,8 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     return client;
   };
   const tool = (client: Client, name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args }).then(r => CallToolResultSchema.parse(r));
+  let testFailed = false;
+  let testFailure: unknown;
   try {
     const a = await connect();
     const b = await connect();
@@ -44,7 +48,9 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     await act({ type: "fill", selector: "#entry", text: "MCP connected" });
     await act({ type: "click", selector: "button" });
     expect(payload(await act({ type: "read", selector: "output" }))).toEqual({ text: "MCP connected" });
-    expect((await tool(b, "orbit_observe", session)).content[0]?.type).toBe("image");
+    const observed = await tool(b, "orbit_observe", session);
+    reportMcpObserve(observed);
+    expect(observed.content[0]?.type).toBe("image");
     const invalid = await tool(a, "orbit_act", { ...session, requestId: "bad", action: { type: "host-mouse" } });
     expect(invalid.isError).toBe(true);
     await tool(b, "orbit_pause", session);
@@ -78,7 +84,24 @@ test("MCP stdio negotiates, validates and controls the shared broker across clie
     expect(payload(await tool(b, "orbit_stop", { sessionId: "unknown" }))).toMatchObject({ code: "SESSION_NOT_FOUND" });
     await broker.close();
     expect(payload(await tool(b, "orbit_status"))).toMatchObject({ code: "BROKER_UNAVAILABLE" });
-  } finally { await Promise.allSettled(clients.map(c => c.close())); await broker.close(); fixture.stop(true); }
+  } catch (error) {
+    testFailed = true;
+    testFailure = error;
+    throw error;
+  } finally {
+    let captureCleanupConfirmed = false;
+    try {
+      const clientOutcomes = await Promise.allSettled(clients.map(c => Promise.resolve().then(() => c.close())));
+      const brokerOutcome = await Promise.allSettled([Promise.resolve().then(() => broker.close())]);
+      const fixtureOutcome = await Promise.allSettled([Promise.resolve().then(() => fixture.stop(true))]);
+      const cleanupErrors = [...clientOutcomes, ...brokerOutcome, ...fixtureOutcome]
+        .flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+      captureCleanupConfirmed = cleanupErrors.length === 0;
+      if (cleanupErrors.length) throw new AggregateError(testFailed ? [testFailure, ...cleanupErrors] : cleanupErrors,
+        "MCP fixture shutdown was not confirmed");
+    }
+    finally { restoreCaptureDiagnostic(captureCleanupConfirmed); }
+  }
 }, 30000);
 
 // Which tool a job belongs to, asserted as the words an agent reads before it chooses one. Orbit's
