@@ -58,6 +58,65 @@ async function settingsFixture(language: string, failLoad = false) {
   return { ...viewer, writes: () => writes, refuse: () => { refuse = true; }, close: async () => { await viewer.close(); server.stop(true); } };
 }
 
+
+async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openViewerPage>>['page'], language: string, shots: string) {
+  const first = page.locator('#tabs button').first();
+  let releaseSelectionResponse = () => {};
+  const selectionResponseGate = new Promise<void>(resolve => { releaseSelectionResponse = resolve; });
+  await page.route('**/rpc', async route => {
+    const request = route.request().postDataJSON();
+    if (request?.method !== 'session.control' || request?.params?.input?.type !== 'select-tab') return route.continue();
+    // Apply the real broker action, then hold its reply so polling can expose
+    // the selected page while the viewer command is still pending.
+    const response = await route.fetch();
+    await selectionResponseGate;
+    await route.fulfill({ response });
+  });
+  try {
+    await first.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => {
+      const button = document.querySelector('#tabs button');
+      return button?.getAttribute('aria-current') === 'page' || button?.getAttribute('aria-selected') === 'true';
+    });
+    const pending = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    releaseSelectionResponse();
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#tabs button')?.disabled);
+    const settled = await first.evaluate(node => ({ current: node.getAttribute('aria-current'), selected: node.getAttribute('aria-selected'), disabled: (node as HTMLButtonElement).disabled, focused: node === document.activeElement, activeElement: document.activeElement?.tagName }));
+    await writeFile(join(shots, `page-selection-race-${language}.json`), JSON.stringify({ language, pending, settled }, null, 2));
+    console.log(JSON.stringify({ pageSelectionRace: language, pending, settled }));
+    expect(settled.disabled).toBe(false);
+    expect(settled.focused).toBe(true);
+  } finally {
+    releaseSelectionResponse();
+    await page.unroute('**/rpc');
+  }
+}
+
+test('selected page restores keyboard focus after its command completes', async () => {
+  const broker = await startBroker();
+  const viewer = await openViewerPage('Private settled page selection fixture', { viewport: { width: 1440, height: 1000 } });
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Private selection fixture</title><body>Private selection fixture</body></html>', { headers: { 'content-type': 'text/html' } }) });
+  const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
+  try {
+    await mkdir(shots, { recursive: true });
+    const preview = await call(broker.socket, 'preview.open') as { url: string };
+    const { page } = viewer;
+    await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
+    const session = await call(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
+    await call(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
+    await call(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
+    await call(broker.socket, 'session.pause', session);
+    await page.waitForFunction(() => {
+      const buttons = document.querySelectorAll('#tabs button');
+      return document.querySelector('#state')?.getAttribute('data-state') === 'paused' && buttons.length === 2 &&
+        (buttons[1]?.getAttribute('aria-current') === 'page' || buttons[1]?.getAttribute('aria-selected') === 'true');
+    });
+    await verifySettledPageSelection(page, 'settled-regression', shots);
+    expect(viewer.errors).toEqual([]);
+  } finally { await viewer.close(); await broker.close(); server.stop(true); }
+}, 30000);
+
 for (const language of ['en', 'ar']) {
   test(`session lifecycle and page selection preserve controls in ${language}`, async () => {
     const broker = await startBroker();
@@ -95,11 +154,8 @@ for (const language of ['en', 'ar']) {
       expect(await page.locator('#resume').evaluate(node => node === document.activeElement)).toBe(true);
       await page.unroute('**/rpc');
       await expect(call(broker.socket, 'session.act', { ...session, requestId: 'refused', action: { type: 'read', selector: 'output' } })).rejects.toMatchObject({ code: 'PAUSED' });
-      const first = page.locator('#tabs button').first();
-      await first.focus();
-      await page.keyboard.press('Enter');
-      await page.waitForFunction(() => document.querySelector('#tabs button')?.getAttribute('aria-current') === 'page');
-      expect(await first.evaluate(node => node === document.activeElement)).toBe(true);
+      await verifySettledPageSelection(page, language, shots);
+      expect(await page.locator('#tabs button').first().getAttribute('aria-current')).toBe('page');
       if (language === 'ar') expect(await page.locator('#page-location').textContent()).not.toMatch(/tab|of/);
       await capture('takeover');
       const box = await page.locator('#frame').boundingBox();
@@ -172,7 +228,7 @@ for (const language of ['en', 'ar']) {
     for (const route of ['index.html', 'ar/index.html']) {
       const file = Bun.file(join(directory, route));
       if (!await file.exists() || file.size === 0) {
-        throw new Error(`Missing rendered onboarding fixture: website/dist/${route}. Install frozen website dependencies and run bun run scripts/limited.ts bun --cwd website run build before this suite.`);
+        throw new Error(`Missing rendered onboarding fixture: website/dist/${route}. Install frozen website dependencies, then run bun run ../scripts/limited.ts bun run build from website/ before this suite.`);
       }
     }
     const viewer = await openViewerPage('Private public onboarding fixture', { language, viewport: { width: 1440, height: 1000 } });

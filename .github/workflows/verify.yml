@@ -42,7 +42,8 @@ jobs:
         working-directory: website
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Build current website for rendered onboarding tests
-        run: bun run scripts/limited.ts bun --cwd website run build
+        working-directory: website
+        run: bun run ../scripts/limited.ts bun run build
       - name: Check types
         run: bun run typecheck
       - name: Install Linux selection callback test dependencies
