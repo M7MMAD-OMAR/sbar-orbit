@@ -1,18 +1,40 @@
 # Roadmap
 
-**State, 22 September 2026.** Tagged `v0.1.1` at `7e9c6d7`, where all nine CI jobs passed, and `0.1.1`
-is what the npm registry serves as `latest`. It is a fix release: it narrows when an agent should open
-an Orbit session at all, and changes no persisted schema and no service unit contract. `0.1.0` before
-it is the first release without an alpha suffix; an automatic update will
-not cross from a prerelease to a release by itself. Of the seven gates below, 2, 3, 6 and 7 are closed at the tier their
-evidence supports, and gate 1 is closed by an automated reading taken on this desktop but not yet by
-the participant's own reading of the viewer's `#cost` line. Gates 4 and 5, and every claim about a
-machine with a person at it, still wait on the same thing: a host that is not this workstation, with
-someone sitting at it. Nothing here is closed by installing Orbit somewhere.
+**State, 6 October 2026, documentation base `0faa05c`.** The checkout declares package
+version `0.2.0`. This is source metadata, not proof of a published package, registry `latest`
+or a tag. The latest retained full workflow tested runtime source
+`1e9e88e37d299fe6ea3aed6c51e4fa6142cdcb81` in run 37415015766: all nine jobs passed.
+Ubuntu recorded 687 pass and 94 skip, Windows 469 pass and 312 skip, macOS 480 pass
+and 301 skip, with zero failures on each. Skips remain unmeasured. The
+[portability ledger](portability-verification.md#corrected-exit-measurement-and-fresh-windows-owned-tree-cleanup-evidence)
+records the exact source, artifacts, earlier failures and limits.
+
+Orbit's full external-user acceptance remains open. The
+[requirement-to-evidence matrix](completion-status.md) names the completed portions,
+code gaps, human/device evidence gaps and externally blocked native preparation.
+Installation never closes a roadmap gate by itself.
+
+**Native owner handoff is held unconditionally.** The owner's compositor crashed
+on 6 October during a Chrome claim. Synthetic regression and refusal fixtures do
+not establish real compositor safety. The hold has no runtime override, and its
+[release evidence requirements](native-handoff-incident.md) remain mandatory.
+The rejected native preparation may not be executed, revised, continued or delegated
+through an alternate path; see the
+[recorded external blocker](portability-verification.md#unfinished-acceptance-gates).
+
+## Historical release state, 22 September 2026
+
+The September snapshot recorded tagged `v0.1.1` at `7e9c6d7`, with all nine CI jobs
+passing, and registry `latest` then serving `0.1.1`. Those are historical statements,
+not a current registry or tag check. It recorded gates 2, 3, 6 and 7 below as closed
+only at their evidence tiers. Gate 1 had an automated desktop reading but lacked the
+participant's own reading of the viewer's `#cost` line. Gates 4 and 5 and full human
+acceptance remained open. The historical gate details are retained below and must
+be read with the October matrix and native hold above.
 
 ## What remains, 20 September 2026
 
-Recorded from the newest evidence, so a reader can tell what alpha.8 does and does not settle.
+Historical alpha.8 evidence and remaining gates, retained with October updates where noted.
 
 1. **A person at the keyboard.** The no-interference half has a ten-minute concurrent measurement on a
    live desktop, and the takeover half is now measured end to end with a scripted participant driving
@@ -26,14 +48,14 @@ Recorded from the newest evidence, so a reader can tell what alpha.8 does and do
 2. **Real-device coverage.** Windows and macOS have run on a borrowed Windows 11 guest and a hosted
    `macos-26-arm64` runner, with nobody at the machine; the guest has Edge alone on one of its two
    hosts. What is missing is a Windows and a macOS machine with a real desktop session and the
-   person's own account, Keychain and browser history. On Linux the native rows come from a machine
-   whose compositor rasterises in software, with no physical GPU, and the other distributions are
-   container limited.
+   person's own account, Keychain and browser history. The historical second Fedora host rasterised in software without a physical GPU. A later
+   private Intel render-node pilot is Limited to its named checks in [support tiers](support-tiers.md);
+   broader GPU/device coverage is not measured. Other distribution native rows are container limited.
 3. **Managed installation and updates on Windows and macOS.** Adopt, stage, activate, rollback and the
    timer exist on Linux only; Windows and macOS refuse managed activation and scheduling explicitly
    rather than reporting success. See [automatic updates](updates.md) and
    [the alpha.8 guide](release-alpha8.md).
-4. **Three failures with no identified cause.** A local Linux installer-contract test failed in one
+4. **Three historical failures with no identified cause.** A local Linux installer-contract test failed in one
    full-suite run and has passed in every run since, with the user journal showing no actionable cause;
    a Windows cold first-capture timed out once and did not recur; and the managed broker on this
    workstation aborted with SIGABRT after 4h46m of uptime, taking its live sessions with it, with the
@@ -41,7 +63,12 @@ Recorded from the newest evidence, so a reader can tell what alpha.8 does and do
    reproduced with its cause named. A successful rerun is not an explanation, and no failing functional
    test was deleted or given a longer deadline. See
    [release readiness](release-readiness.md#managed-broker-abort-20-september-2026).
-5. **A real host for gates 4 and 5.** The browser extension and the Linux families are closed as far as
+5. **October Windows failures remain preserved.** The later successful owned-tree test does not
+   explain PID `7528` in the `5c1193d` failure or the older installed-browser startup readiness
+   timeout. The `dcf8279` stable-witness failure was a premature measurement with no eventual
+   survivor result. These remain separate from the September incidents; see the
+   [October failure record](completion-status.md#preserved-failures-and-unknowns).
+6. **A real host for gates 4 and 5.** The browser extension and the Linux families are closed as far as
    their hosts could take them. What closes more is a machine of each family with a screen and a GPU,
    and a person's Windows or macOS desktop, which is the same host classes item 2 names.
 
@@ -68,7 +95,7 @@ Recorded from the newest evidence, so a reader can tell what alpha.8 does and do
   verifies that the broker answers, printing a remedy for every item only a package manager can supply.
   It reports installation state and says in its own closing line that this is not a measurement.
 
-## Next acceptance gates
+## Historical acceptance gate detail
 
 1. **Closed on 14 September 2026, with the figure read on the participant's own desktop.** `experiments/viewer-cost-desktop.ts` opened the viewer window Orbit opens there, Hyprland, Google Chrome in Orbit's own profile, and read `Viewer cycle: 75 to 129 ms of every 1000 ms (7 to 13%)` from its `#cost` line for a minute on a blank session, request 59 to 110 ms, decode 6 to 9 ms, draw 0 ms. See [validation](validation.md). What that does not settle is the participant's earlier feeling, which predates the two fixes and the new window; a native session or a busy page costs more per frame, and the line is there for the person to read whenever it does.
    The original gate, for the record: resolve the participant-reported CPU problem before another interactive trial. Names/pointer visibility were confirmed; takeover and resource acceptance were not. Two measured causes are now fixed: the viewer scheduled its next poll with no delay once an iteration outlasted its cadence, and PNG deflate dominated capture on both backends. The viewer now reports its own per-frame cost, because it runs outside Orbit's cgroup and the CPU sampler cannot see it. A participant-read cost figure is still required; neither fix is confirmed to be what the participant felt.
@@ -200,4 +227,4 @@ Recorded from the newest evidence, so a reader can tell what alpha.8 does and do
    a display number exists, and a scope started from inside lands in the slice. See
    [support tiers](support-tiers.md) and [porting](porting.md).
 
-Use [acceptance cases](acceptance.md) as release criteria. Alpha versions do not imply these gates are complete.
+Use [acceptance cases](acceptance.md) as release criteria and the [October matrix](completion-status.md) for current gaps. A version number or installation result does not imply these gates are complete.
