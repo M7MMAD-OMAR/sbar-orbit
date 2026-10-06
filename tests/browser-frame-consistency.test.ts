@@ -4,9 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserBackend, captureTimeoutMs } from '../src/browser';
 import type { Page } from 'playwright';
+import { fixturePhases } from './fixture-phases';
 
 test('browser frame keeps its captured page and dimensions when tab actions finish concurrently', async () => {
-  const profile = await mkdtemp(join(tmpdir(), 'orbit-frame-consistency-'));
+  const trace = fixturePhases('first-frame-consistency');
+  const profile = await trace.observe('profile-create', mkdtemp(join(tmpdir(), 'orbit-frame-consistency-')));
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     const path = new URL(request.url).pathname;
     return new Response(`<html><head><title>${path}</title><style>html,body{margin:0;width:100%;height:100%;background:${path === '/first' ? '#ff0000' : '#0000ff'}}</style></head><body>${path}</body></html>`, { headers: { 'content-type': 'text/html' } });
@@ -14,9 +16,9 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
   let backend: BrowserBackend | undefined;
   let releaseCapture = () => {};
   try {
-    backend = await BrowserBackend.create(profile, { width: 640, height: 480 });
+    backend = await trace.observe('backend-create', BrowserBackend.create(profile, { width: 640, height: 480 }));
     const origin = `http://127.0.0.1:${server.port}`;
-    await backend.act({ type: 'navigate', url: `${origin}/first` });
+    await trace.observe('initial-navigate', backend.act({ type: 'navigate', url: `${origin}/first` }));
     const firstPage = backend.context.pages()[0];
     if (!firstPage) throw new Error('Owned first page is missing');
     let captured = () => {};
@@ -25,26 +27,31 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
     const attach = backend.context.newCDPSession.bind(backend.context);
     let hold = true;
     backend.context.newCDPSession = async page => {
-      const session = await attach(page);
+      const session = await trace.observe('cdp-attach', attach(page));
       const send = session.send.bind(session);
       session.send = async (method, params) => {
-        const result = await send(method, params);
+        const operation = send(method, params);
+        const result = await (method === 'Page.captureScreenshot' ? trace.observe('capture-send', operation) : operation);
         if (method === 'Page.captureScreenshot' && hold) {
           hold = false;
+          trace.phase('real-raw-bytes-ready', 'done');
           // The screenshot is already real Chromium output. Only its delivery
           // is held while real tab and resize actions finish independently.
           captured();
-          await captureGate;
+          await trace.observe('held-capture-delivery', captureGate);
         }
         return result;
       };
       return session;
     };
     const observing = backend.observe();
-    await capturedBytes;
-    await backend.act({ type: 'open-tab', url: `${origin}/second` });
-    await backend.act({ type: 'resize', width: 800, height: 600 });
+    trace.observe('observation', observing);
+    await trace.observe('captured-bytes-gate', capturedBytes);
+    await trace.observe('open-tab', backend.act({ type: 'open-tab', url: `${origin}/second` }));
+    await trace.observe('resize', backend.act({ type: 'resize', width: 800, height: 600 }));
+    trace.phase('release-capture', 'start');
     releaseCapture();
+    trace.phase('release-capture', 'done');
     const frame = await observing;
     const decoded = await firstPage.evaluate(async image => {
       const bytes = Uint8Array.from(atob(image), char => char.charCodeAt(0));
@@ -72,9 +79,15 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
     expect(evidence.current.location).toBe(`${origin}/second`);
     expect(backend.surface).toEqual({ width: 800, height: 600 });
   } finally {
+    trace.phase('finally-release-capture', 'start');
     releaseCapture();
-    try { await backend?.close(); await rm(profile, { recursive: true }); }
-    finally { server.stop(true); }
+    trace.phase('finally-release-capture', 'done');
+    try {
+      trace.phase('backend-close', 'start');
+      await backend?.close();
+      trace.phase('backend-close', 'done');
+      await trace.observe('profile-remove', rm(profile, { recursive: true }));
+    } finally { server.stop(true); trace.phase('server-stop', 'done'); trace.finish(); }
   }
 }, 30000);
 
