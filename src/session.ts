@@ -315,13 +315,13 @@ export class Sessions {
         // a read only snapshot inside the profile would stop the profile itself being removed.
         session.releasing ??= (async () => {
           const failures: unknown[] = [];
-          try {
-            await session.tail;
-            await account?.release();
-            await session.releaseClone?.();
-            await session.egress.close();
-            if (session.restoreStore) await clearRestorePoints(session.restoreStore);
-          } catch (error) { failures.push(error); }
+          await session.tail;
+          // Each resource must get its release attempt even when an earlier release fails.
+          try { await account?.release(); } catch (error) { failures.push(error); }
+          try { await session.releaseClone?.(); } catch (error) { failures.push(error); }
+          try { await session.egress.close(); } catch (error) { failures.push(error); }
+          try { if (session.restoreStore) await clearRestorePoints(session.restoreStore); }
+          catch (error) { failures.push(error); }
           try { await this.removeProfile(profile); } catch (error) { failures.push(error); }
           if (failures.length === 1) throw failures[0];
           if (failures.length > 1) throw new AggregateError(failures, "Owned session resource release and profile removal failed");
@@ -709,7 +709,12 @@ export class Sessions {
       const id = text(params.sessionId, "sessionId");
       const known = this.sessions.get(id);
       if (known && known.state !== "closed") throw new OrbitError("SESSION_OPEN", "End the session before removing it from the list");
-      if (known) this.sessions.delete(id);
+      if (known) {
+        // A backend exit marks it closed before asynchronous resource release finishes.
+        // Keep the entry if cleanup fails so stop and broker shutdown still report it.
+        await known.releasing;
+        this.sessions.delete(id);
+      }
       return { sessionId: id, forgotten: known !== undefined };
     }
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow", "session.restore"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
