@@ -132,3 +132,85 @@ Actual native claim, cursor, focus, input and cleanup remain `not measured`; the
 owner handoff release hold remains active. The native preparation task's content
 rejection and its lack of a specific tool/operation identity remain recorded above.
 No rejected Fedora prototype was executed by this verification task.
+
+## Official source review correction and preserved Windows startup failure
+
+The three P2 findings after the successful `e5e9a8d` run were real coverage gaps:
+relative executable binding before helper execution, official Chrome ELF profile
+pinning and SingletonLock checks, and placement of the profile switch before the
+caller's argument terminator. A successful `e5e9a8d` suite did not cover those
+three cases and is retained as limited earlier evidence.
+
+The independent source correction `d78a66a` was integrated into official `main` as
+`66e15949ffad5b9f498d49b900dcd166629e6912`. The same three pure Python assertions
+failed against the old `e5e9a8d` source and passed against the correction. Their
+names are `relative_executable_is_resolved_before_approval`,
+`official_chrome_elf_pins_directory_and_checks_lock`, and
+`browser_profile_switch_precedes_argument_terminator`. The coordinator additionally
+recorded four passing bounded pure Bun tests, zero failures, 15 assertions and
+1072 milliseconds on merged `main`. No owner IPC or real application was used by
+those regressions.
+
+[Official run 37411189838](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838)
+tested that exact source. Attempt 1 finished with eight successful jobs and one
+failed job. All three suites passed:
+
+| Runner and runtime | Pass | Skip | Fail | Test scope | Duration |
+| --- | ---: | ---: | ---: | --- | --- |
+| Ubuntu 24.04 x64, Bun 1.3.14 | 666 | 94 | 0 | 760 tests in 164 files | 343.15 seconds |
+| Windows x64, Bun 1.4.2 | 448 | 312 | 0 | 760 tests in 164 files | 292.15 seconds |
+| macOS arm64, Bun 1.3.14 | 459 | 301 | 0 | 760 tests in 164 files | 221.21 seconds |
+
+Ubuntu's native opening Bun fixture runs the complete 11-method Python suite,
+including the three added cases, and checks its zero exit status and `OK` result.
+Windows and macOS skip that Linux fixture, with three other opening tests passing.
+These remain fake-worker and argument/approval fixtures, not real opening evidence.
+
+The failed Windows installed-browser job passed installation, dependencies,
+service, installer verification and host registration. The later browser `session
+create` operation failed with `BACKEND_FAILED`: the owned Chrome process was still
+running but had not published its local endpoint within 15 seconds. The retained
+stage timing was 15502 milliseconds; `doctor` had passed in 424 milliseconds. No
+browser frame was produced. Installer stderr was empty, which is not a measurement
+of owned Chrome stderr.
+
+One authorized targeted rerun of that Windows installed-browser job used the
+identical SHA, timeout and source. [Attempt 2](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/attempts/2)
+passed; only this job was executed again. The other eight job results were carried
+forward from attempt 1. The rerun created a session in 8527 milliseconds, captured
+a nonempty 18264-byte JPEG, passed navigation/read/pause-refusal/resume checks, and
+received a successful stop response in 568 milliseconds. The latest job summary
+is nine successful jobs, but the first attempt's failure is preserved rather than
+being replaced by a claim of repeatable startup success.
+
+Startup root cause remains unknown. The failed job did not preserve owned-browser
+stderr, job accounting, membership or post-stop process-handle liveness. Source
+inspection identifies an attempted startup cleanup path through the per-session
+Windows job object, but it does not prove zero survivors in the failed run. The
+successful rerun's stop response also does not prove that absence. Suite resource
+artifacts come from separate job runners and cannot establish CPU pressure on the
+failed installed-browser runner. No timeout was expanded and no environment or
+source cause is asserted from the rerun result.
+
+A separate source review found that Windows stop can resolve after a four-second
+child-exit race without confirmed exit, and `CloseHandle` success is not checked.
+That is a cleanup-contract concern requiring its own source correction and
+validation; it is not evidence that this run left survivors. It remains separate
+from the unresolved readiness failure.
+
+| Artifact | Link |
+| --- | --- |
+| Windows installed acceptance, failed attempt 1 | [installer report and failed stage timing](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11388783960) |
+| Windows installed acceptance, successful attempt 2 | [installer, browser frame and stage timings](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11389785674) |
+| Ubuntu installed acceptance | [installer and browser evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11389725434) |
+| macOS installed acceptance | [installer and browser evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11388808867) |
+| Windows suite resources | [whole-runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11389795855) |
+| Ubuntu suite resources | [whole-runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11389467195) |
+| macOS suite resources | [whole-runner resource evidence](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37411189838/artifacts/11389621340) |
+
+All nine generated host entries negotiated 16 MCP tools. Actual Claude, Codex and
+Hermes CLIs were absent on all runners, and native installer steps were skipped.
+Actual native claim, cursor, focus, input, cleanup and performance remain
+`not measured`. The owner handoff release hold and the earlier rejected native
+preparation limitation remain. Later documentation-only commits do not claim a
+new tested runtime source.
