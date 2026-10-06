@@ -17,6 +17,13 @@ from .transport import NativeTransport, action_response
 
 
 class ExistingApplicationSession(NativeSession):
+    def open(self, value):
+        from .owner_open import open_application
+        with self.lock:
+            if self.closed or self.lease_id is not None:
+                raise SessionError("Open an application before claiming its session")
+            return open_application(self, value)
+
     def __init__(self, plan, directory, control):
         self.plan = copy.deepcopy(plan)
         self.directory = private_directory(directory)

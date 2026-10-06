@@ -14,6 +14,17 @@ type NativeAction = { type: string; [key: string]: unknown };
 type Window = Target & { title: string; width: number; height: number };
 
 export type HandoffSelection = { workspace: number; address?: string; stableId?: string };
+export type NativeOpen = { workspace: number; argv: string[] };
+export function parseNativeOpen(value: unknown): NativeOpen {
+  const input = record(value);
+  parseHandoff({ workspace: input.workspace });
+  if (Object.keys(input).some(key => !["workspace", "argv"].includes(key))
+      || !Array.isArray(input.argv) || input.argv.length < 1 || input.argv.length > 64
+      || input.argv.some(arg => typeof arg !== "string" || Buffer.byteLength(arg) > 4096 || /[\0\r\n]/.test(arg))
+      || !input.argv[0] || Buffer.byteLength(input.argv.join("")) > 16384)
+    throw new OrbitError("INVALID_REQUEST", "Opening requires bounded application arguments and a workspace");
+  return { workspace: Number(input.workspace), argv: input.argv as string[] };
+}
 export function parseHandoff(value: unknown): HandoffSelection {
   const input = record(value);
   if (Object.keys(input).some(key => !["workspace", "address", "stableId"].includes(key))
@@ -114,6 +125,42 @@ export class NativeBackend {
       if (worker) await worker.close();
       await rm(directory, { recursive: true, force: true });
     }
+  }
+
+  static async openApplication(options: NativeOptions, value: NativeOpen) {
+    await requireResourceBudget();
+    const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
+    let worker: NativeWorker | undefined;
+    let remove = false;
+    let result: unknown;
+    let primary: unknown;
+    const cleanup: unknown[] = [];
+    try {
+      worker = await NativeWorker.create(join(directory, "worker"), options,
+        ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
+      result = await worker.request("open", value);
+      remove = true;
+    } catch (error) {
+      // A denied approval did not dispatch. Other errors retain uncertain launch evidence.
+      remove = error instanceof OrbitError && error.code === "APPROVAL_REQUIRED";
+      primary = error;
+    }
+    let stopped = !worker;
+    if (worker) {
+      try { await worker.close(); stopped = true; }
+      catch (error) { cleanup.push(error); }
+    }
+    if (remove && stopped) {
+      try { await rm(directory, { recursive: true, force: true }); }
+      catch (error) { cleanup.push(error); }
+    }
+    if (primary !== undefined) {
+      if (cleanup.length && primary instanceof Error)
+        Object.defineProperty(primary, "cause", { value: new AggregateError(cleanup, "Native opening cleanup failed"), configurable: true });
+      throw primary;
+    }
+    if (cleanup.length) throw new AggregateError(cleanup, "Native opening cleanup failed");
+    return result;
   }
 
   get surface(): Viewport { return this.size; }

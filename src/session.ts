@@ -5,7 +5,7 @@ import { AccountLease } from "./profiles";
 import { join } from "node:path";
 import { BrowserBackend } from "./browser";
 import { FedoraBackend } from "./fedora";
-import { NativeBackend, parseHandoff } from "./hyprland";
+import { NativeBackend, parseHandoff, parseNativeOpen } from "./hyprland";
 import { nativeOptionsFromEnv, type NativeOptions } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
@@ -128,6 +128,7 @@ export class Sessions {
   // and several Chromes or compositors booting together on one core made each other time out
   // where one after another all start; the queue costs the later ones only the earlier ones' start.
   private creationTail: Promise<unknown> = Promise.resolve();
+  private nativeOpens = new Map<string, { fingerprint: string; result: Promise<unknown> }>();
   private shuttingDown = false;
   /**
    * Probed once. The probe starts a sandbox to find out whether it can, and a session creation is not
@@ -614,6 +615,35 @@ export class Sessions {
       // only, since it is systemd units that drift this way.
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
+    if (request.method === "native.open") {
+      if (!this.native) throw new OrbitError("UNSUPPORTED", "Native opening is not configured");
+      if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+      const requestId = text(params.requestId, "requestId");
+      if (requestId.length > 128) throw new OrbitError("INVALID_REQUEST", "Opening request identity is too long");
+      if (Object.keys(params).some(key => !["requestId", "workspace", "argv"].includes(key)))
+        throw new OrbitError("INVALID_REQUEST", "Unknown native opening field");
+      const opening = parseNativeOpen({ workspace: params.workspace, argv: params.argv });
+      const fingerprint = JSON.stringify(opening);
+      const previous = this.nativeOpens.get(requestId);
+      if (previous) {
+        if (previous.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Opening request identity conflicts");
+        return previous.result;
+      }
+      if (this.nativeOpens.size >= 256) throw new OrbitError("LIMIT_REACHED", "Native opening request limit reached");
+      const options = this.native;
+      const result = this.creationTail.then(() => {
+        if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+        return NativeBackend.openApplication(options, opening);
+      });
+      this.creationTail = result.catch(() => {});
+      this.nativeOpens.set(requestId, { fingerprint, result });
+      this.creating.add(result);
+      void result.then(() => this.creating.delete(result), () => this.creating.delete(result));
+      void result.catch(error => {
+        if (error instanceof OrbitError && error.code === "APPROVAL_REQUIRED") this.nativeOpens.delete(requestId);
+      });
+      return result;
+    }
     if (request.method === "native.candidates") {
       if (!this.native) throw new OrbitError("UNSUPPORTED", "Native handoff is not configured");
       return NativeBackend.candidates(this.native, parseHandoff(params));
