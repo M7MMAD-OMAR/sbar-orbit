@@ -59,9 +59,54 @@ jobs:
           if ($env:EXPECTED_COMMIT -cnotmatch '^[0-9a-f]{40}$' -or ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:EXPECTED_MANIFEST -cnotmatch '^[0-9a-f]{64}$')) { throw 'Exact commit and manifest inputs required' }
           $head = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $head -cne $env:EXPECTED_COMMIT -or $head -cne $env:GITHUB_SHA) { throw 'Prepared candidate source commit mismatch' }
-          $paths = @(git ls-files)
+          $originalPaths = @(git ls-files)
+          if ($LASTEXITCODE -ne 0 -or $originalPaths.Count -eq 0) { throw 'Tracked source manifest unavailable' }
+          $originalBytes = [Text.Encoding]::UTF8.GetBytes(($originalPaths -join "`n") + "`n")
+          [IO.File]::WriteAllBytes("$env:EVIDENCE/git-ls-files-original.txt", $originalBytes)
+          $oldPaths = $originalPaths.Clone()
+          $oldSortError = $null
+          try { [Array]::Sort($oldPaths, [StringComparer]::Ordinal) } catch { $oldSortError = $_.Exception.Message }
+          [string[]] $paths = @($originalPaths)
           [Array]::Sort($paths, [StringComparer]::Ordinal)
-          if ($LASTEXITCODE -ne 0 -or $paths.Count -eq 0) { throw 'Tracked source manifest unavailable' }
+          function TestOrdinal($values) {
+            for ($index = 1; $index -lt $values.Count; $index++) {
+              if ([StringComparer]::Ordinal.Compare([string]$values[$index - 1], [string]$values[$index]) -ge 0) { return $false }
+            }
+            return $true
+          }
+          function GetPathCounts($values) {
+            $counts = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
+            foreach ($value in $values) {
+              $key = [string]$value
+              if ($counts.ContainsKey($key)) { $counts[$key]++ } else { $counts.Add($key, 1) }
+            }
+            return ,$counts
+          }
+          function SameMultiset($left, $right) {
+            $leftCounts = GetPathCounts $left; $rightCounts = GetPathCounts $right
+            if ($leftCounts.Count -ne $rightCounts.Count -or $left.Count -ne $right.Count) { return $false }
+            foreach ($key in $leftCounts.Keys) {
+              if (-not $rightCounts.ContainsKey($key) -or $leftCounts[$key] -ne $rightCounts[$key]) { return $false }
+            }
+            return $true
+          }
+          $oldOrdinal = $null
+          $oldOutcome = 'not measured: old comparison invalid'
+          if (-not $oldSortError) {
+            $oldOrdinal = TestOrdinal $oldPaths
+            $oldOutcome = if ($oldOrdinal) { 'counterexample not reproduced' } else { 'actual old nonordinal order reproduced' }
+          }
+          $fixedOrdinal = TestOrdinal $paths
+          $fixedMultiset = SameMultiset $originalPaths $paths
+          $oldMultiset = SameMultiset $originalPaths $oldPaths
+          @{ commit = $head; nativeGitExecutable = (Get-Command git).Source; nativeGitArgv = @('ls-files'); nativeGitExitCode = 0;
+             inputSerialization = 'Unmodified native path sequence serialized UTF8 with LF before either sort'; inputSha256 = (Get-FileHash "$env:EVIDENCE/git-ls-files-original.txt" -Algorithm SHA256).Hash.ToLowerInvariant(); inputCount = $originalPaths.Count;
+             originalArrayType = $originalPaths.GetType().FullName; oldArrayType = $oldPaths.GetType().FullName; fixedArrayType = $paths.GetType().FullName;
+             originalOrder = $originalPaths; oldOrder = $oldPaths; fixedOrder = $paths;
+             oldComparison = @{ state = $oldOutcome; error = $oldSortError; strictOrdinal = $oldOrdinal; sameMultiset = $oldMultiset };
+             fixedComparison = @{ strictOrdinal = $fixedOrdinal; sameMultiset = $fixedMultiset };
+             limit = 'Actual native Git output, same input for both comparisons. Non-reproduction or invalid old comparison remains explicit. No Windows process capability claim.' } | ConvertTo-Json -Depth 8 | Set-Content "$env:EVIDENCE/native-sort-control.json"
+          if (-not $fixedOrdinal -or -not $fixedMultiset -or -not $oldMultiset -or $paths.GetType().FullName -cne 'System.String[]') { throw 'Typed ordinal sorting control failed' }
           foreach ($path in $paths) {
             $stage = (git ls-files -s -- $path).Trim()
             if ($stage -notmatch '^[0-9]+ ([0-9a-f]{40}) 0	') { throw 'Published tracked source blob unavailable' }
@@ -137,7 +182,7 @@ jobs:
           } catch { $result.error = $_.Exception.Message }
           finally {
             try {
-            $paths = @(git ls-files)
+            [string[]] $paths = @(git ls-files)
             [Array]::Sort($paths, [StringComparer]::Ordinal)
             $rows = @($paths | ForEach-Object { "$_`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $_).Hash.ToLowerInvariant())" })
             [IO.File]::WriteAllBytes("$env:EVIDENCE/source-after.txt", [Text.Encoding]::UTF8.GetBytes(($rows -join "`n") + "`n"))
