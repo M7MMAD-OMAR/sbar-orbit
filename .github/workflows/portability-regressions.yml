@@ -29,12 +29,12 @@ jobs:
           output.mkdir(parents=True, exist_ok=True)
           cases = [
               ('registry', 'src/runtime-paths.ts', 'tests/windows-host.test.ts',
-               'registry-only candidate has unsupported profile identity', 3),
+               'registry-only candidate has unsupported profile identity', 3, 'expect(received)'),
               ('zen', 'src/native-zen-launch.ts', 'tests/native-zen-launch.test.ts',
-               'Zen stable discovery handles', 1),
+               'Zen stable discovery handles', 1, 'Expected promise that rejects'),
           ]
           evidence = []
-          for name, source, test, pattern, expected_failures in cases:
+          for name, source, test, pattern, expected_failures, assertion_marker in cases:
               path = pathlib.Path(source)
               fixed = path.read_bytes()
               old = subprocess.check_output(['git', 'show', 'ea4a017f208a1ea121faabec31ead73301dec6f7:' + source])
@@ -45,7 +45,7 @@ jobs:
                   (output / (name + '-old.log')).write_bytes(red.stdout)
                   text = re.sub(r'\x1b\[[0-9;]*m', '', red.stdout.decode(errors='replace'))
                   failures = re.search(r'^\s*(\d+) fail\s*$', text, re.MULTILINE)
-                  if red.returncode == 0 or not failures or int(failures[1]) != expected_failures or 'expect(received)' not in text:
+                  if red.returncode == 0 or not failures or int(failures[1]) != expected_failures or assertion_marker not in text:
                       raise RuntimeError(name + ': old source did not produce the expected assertion failures')
               finally:
                   path.write_bytes(fixed)
