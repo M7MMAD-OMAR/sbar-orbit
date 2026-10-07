@@ -1,5 +1,41 @@
 # Product interface evidence
 
+## Current combined integration, validation pending
+
+The current integration combines prior product source
+`bdfa5ec0463920912a66c3623ca3866e9a81f514` with official main
+`c98dce1f05a8b2fe47dcb5403f04715fe6ba47e3` through a normal merge. It preserves
+the accepted pipe diagnostics and the product interaction and capture changes.
+A preparatory typecheck passed. Fresh validation of this combined source,
+including its private UI captures and independent reviews, remains pending.
+The combined product checkpoint is not accepted.
+
+The prior product draft PR15 passed all nine CI jobs in run `37606331848`,
+using source tree `6b60be801ffc394cc417bbdb96ce736669cf13f3`. That run predates
+this combined integration and does not certify the newly combined source.
+Its separate child controls and actual private-browser parent capture remain
+historical evidence for that exact prior source.
+
+The current plan preserves all nine product checks and adds fresh pipe receipt,
+controlled timeout, five semantic negative and original observe/list checks.
+The typecheck and complete suite cover both workstreams. The combined local
+suite projection is 958 parent cases, with the same 49 explicit skip cases and
+909 executed cases. This projection must match actual named cases before it
+can become a measured result. Fresh English and Arabic captures, all 20
+lifecycle cells, eight settled optional cells, four visibly held capture errors
+and actual recovery, current Linux/Windows/macOS CI, and independent UI,
+specification and standards reviews are required before acceptance.
+
+The historical Windows exit 143 cause, full cleanup, browser executable
+identity, participant acceptance and native activation remain unmeasured.
+The native compositor crash hold remains unconditional.
+
+## Historical snapshot before the combined integration
+
+The following snapshot and all earlier records are preserved as history for
+their original source. Statements about pending checks, publication or image
+counts below describe those earlier snapshots.
+
 ## Current integration and evidence limits
 
 The latest verified local runtime integration is
