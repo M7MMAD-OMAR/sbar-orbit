@@ -22,7 +22,7 @@ import { openBroker, startFixture, act, type JournalView } from "./probe";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ChromeTransportObserver, type ChromeTraceProducer } from "../../src/chrome-transport-observer";
+import { ChromeTransportObserver, createChromeTraceOutputSink, type ChromeTraceProducer } from "../../src/chrome-transport-observer";
 
 const capabilities = await detectPlatform();
 const supported = capabilities.browserBackendSupported;
@@ -165,7 +165,7 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
       coreBundle, dependencyVersion,
     };
   })();
-  const trace = new ChromeTransportObserver(producer, value => console.error(JSON.stringify(value)));
+  const trace = new ChromeTransportObserver(producer, createChromeTraceOutputSink(line => console.error(line)));
   try {
     const broker = await trace.observe("open-broker", () => openBroker("adversarial-reaping"));
     trace.settled("open-broker");

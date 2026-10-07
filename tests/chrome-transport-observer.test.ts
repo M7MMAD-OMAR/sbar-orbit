@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { ChromeTransportObserver, currentChromeTransportObservation, forwardChromeProtocol, forwardChromeSend, forwardChromeReceive, forwardChromeEvent } from "../src/chrome-transport-observer";
+import { ChromeTransportObserver, createChromeTraceOutputSink, currentChromeTransportObservation, forwardChromeProtocol, forwardChromeSend, forwardChromeReceive, forwardChromeEvent } from "../src/chrome-transport-observer";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { controlledTraceValue, outputLines, outputTraceId, reassembleTraceOutput } from "./chrome-trace-output-probe";
 import { requireResourceBudget } from "../src/resource-budget";
 
 await requireResourceBudget();
@@ -365,3 +368,190 @@ test("browser version aggregate preserves unknown separate connection evidence",
   observer.finish(); expect(finalOf(values)?.browserVersion).toBe("not measured");
   expect(finalOf(values)?.browserVersions).toContainEqual({ connection: 2, browserVersion: "not measured", state: "not observed", requestId: null, session: null });
 }));
+
+function verifiedOutput(value: Record<string, unknown>, lines = outputLines(value)) {
+  for (const line of lines) if (Buffer.byteLength(line, "utf8") + 1 > 4096) throw new Error("trace-output-line-bound");
+  const decoded = reassembleTraceOutput(lines);
+  expect(decoded.bytes.equals(Buffer.from(JSON.stringify(value), "utf8"))).toBe(true);
+  expect(decoded.value).toEqual(value);
+  return lines;
+}
+function alteredOutput(lines: string[], edit: (value: Record<string, unknown>, index: number) => void) {
+  return lines.map((line, index) => {
+    const value: Record<string, unknown> = JSON.parse(line);
+    edit(value, index);
+    return JSON.stringify(value);
+  });
+}
+function expectIncomplete(lines: string[]) { expect(() => reassembleTraceOutput(lines)).toThrow(); }
+
+test("trace output ascii-4095", () => { verifiedOutput(controlledTraceValue(4095)); });
+test("trace output ascii-4096", () => { verifiedOutput(controlledTraceValue(4096)); });
+test("trace output ascii-65535", () => { verifiedOutput(controlledTraceValue(65535)); });
+test("trace output ascii-65536", () => { verifiedOutput(controlledTraceValue(65536)); });
+test("trace output ascii-65537", () => { verifiedOutput(controlledTraceValue(65537)); });
+test("trace output ascii-98304", () => { verifiedOutput(controlledTraceValue(98304)); });
+test("trace output unicode-boundary", () => {
+  const empty = controlledTraceValue(0, "");
+  const prefix = JSON.stringify(empty).indexOf('"padding":"') + '"padding":"'.length;
+  const value = controlledTraceValue(0, "X".repeat(2047 - prefix) + "😀عe\u0301".repeat(3000));
+  const bytes = Buffer.from(JSON.stringify(value));
+  expect(bytes[2047]).toBe(0xf0);
+  const lines = verifiedOutput(value);
+  const first: { payload: string } = JSON.parse(lines[0] ?? "");
+  expect(() => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(first.payload, "base64"))).toThrow();
+});
+test("trace output maximum", () => {
+  const lines = verifiedOutput(controlledTraceValue(524288));
+  expect(lines.length).toBe(257);
+  for (const line of lines) {
+    const value: { payload?: string; count: number } = JSON.parse(line);
+    expect(value.count).toBe(256);
+    if (value.payload !== undefined) expect(Buffer.from(value.payload, "base64").length).toBeLessThanOrEqual(2048);
+  }
+});
+test("trace output over-cap", () => {
+  const lines: string[] = [];
+  expect(() => createChromeTraceOutputSink(line => lines.push(line))(controlledTraceValue(524289))).toThrow("trace-output-byte-cap");
+  expect(lines.some(line => JSON.parse(line).kind === "fragment" || JSON.parse(line).kind === "emission-manifest")).toBe(false);
+  expectIncomplete(lines);
+});
+test("trace output missing", () => { expectIncomplete(outputLines(controlledTraceValue(98304)).slice(1)); });
+test("trace output duplicate", () => {
+  const lines = outputLines(controlledTraceValue(98304));
+  expectIncomplete([...lines, lines[0] ?? ""]);
+});
+test("trace output conflict", () => {
+  const lines = outputLines(controlledTraceValue(98304));
+  const duplicate = alteredOutput(lines.slice(0, 1), value => { value.payload = Buffer.alloc(2048, 65).toString("base64"); });
+  expectIncomplete([...lines, ...duplicate]);
+});
+test("trace output reordered", () => { const value = controlledTraceValue(98304); verifiedOutput(value, outputLines(value).reverse()); });
+test("trace output digest", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { value.sha256 = "0".repeat(64); })); });
+test("trace output length", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { value.bytes = 98303; })); });
+test("trace output count", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { value.count = 47; })); });
+test("trace output index", () => {
+  for (const index of [-1, 0.5, 48]) expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), (value, row) => { if (row === 0) value.index = index; }));
+});
+test("trace output malformed", () => {
+  const lines = outputLines(controlledTraceValue(98304));
+  expectIncomplete(["{", ...lines.slice(1)]);
+  expectIncomplete(alteredOutput(lines, (value, row) => { if (row === 0) value.payload = "%%%"; }));
+  const invalid = Buffer.from(JSON.stringify(controlledTraceValue(98304)));
+  invalid[0] = 0xff;
+  const invalidHash = createHash("sha256").update(invalid).digest("hex");
+  expectIncomplete(alteredOutput(lines, value => {
+    value.sha256 = invalidHash;
+    if (value.kind === "fragment" && typeof value.index === "number") value.payload = invalid.subarray(value.index * 2048, (value.index + 1) * 2048).toString("base64");
+  }));
+  const first = lines[0] ?? "";
+  expectIncomplete([first.replace('"schema":1', '"schema":1,"schema":1'), ...lines.slice(1)]);
+});
+test("trace output unknown-schema", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { value.schema = 2; })); });
+test("trace output unknown-fields", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { value.unknown = true; })); });
+test("trace output absent-manifest", () => { expectIncomplete(outputLines(controlledTraceValue(98304)).slice(0, -1)); });
+test("trace output duplicate-manifest", () => {
+  const lines = outputLines(controlledTraceValue(98304));
+  expectIncomplete([...lines, lines.at(-1) ?? ""]);
+});
+test("trace output manifest-conflict", () => { expectIncomplete(alteredOutput(outputLines(controlledTraceValue(98304)), value => { if (value.kind === "emission-manifest") value.sha256 = "0".repeat(64); })); });
+test("trace output foreign-identity", () => {
+  const lines = outputLines(controlledTraceValue(98304));
+  for (const field of ["traceId", "message"]) {
+    const changed = alteredOutput(lines, (value, row) => { if (row === 0) value[field] = field === "traceId" ? "22222222-2222-4222-8222-222222222222" : 2; });
+    expectIncomplete(changed);
+  }
+});
+function throwingOutput(kind: "first" | "middle" | "manifest") {
+  const lines: string[] = [];
+  const original = new Error("owned-framing-sink-error");
+  let calls = 0;
+  const sink = createChromeTraceOutputSink(line => {
+    calls++;
+    const frame: { kind: string } = JSON.parse(line);
+    if ((kind === "first" && calls === 1) || (kind === "middle" && calls === 2) || (kind === "manifest" && frame.kind === "emission-manifest")) throw original;
+    lines.push(line);
+  });
+  let caught: unknown;
+  try { sink(controlledTraceValue(98304)); } catch (error) { caught = error; }
+  expect(caught).toBe(original);
+  expectIncomplete(lines);
+  expect(lines.some(line => JSON.parse(line).kind === "emission-manifest")).toBe(false);
+}
+test("trace output sink-first", () => { throwingOutput("first"); });
+test("trace output sink-middle", () => { throwingOutput("middle"); });
+test("trace output sink-manifest", () => { throwingOutput("manifest"); });
+test("trace output serialization", () => {
+  let reads = 0;
+  const value = { toJSON() { reads++; return controlledTraceValue(98304); } };
+  const decoded = reassembleTraceOutput(outputLines(value));
+  expect(reads).toBe(1); expect(decoded.value).toEqual(controlledTraceValue(98304));
+  const cyclic: Record<string, unknown> = {}; cyclic.self = cyclic;
+  for (const refused of [undefined, cyclic, { chromeProtocolTrace: outputTraceId + "\n" }, { get chromeProtocolTrace() { throw new Error("owned-serialization-getter"); } }]) {
+    const lines: string[] = [];
+    expect(() => createChromeTraceOutputSink(line => lines.push(line))(refused)).toThrow();
+    expectIncomplete(lines);
+    for (const line of lines) expect(Buffer.byteLength(line) + 1).toBeLessThanOrEqual(4096);
+  }
+});
+test("trace output message-cap", () => {
+  const lines: string[] = [];
+  const sink = createChromeTraceOutputSink(line => lines.push(line));
+  for (let message = 1; message <= 81; message++) {
+    const start = lines.length; sink(controlledTraceValue(256));
+    expect(reassembleTraceOutput(lines.slice(start), outputTraceId, message).bytes.length).toBe(256);
+  }
+  const start = lines.length;
+  expect(() => sink(controlledTraceValue(256))).toThrow("trace-output-message-cap");
+  expectIncomplete(lines.slice(start));
+  expect(lines.slice(start).some(line => JSON.parse(line).kind === "emission-manifest")).toBe(false);
+});
+test("trace output repeated-finish", () => {
+  const lines: string[] = [];
+  const observer = new ChromeTransportObserver(producer, createChromeTraceOutputSink(line => lines.push(line)));
+  observer.finish(); const count = lines.length; observer.finish();
+  expect(lines.length).toBe(count);
+  const manifests = lines.filter(line => JSON.parse(line).kind === "emission-manifest");
+  expect(manifests.length).toBe(1);
+  const manifest: { traceId: string } = JSON.parse(manifests[0] ?? "");
+  expect(reassembleTraceOutput(lines, manifest.traceId).value.final).toBeDefined();
+});
+test("trace output synthetic-line-model", () => {
+  const value = controlledTraceValue(98304), expected = Buffer.from(JSON.stringify(value));
+  const legacy = expected.subarray(0, 65536);
+  expect(legacy.equals(expected)).toBe(false);
+  const lines = verifiedOutput(value);
+  const synthetic = lines.map(line => Buffer.from(line).subarray(0, 65536).toString("utf8"));
+  expect(reassembleTraceOutput(synthetic).bytes.equals(expected)).toBe(true);
+});
+test("trace output producer-hash", () => {
+  const path = new URL("../src/chrome-transport-observer.ts", import.meta.url);
+  const source = readFileSync(path);
+  const digest = createHash("sha256").update(source).digest("hex");
+  expect(source.toString()).toContain("export function createChromeTraceOutputSink");
+  const fixture = readFileSync(new URL("./adversarial/reaping-and-secrets.test.ts", import.meta.url));
+  const current = { ...producer, observer: digest, fixture: createHash("sha256").update(fixture).digest("hex") };
+  const lines: string[] = [];
+  const observer = new ChromeTransportObserver(current, createChromeTraceOutputSink(line => lines.push(line)));
+  observer.finish();
+  expect(reassembleTraceOutput(lines, observer.traceId).value.producer).toEqual(current);
+});
+test("trace output operation-parity", () => {
+  const original = new Error("owned-original-operation-error"), returnValue = {};
+  const order: string[] = [];
+  const observer = new ChromeTransportObserver(producer, createChromeTraceOutputSink(() => { throw new Error("sink"); }));
+  expect(observer.observe("fixture-start", () => { order.push("start"); return returnValue; })).toBe(returnValue);
+  let caught: unknown;
+  try { observer.observe("navigate", () => { order.push("throw"); throw original; }); } catch (error) { caught = error; }
+  expect(caught).toBe(original);
+  observer.observe("fixture-stop", () => { order.push("stop"); }); observer.finish();
+  expect(order).toEqual(["start", "throw", "stop"]);
+  expect(observer.isFinished()).toBe(true);
+});
+test("trace output unhandled-child", async () => {
+  const child = Bun.spawn([process.execPath, "run", fileURLToPath(new URL("./chrome-trace-output-probe.ts", import.meta.url)), "fixture-framed"], { stdout: "pipe", stderr: "pipe" });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect(code).not.toBe(0); expect(stdout + stderr).toContain("owned-fixture-stop-original-rejection");
+  const lines = stderr.split("\n").filter(line => line.startsWith('{"chromeTraceFrame":'));
+  expect(lines.length).toBeGreaterThan(0);
+});
