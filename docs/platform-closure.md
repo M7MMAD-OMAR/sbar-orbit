@@ -15,11 +15,57 @@ not push official `main`, change support claims or bypass the native release hol
 ## Current execution
 
 The verified main baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
-which reconciled the accepted PR 15 evidence retained below. The startup
-diagnostic successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
-currently at `abe0d63c83461ff4d1351d4b4bf328b69ee69144`, tree
-`0628a3002ab6b45e19bb6cb9c0b22cb6f0914a0f`. It remains open and unmerged.
+which reconciled the accepted PR 15 evidence retained below. Documentation
+PR 18 subsequently merged at `bbfb6b5b3892f920b798d212e2361d8907249c8d`.
+Its successful nine-job PR run does not replace the failed actual-main run
+recorded below. Runtime acceptance remains separate from documentation publication.
+
+The startup and capture successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
+currently at `92608f93c18fc89e351759228d8f5ffea8391b0f`, tree
+`efe3878f5a51a96f15c337d8997b2125c6e5396b`. It remains open and unmerged.
 PR 15 acceptance does not accept this new candidate or close the full platform.
+
+The combined candidate retains the exact portable resource sampling fixture
+from `abe0d63` and integrates the five capture paths from `292cea0`.
+Nine local checks and two fresh independent reviews accepted its local contract:
+the full suite ran 963 cases with 914 pass, 49 skip, zero fail, 6063 assertions
+and 274.63 seconds. Full-suite receipt SHA256 is
+`e18c9835bece770a0fb77fb1ab9c94e762552fb58e90c7e9779a14cd8b672793`.
+This local acceptance does not accept a provider run or final official main.
+
+Its exact-source [normal run 37656562979, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37656562979)
+failed: eight jobs succeeded and the Windows suite failed. The original
+attempt archive identifies native checkout `92608f9` in all nine jobs.
+Ubuntu reported 867 pass, 95 skip and zero fail; macOS reported 656 pass,
+306 skip and zero fail; Windows reported 642 pass, 318 skip and two failures.
+The Windows failures were
+`cross child leaves real browser capture available in the shared suite`,
+with startup endpoint timeout, and
+`abrupt broker death reaps its browser tree and a fresh broker rejects stale sessions`,
+with the unchanged 20000 ms test timeout. Their causes and repaired outcomes
+remain `not measured`. The original Windows raw log SHA256 is
+`d0f4abed43005cc7ca1ab202cbed2d2242761c7c661acd77ea5cd8cb6a1da66c`.
+The authenticated attempt log archive is 495585 bytes with SHA256
+`af9d4329e7cfd492f5c81c74bb0512e65e44aba0b589e05366490632d7341333`;
+all 112 members passed CRC validation. This is a log archive, not a complete
+source archive emitted by the runner. Failed provider evidence prevents
+provider acceptance; the local result does not replace it.
+
+The documentation head `bbfb6b5` passed all nine jobs in
+[PR run 37654515558](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37654515558),
+then its separate [actual-main run 37655792956, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37655792956)
+failed. Eight jobs succeeded and Windows reported 638 pass, 317 skip,
+two failures, 957 cases across 186 files, 4305 assertions and 526.38 seconds.
+`settings retry an unavailable connection in ar` failed during fixture setup
+at `tests/product-ui.test.ts:248`, waiting for `domcontentloaded`.
+`public onboarding renders and keyboard navigation works in ar` failed at
+line 628, waiting for `networkidle`. Both navigation deadlines remained
+15000 ms. Raw Windows log SHA256 is
+`ec41fe1b1d7d565b76850ef88ab64321569a56d264d0412d8eefe861fd3cc61e`.
+The setup failure bypasses the existing caller cleanup in the settings fixture;
+this control-flow cleanup gap is distinct from the unproven initial timeout
+cause. No timeout extension, retry or repaired result is claimed. These main
+failures differ from the candidate failures and are preserved independently.
 
 The previous candidate `c8effcd8feb51d5da1ffdcea4af6340c2d31570f`
 completed all three Ubuntu jobs in [profile diagnostic run 37646205630](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646205630).
