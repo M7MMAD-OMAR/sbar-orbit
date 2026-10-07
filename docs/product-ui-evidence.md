@@ -1,6 +1,137 @@
 # Product interface evidence
 
-## Current combined integration, validation pending
+## Accepted combined integration
+
+Latest verified runtime integration on official main is [7458a35d380777ea5d990312dd9eadfe7cce943b](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/7458a35d380777ea5d990312dd9eadfe7cce943b), after
+[PR 15](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/15) merged the bilingual
+product interface and capture contracts with the accepted CLI pipe diagnostics.
+That runtime integration tree `39a86a0facb0b7f591c4020720851eb6a0f8e792` exactly matches published
+head `3ee1963f30b9fcac7d6a45fcf257d770322547f5`, local validated integration
+`a7e1f6a57e4957baf85b5ea1ff7e36906aab1666` and actual PR checkout
+`c12ac8fb9fc70f51f242961ba9ef0e83e0b977d9`.
+
+The product checkpoint was formally accepted at revision 184, with source hash
+`c7eb1d0209d6f24e46cdbf1b0a6db3d6c2e6688cde12f8efdec16e21c7bf90ec`
+and plan hash `0817b8cf6c53cee63c170eba1ebca94e2841680c66f59e055aec998b5631f63c`.
+All 13 behavior gates, two fresh independent specification/standards reviews
+and the fresh independent UI gate passed. This accepts the stated product and
+diagnostic contract only; full platform closure remains open.
+
+[PR run 37619300681](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37619300681)
+completed all nine jobs successfully. Each provider suite actually ran 957 cases
+across 186 files. These are the PR counts, separately bound to that workflow:
+
+| Runner | Pass | Skip | Fail | Assertions | Seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ubuntu 24.04 | 862 | 95 | 0 | 5526 | 378.34 |
+| macOS | 652 | 305 | 0 | 4362 | 323.78 |
+| Windows | 640 | 317 | 0 | 4333 | 389.89 |
+
+The retained PR freeze manifest SHA256 is
+`c77b6cc165eba703341c6100f991c661e698cacd06f40365ab27bd84004d5b1e`.
+Offline checks verified 1132 retained files, 991 source blobs, 12 API-pinned ZIPs
+and 56 CRC-checked members. All named provider cases and explicit skip inventories
+match their terminal summaries. The local complete suite separately ran 958
+cases: 909 pass, 49 skip, zero fail and 6006 assertions. The extra local case is
+conditional confinement coverage in `tests/browser-upload.test.ts`; provider
+scope does not include it. Child controls are separate observations and are not
+added to these parent suite totals. Skipped or unknown scope is `not measured`.
+
+The separate [actual-main run 37621614377](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37621614377)
+completed all nine jobs successfully on actual push checkout `7458a35`.
+Its complete raw logs independently identify that checkout for every job.
+Each main suite ran 957 cases across 186 files, with these actual results:
+
+| Runner | Pass | Skip | Fail | Assertions | Seconds |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ubuntu 24.04 | 862 | 95 | 0 | 5526 | 370.44 |
+| macOS | 652 | 305 | 0 | 4362 | 353.60 |
+| Windows | 640 | 317 | 0 | 4331 | 424.76 |
+
+The actual-main freeze manifest SHA256 is
+`292a178fcd7f0dcac245b3e231429f0e23fb29d93e94fd0ebe79fcedfa8c8345`.
+The coordinator independently verified all 1140 retained files and modes, all
+991 Git blob identities, nine raw logs, 12 new API-digest-pinned ZIPs, 56
+CRC-checked members and their extracted bytes. Named case and skip inventories
+match each main terminal summary. Windows main's 4331 assertions remain distinct
+from PR Windows's 4333; no assertion parity or cause is inferred from equal
+case totals. Main evidence uses its own provider logs and artifacts.
+
+Main traces independently reconstruct 65 logical messages, final ordinal 65 and
+161 physical frames per platform. Dropped records are 53 on Ubuntu, 75 on Mac
+and 77 on Windows; fixture-stop remains pending. Six producer fields match the
+current source and declared dependency hash support, with original child exit
+zero. All six original pipe receipts and raw report/stderr/Python bytes match
+current main suite diagnostics and five source producer digests. Main child
+controls and actual real-parent report remain separate: 320x240, one page and
+1208 image bytes. The parent JPEG binary and child stdout bytes are not separately
+archived; raw-log metadata cannot establish image-content inspection.
+
+Both original observe/list pipe cases passed on every PR provider with awaited
+exit zero and exit-code snapshot zero. Raw report bytes are Python wrapper
+output, with original CLI stdout assertions and metadata; full CLI stdout bytes
+are not archived in those receipts. Artifact caps are checked after EOF rather
+than enforcing a streaming memory bound. Pipe deadline enforcement, full process
+cleanup and the earlier Windows exit 143 cause remain `not measured`.
+
+PR traces independently reconstruct 65 logical messages, final ordinal 65 and
+161 physical frames per provider, with six source-bound producer fields and
+original child exit zero. PR dropped records are 67 on Ubuntu, 61 on Mac and 73
+on Windows. Fixture-stop remains pending. Dependency package/coreBundle bindings
+and existing matched CDP browser replies do not establish loaded executable
+identity or archive provider runtime binaries. Windows ACL and ancestry race
+resistance, full cleanup and power-loss persistence remain `not measured`.
+
+The completed local suite used a 600-second aggregate inner supervisor and a
+630-second outer gate for the expanded scope. Earlier V4 inner 300-second and V5
+inner 330-second attempts actually timed out; their incomplete summaries remain
+failed measurements. The budget adjustment is not a functional repair, exit 143
+diagnosis, CPU/hang/production regression determination, cleanup proof or public
+performance improvement. Original 6/8/15/45-second production and per-test
+budgets remain unchanged. Earlier PR 13 framing, PR 14 pipe integration, raw
+provider failures and rejected product measurements retain their own source
+identities and limits in the historical records below.
+
+Managed browser installation is measured at the Limited disposable runner tier
+on Ubuntu, Windows and macOS. Managed update adoption, activation, scheduling
+and real service/task rollback remain separate evidence or code gaps.
+[GitHub v0.2.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0)
+still identifies `af37cc4`; retained [registry inspection](published-artifact-identity.json)
+identifies `latest` as `0.1.1`. Those published artifacts do not establish parity
+with this main integration or external installed behavior.
+
+Public latency remains 42.942314 percent overhead against the 20 percent target,
+a failed target. Idle overhead is 5.523438 MiB against 100 MiB, a bounded pass.
+Product acceptance and suite completion establish no production performance
+repair. Startup causes, Windows census, managed update lifecycle, release parity
+and external participants U1/T1 through U12/T12 remain open or `not measured`.
+[Support tiers](support-tiers.md) continue to govern capability claims.
+Native owner handoff and plugin activation remain unconditionally on hold;
+owner input, borrowed input/resume and alternate routes are not authorized by
+this acceptance. The full platform objective remains active.
+
+Public PR, workflow and commit references below identify publication and source.
+Local-only review and diagnostic archives are not published by those links;
+retained manifest digests identify the separately archived evidence. Historical
+then-current candidate and publication statements apply only to their snapshots.
+
+Fresh local UI review covered English and Arabic at 1440x1000 and 390x844,
+all 20 lifecycle cells, eight settled optional cells, four visibly held capture
+errors and actual recovery, with matching interaction receipts. These private
+fixtures do not measure physical devices, assistive technology, owner accounts
+or participant acceptance. Provider synthetic nine-case child reports passed
+separately from the actual private-browser parent reports: 320x240, one page
+and nonempty image bytes. Their child stdout and parent JPEG bytes are not
+separately archived, so report metadata cannot establish image-content review.
+Faithful settings wording intentionally changes the abbreviated baseline layout.
+New lifecycle states use the interaction contract without old-state pixel references.
+Mobile saved/refused framing scrolls the focused switch offscreen; the focus
+claim comes from executed DOM assertions and receipts, not a visible focus ring.
+No accessibility scanner or assistive-technology acceptance is claimed.
+
+## Historical combined integration before acceptance
+
+
 
 The current integration combines prior product source
 `bdfa5ec0463920912a66c3623ca3866e9a81f514` with official main
@@ -36,7 +167,7 @@ The following snapshot and all earlier records are preserved as history for
 their original source. Statements about pending checks, publication or image
 counts below describe those earlier snapshots.
 
-## Current integration and evidence limits
+## Historical integration and evidence limits before PR 15
 
 The latest verified local runtime integration is
 `eea17c15c9b8590acd41fb451e7c656d90951bd8`. It combines the product changes
@@ -102,7 +233,7 @@ complete objective and unconditional native hold.
 
 ## Baseline source and defects
 
-The preserved detached checkout at `/var/tmp/orbit-product-baseline-56fd8f3`
+The preserved detached checkout of [baseline 56fd8f3](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/56fd8f318c5ec2aaded827a8be89387bf54579f1)
 contained that commit's production source plus new tests. On October 6, 2026,
 the authorized bounded run of `tests/product-ui.test.ts` and
 `website/tests/locale.test.tsx` executed 17 tests in 29.00 seconds: 8 pass,
