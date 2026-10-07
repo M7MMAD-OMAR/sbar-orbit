@@ -2,7 +2,7 @@
 
 ## Current startup diagnostic candidate and provider limits
 
-Official main remains [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
+The verified main baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
 which reconciled the accepted PR 15 evidence retained below. The startup
 diagnostic successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
 currently at `abe0d63c83461ff4d1351d4b4bf328b69ee69144`, tree
@@ -59,6 +59,24 @@ scoped Windows outcome do not accept the whole platform or transfer the previous
 candidate's local suite result to `abe0d63`.
 The fixture correction does not repair or explain the separate Mac capture
 timeout, establish startup reliability or prove production performance gains.
+
+The separate documentation [PR 18](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/18)
+at `c0054c2080c426c0a82599c7d775cbded6e7c5cb` failed
+[run 37651136473](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37651136473):
+eight jobs succeeded and the macOS suite failed. Its retained authenticated raw
+log identifies PR merge checkout `5b1ad1d`, merging that documentation head
+into `834f3f6`, and reports 651 pass, 305 skip, one failure, 957 cases across
+186 files, 4357 assertions and 360.37 seconds. The failed case was
+`selected page restores keyboard focus after its command completes`, taking
+18336.77 ms. The actual failure was a 5000 ms `waitForFunction` timeout at
+`tests/product-ui.test.ts:385`, after `session.pause`, while waiting for the
+paused viewer with two tabs and its second tab selected. The subsequent focus
+verification was not reached. The failure cause and a repaired outcome remain
+`not measured`; no cause is attributed to documentation, host load or a focus
+regression. Raw log SHA256 is
+`3d9263f98ad73fb7dc9de004abc7201876bc09a9ee49170b5257637c72ca555b`.
+This is separate source-bound failed evidence and does not replace the PR 17
+Windows result or establish final-main or whole-platform acceptance.
 
 Public latency remains 42.942314 percent overhead against the 20 percent target,
 a failed target. Managed lifecycle and recovery, release/package parity,
