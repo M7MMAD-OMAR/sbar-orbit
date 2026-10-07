@@ -93,7 +93,7 @@ test('cross CDP thenable preserves receiver arguments and original await', () =>
   expect(receiver).toBe(value.channel); expect(method).toBe('Page.captureScreenshot');
   expect(options).toEqual({ format: 'jpeg', quality: 80, fromSurface: true, captureBeyondViewport: false });
   expect(awaits).toBe(1); expect(result.image).toBe(frame);
-  expect(value.registration?.snapshot().rows.map(row => row.stage)).toEqual(['begin', 'attachment-before', 'attachment-settled', 'screenshot-before', 'screenshot-settled', 'presence-before', 'presence-settled', 'race-settled', 'cleanup']);
+  expect(value.registration?.snapshot().rows.map(row => row.stage)).toEqual(['begin', 'attachment-before', 'attachment-settled', 'screenshot-before', 'presence-before', 'screenshot-settled', 'presence-settled', 'race-settled', 'cleanup']);
 }));
 test('cross CDP rejection preserves original error object', () => fixture(async value => {
   const original = new Error('Owned CDP rejection'); value.channel.send = () => Promise.reject(original);
