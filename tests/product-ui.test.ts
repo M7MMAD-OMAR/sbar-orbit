@@ -1,3 +1,4 @@
+import { OwnedFixtureScope } from './owned-fixture';
 import { expect, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -226,29 +227,34 @@ async function captureProductState(page: Awaited<ReturnType<typeof openViewerPag
 }
 
 async function settingsFixture(language: string, failLoad = false) {
-  const viewer = await openViewerPage('Private product settings fixture', { language, viewport: { width: 1440, height: 1000 } });
-  let settings = structuredClone(initial), writes = 0, refuse = false, lists = 0;
-  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
-    const path = new URL(request.url).pathname;
-    if (path === '/rpc') {
-      const { method, params } = await request.json() as { method: string; params: { key: string; value: unknown; all?: boolean } };
-      if (method === 'settings.list' && ++lists === 1 && failLoad) return Response.json({ ok: false, error: { message: 'Fixture connection unavailable' } });
-      if (method === 'settings.write') {
-        writes++;
-        if (refuse) return Response.json({ ok: false, error: { message: 'Fixture refused this value' } });
-        if (params.all) settings = structuredClone(initial);
-        else { const entry = settings.find(entry => entry.key === params.key); if (entry) Object.assign(entry, { value: params.value }); }
+  const scope = new OwnedFixtureScope();
+  return scope.protect(async () => {
+    const viewer = await openViewerPage('Private product settings fixture', { language, viewport: { width: 1440, height: 1000 } });
+    scope.defer(() => viewer.close());
+    let settings = structuredClone(initial), writes = 0, refuse = false, lists = 0;
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === '/rpc') {
+        const { method, params } = await request.json() as { method: string; params: { key: string; value: unknown; all?: boolean } };
+        if (method === 'settings.list' && ++lists === 1 && failLoad) return Response.json({ ok: false, error: { message: 'Fixture connection unavailable' } });
+        if (method === 'settings.write') {
+          writes++;
+          if (refuse) return Response.json({ ok: false, error: { message: 'Fixture refused this value' } });
+          if (params.all) settings = structuredClone(initial);
+          else { const entry = settings.find(entry => entry.key === params.key); if (entry) Object.assign(entry, { value: params.value }); }
+        }
+        return Response.json({ ok: true, result: method === 'session.list' ? [] : { settings, browsers: [{ id: 'chrome', name: 'Chrome', appWindow: true }], monitors: [{ connector: 'DP-1', width: 1920, height: 1080 }] } });
       }
-      return Response.json({ ok: true, result: method === 'session.list' ? [] : { settings, browsers: [{ id: 'chrome', name: 'Chrome', appWindow: true }], monitors: [{ connector: 'DP-1', width: 1920, height: 1080 }] } });
-    }
-    if (path === '/theme.css' || path === '/favicon.svg') return new Response('');
-    const file = Bun.file(join(import.meta.dir, '../viewer', path === '/' ? 'index.html' : path.slice(1)));
-    return await file.exists() ? new Response(file) : new Response('', { status: 404 });
-  } });
-  await viewer.page.goto(`http://127.0.0.1:${server.port}/?view=settings#fixture`, { waitUntil: 'domcontentloaded' });
-  await viewer.page.locator('#settings-view').waitFor();
-  if (!failLoad) await viewer.page.locator('.setting').first().waitFor();
-  return { ...viewer, writes: () => writes, refuse: () => { refuse = true; }, close: async () => { await viewer.close(); server.stop(true); } };
+      if (path === '/theme.css' || path === '/favicon.svg') return new Response('');
+      const file = Bun.file(join(import.meta.dir, '../viewer', path === '/' ? 'index.html' : path.slice(1)));
+      return await file.exists() ? new Response(file) : new Response('', { status: 404 });
+    } });
+    scope.defer(() => server.stop(true));
+    await viewer.page.goto(`http://127.0.0.1:${server.port}/?view=settings#fixture`, { waitUntil: 'domcontentloaded' });
+    await viewer.page.locator('#settings-view').waitFor();
+    if (!failLoad) await viewer.page.locator('.setting').first().waitFor();
+    return { ...viewer, writes: () => writes, refuse: () => { refuse = true; }, close: () => scope.close(), run: <T>(work: () => Promise<T>) => scope.run(work) };
+  });
 }
 
 
@@ -363,233 +369,243 @@ async function verifySettledPageSelection(page: Awaited<ReturnType<typeof openVi
 }
 
 test('selected page restores keyboard focus after its command completes', async () => {
-  const diagnostics = productBoundaryTrace('selected-regression');
-  diagnostics.record('broker-start');
-  const broker = await startBroker();
-  diagnostics.record('broker-ready');
-  const viewer = await openViewerPage('Private settled page selection fixture', { viewport: { width: 1440, height: 1000 } });
-  diagnostics.record('viewer-ready');
-  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Private selection fixture</title><body>Private selection fixture</body></html>', { headers: { 'content-type': 'text/html' } }) });
-  const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
-  let failure: unknown;
-  try {
-    await mkdir(shots, { recursive: true });
-    const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
-    const { page } = viewer;
-    await diagnostics.attach(page);
-    await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
-    const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
-    await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
-    await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
-    await diagnostics.rpc(broker.socket, 'session.pause', session);
-    await page.waitForFunction(() => {
-      const buttons = document.querySelectorAll('#tabs button');
-      return document.querySelector('#state')?.getAttribute('data-state') === 'paused' && buttons.length === 2 &&
-        (buttons[1]?.getAttribute('aria-current') === 'page' || buttons[1]?.getAttribute('aria-selected') === 'true');
-    });
-    await verifySettledPageSelection(page, 'settled-regression', shots);
-    expect(viewer.errors).toEqual([]);
-  } catch (error) { failure = String(error); throw error; }
-  finally {
-    await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
-    await viewer.close(); await broker.close(); server.stop(true);
-  }
-}, 30000);
-
-for (const language of ['en', 'ar']) {
-  test(`session lifecycle and page selection preserve controls in ${language}`, async () => {
-    const diagnostics = productBoundaryTrace(language);
+  const scope = new OwnedFixtureScope();
+  await scope.run(async () => {
+    const diagnostics = productBoundaryTrace('selected-regression');
     diagnostics.record('broker-start');
     const broker = await startBroker();
+    scope.defer(() => broker.close());
     diagnostics.record('broker-ready');
-    const viewer = await openViewerPage('Private lifecycle fixture', { language, viewport: { width: 1440, height: 1000 } });
+    const viewer = await openViewerPage('Private settled page selection fixture', { viewport: { width: 1440, height: 1000 } });
+    scope.defer(() => viewer.close());
     diagnostics.record('viewer-ready');
-    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
-      if (new URL(request.url).pathname === '/product-probe-events') {
-        diagnostics.record('target-event', await request.json()); return new Response('ok');
-      }
-      return new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui;background:#00ff00}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output>${diagnostics.fixtureScript}</body></html>`, { headers: { 'content-type': 'text/html' } });
-    } });
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Private selection fixture</title><body>Private selection fixture</body></html>', { headers: { 'content-type': 'text/html' } }) });
+    scope.defer(() => server.stop(true));
     const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
-    const evidence: Record<string, unknown> = { language };
     let failure: unknown;
     try {
       await mkdir(shots, { recursive: true });
       const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
       const { page } = viewer;
       await diagnostics.attach(page);
-      const capture = async (state: string) => {
-        for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-          await settleViewerViewport(page, viewport);
-          // The stop action scrolls the nested work column to its tools. Frame each capture from its heading.
-          const framingBefore = await page.locator('.work').evaluate(node => ({ scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight }));
-          await page.locator('.work').evaluate(node => { node.scrollTop = 0; });
-          await page.waitForFunction(() => document.querySelector('.work')?.scrollTop === 0);
-          await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
-          const framingAfter = await page.locator('.work').evaluate(node => ({ scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight }));
-          expect(framingAfter.scrollTop).toBe(0);
-
-          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-
-          const errorSnapshot = async () => {
-            const box = await page.locator('#error').boundingBox();
-            const currentViewport = page.viewportSize();
-            return ({
-            inViewport: !!box && !!currentViewport && box.x >= 0 && box.y >= 0 && box.x + box.width <= currentViewport.width && box.y + box.height <= currentViewport.height,
-            role: await page.locator('#error').getAttribute('role'),
-            visible: await page.locator('#error').isVisible(),
-            text: await page.locator('#error').textContent(),
-            source: await page.locator('#error').getAttribute('data-source'),
-            connection: await page.locator('#connection').getAttribute('data-connected'),
-            session: await page.locator('#state').getAttribute('data-state'),
-          });
-          };
-
-          const lifecycleSnapshot = () => page.evaluate((state) => {
-            const visible = (selector: string) => {
-              const node = document.querySelector(selector);
-              if (!(node instanceof HTMLElement)) return { visible: false, inViewport: false };
-              const box = node.getBoundingClientRect(), style = getComputedStyle(node);
-              return { visible: !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0,
-                inViewport: box.width > 0 && box.height > 0 && box.right > 0 && box.bottom > 0 && box.left < innerWidth && box.top < innerHeight };
-            };
-            const marker = state === 'empty' || state === 'finished' ? '#empty' : '#frame';
-            return { session: document.querySelector('#state')?.getAttribute('data-state'), marker,
-              markerVisible: visible(marker).visible, markerInViewport: visible(marker).inViewport,
-              stateVisible: visible('#state').visible, stateInViewport: visible('#state').inViewport,
-              stateLabelPresent: !!document.querySelector('#state')?.textContent?.trim(),
-              emptyReason: marker === '#empty' ? document.querySelector('#empty')?.getAttribute('data-reason') : null,
-              manualVisible: visible('#manual').visible, frameVisible: visible('#frame').visible };
-          }, state);
-          const lifecycleExpected = {
-            session: state === 'empty' ? '' : state === 'takeover' ? 'paused' : state === 'finished' ? 'closed' : 'running',
-            marker: state === 'empty' || state === 'finished' ? '#empty' : '#frame',
-            markerVisible: true, markerInViewport: true, stateVisible: true, stateInViewport: true, stateLabelPresent: true,
-            emptyReason: state === 'empty' ? 'none' : state === 'finished' ? 'closed' : null,
-            manualVisible: state === 'takeover', frameVisible: state !== 'empty' && state !== 'finished',
-          };
-          const lifecycleBefore = await lifecycleSnapshot();
-          expect({ contract: 'lifecycle-capture-state', ...lifecycleBefore }).toEqual({ contract: 'lifecycle-capture-state', ...lifecycleExpected });
-          const before = state === 'capture-error' ? await errorSnapshot() : null;
-          if (before) expect({ contract: 'held-capture-error', ...before }).toEqual({
-            contract: 'held-capture-error', inViewport: true, role: 'alert', visible: true, text: 'Disposable capture unavailable', source: 'poll', connection: 'false', session: 'running',
-          });
-          await page.screenshot({ path: join(shots, `session-${language}-${viewport.width}-${state}.png`), fullPage: true });
-          const lifecycleAfter = await lifecycleSnapshot();
-          expect(lifecycleAfter).toEqual(lifecycleBefore);
-          await writeFile(join(shots, `session-${language}-${viewport.width}-${state}-state.json`), JSON.stringify({ language, viewport, state, before: lifecycleBefore, after: lifecycleAfter, framingBefore, framingAfter }, null, 2));
-
-          if (before) {
-            const after = await errorSnapshot();
-            expect(after).toEqual(before);
-            await writeFile(join(shots, `session-${language}-${viewport.width}-${state}.json`), JSON.stringify({
-              language, viewport, state, before, after, fixtureCaptureRefusalHeld: true,
-            }, null, 2));
-          }
-
-        }
-      };
       await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
-      await page.locator('#empty').waitFor();
-      await capture('empty');
-      const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser', agentName: 'Codex', taskName: 'Private product task', conversationName: 'Fixture conversation', projectName: 'Disposable project' }) as { sessionId: string };
-      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'navigate', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}` } });
-      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'tab', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
-      await page.locator('#frame').waitFor();
-      await capture('running');
-      await page.route('**/rpc', async route => {
-        if (route.request().postDataJSON()?.method === 'session.pause') await new Promise(resolve => setTimeout(resolve, 350));
-        await route.continue();
+      const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
+      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
+      await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
+      await diagnostics.rpc(broker.socket, 'session.pause', session);
+      await page.waitForFunction(() => {
+        const buttons = document.querySelectorAll('#tabs button');
+        return document.querySelector('#state')?.getAttribute('data-state') === 'paused' && buttons.length === 2 &&
+          (buttons[1]?.getAttribute('aria-current') === 'page' || buttons[1]?.getAttribute('aria-selected') === 'true');
       });
-      await page.locator('#pause').focus();
-      await page.keyboard.press('Enter');
-      expect(await page.locator('#pause').isDisabled()).toBe(true);
-      await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'paused');
-      expect(await page.locator('#resume').evaluate(node => node === document.activeElement)).toBe(true);
-      await page.unroute('**/rpc');
-      await expect(diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'refused', action: { type: 'read', selector: 'output' } })).rejects.toMatchObject({ code: 'PAUSED' });
-      await verifySettledPageSelection(page, language, shots);
-      expect(await page.locator('#tabs button').first().getAttribute('aria-current')).toBe('page');
-      if (language === 'ar') expect(await page.locator('#page-location').textContent()).not.toMatch(/tab|of/);
-      await capture('takeover');
-      const inputPoint = { x: 100, y: 180 };
-      const picture = await page.locator('#frame').evaluate((node, point) => {
-        const canvas = node as HTMLCanvasElement;
-        const pixel = canvas.getContext('2d')?.getImageData(point.x, point.y, 1, 1).data;
-        return { width: canvas.width, height: canvas.height, pixel: pixel ? [...pixel] : [], rect: canvas.getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight } };
-      }, inputPoint);
-      diagnostics.record('pre-input', { canvas: picture, inputPoint });
-      expect(Number.isInteger(picture.width) && Number.isInteger(picture.height)).toBe(true);
-      expect(picture.width).toBeGreaterThan(inputPoint.x);
-      expect(picture.height).toBeGreaterThan(inputPoint.y);
-      expect(picture.pixel).toHaveLength(4);
-      expect(picture.pixel[0] ?? 255).toBeLessThan(30);
-      expect(picture.pixel[1] ?? 0).toBeGreaterThan(230);
-      expect(picture.pixel[2] ?? 255).toBeLessThan(30);
-      expect(picture.pixel[3]).toBe(255);
-      const box = await page.locator('#frame').boundingBox();
-      if (!box) throw new Error('Private viewer frame missing');
-      await page.locator('#frame').click({ position: { x: box.width * inputPoint.x / picture.width, y: box.height * inputPoint.y / picture.height } });
-      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
-      const message = language === 'ar' ? 'اختبار التحكم الخاص' : 'Private takeover verified';
-      await page.locator('#text').fill(message);
-      await page.locator('#send').click();
-      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
-      await page.locator('#press').click();
-      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#press')?.disabled);
-      await page.locator('#resume').focus();
-      await page.keyboard.press('Enter');
-      await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'running');
-      expect(await page.locator('#pause').evaluate(node => node === document.activeElement)).toBe(true);
-      evidence.readback = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'readback', action: { type: 'read', selector: 'output' } });
-      expect(evidence.readback).toEqual({ text: message });
-      let failed = false, holdCaptureRefusal = true;
-      await page.route('**/rpc', async route => {
-        if (holdCaptureRefusal && route.request().postDataJSON()?.method === 'session.observe') {
-          failed = true; await route.fulfill({ json: { ok: false, error: { code: 'CAPTURE_TIMEOUT', message: 'Disposable capture unavailable' } } });
-        } else await route.continue();
-      });
-      await page.locator('#error').waitFor();
-      await capture('capture-error');
-      holdCaptureRefusal = false;
-      await page.locator('#error').waitFor({ state: 'hidden' });
-      expect(await page.locator('#connection').getAttribute('data-connected')).toBe('true');
-      expect(await page.locator('#state').getAttribute('data-state')).toBe('running');
-      evidence.captureRecovery = { refusalReleased: true, errorHidden: true, connection: 'true', session: 'running' };
-      await page.unroute('**/rpc');
-      await page.goto('about:blank');
-      evidence.afterViewerClose = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'viewer-closed', action: { type: 'read', selector: 'output' } });
-      expect(evidence.afterViewerClose).toEqual({ text: message });
-      await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
-      await page.locator('#frame').waitFor();
-      // The saved failure prepares a report and opens the tools sheet on reload.
-      await page.locator('#report-actions').waitFor();
-      expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(true);
-      const toolsSummary = page.locator('#tools summary').first();
-      await toolsSummary.focus();
-      await page.keyboard.press('Enter');
-      expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(false);
-      expect(await page.locator('#stop').isVisible()).toBe(false);
-      await page.keyboard.press('Enter');
-      expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(true);
-      expect(await page.locator('#stop').isVisible()).toBe(true);
-      await page.locator('#stop').click();
-      await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'closed');
-      await capture('finished');
-      evidence.pausedAgentRefusal = 'PAUSED'; evidence.captureRecovered = failed; evidence.closed = true;
+      await verifySettledPageSelection(page, 'settled-regression', shots);
       expect(viewer.errors).toEqual([]);
-      await writeFile(join(shots, `session-${language}.json`), JSON.stringify(evidence, null, 2));
     } catch (error) { failure = String(error); throw error; }
     finally {
       await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
-      await viewer.close(); await broker.close(); server.stop(true);
     }
+  });
+}, 30000);
+
+for (const language of ['en', 'ar']) {
+  test(`session lifecycle and page selection preserve controls in ${language}`, async () => {
+    const scope = new OwnedFixtureScope();
+    await scope.run(async () => {
+      const diagnostics = productBoundaryTrace(language);
+      diagnostics.record('broker-start');
+      const broker = await startBroker();
+      scope.defer(() => broker.close());
+      diagnostics.record('broker-ready');
+      const viewer = await openViewerPage('Private lifecycle fixture', { language, viewport: { width: 1440, height: 1000 } });
+      scope.defer(() => viewer.close());
+      diagnostics.record('viewer-ready');
+      const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+        if (new URL(request.url).pathname === '/product-probe-events') {
+          diagnostics.record('target-event', await request.json()); return new Response('ok');
+        }
+        return new Response(`<html><head><title>Product input fixture</title><style>body{margin:0;background:#f5f6f8;font:24px system-ui;color:#192842}h1{padding:40px}input{position:absolute;left:80px;top:160px;width:400px;height:48px;font:24px system-ui;background:#00ff00}button{position:absolute;left:500px;top:160px;height:48px}output{position:absolute;left:80px;top:260px}</style></head><body><h1>Private product fixture</h1><form onsubmit="event.preventDefault();document.querySelector('output').textContent=document.querySelector('input').value"><input aria-label="Message"><button>Save</button></form><output>Waiting</output>${diagnostics.fixtureScript}</body></html>`, { headers: { 'content-type': 'text/html' } });
+      } });
+      scope.defer(() => server.stop(true));
+      const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
+      const evidence: Record<string, unknown> = { language };
+      let failure: unknown;
+      try {
+        await mkdir(shots, { recursive: true });
+        const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
+        const { page } = viewer;
+        await diagnostics.attach(page);
+        const capture = async (state: string) => {
+          for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+            await settleViewerViewport(page, viewport);
+            // The stop action scrolls the nested work column to its tools. Frame each capture from its heading.
+            const framingBefore = await page.locator('.work').evaluate(node => ({ scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight }));
+            await page.locator('.work').evaluate(node => { node.scrollTop = 0; });
+            await page.waitForFunction(() => document.querySelector('.work')?.scrollTop === 0);
+            await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+            const framingAfter = await page.locator('.work').evaluate(node => ({ scrollTop: node.scrollTop, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight }));
+            expect(framingAfter.scrollTop).toBe(0);
+
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+            const errorSnapshot = async () => {
+              const box = await page.locator('#error').boundingBox();
+              const currentViewport = page.viewportSize();
+              return ({
+              inViewport: !!box && !!currentViewport && box.x >= 0 && box.y >= 0 && box.x + box.width <= currentViewport.width && box.y + box.height <= currentViewport.height,
+              role: await page.locator('#error').getAttribute('role'),
+              visible: await page.locator('#error').isVisible(),
+              text: await page.locator('#error').textContent(),
+              source: await page.locator('#error').getAttribute('data-source'),
+              connection: await page.locator('#connection').getAttribute('data-connected'),
+              session: await page.locator('#state').getAttribute('data-state'),
+            });
+            };
+
+            const lifecycleSnapshot = () => page.evaluate((state) => {
+              const visible = (selector: string) => {
+                const node = document.querySelector(selector);
+                if (!(node instanceof HTMLElement)) return { visible: false, inViewport: false };
+                const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+                return { visible: !node.hidden && style.display !== 'none' && style.visibility !== 'hidden' && box.width > 0 && box.height > 0,
+                  inViewport: box.width > 0 && box.height > 0 && box.right > 0 && box.bottom > 0 && box.left < innerWidth && box.top < innerHeight };
+              };
+              const marker = state === 'empty' || state === 'finished' ? '#empty' : '#frame';
+              return { session: document.querySelector('#state')?.getAttribute('data-state'), marker,
+                markerVisible: visible(marker).visible, markerInViewport: visible(marker).inViewport,
+                stateVisible: visible('#state').visible, stateInViewport: visible('#state').inViewport,
+                stateLabelPresent: !!document.querySelector('#state')?.textContent?.trim(),
+                emptyReason: marker === '#empty' ? document.querySelector('#empty')?.getAttribute('data-reason') : null,
+                manualVisible: visible('#manual').visible, frameVisible: visible('#frame').visible };
+            }, state);
+            const lifecycleExpected = {
+              session: state === 'empty' ? '' : state === 'takeover' ? 'paused' : state === 'finished' ? 'closed' : 'running',
+              marker: state === 'empty' || state === 'finished' ? '#empty' : '#frame',
+              markerVisible: true, markerInViewport: true, stateVisible: true, stateInViewport: true, stateLabelPresent: true,
+              emptyReason: state === 'empty' ? 'none' : state === 'finished' ? 'closed' : null,
+              manualVisible: state === 'takeover', frameVisible: state !== 'empty' && state !== 'finished',
+            };
+            const lifecycleBefore = await lifecycleSnapshot();
+            expect({ contract: 'lifecycle-capture-state', ...lifecycleBefore }).toEqual({ contract: 'lifecycle-capture-state', ...lifecycleExpected });
+            const before = state === 'capture-error' ? await errorSnapshot() : null;
+            if (before) expect({ contract: 'held-capture-error', ...before }).toEqual({
+              contract: 'held-capture-error', inViewport: true, role: 'alert', visible: true, text: 'Disposable capture unavailable', source: 'poll', connection: 'false', session: 'running',
+            });
+            await page.screenshot({ path: join(shots, `session-${language}-${viewport.width}-${state}.png`), fullPage: true });
+            const lifecycleAfter = await lifecycleSnapshot();
+            expect(lifecycleAfter).toEqual(lifecycleBefore);
+            await writeFile(join(shots, `session-${language}-${viewport.width}-${state}-state.json`), JSON.stringify({ language, viewport, state, before: lifecycleBefore, after: lifecycleAfter, framingBefore, framingAfter }, null, 2));
+
+            if (before) {
+              const after = await errorSnapshot();
+              expect(after).toEqual(before);
+              await writeFile(join(shots, `session-${language}-${viewport.width}-${state}.json`), JSON.stringify({
+                language, viewport, state, before, after, fixtureCaptureRefusalHeld: true,
+              }, null, 2));
+            }
+
+          }
+        };
+        await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
+        await page.locator('#empty').waitFor();
+        await capture('empty');
+        const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser', agentName: 'Codex', taskName: 'Private product task', conversationName: 'Fixture conversation', projectName: 'Disposable project' }) as { sessionId: string };
+        await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'navigate', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}` } });
+        await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'tab', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
+        await page.locator('#frame').waitFor();
+        await capture('running');
+        await page.route('**/rpc', async route => {
+          if (route.request().postDataJSON()?.method === 'session.pause') await new Promise(resolve => setTimeout(resolve, 350));
+          await route.continue();
+        });
+        await page.locator('#pause').focus();
+        await page.keyboard.press('Enter');
+        expect(await page.locator('#pause').isDisabled()).toBe(true);
+        await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'paused');
+        expect(await page.locator('#resume').evaluate(node => node === document.activeElement)).toBe(true);
+        await page.unroute('**/rpc');
+        await expect(diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'refused', action: { type: 'read', selector: 'output' } })).rejects.toMatchObject({ code: 'PAUSED' });
+        await verifySettledPageSelection(page, language, shots);
+        expect(await page.locator('#tabs button').first().getAttribute('aria-current')).toBe('page');
+        if (language === 'ar') expect(await page.locator('#page-location').textContent()).not.toMatch(/tab|of/);
+        await capture('takeover');
+        const inputPoint = { x: 100, y: 180 };
+        const picture = await page.locator('#frame').evaluate((node, point) => {
+          const canvas = node as HTMLCanvasElement;
+          const pixel = canvas.getContext('2d')?.getImageData(point.x, point.y, 1, 1).data;
+          return { width: canvas.width, height: canvas.height, pixel: pixel ? [...pixel] : [], rect: canvas.getBoundingClientRect().toJSON(), viewport: { width: innerWidth, height: innerHeight } };
+        }, inputPoint);
+        diagnostics.record('pre-input', { canvas: picture, inputPoint });
+        expect(Number.isInteger(picture.width) && Number.isInteger(picture.height)).toBe(true);
+        expect(picture.width).toBeGreaterThan(inputPoint.x);
+        expect(picture.height).toBeGreaterThan(inputPoint.y);
+        expect(picture.pixel).toHaveLength(4);
+        expect(picture.pixel[0] ?? 255).toBeLessThan(30);
+        expect(picture.pixel[1] ?? 0).toBeGreaterThan(230);
+        expect(picture.pixel[2] ?? 255).toBeLessThan(30);
+        expect(picture.pixel[3]).toBe(255);
+        const box = await page.locator('#frame').boundingBox();
+        if (!box) throw new Error('Private viewer frame missing');
+        await page.locator('#frame').click({ position: { x: box.width * inputPoint.x / picture.width, y: box.height * inputPoint.y / picture.height } });
+        await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
+        const message = language === 'ar' ? 'اختبار التحكم الخاص' : 'Private takeover verified';
+        await page.locator('#text').fill(message);
+        await page.locator('#send').click();
+        await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#send')?.disabled);
+        await page.locator('#press').click();
+        await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('#press')?.disabled);
+        await page.locator('#resume').focus();
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'running');
+        expect(await page.locator('#pause').evaluate(node => node === document.activeElement)).toBe(true);
+        evidence.readback = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'readback', action: { type: 'read', selector: 'output' } });
+        expect(evidence.readback).toEqual({ text: message });
+        let failed = false, holdCaptureRefusal = true;
+        await page.route('**/rpc', async route => {
+          if (holdCaptureRefusal && route.request().postDataJSON()?.method === 'session.observe') {
+            failed = true; await route.fulfill({ json: { ok: false, error: { code: 'CAPTURE_TIMEOUT', message: 'Disposable capture unavailable' } } });
+          } else await route.continue();
+        });
+        await page.locator('#error').waitFor();
+        await capture('capture-error');
+        holdCaptureRefusal = false;
+        await page.locator('#error').waitFor({ state: 'hidden' });
+        expect(await page.locator('#connection').getAttribute('data-connected')).toBe('true');
+        expect(await page.locator('#state').getAttribute('data-state')).toBe('running');
+        evidence.captureRecovery = { refusalReleased: true, errorHidden: true, connection: 'true', session: 'running' };
+        await page.unroute('**/rpc');
+        await page.goto('about:blank');
+        evidence.afterViewerClose = await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'viewer-closed', action: { type: 'read', selector: 'output' } });
+        expect(evidence.afterViewerClose).toEqual({ text: message });
+        await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
+        await page.locator('#frame').waitFor();
+        // The saved failure prepares a report and opens the tools sheet on reload.
+        await page.locator('#report-actions').waitFor();
+        expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(true);
+        const toolsSummary = page.locator('#tools summary').first();
+        await toolsSummary.focus();
+        await page.keyboard.press('Enter');
+        expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(false);
+        expect(await page.locator('#stop').isVisible()).toBe(false);
+        await page.keyboard.press('Enter');
+        expect(await page.locator('#tools').evaluate(node => (node as HTMLDetailsElement).open)).toBe(true);
+        expect(await page.locator('#stop').isVisible()).toBe(true);
+        await page.locator('#stop').click();
+        await page.waitForFunction(() => document.querySelector('#state')?.getAttribute('data-state') === 'closed');
+        await capture('finished');
+        evidence.pausedAgentRefusal = 'PAUSED'; evidence.captureRecovered = failed; evidence.closed = true;
+        expect(viewer.errors).toEqual([]);
+        await writeFile(join(shots, `session-${language}.json`), JSON.stringify(evidence, null, 2));
+      } catch (error) { failure = String(error); throw error; }
+      finally {
+        await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
+      }
+    });
   }, 45000);
 
   test(`settings retry an unavailable connection in ${language}`, async () => {
     for (const viewport of productViewports) {
       const fixture = await settingsFixture(language, true);
-      try {
+      await fixture.run(async () => {
         const { page } = fixture;
         const retry = page.getByRole('button', { name: language === 'ar' ? 'حاول مرة أخرى' : 'Try again' });
         await retry.waitFor();
@@ -600,27 +616,30 @@ for (const language of ['en', 'ar']) {
         await page.keyboard.press('Enter');
         await page.locator('.setting').first().waitFor();
         expect(await page.locator('#settings-view').getAttribute('aria-busy')).toBe('false');
-      } finally { await fixture.close(); }
+      });
     }
   }, 30000);
 
   test(`public onboarding renders and keyboard navigation works in ${language}`, async () => {
-    const directory = join(import.meta.dir, '../website/dist');
-    for (const route of ['index.html', 'ar/index.html']) {
-      const file = Bun.file(join(directory, route));
-      if (!await file.exists() || file.size === 0) {
-        throw new Error(`Missing rendered onboarding fixture: website/dist/${route}. Install frozen website dependencies, then run bun run ../scripts/limited.ts bun run build from website/ before this suite.`);
+    const scope = new OwnedFixtureScope();
+    await scope.run(async () => {
+      const directory = join(import.meta.dir, '../website/dist');
+      for (const route of ['index.html', 'ar/index.html']) {
+        const file = Bun.file(join(directory, route));
+        if (!await file.exists() || file.size === 0) {
+          throw new Error(`Missing rendered onboarding fixture: website/dist/${route}. Install frozen website dependencies, then run bun run ../scripts/limited.ts bun run build from website/ before this suite.`);
+        }
       }
-    }
-    const viewer = await openViewerPage('Private public onboarding fixture', { language, viewport: { width: 1440, height: 1000 } });
-    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
-      const path = new URL(request.url).pathname;
-      const file = Bun.file(join(directory, path.endsWith('/') ? `${path}index.html` : path));
-      return await file.exists() ? new Response(file) : new Response('', { status: 404 });
-    } });
-    const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
-    const evidence: unknown[] = [];
-    try {
+      const viewer = await openViewerPage('Private public onboarding fixture', { language, viewport: { width: 1440, height: 1000 } });
+      scope.defer(() => viewer.close());
+      const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
+        const path = new URL(request.url).pathname;
+        const file = Bun.file(join(directory, path.endsWith('/') ? `${path}index.html` : path));
+        return await file.exists() ? new Response(file) : new Response('', { status: 404 });
+      } });
+      scope.defer(() => server.stop(true));
+      const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
+      const evidence: unknown[] = [];
       await mkdir(shots, { recursive: true });
       const { page } = viewer;
       for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
@@ -658,12 +677,12 @@ for (const language of ['en', 'ar']) {
       }
       expect(viewer.errors).toEqual([]);
       await writeFile(join(shots, `onboarding-${language}.json`), JSON.stringify(evidence, null, 2));
-    } finally { await viewer.close(); server.stop(true); }
+    });
   }, 45000);
 
   test(`settings names and descriptions are usable in ${language}`, async () => {
     const fixture = await settingsFixture(language);
-    try {
+    await fixture.run(async () => {
       const { page } = fixture;
       const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
       await mkdir(shots, { recursive: true });
@@ -698,13 +717,13 @@ for (const language of ['en', 'ar']) {
       expect(await toggle.count()).toBe(1);
       expect(await toggle.getAttribute('aria-describedby')).toBeTruthy();
       expect(fixture.errors).toEqual([]);
-    } finally { await fixture.close(); }
+    });
   }, 30000);
 
   test(`settings keep keyboard focus after save and refusal in ${language}`, async () => {
     for (const viewport of productViewports) {
       const fixture = await settingsFixture(language);
-      try {
+      await fixture.run(async () => {
         const { page } = fixture;
         await settleViewerViewport(page, viewport);
         const toggle = page.locator('.toggle').first();
@@ -721,13 +740,13 @@ for (const language of ['en', 'ar']) {
         expect(await toggle.getAttribute('aria-checked')).toBe('false');
         expect(fixture.writes()).toBe(2);
         await captureProductState(page, language, 'refused', 'settings');
-      } finally { await fixture.close(); }
+      });
     }
   }, 30000);
 
   test(`settings choices support arrow keys in ${language}`, async () => {
     const fixture = await settingsFixture(language);
-    try {
+    await fixture.run(async () => {
       const { page } = fixture;
       const group = page.locator('.setting[data-kind="choice"] [role="radiogroup"]');
       await group.locator('[aria-checked="true"]').focus();
@@ -736,6 +755,6 @@ for (const language of ['en', 'ar']) {
       expect(await group.locator('[aria-checked="true"]').textContent()).toBe(language === 'ar' ? 'يمين' : 'right');
       expect(await group.locator('[aria-checked="true"]').evaluate(node => node === document.activeElement)).toBe(true);
       expect(await group.locator('[tabindex="0"]').count()).toBe(1);
-    } finally { await fixture.close(); }
+    });
   }, 30000);
 }

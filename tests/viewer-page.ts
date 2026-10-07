@@ -1,3 +1,4 @@
+import { OwnedCleanupError, retryableCleanup } from '../src/owned-cleanup';
 import { rm } from "node:fs/promises";
 import { Sessions } from "../src/session";
 import type { BrowserBackend } from "../src/browser";
@@ -14,12 +15,15 @@ import { createWorkspaceDirectory } from "../src/workspace-storage";
  */
 export async function openViewerPage(taskName: string, options: { language?: string; viewport?: { width: number; height: number } } = {}) {
   const root = await createWorkspaceDirectory("viewer-qa");
-  const viewing = new Sessions(root);
-  const close = async () => {
-    try { await viewing.close(); }
-    finally { await rm(root, { recursive: true, force: true }); }
-  };
+  let viewing: Sessions | undefined;
+  const closeSessions = retryableCleanup(async () => { if (viewing) await viewing.close(); });
+  const removeRoot = retryableCleanup(async () => { await rm(root, { recursive: true, force: true }); });
+  const close = retryableCleanup(async () => {
+    await closeSessions();
+    await removeRoot();
+  });
   try {
+    viewing = new Sessions(root);
     const session = await viewing.dispatch({ method: "session.create", params: { backend: "browser", agentName: "Codex", taskName } }) as { sessionId: string };
     const backend = (viewing as unknown as { sessions: Map<string, { backend: BrowserBackend }> }).sessions.get(session.sessionId)?.backend;
     const page = backend?.context.pages()[0];
@@ -42,7 +46,8 @@ export async function openViewerPage(taskName: string, options: { language?: str
     if (options.language) await page.addInitScript(`Object.defineProperty(navigator, 'languages', { get: () => ${JSON.stringify([options.language])}, configurable: true });`);
     return { page, errors, close };
   } catch (error) {
-    await close();
+    try { await close(); }
+    catch (cleanup) { throw new OwnedCleanupError(error, cleanup, close); }
     throw error;
   }
 }
