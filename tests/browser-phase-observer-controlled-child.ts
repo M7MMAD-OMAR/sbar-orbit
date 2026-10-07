@@ -89,7 +89,7 @@ test("actual observe preserves CDP receiver arguments and original await", async
     expect(args).toEqual({ format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false });
     expect(awaits).toBe(1); expect(frame.image).toBe(controlledFrame); expect(frame.presence).toEqual(v.presence); expect({ width: frame.width, height: frame.height }).toEqual({ width: 32, height: 24 });
     expect(v.contextReads()).toBe(1); expect(reg?.snapshot().pending).toBe(0);
-    expect(reg?.snapshot().rows.map(row => row.stage)).toEqual(["begin", "attachment-before", "attachment-settled", "screenshot-before", "screenshot-settled", "presence-before", "presence-settled", "race-settled", "cleanup"]);
+    expect(reg?.snapshot().rows.map(row => row.stage)).toEqual(["begin", "attachment-before", "attachment-settled", "screenshot-before", "presence-before", "screenshot-settled", "presence-settled", "race-settled", "cleanup"]);
   } finally { reg?.close(); }
 }));
 test("actual observe preserves screenshot rejection object identity", async () => actualFixture(async v => {
