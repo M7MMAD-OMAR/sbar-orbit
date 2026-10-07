@@ -1,5 +1,16 @@
+import { BrowserBackend } from "../src/browser";
+import { registerBrowserPhases } from "../src/browser-phase-observer";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { test, expect } from "bun:test";
 import { call, startBroker } from "../src/ipc";
+
+
+const phaseNote = (value: unknown) => { try { console.error(JSON.stringify({ browserPhaseDiagnostic: value })); } catch {} };
+const phaseProducer = () => {
+  try { return { browserIdentity: "not measured", loadedDependencyIdentity: "not measured", fixtureSha256: createHash("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex"), producer: Object.fromEntries(["../src/browser.ts", "../src/browser-phase-observer.ts", "../src/session.ts", "../src/ipc.ts", "../bun.lock"].map(path => [path, createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex")])) }; }
+  catch { return { sourceIdentity: "not measured" }; }
+};
 
 /** A site that opens its login in a new tab must be reachable, and the agent must be able to go back. */
 test("a popup becomes the followed tab and select-tab returns to the opener", async () => {
@@ -52,8 +63,13 @@ test("a tab that closes itself hands control back to a surviving tab", async () 
       { headers: { "Content-Type": "text/html" } });
   } });
   const broker = await startBroker();
+  let phases: ReturnType<typeof registerBrowserPhases>;
   try {
     const session = await call(broker.socket, "session.create", { backend: "browser" }) as { sessionId: string };
+    const owned = broker.sessions["get"](session.sessionId);
+    if (owned.backend instanceof BrowserBackend) phases = registerBrowserPhases(owned.backend, owned.backend.context, broker.sessions["root"], owned.profile, phaseNote);
+    phaseNote({ producer: phaseProducer(), admitted: phases !== undefined, ownership: "fresh test backend/context/workspace/profile capability; Windows ACL not measured" });
+    phases?.label("first-popup");
     const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
     const observe = () => call(broker.socket, "session.observe", session) as Promise<{ presence: { title: string; pageCount: number } }>;
     await act({ type: "navigate", url: `http://127.0.0.1:${fixture.port}/` });
@@ -61,10 +77,15 @@ test("a tab that closes itself hands control back to a surviving tab", async () 
     for (let i = 0; i < 100 && (await observe()).presence.pageCount < 2; i++) await Bun.sleep(30);
     expect((await observe()).presence.title).toBe("Popup");
     await act({ type: "click", selector: "#go" });
+    phases?.label("after-close");
     for (let i = 0; i < 100 && (await observe()).presence.pageCount > 1; i++) await Bun.sleep(30);
     expect((await observe()).presence).toMatchObject({ title: "Main", pageCount: 1 });
     expect(await act({ type: "read", selector: "#who" })).toEqual({ text: "Main page" });
-  } finally { await broker.close(); fixture.stop(true); }
+  } finally {
+    phases?.close();
+    try { await broker.close(); fixture.stop(true); }
+    finally { phaseNote({ final: phases?.snapshot() ?? { admission: "not measured" }, fixtureStopAwaited: false }); }
+  }
 }, 30000);
 
 /** An application that needs room must be able to get it, and every tab must agree on the size. */
