@@ -1,13 +1,61 @@
 # Completion status and evidence
 
+Current recorded state: official main remains `bbfb6b5`. UI successor `215d59d` is locally accepted and published in draft PR20; provider and final-main acceptance remain open. Managed XML V10 remains unaccepted because its source-stable full-suite gate rejected generated Python caches. See the [latest successor and execution record](#connection-recovery-successor-and-current-execution-limits).
+
 ## Current startup diagnostic candidate and provider limits
 
 The verified main baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
-which reconciled the accepted PR 15 evidence retained below. The startup
-diagnostic successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
-currently at `abe0d63c83461ff4d1351d4b4bf328b69ee69144`, tree
-`0628a3002ab6b45e19bb6cb9c0b22cb6f0914a0f`. It remains open and unmerged.
+which reconciled the accepted PR 15 evidence retained below. Documentation
+PR 18 subsequently merged at `bbfb6b5b3892f920b798d212e2361d8907249c8d`.
+Its successful nine-job PR run does not replace the failed actual-main run
+recorded below. Runtime acceptance remains separate from documentation publication.
+
+The startup and capture successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
+currently at `92608f93c18fc89e351759228d8f5ffea8391b0f`, tree
+`efe3878f5a51a96f15c337d8997b2125c6e5396b`. It remains open and unmerged.
 PR 15 acceptance does not accept this new candidate or close the full platform.
+
+The combined candidate retains the exact portable resource sampling fixture
+from `abe0d63` and integrates the five capture paths from `292cea0`.
+Nine local checks and two fresh independent reviews accepted its local contract:
+the full suite ran 963 cases with 914 pass, 49 skip, zero fail, 6063 assertions
+and 274.63 seconds. Full-suite receipt SHA256 is
+`e18c9835bece770a0fb77fb1ab9c94e762552fb58e90c7e9779a14cd8b672793`.
+This local acceptance does not accept a provider run or final official main.
+
+Its exact-source [normal run 37656562979, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37656562979)
+failed: eight jobs succeeded and the Windows suite failed. The original
+attempt archive identifies native checkout `92608f9` in all nine jobs.
+Ubuntu reported 867 pass, 95 skip and zero fail; macOS reported 656 pass,
+306 skip and zero fail; Windows reported 642 pass, 318 skip and two failures.
+The Windows failures were
+`cross child leaves real browser capture available in the shared suite`,
+with startup endpoint timeout, and
+`abrupt broker death reaps its browser tree and a fresh broker rejects stale sessions`,
+with the unchanged 20000 ms test timeout. Their causes and repaired outcomes
+remain `not measured`. The original Windows raw log SHA256 is
+`d0f4abed43005cc7ca1ab202cbed2d2242761c7c661acd77ea5cd8cb6a1da66c`.
+The authenticated attempt log archive is 495585 bytes with SHA256
+`af9d4329e7cfd492f5c81c74bb0512e65e44aba0b589e05366490632d7341333`;
+all 112 members passed CRC validation. This is a log archive, not a complete
+source archive emitted by the runner. Failed provider evidence prevents
+provider acceptance; the local result does not replace it.
+
+The documentation head `bbfb6b5` passed all nine jobs in
+[PR run 37654515558](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37654515558),
+then its separate [actual-main run 37655792956, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37655792956)
+failed. Eight jobs succeeded and Windows reported 638 pass, 317 skip,
+two failures, 957 cases across 186 files, 4305 assertions and 526.38 seconds.
+`settings retry an unavailable connection in ar` failed during fixture setup
+at `tests/product-ui.test.ts:248`, waiting for `domcontentloaded`.
+`public onboarding renders and keyboard navigation works in ar` failed at
+line 628, waiting for `networkidle`. Both navigation deadlines remained
+15000 ms. Raw Windows log SHA256 is
+`ec41fe1b1d7d565b76850ef88ab64321569a56d264d0412d8eefe861fd3cc61e`.
+The setup failure bypasses the existing caller cleanup in the settings fixture;
+this control-flow cleanup gap is distinct from the unproven initial timeout
+cause. No timeout extension, retry or repaired result is claimed. These main
+failures differ from the candidate failures and are preserved independently.
 
 The previous candidate `c8effcd8feb51d5da1ffdcea4af6340c2d31570f`
 completed all three Ubuntu jobs in [profile diagnostic run 37646205630](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646205630).
@@ -1283,3 +1331,27 @@ The successful latest run does not erase these earlier outcomes:
 All limitations remain visible when a capability is claimed. No row closes because
 Orbit was installed, a newer version was declared, an unchanged-source rerun was
 green, or a failed test was skipped.
+
+
+## Current UI cleanup local evidence and PR20 provider failure
+
+The fixture cleanup predecessor `1b0b43e51401aa6951852922ce820d2a677577ac` was published in [draft PR20](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/20), without main acceptance. The connection recovery successor is recorded below. Its isolated fixture cleanup checkpoint had authentic old controls with two pass and four fail, current six controls passing, thirteen product UI cases and two unchanged caller cases passing. The full local suite reported 915 pass, 49 skip, zero fail and 6048 assertions across 964 cases. Fresh independent specification and ownership reviews passed, and delegated local acceptance completed. This supports local cleanup hygiene only. The original Windows timing cause, skipped scope, native activation and final-main acceptance remain `not measured`.
+
+The actual [PR20 provider run 37670328088, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37670328088) failed: seven jobs succeeded, while Windows and macOS suites failed. All nine checkout logs identify PR merge `424be14614f301984a7d63e83043e105c86fffa6`, merging the UI head into main `bbfb6b5b3892f920b798d212e2361d8907249c8d`. The authenticated 508218-byte log ZIP has SHA256 `8d7b581b4bf036dd261db006e89265b8e2300ae2d205ae3895d89a32f6f9c5b0`; all 111 members passed CRC verification. This is that PR merge measurement, not a final-main result.
+
+Windows reported 643 pass, 317 skip, three fail and 4344 assertions across 963 cases in 437.59 seconds. Failures were the shared-suite real browser capture child missing its browser endpoint, abrupt broker death setup, and capture while a web font remains pending. Original raw log SHA256 is `2c63345012854e9eb98567e437f0d98e3439d3b8dc4a56b6eb47f79b12340e52`. The first two failures occur before the intended capture or broker death measurement; no browser cleanup defect or timing cause is inferred from them.
+
+macOS reported 657 pass, 305 skip, one fail and 4384 assertions across 963 cases in 360.05 seconds. The selected-page focus case failed its initial paused-page readiness wait after an observed 3000 ms capture timeout. The later keyboard focus assertion was not reached. Original raw log SHA256 is `2b575302556f015199b00c1277218db2af98ac4ab22c3a4de6cfe17d46efbdef`. The underlying attachment, pixel or metadata phase remains `not measured`; cleanup hygiene does not establish the capture cause.
+
+A separate [direct-head workflow run 37671161645](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37671161645) was dispatched once for exact UI head `1b0b43e51401aa6951852922ce820d2a677577ac`. Its verified terminal result is failure: seven jobs succeeded, macOS failed and Ubuntu was cancelled during Linux selection callback dependency installation. The bounded Ubuntu suite was skipped, so its test result is `not measured`. All nine checkout logs identify that exact head. The authenticated 378732-byte archive has SHA256 `aeef79ce8a91e94b0801df7f24ba5d6cae545de865299aeb591c5d346621ae2a`; all 110 members passed CRC validation. macOS reported 657 pass, 305 skip, one fail and 4367 assertions across 963 cases in 381.03 seconds. The Arabic lifecycle and page-selection assertion failed at product-ui.test.ts:500 and :569, receiving connected true while connected false was expected. The 307254-byte raw log SHA256 is `9e046da37a91bda1bd28fd3ec26e46b1c1556d68ded07d2ae5b561a0fe9d0996`. This connection-state failure is preserved separately from the earlier initial capture failure. Current provider and whole-platform acceptance remain open.
+
+
+## Connection recovery successor and current execution limits
+
+[Draft PR20](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/20) now publishes `215d59df792b5706fab89b9413f98e3097bc48fa`, with parent `1b0b43e`. The two new paths are viewer/viewer.js and tests/viewer-polling.test.ts. The viewer marks a poll connected after observation and decoding complete and its poll error clears. A pending next frame therefore retains the prior disconnected state and visible capture error; healthy manual polling still recovers without requesting a frame. The genuine unchanged-old regression failed its assertion, while current polling passed all eleven cases with 44 assertions. Product UI passed thirteen English/Arabic cases. Related callers passed eleven cases with one existing Windows-only skip. The full local suite reported 918 pass, 49 skip, zero fail, 967 cases and 6061 assertions in 297.39 seconds. Original raw stderr SHA256 is `0a04476f2a9d3c911482102b65fa540180f2bbca364912aad19c3566d0a8660f`.
+
+Both fresh specification and standards reviews passed. The corrected audit retained the actual successful caller child and its legitimate skip after the original wrapper rejected an incorrect zero-skip expectation. Seven new parser controls and thirteen source-bound retained execution audits passed. Delegated local acceptance completed before commit; publication continuity confirmed unchanged checkout source bytes. This does not claim another full-suite invocation. Git/ref and provider identity require downstream rebinding. [PR run 37681318320](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37681318320) completed with eight successful jobs and one failed Windows suite. All nine actual checkouts were synthetic merge `774326828aa1cbe0e1099c845340d799a903138d`, merging successor `215d59d` into main `bbfb6b5`. Linux reported 871 pass, 95 skip, zero fail; macOS reported 661 pass, 305 skip, zero fail; Windows reported 648 pass, 317 skip, one fail. The Windows workspace-presence test failed at tests/workspace-presence.test.ts:13 during initial loopback fixture navigation with `DEADLINE_EXCEEDED`, before presence, pointer or privacy assertions. The original browser timeout details and fixture request traces are absent, so the underlying navigation cause is `not measured`. The full log archive SHA256 is `d29f667242cdc3eb6d1db65a22613bf22ddbc34e15b80b8ae9dd50e2735245b8`; all 112 members passed CRC verification. These terminal observations do not establish full provider acceptance. Native activation, skipped scope and final main remain open.
+
+The prior documentation head `b7c513aea79d2020e8de3c11262d6f6052a1ec14` had a separate [run 37673060886](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37673060886): eight jobs succeeded and macOS failed its Arabic connection-state assertion. All nine checkout logs identify PR merge `f5116d4a09288f1dbb12b761c68645c46090a725`. The authenticated 502909-byte archive SHA256 is `fa3d209b59a6efee08f8d8eeffd0e53f461b7ca65db44e6b038fa1e81d60ca5c`; all 112 members passed CRC validation. macOS raw SHA256 is `d68b7960777eaa5488b03027bde67e492c1c73a5ca1329418d197c9e15eb3f4e`, with 651 pass, 305 skip, one fail and 4340 assertions across 957 cases in 366.64 seconds. This is additional baseline evidence, not a repaired successor result.
+
+Managed lifecycle XML candidate V10 remains unaccepted. Its twenty-six prerequisite gates passed, including genuine old malformed-XML failures and four current XML cases with 536 assertions. Its full-suite child reported 979 pass, 52 skip, zero fail and 6813 assertions across 1031 cases in 321.91 seconds, but the required source-stable gate rejected 36 newly generated Python cache entries with gate exit 82. Both fresh reviews failed on that missing valid full-suite gate. Original full stderr SHA256 is `1731000df967f2c1ea48c822aa35f099fa3f33184295a135a043dea92737e0ba`. The passing child result does not replace the rejected gate. A separate bytecode-isolated successor requires fresh evidence; I3, I4, I5, provider and final-main closure remain open.
