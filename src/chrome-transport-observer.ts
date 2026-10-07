@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 
@@ -29,6 +29,43 @@ function integer(value: unknown): number | null {
 }
 
 /** These are forwarding-site observations, not Playwright's callback state. */
+/** Emit only bounded diagnostic lines. A manifest acknowledges synchronous emission, not capture. */
+export function createChromeTraceOutputSink(writeLine: (line: string) => void): (value: unknown) => void {
+  let message = 0;
+  let traceId: string | null = null;
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  const line = (value: unknown) => {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined || Buffer.byteLength(serialized, "utf8") + 1 > 4096) throw new Error("trace-output-line-bound");
+    writeLine(serialized);
+  };
+  return value => {
+    const ordinal = ++message;
+    try {
+      if (ordinal > 81) throw new Error("trace-output-message-cap");
+      const serialized = JSON.stringify(value);
+      if (serialized === undefined) throw new Error("trace-output-serialization");
+      const bytes = Buffer.from(serialized, "utf8");
+      if (bytes.length > 524288) throw new Error("trace-output-byte-cap");
+      const parsed: unknown = JSON.parse(serialized);
+      if (!object(parsed) || typeof parsed.chromeProtocolTrace !== "string" || parsed.chromeProtocolTrace.length !== 36 || !uuid.test(parsed.chromeProtocolTrace)) throw new Error("trace-output-identity");
+      if (traceId !== null && traceId !== parsed.chromeProtocolTrace) throw new Error("trace-output-identity");
+      traceId = parsed.chromeProtocolTrace;
+      const count = Math.ceil(bytes.length / 2048);
+      if (count < 1 || count > 256) throw new Error("trace-output-fragment-cap");
+      const metadata = { chromeTraceFrame: "orbit-chrome-trace", schema: 1, traceId, message: ordinal, count, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+      for (let index = 0; index < count; index++) {
+        line({ ...metadata, kind: "fragment", index, payload: bytes.subarray(index * 2048, (index + 1) * 2048).toString("base64") });
+      }
+      line({ ...metadata, kind: "emission-manifest" });
+    } catch (error) {
+      // One best-effort refusal marker, never a success manifest or fragment retry.
+      try { line({ chromeTraceFrame: "orbit-chrome-trace", schema: 1, kind: "incomplete", traceId, message: ordinal, reason: "output-refused-or-sink-threw" }); } catch {}
+      throw error;
+    }
+  };
+}
+
 export class ChromeTransportObserver {
   private readonly salt = randomBytes(32);
   private readonly started = performance.now();

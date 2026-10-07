@@ -14,7 +14,80 @@ not push official `main`, change support claims or bypass the native release hol
 
 ## Current execution
 
-Latest verified integration base: 7 October 2026, official main `0798bbd`.
+Latest verified runtime integration on official main is `25412fd184e3a86721c563786e0a5a0e5f88c3c5`, after
+[PR 13](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/13) merged bounded diagnostic
+framing. Its tree `d4fcf260a6d23558ea51a3d170726ec31412760c` exactly matches the
+PR merge checkout `48617228b16b632e85a85e238026bfa2f25061b6`, tested in
+[run 37594463052](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37594463052)
+at head `9aab17f6fe32951ea2f21bed4021365f7a6ebd72`. All nine PR jobs succeeded.
+Each suite ran 916 tests across 179 files:
+
+| Runner | Pass | Skip | Fail | Assertions |
+| --- | ---: | ---: | ---: | ---: |
+| Ubuntu 24.04 | 821 | 95 | 0 | 5059 |
+| macOS | 611 | 305 | 0 | 3899 |
+| Windows | 599 | 317 | 0 | 3870 |
+
+The separate [main run 37597801469](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37597801469)
+now completed all nine jobs successfully on actual push checkout `25412fd`, with
+the same 916-test, 179-file counts and assertions above. Its independently retained
+main packet contains nine complete raw logs, nine ZIPs and 32 CRC-checked members;
+all API ZIP digests and run/head identities are verified. The 977-file canonical
+source matches actual official main tree `d4fcf260`. The main freeze manifest SHA256
+is `24919636b7570936116426322d85f80e91a958cd08d037e4c6a4efb81cf59636`.
+This is separate actual-main evidence, rather than inferred PR-source acceptance.
+The earlier [main `7979632` run 37584808021](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37584808021)
+failed a Windows pipe operation with error 143; eight of nine jobs succeeded.
+The underlying cause and full cleanup remain unknown. Successful framing evidence
+does not explain or fix that historical failure. The successful `0798bbd` run and
+its source-bound limits remain preserved in the historical snapshot below.
+
+The PR packet retains nine complete raw job logs, nine actual ZIPs and 32
+CRC-checked members. Its canonical 977-file source tree matches both PR head and
+tested merge. The freeze manifest SHA256 is
+`11932662e0925622383e064d7152e450aa1dd37c4eca257ae2eff56d0ea6d332`.
+Strict reconstruction on each platform recovered 65 logical messages, final
+ordinal 65 and 161 physical frames, with six current producer rows and original
+child exit zero. The coordinator and two fresh independent provider reviewers
+verified the frozen packet. Nine local gates and two local reviews passed; the
+retained local full suite reported 868 pass, 49 skip and zero failures. The framing
+checkpoint was accepted at revision 73 after the two fresh provider reports.
+These are bounded diagnostic-output results, not full-platform acceptance.
+
+The actual main traces independently reconstruct 65 logical messages each, final
+ordinal 65 and 161 physical frames, with six current producer rows per platform,
+original child exit zero and no observer, sink or refusal errors. The main packet
+uses its own logs, ZIPs and raw Git blobs, without borrowing PR trace bytes.
+Hash-pinned Playwright/package bytes match across all 195 producer rows. Validated
+provider metadata is not capture of the provider executable binary.
+
+The original fixture-stop remains pending. Actual main observer drops are 57 on
+Ubuntu, 75 on Mac and 77 on Windows. The preceding PR packet separately retained
+73, 75 and 67 drops respectively. Browser identity is matched to existing CDP
+responses only. Loaded executable identity and full cleanup remain `not measured`.
+Frame fsync/close return is retained, without a power-loss persistence guarantee.
+The previous `ab0061b` Mac log framing failure remains in historical evidence;
+its failed bytes were not repaired into a passing trace.
+
+The isolated current product candidate at source
+`0890533218fa771c282ad88e0aa4aaea1fd71ff213e704c1d449d74a4f160875`,
+plan `1b39ef63890d455e63c5aed9af45f25179bb9c1fe29b0b1c75319c8748291b60`,
+passed eight local gates, including 55 focused tests and 708 assertions. Its later
+full suite failed: 860 pass, 49 skip and 13 failures across 922 tests in 184 files.
+The retained diagnosis identifies shared-module mock leakage. An isolated-child
+repair packet is prepared but unexecuted, so no repaired result is established.
+Literal P7 evidence for fresh current-product cross-platform CI remains absent.
+The product candidate is not merged or accepted from focused checks alone.
+
+Startup, Windows census, managed lifecycle, production performance, release and
+registry parity, external U1/T1 through U12/T12 acceptance and the unconditional
+native hold remain open. The full closure objective remains active. Historical
+entries below describe their own source snapshots and do not supersede this
+current execution state.
+
+### Historical integration snapshot before PR 13
+
+Historical verified integration base: 7 October 2026, official main `0798bbd`.
 [PR 11](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/11) is merged. The installed
 Windows retention repair passed its source-bound local checks and two independent
 reviews. Its PR workflow passed all nine jobs. The subsequent
