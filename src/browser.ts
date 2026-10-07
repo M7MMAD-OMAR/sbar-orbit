@@ -3,12 +3,13 @@ import { observeBrowserPointer } from "./browser-presence";
 import { parseScrollInput, type ScrollInput } from "./scroll-input";
 import { type BrowserContext, type CDPSession, type Page } from "playwright";
 import { realpath, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { readUploadPayloads } from "./upload-payload";
 import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
+import { beginBrowserCapture, revokeBrowserPhases } from "./browser-phase-observer";
 
 /**
  * How long a single frame capture may take, in milliseconds.
@@ -93,6 +94,11 @@ function label(page: Page, title: string): string {
   } catch { return "New tab"; }
 }
 export class BrowserBackend {
+  static #phaseOwners = new WeakMap<object, { readonly context: object; readonly workspace: string; readonly profile: string; readonly lifetime: { live: boolean } }>();
+  static phaseOwnershipMatches(backend: object, context: object, workspace: string, profile: string) {
+    const identity = BrowserBackend.#phaseOwners.get(backend);
+    return identity !== undefined && identity.lifetime.live && identity.context === context && identity.workspace === workspace && identity.profile === profile;
+  }
   readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
@@ -165,6 +171,14 @@ export class BrowserBackend {
       owned.context.on("page", page => { backend.adopt(page); });
       for (const page of owned.context.pages()) backend.watch(page);
       await backend.bindPointer(owned.page);
+      const lifetime = { live: true };
+      const phaseOwner = new WeakRef(backend);
+      owned.onClose(() => {
+        lifetime.live = false;
+        const liveBackend = phaseOwner.deref();
+        if (liveBackend) revokeBrowserPhases(liveBackend);
+      });
+      if (lifetime.live) BrowserBackend.#phaseOwners.set(backend, Object.freeze({ context: owned.context, workspace: dirname(profile), profile, lifetime }));
       return backend;
     } catch (error) {
       try { await owned.close(); }
@@ -327,32 +341,47 @@ export class BrowserBackend {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
     let attachment = this.captureSessions.get(page);
+    const phase = beginBrowserCapture(this, () => page.context(), page, budget, attachment !== undefined);
+    phase?.mark("attachment-before");
     if (!attachment) {
-      attachment = this.context.newCDPSession(page);
+      try { attachment = this.context.newCDPSession(page); }
+      catch (error) { phase?.mark("attachment-rejected"); phase?.finish(); throw error; }
       this.captureSessions.set(page, attachment);
       void attachment.catch(() => { if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page); });
     }
     const operation = (async () => {
-      capture = await attachment;
+      try { capture = await attachment; phase?.mark("attachment-settled"); }
+      catch (error) { phase?.mark("attachment-rejected"); phase?.finish(); throw error; }
       // An attachment that settles after the deadline must not start a late capture.
-      if (expired) { void capture.detach().catch(() => {}); throw timeout(); }
-      return (await capture.send("Page.captureScreenshot", {
+      if (expired) { phase?.mark("detach-dispatched"); void capture.detach().catch(() => { phase?.mark("detach-rejected"); }); phase?.finish(); throw timeout(); }
+      phase?.mark("screenshot-before");
+      try { const result = await capture.send("Page.captureScreenshot", {
         format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
-      })).data;
+      }); phase?.mark("screenshot-settled"); if (expired) phase?.finish(); return result.data; }
+      catch (error) { phase?.mark("screenshot-rejected"); phase?.finish(); throw error; }
     })();
     let image: string;
     try {
       image = await Promise.race([operation, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { expired = true; reject(timeout()); }, budget);
+        timer = setTimeout(() => { expired = true; phase?.mark("timer-fired"); reject(timeout()); }, budget);
       })]);
+      phase?.mark("race-settled");
+    } catch (error) { phase?.mark("race-rejected"); throw error;
     } finally {
+      phase?.mark("cleanup");
       if (timer !== undefined) clearTimeout(timer);
       if (expired) {
         if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page);
-        void capture?.detach().catch(() => {});
+        if (capture) phase?.mark("detach-dispatched");
+        void capture?.detach().catch(() => { phase?.mark("detach-rejected"); });
       }
     }
-    return { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
+    phase?.mark("presence-before");
+    try {
+      const result = { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
+      phase?.mark("presence-settled"); return result;
+    } catch (error) { phase?.mark("presence-rejected"); throw error; }
+    finally { phase?.finish(); }
   }
   async control(value: unknown) {
     const input = record(value);
@@ -380,5 +409,11 @@ export class BrowserBackend {
     }
     return { applied: true };
   }
-  close() { return this.owned.close(); }
+  close() {
+    const identity = BrowserBackend.#phaseOwners.get(this);
+    if (identity) identity.lifetime.live = false;
+    BrowserBackend.#phaseOwners.delete(this);
+    revokeBrowserPhases(this);
+    return this.owned.close();
+  }
 }

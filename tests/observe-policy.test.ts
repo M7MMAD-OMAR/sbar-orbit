@@ -1,6 +1,17 @@
+import { BrowserBackend } from "../src/browser";
+import { registerBrowserPhases } from "../src/browser-phase-observer";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { test, expect } from "bun:test";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { Sessions } from "../src/session";
+
+
+const phaseNote = (value: unknown) => { try { console.error(JSON.stringify({ browserPhaseDiagnostic: value })); } catch {} };
+const phaseProducer = () => {
+  try { return { browserIdentity: "not measured", loadedDependencyIdentity: "not measured", fixtureSha256: createHash("sha256").update(readFileSync(new URL(import.meta.url))).digest("hex"), producer: Object.fromEntries(["../src/browser.ts", "../src/browser-phase-observer.ts", "../src/session.ts", "../src/ipc.ts", "../bun.lock"].map(path => [path, createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex")])) }; }
+  catch { return { sourceIdentity: "not measured" }; }
+};
 
 /**
  * Observation is an action the policy decides, not a free read.
@@ -27,6 +38,7 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     try { return await sessions.dispatch({ method, params }); }
     finally { console.error(JSON.stringify({observePolicyPhase:method,status:"settled",elapsedMs:Math.round(performance.now()-started)})); }
   };
+  let phases: ReturnType<typeof registerBrowserPhases>;
   try {
     const origin = `http://127.0.0.1:${fixture.port}`;
     const created = await run("session.create", {
@@ -34,9 +46,14 @@ test("a session whose policy allows no reading is refused a frame, and the refus
       policy: { mode: "autonomous", origins: [origin], allow: ["read", "navigate"] },
     }) as { sessionId: string };
     const session = { sessionId: created.sessionId };
+    const owned = sessions["get"](created.sessionId);
+    if (owned.backend instanceof BrowserBackend) phases = registerBrowserPhases(owned.backend, owned.backend.context, workspace, owned.profile, phaseNote);
+    phaseNote({ producer: phaseProducer(), admitted: phases !== undefined, ownership: "fresh test backend/context/workspace/profile capability; Windows ACL not measured" });
 
     // While reading is allowed, a frame is returned: a boundary that refuses everything proves nothing.
     await run("session.act", { ...session, requestId: crypto.randomUUID(), action: { type: "navigate", url: `${origin}/` } });
+    phases?.label("permitted-frame");
+    phaseNote({ fixtureCall: "permitted-frame" });
     const frame = await run("session.observe", session) as { mimeType: string; image: string };
     expect(frame.mimeType).toBe("image/jpeg");
     expect(frame.image.length).toBeGreaterThan(0);
@@ -45,6 +62,8 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     // makes when it contains a session, so the two are the same boundary.
     await run("session.narrow", { ...session, allow: [] });
 
+    phases?.label("denied-after-narrow");
+    phaseNote({ fixtureCall: "denied-after-narrow" });
     await expect(run("session.observe", session)).rejects.toMatchObject({ code: "POLICY_DENIED" });
 
     // Refused, and RECORDED: a reader of an autonomous run must see the attempt rather than a gap.
@@ -57,7 +76,8 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     // carries no page content. Losing it would blind the person rather than the agent.
     expect(await run("session.presence", session)).toMatchObject({ location: expect.any(String) });
   } finally {
-    await sessions.close();
-    fixture.stop(true);
+    phases?.close();
+    try { await sessions.close(); fixture.stop(true); }
+    finally { phaseNote({ final: phases?.snapshot() ?? { admission: "not measured" }, fixtureStopAwaited: false }); }
   }
 }, 60000);

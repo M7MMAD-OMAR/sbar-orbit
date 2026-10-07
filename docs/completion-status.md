@@ -1,57 +1,62 @@
 # Completion status and evidence
 
-Latest integration snapshot: 7 October 2026, official main `e92afa3`.
+Latest verified integration base: 7 October 2026, official main `1114c2f`.
 [PR 11](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/11) is merged. The installed
-Windows retention repair at source `420edc3` passed typecheck, 45 pure controls
-with 261 assertions and nine boundary controls with 98 assertions, all without
-skips. Two independent reviewers assessed the current source and actual installed
-Windows evidence; checkpoint revision 20 is locally accepted.
-[Run 37547644460](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37547644460)
-passed all nine jobs. Windows reported 563 pass and 317 skip; Mac 575 pass and
-305 skip; Ubuntu 785 pass and 95 skip, each with zero failures across 880 tests
-in 178 files. Skips remain not measured. The exact tested tree matches official
-merge `e92afa3`. Nine complete logs, six ZIPs and 20 artifact members are retained.
-[Official-main run 37548946722](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37548946722)
-started separately; its terminal evidence is not yet verified in this snapshot.
+Windows retention repair passed its source-bound local checks and two independent
+reviews. Its PR workflow passed all nine jobs. The subsequent
+[main workflow 37549089608](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37549089608)
+also passed all nine jobs. These results establish their stated test scope, not
+whole-platform acceptance. Skipped tests remain not measured.
 
-The actual installed Windows artifact retains 49 contiguous records in a sealed
-47177-byte window, with independently checked trace/status hashes and an
-acknowledgement of the earlier seal-write return. The endpoint published after
-4123 milliseconds within the unchanged 15000-millisecond budget. Stderr EOF and
-the latest owned stop are recorded. This is one disposable source-bound run;
+The installed Windows evidence retains a sealed record window with verified
+trace/status hashes and a seal-write acknowledgement. It does not establish
 membership after handle closure, mapped executable image identity, acknowledgement
-own persistence return, general startup reliability and historical failure cause
-remain not measured. Diagnostic IO perturbs timing. The original unfixed nine-case
-harness and later negative mutant failures remain separately retained as failures.
+persistence, general startup reliability or the causes of historical failures.
+[PR 10](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/10) is marked merged through
+its inherited commit in PR 11, not as separate acceptance of its original candidate.
+The earlier observer integration in PR 9 remains historical source-bound evidence;
+pending fixture-stop and dropped records do not prove whole-platform cleanup.
 
-[PR 10](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/10) is also marked merged by
-GitHub through its inherited commit in the reviewed PR 11 integration. Its original
-candidate and measurements remain historical, not a separate acceptance of that
-unrepaired source.
+[Capture diagnostics PR 12](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/12)
+is a draft outside official main. Its exact head `270a960` passed eight jobs in
+[run 37581024647](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37581024647),
+but the Mac suite failed the isolated factory-control wrapper. The nested child
+reported 17 passes and 15 failures across 32 cases; the suite reports one wrapper
+failure, not 15 separate suite failures. A separate unchanged-source owned alias
+control reproduced the same 15 failure names, while the direct path passed all
+32 cases. The actual Mac temporary-path bytes were not captured, so this contrast
+does not prove the provider failure's cause.
 
-The earlier [PR 9](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/9) observer
-integration remains accepted at checkpoint revision 51. Its
-[PR run 37544177128](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37544177128)
-and [main run 37545015395](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37545015395)
-passed all nine jobs, with 835 tests across 177 files per suite. Their Mac traces
-dropped 71 and 73 records respectively and retained pending fixture-stop. The
-new PR 11 Mac suite final observer JSON is partial at 65536 trace bytes. Windows and Ubuntu
-final summaries retain pending fixture-stop and dropped records. These diagnostic
-limits do not establish historical cause or whole-platform cleanup.
+The current local repair canonicalizes only the controlled fixture root and adds
+an owned alias regression; production admission guards are unchanged. Its nine
+planned local gates passed: types, 32 pure cases, 12 defective-source controls,
+isolation, alias, alias-negative and the actual tabs, pipe and policy fixtures.
+The isolation wrapper observes the same 32 distinct cases through two routes,
+not 64 distinct tests. Fresh independent review and exact repaired-head provider
+verification remain pending. The earlier local acceptance belongs to the previous
+source and does not accept this changed candidate or its failed provider run.
 
-Portable capture/pipe diagnostics remain unaccepted. Fresh standards review found
-that admission could pair an actual backend with an unrelated profile/workspace.
-A source-bound unfixed control genuinely recorded one valid baseline pass and two
-intended assertion failures through the real creation path with a mocked launcher.
-The provenance repair is in progress. Separately, eight actual local output
-observations retained complete 65535, 65536, 65537 and 98304-byte payloads; they did
-not reproduce CI loss. Bounded output framing is being prepared, not measured.
+[Bounded diagnostic framing PR 13](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/13)
+is also a draft outside main. Head `ab0061b` passed five local gates and two
+independent reviews. Its
+[run 37582132182](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37582132182)
+passed all nine jobs, but strict reconstruction of the actual Mac log failed on
+malformed frame JSON, including interleaved test output. The resource artifact
+contains no independent trace channel. Windows reconstruction retained 65 logical
+messages and a 64620-byte final message. Provider capture completeness remains
+unproven on Mac; passing jobs do not close this diagnostic requirement. The failed
+raw bytes are retained without suffix repair. Integration remains pending.
 
-Product PR 5, startup PR 7 and Windows census PR 8 remain drafts with their required
-independent review unproven. Performance, managed lifecycle, published release and
-registry parity, external U1/T1 through U12/T12 acceptance and the unconditional
-native hold remain open. Detailed entries below describe named historical source
-snapshots and do not supersede this integration snapshot.
+Product PR 5, startup PR 7 and Windows census PR 8 remain drafts. The product
+candidate reconciled with `1114c2f` passed local typecheck, website build, 55 focused
+tests without failures or skips, and the stopping observer fixture. Matched UI
+comparison, fresh independent review and exact integrated-head provider evidence
+remain pending. It has not been committed or published as the final integrated
+product candidate.
+
+Performance, managed lifecycle, release and registry parity, external U1/T1 through
+U12/T12 acceptance and the unconditional native hold remain open. Detailed entries
+below describe named historical source snapshots and do not supersede this snapshot.
 
 
 Historical publication sequence: official main snapshot `ce447d1` completed
