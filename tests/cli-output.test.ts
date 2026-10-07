@@ -1,3 +1,4 @@
+import { newPipeAttempt, pipeBytes, retainPipeAttempt, type PipeAttemptReceipt, type PipeSupervisorRow } from "./cli-pipe-receipts";
 import { expect, test } from "bun:test";
 import { chmod, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,18 +9,24 @@ import { readFileSync } from "node:fs";
 import { classifyPipePhases } from "../src/browser-phase-observer";
 
 const pipeNote = (value: unknown) => { try { console.error(JSON.stringify({ pipePhaseDiagnostic: value })); } catch {} };
-const pipeProducer = () => { try { return Object.fromEntries(["../src/cli.ts", "../src/cli-output.ts", "./cli-output.test.ts", "../bun.lock"].map(path => [path, createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex")])); } catch { return { sourceIdentity: "not measured" }; } };
+const pipeProducer = () => { try { return Object.fromEntries(["../src/cli.ts", "../src/cli-output.ts", "./cli-output.test.ts", "./cli-pipe-receipts.ts", "../bun.lock"].map(path => [path, createHash("sha256").update(readFileSync(new URL(path, import.meta.url))).digest("hex")])); } catch { return { sourceIdentity: "not measured" }; } };
 
 const python = Bun.which("python3") ?? Bun.which("python");
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
 async function pipedReply(verb: "observe" | "list", result: unknown) {
+  const attempt = newPipeAttempt(verb);
+  const supervisor: PipeSupervisorRow[] = [];
+  let streamsCaptured = false;
+  let awaitedExit: number | null = null, reportRaw = new Uint8Array(), stderrRaw = new Uint8Array();
+  const supervisorRow = (stage: PipeSupervisorRow["stage"], snapshot: number | null) => { supervisor.push({ sequence: supervisor.length + 1, stage, clock: "bun-performance-ms", elapsedMs: performance.now() - attempt.startedMs, awaitedExit, exitCodeSnapshot: snapshot }); };
+  const receiptDirectory = process.env.ORBIT_TEST_PIPE_RECEIPT_DIR ?? await fixtureRoot("orbit-cli-pipe-receipts-");
   const root = await fixtureRoot("orbit-cli-output-");
   await chmod(root, 0o700);
   const socket = join(root, "broker.sock");
   const methods: unknown[] = [];
   let requestRows = 0;
-  const requestPhase = (stage: string) => { if (requestRows++ < 32) pipeNote({ requestPhase: stage }); };
+  const requestPhase = (stage: string) => { if (requestRows++ < 32) pipeNote({ attempt: attempt.attempt, verb, requestSequence: requestRows, clock: "bun-performance-ms", elapsedMs: performance.now() - attempt.startedMs, requestPhase: stage }); };
   const server = Bun.serve({ unix: socket, async fetch(request) {
     requestPhase("request-received"); requestPhase("body-parse-before");
     const body = await request.json() as { method: string };
@@ -71,11 +78,14 @@ phase("output-write-settled")
 print(json.dumps({"exit":p.returncode,"stderr":err.decode(),"stdoutBytes":len(out)}))`;
   const child = Bun.spawn([python, "-c", reader, process.execPath, cli, verb, outputPath, phasePath],
     { cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 8000 });
+  supervisorRow("spawn-returned", child.exitCode);
   try {
-    const [report, err, exit] = await Promise.all([
-      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    const [reportBuffer, stderrBuffer, exit] = await Promise.all([
+      new Response(child.stdout).arrayBuffer(), new Response(child.stderr).arrayBuffer(), child.exited,
     ]);
-    pipeNote({ producer: pipeProducer(), exit, reportBytes: Buffer.byteLength(report), stderrBytes: Buffer.byteLength(err), reportSha256: createHash("sha256").update(report).digest("hex"), stderrSha256: createHash("sha256").update(err).digest("hex"), validity: "original assertions follow; phase missing means not measured" });
+    reportRaw = new Uint8Array(reportBuffer); stderrRaw = new Uint8Array(stderrBuffer); streamsCaptured = true;
+    const report = new TextDecoder().decode(reportRaw), err = new TextDecoder().decode(stderrRaw); awaitedExit = exit; supervisorRow("streams-exit-settled", child.exitCode);
+    pipeNote({ attempt: attempt.attempt, verb, producer: pipeProducer(), exit, streamBytes: { report: pipeBytes(reportRaw), stderr: pipeBytes(stderrRaw), representation: "original drained bytes" }, decodedText: true, reportBytes: Buffer.byteLength(report), stderrBytes: Buffer.byteLength(err), reportSha256: createHash("sha256").update(report).digest("hex"), stderrSha256: createHash("sha256").update(err).digest("hex"), validity: "original assertions follow; phase missing means not measured" });
     expect(exit).toBe(0);
     expect(err).toBe("");
     const measured = JSON.parse(report) as { exit: number; stderr: string; stdoutBytes: number };
@@ -88,17 +98,23 @@ print(json.dumps({"exit":p.returncode,"stderr":err.decode(),"stdoutBytes":len(ou
     expect(out).toBe(expected);
     expect(JSON.parse(out)).toEqual({ ok: true, result });
   } finally {
-    if (child.exitCode === null) child.kill();
-    await child.exited;
+    if (child.exitCode === null) { child.kill(); supervisorRow("finally-kill-dispatched", child.exitCode); }
+    awaitedExit = await child.exited; supervisorRow("finally-exit-settled", child.exitCode);
     server.stop(true);
+    let phaseRaw: Uint8Array | undefined;
     try {
       const phaseStat = await stat(phasePath);
       if (phaseStat.size > 8192) pipeNote({ sidecar: "overflow, not measured" });
       else {
-        const phaseText = await readFile(phasePath, "utf8");
-        pipeNote({ pythonPhases: classifyPipePhases(phaseText, child.exitCode), limit: "reply construction is not delivery; kill dispatch is not cleanup proof" });
+        phaseRaw = await readFile(phasePath); const phaseText = new TextDecoder().decode(phaseRaw);
+        pipeNote({ attempt: attempt.attempt, verb, pythonPhases: classifyPipePhases(phaseText, child.exitCode), limit: "reply construction is not delivery; kill dispatch is not cleanup proof" });
       }
     } catch { pipeNote({ sidecar: "absent or partial, not measured" }); }
+    try {
+      const receipt: PipeAttemptReceipt = { identity: attempt, budgets: { communicateSeconds: 6, supervisorMs: 8000, testMs: 15000, rpcMs: 45000, delaySeconds: 0.05 }, supervisor, python: { clock: "python-perf-counter-ns", raw: phaseRaw === undefined ? undefined : pipeBytes(phaseRaw) }, raw: streamsCaptured ? { capture: "complete", report: pipeBytes(reportRaw), stderr: pipeBytes(stderrRaw) } : { capture: "not measured", report: undefined, stderr: undefined }, actualChildPid: child.pid, deadlineObserved: "not measured", cleanup: "not measured" };
+      const retained = await retainPipeAttempt(receiptDirectory, root, receipt, reportRaw, stderrRaw, phaseRaw);
+      pipeNote({ attempt: attempt.attempt, verb, retained, awaitedExit, exitCodeSnapshot: child.exitCode, cleanup: "not measured" });
+    } catch (error) { pipeNote({ attempt: attempt.attempt, verb, receiptRetention: "not measured", error: error instanceof Error ? error.name : "unknown" }); }
     await rm(root, { recursive: true, force: true });
   }
 }

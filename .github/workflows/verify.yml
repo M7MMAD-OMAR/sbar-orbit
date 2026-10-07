@@ -52,6 +52,8 @@ jobs:
       # Use the same bounded entry point on every platform. The command's exit
       # status is the job result, with no echo or tolerated failure masking it.
       - name: Run the bounded suite
+        env:
+          ORBIT_TEST_PIPE_RECEIPT_DIR: ${{ github.workspace }}/output/cli-pipe-receipts
         run: bun experiments/verify-with-resources.ts
       - name: Preserve runner resource evidence
         if: always()
@@ -68,6 +70,14 @@ jobs:
           path: output/chrome-trace/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Preserve owned pipe receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-pipe-receipts-${{ matrix.os }}
+          path: output/cli-pipe-receipts/
+          if-no-files-found: warn
 
   registered-hosts:
     strategy:
