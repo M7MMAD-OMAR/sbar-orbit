@@ -81,7 +81,7 @@ test("failed resource sampling stays unavailable and retains successful counters
   expect(allFailed.unavailable.sort()).toEqual(["cgroup-ancestry", "budget-root", "runner.cpu", "runner.cpu.pressure", "runner.io.pressure", "runner.memory.pressure"].sort());
   const partial = await sampleBrowserStartupDiagnostic(async path => {
     if (path === "/proc/self/cgroup") return "0::/user.slice/sbarorbit.slice/fixture.scope\n";
-    if (path.endsWith("/memory.current")) return "123\n";
+    if (path === join("/sys/fs/cgroup/user.slice/sbarorbit.slice", "memory.current")) return "123\n";
     throw new Error("counter unavailable");
   });
   expect(partial.counters).toEqual({ "memory.current": "123" });
