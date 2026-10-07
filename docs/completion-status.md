@@ -38,12 +38,25 @@ its source manifest SHA256 is
 `c426152ffde11fb2d85b8e0e8262098269c97aab3f3c0a61e0fdaf4ecfa9c07b`.
 These local-only archives are not published by the PR link.
 
-At the October 7, 2026, 8:08 PM Dubai time API observation,
-[fresh PR run 37649479046](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37649479046)
-identified head `abe0d63` and remained in progress. All six installed-browser
-and registered-hosts jobs had succeeded; the three provider suites were still
-running. The fixed Windows case, fresh complete suite totals and fresh provider
-source/log binding remain `not measured` pending terminal raw evidence review.
+The retained connector metadata now reports [fresh PR run 37649479046](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37649479046)
+completed successfully, with all nine jobs successful. This terminal metadata
+supersedes the October 7, 2026, 8:08 PM Dubai time in-progress observation.
+The decoded Windows suite log identifies PR merge checkout `cb2fb9b`, merging
+`abe0d63c83461ff4d1351d4b4bf328b69ee69144` into official main `834f3f6`.
+It records the resource sampling case passing and a terminal summary of
+644 pass, 318 skip, zero fail, 962 cases across 187 files, 4367 assertions
+and 393.38 seconds. This is an observed Windows outcome on that PR merge
+checkout, not a direct candidate checkout or an actual-main measurement.
+
+The retained Windows file is connector-decoded log text; its SHA256 is
+`bda30f02f568fe1a47cede9a3c85a40b9c69badbbf85f794244773e3bc960ce9`.
+That hash identifies the decoded file, not original HTTP response bytes.
+Complete provider source/blob and archive verification, original raw retention,
+Ubuntu and Mac case inventories and terminal counts, fresh candidate provider
+acceptance, independent provider reviews and final-main evidence remain pending.
+Unknown or skipped scope remains `not measured`. Terminal metadata and the
+scoped Windows outcome do not accept the whole platform or transfer the previous
+candidate's local suite result to `abe0d63`.
 The fixture correction does not repair or explain the separate Mac capture
 timeout, establish startup reliability or prove production performance gains.
 
