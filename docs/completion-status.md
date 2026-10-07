@@ -1,6 +1,6 @@
 # Completion status and evidence
 
-Latest verified integration base: 7 October 2026, official main `1114c2f`.
+Latest verified integration base: 7 October 2026, official main `0798bbd`.
 [PR 11](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/11) is merged. The installed
 Windows retention repair passed its source-bound local checks and two independent
 reviews. Its PR workflow passed all nine jobs. The subsequent
@@ -18,23 +18,38 @@ The earlier observer integration in PR 9 remains historical source-bound evidenc
 pending fixture-stop and dropped records do not prove whole-platform cleanup.
 
 [Capture diagnostics PR 12](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/12)
-is a draft outside official main. Its exact head `270a960` passed eight jobs in
-[run 37581024647](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37581024647),
-but the Mac suite failed the isolated factory-control wrapper. The nested child
-reported 17 passes and 15 failures across 32 cases; the suite reports one wrapper
-failure, not 15 separate suite failures. A separate unchanged-source owned alias
-control reproduced the same 15 failure names, while the direct path passed all
-32 cases. The actual Mac temporary-path bytes were not captured, so this contrast
-does not prove the provider failure's cause.
+is merged into official main `0798bbd`. Head `6e8d92c` passed all nine jobs in
+[run 37583092385](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37583092385).
+The normal merge tree exactly matches the tested PR merge tree. Its separate
+[main run 37583855212](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37583855212)
+also passed all nine jobs. Each suite ran 882 tests across 179 files. Main reported
+Ubuntu 787 pass and 95 skip, Windows 565 pass and 317 skip, and Mac 577 pass and
+305 skip, each with zero failures. Skips remain not measured. Nine complete logs,
+six actual ZIPs and 20 extracted members are retained for each workflow.
 
-The current local repair canonicalizes only the controlled fixture root and adds
-an owned alias regression; production admission guards are unchanged. Its nine
-planned local gates passed: types, 32 pure cases, 12 defective-source controls,
-isolation, alias, alias-negative and the actual tabs, pipe and policy fixtures.
-The isolation wrapper observes the same 32 distinct cases through two routes,
-not 64 distinct tests. Fresh independent review and exact repaired-head provider
-verification remain pending. The earlier local acceptance belongs to the previous
-source and does not accept this changed candidate or its failed provider run.
+Each platform's isolated factory child passed the same 32 cases through ordinary
+and owned temporary ancestor alias routes, with zero failures or skips and
+185 assertions per route. These are 64 observations over 32 distinct cases;
+they are not additional full-suite tests. The local repaired source passed all
+nine planned gates and two fresh independent reviews, accepted at checkpoint
+revision 126. Only the controlled fixture root was canonicalized; production
+admission guards remain strict. Existing registration is revoked synchronously
+at both close boundaries, while previously admitted operations retain observable
+late settlement and original promise/error behavior.
+
+The previous head `270a960` failed the Mac isolated wrapper in
+[run 37581024647](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37581024647),
+with 17 passes and 15 failures in its nested child. The owned alias counterexample
+reproduced those 15 names against unchanged source; the real provider temporary
+path was not captured, so historical cause remains unproven. Original lifetime
+and helper counterexamples remain failures in retained evidence. The passing
+repair does not prove general startup reliability, loaded executable identity,
+Windows ACLs, full cleanup or native readiness. Successful child raw digests are
+producer receipts; separate complete child bytes are not published for independent
+hash recomputation. Selected capture JSON is complete on each platform, while the
+older Linux protocol final in the main workflow is truncated and remains not
+measured. Windows and Mac older finals retain pending fixture-stop and dropped
+records, which are separate from the selected capture controls.
 
 [Bounded diagnostic framing PR 13](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/13)
 is also a draft outside main. Head `ab0061b` passed five local gates and two
@@ -49,10 +64,13 @@ raw bytes are retained without suffix repair. Integration remains pending.
 
 Product PR 5, startup PR 7 and Windows census PR 8 remain drafts. The product
 candidate reconciled with `1114c2f` passed local typecheck, website build, 55 focused
-tests without failures or skips, and the stopping observer fixture. Matched UI
-comparison, fresh independent review and exact integrated-head provider evidence
-remain pending. It has not been committed or published as the final integrated
-product candidate.
+tests without failures or skips, and the stopping observer fixture. These are
+historical results for that candidate. A new isolated candidate starts from
+`0798bbd` to combine document-consistent capture and metadata with the accepted
+phase/lifetime recorder. The original staged work remains preserved. Combined
+source, faithful settings fixture wording, missing state screenshots, fresh
+independent reviews and exact integrated-head provider evidence remain pending.
+The final integrated product candidate has not been published.
 
 Performance, managed lifecycle, release and registry parity, external U1/T1 through
 U12/T12 acceptance and the unconditional native hold remain open. Detailed entries
