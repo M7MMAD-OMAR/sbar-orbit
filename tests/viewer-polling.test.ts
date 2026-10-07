@@ -7,7 +7,7 @@ async function harness(costPerCall = 0) {
   const elements = new Map<string, any>(), timers: { run: () => unknown; delay: number }[] = [];
   const calls: string[] = [];
   let clock = 0;
-  let fail = false, decoded = 0, closed = 0, drawn = 0;
+  let fail = false, refuseCapture = false, decoded = 0, closed = 0, drawn = 0;
   let observeGate: Promise<void> | undefined, decodeGate: Promise<void> | undefined, listGate: Promise<void> | undefined;
   const intervals: (() => void)[] = [];
   const makeElement = () => ({ value: "", hidden: false, textContent: "", disabled: false,
@@ -29,6 +29,7 @@ async function harness(costPerCall = 0) {
       if (fail) throw new Error("Fixture disconnected");
       if (method === "session.list") await listGate;
       if (method === "session.observe") await observeGate;
+      if (method === "session.observe" && refuseCapture) return { ok: true, json: async () => ({ ok: false, error: { code: "CAPTURE_TIMEOUT", message: "Disposable capture unavailable" } }) };
       return { ok: true, json: async () => ({ ok: true, result: method === "session.list"
         ? [{ sessionId: "fixture", state: "running", backend: "browser" }]
         : { image: "", mimeType: "image/png", width: 1280, height: 800, capturedAt: Date.now() } }) };
@@ -38,6 +39,7 @@ async function harness(costPerCall = 0) {
   await new Promise(resolve => setImmediate(resolve));
   return { calls, document, timers, element, counts: () => ({ decoded, closed }), disconnect: () => { fail = true; },
     draws: () => drawn, intervals,
+    refuseCapture(value: boolean) { refuseCapture = value; },
     holdList() { let release!: () => void; listGate = new Promise(resolve => { release = resolve; }); return release; },
     holdObserve() { let release!: () => void; observeGate = new Promise(resolve => { release = resolve; }); return release; },
     holdDecode() { let release!: () => void; decodeGate = new Promise(resolve => { release = resolve; }); return release; },
@@ -141,4 +143,57 @@ test("a fast viewer keeps its requested cadence", async () => {
   app.mode("smooth");
   await app.tick();
   expect(app.timers[0]?.delay).toBe(180);
+});
+
+const settlePollBoundary = () => new Promise(resolve => setImmediate(resolve));
+const connectionError = (app: Awaited<ReturnType<typeof harness>>) => ({
+  connected: app.element("connection").dataset.connected,
+  errorHidden: app.element("error").hidden,
+  source: app.element("error").dataset.source,
+  message: app.element("error").textContent,
+});
+
+test("capture refusal stays disconnected through a successful list and a pending next frame", async () => {
+  const app = await harness();
+  app.refuseCapture(true);
+  await app.tick();
+  const refused = { connected: "false", errorHidden: false, source: "poll", message: "Disposable capture unavailable" };
+  expect(connectionError(app)).toEqual(refused);
+  const release = app.holdObserve();
+  const iteration = app.tick();
+  try {
+    await settlePollBoundary();
+    // Real direct Mac order: prior capture refused, next list succeeds, next observe awaits.
+    expect(app.calls.slice(-2)).toEqual(["session.list", "session.observe"]);
+    expect(connectionError(app)).toEqual(refused);
+  } finally { release(); await iteration; }
+  expect(connectionError(app)).toEqual(refused);
+});
+
+test("capture recovery clears the prior error only after the arriving frame decodes", async () => {
+  const app = await harness();
+  app.refuseCapture(true); await app.tick();
+  app.refuseCapture(false);
+  const release = app.holdDecode();
+  const iteration = app.tick();
+  try {
+    await settlePollBoundary();
+    expect(connectionError(app)).toEqual({ connected: "false", errorHidden: false, source: "poll", message: "Disposable capture unavailable" });
+  } finally { release(); await iteration; }
+  expect(app.element("connection").dataset.connected).toBe("true");
+  expect(app.element("error").hidden).toBe(true);
+  expect(app.counts()).toEqual({ decoded: 2, closed: 2 });
+  expect(app.draws()).toBe(2);
+  expect(app.timers.length).toBe(1);
+});
+
+test("healthy list-only manual polling recovers connection without requesting a frame", async () => {
+  const app = await harness();
+  app.refuseCapture(true); await app.tick();
+  app.mode("manual");
+  const before = app.calls.filter(method => method === "session.observe").length;
+  await app.tick();
+  expect(app.calls.filter(method => method === "session.observe").length).toBe(before);
+  expect(app.element("connection").dataset.connected).toBe("true");
+  expect(app.element("error").hidden).toBe(true);
 });

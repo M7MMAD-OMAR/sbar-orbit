@@ -58,7 +58,7 @@
   "scripts": {
     "verify": "bun --smol run scripts/limited.ts bun --smol test",
     "verify:platform-contracts": "bun run verify tests/macos.test.ts tests/macos-keychain.test.ts tests/macos-service-simulation.test.ts tests/platform.test.ts tests/service-paths.test.ts",
-    "typecheck": "tsc",
+    "typecheck": "bun node_modules/typescript/bin/tsc",
     "orbit": "bun run src/cli.ts",
     "serve": "bun run scripts/limited.ts bun run src/cli.ts serve"
   },
@@ -69,6 +69,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
+    "@typescript/typescript6": "6.0.2",
     "typescript": "^7.0.2"
   }
 }
