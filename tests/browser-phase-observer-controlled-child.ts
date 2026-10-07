@@ -1,6 +1,6 @@
 import { expect, mock, test } from "bun:test";
 import type { BrowserBackend as BrowserBackendType } from "../src/browser";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ mock.module(fileURLToPath(import.meta.resolve("../src/chrome")), () => ({ launch
 const { beginBrowserCapture, registerBrowserPhases, classifyPipePhases } = await import("../src/browser-phase-observer");
 const { BrowserBackend } = await import("../src/browser");
 async function makeOwnedFixture() {
-  const root = mkdtempSync(join(tmpdir(), "orbit-phase-pure-")); chmodSync(root, 0o700);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "orbit-phase-pure-"))); chmodSync(root, 0o700);
   const profile = join(root, "profile-owned"); mkdirSync(profile, { mode: 0o700 });
   let reads = 0, ready = false;
   const capture = { send: (_method: string, _args: object): unknown => Promise.resolve({ data: "owned-stub-frame" }), detach: async () => {} };
