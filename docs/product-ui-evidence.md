@@ -1,5 +1,63 @@
 # Product interface evidence
 
+## Current integration and evidence limits
+
+The latest verified local runtime integration is
+`eea17c15c9b8590acd41fb451e7c656d90951bd8`. It combines the product changes
+and the reviewed controlled JPEG publication registration with official main
+`85051a46f409052ce9a95de06a973e111ede8f9d` through a normal merge. A bounded
+TypeScript check against that local integration exited zero. The product
+integration has not been published or accepted. The current merged source has
+987 influence files and 29 owned task paths.
+
+Fresh product checks against the merged source remain pending. They must include
+the focused interaction tests, the isolated nine-case cross-contract child and
+its separate real private-browser parent control, both 32-case admission routes,
+the 12 semantic mutants, the stopping case, verified historical discriminators
+and the full suite. Full-suite totals projected from the source are not measured
+results. The current integration also needs 66 fresh images with matching
+interaction receipts, all 20 lifecycle state cells, eight settled optional-viewer
+cells, four visibly held capture-error cells and the subsequent actual recovery.
+Fresh independent UI, specification and standards reviews must use the current
+source and plan. Literal P7 still requires actual fresh Linux, Windows and macOS
+CI before acceptance; an earlier CI run or local pass cannot satisfy it.
+
+Two retained local histories explain why earlier passes cannot certify this
+integration. Source `0890533` passed its eight planned gates, but its later full
+suite actually recorded 860 pass, 49 skip and 13 fail. The process-global
+cross-contract launcher mock affected ordinary private-browser factories. The
+successor isolated the unchanged nine cases in an owned child and added a real
+parent capture control. The later source `366dcf9` epoch passed types, build,
+focused, cross, admission and mutant checks. Its stopping command exited zero
+but emitted no pass/fail/Ran summary, so the gate correctly failed at revision
+81. That failure remains retained; its cause is unknown. Integrating main's
+framed trace retention does not itself prove that failure repaired. The prior
+full-suite failure and this later stopping failure are separate observations.
+
+The earlier 49-image review and its error-state screenshot claims below are
+superseded historical records. Later review found that early lifecycle/error
+images did not prove the state claimed at capture time. Those earlier images
+and table entries cannot establish the current visible state, current review
+approval or acceptance. Later held-error and framing corrections have their
+own retained evidence, but fresh merged-source captures and reviews remain
+required. The historical snapshot is preserved to show what was recorded,
+including claims that were subsequently rejected, rather than erase them.
+
+The native hold and external participant/device acceptance gates remain open.
+No private fixture result establishes the person's settings, account lifecycle,
+assistive-technology behavior, published-package behavior or participant
+acceptance. The [product contract](product-contract.md) identifies the actual
+owners and limits; [completion status](completion-status.md) records the wider
+closure work.
+
+## Historical product workstream snapshot
+
+The remainder preserves an earlier scoped workstream record. Its source hashes,
+test counts, image counts and recorded states describe that earlier snapshot.
+They are not the latest integrated evidence or current acceptance. In particular,
+`Fixture passed` in the table is a historical recorded label, not a renewed claim
+that an early screenshot faithfully demonstrated its stated lifecycle/error state.
+
 Workstream base: `56fd8f318c5ec2aaded827a8be89387bf54579f1`. This is a scoped
 product repair and audit, not official integration, publication or participant
 acceptance. The [product contract](product-contract.md) names the actual owners
@@ -27,7 +85,7 @@ source/test manifests and captures. `baseline.log`, `focused-wrapper.log` and
 `baseline-settled-source.json` distinguish the regression source from the final
 interaction checks and corrected reference captures.
 
-## Architecture and interaction matrix
+## Historical architecture and interaction matrix
 
 Before this documentation update, the source-bound focused run passed 40 tests
 with no failures or skips in 62.98 seconds. TypeScript and the website build
@@ -42,7 +100,7 @@ actual platform settings, account lifecycle or participant acceptance. Stable ol
 settings references and retained guide references support the matched comparison;
 no old lifecycle pixel comparison is claimed.
 
-| Deliverable | Real owner and interaction evidence | Baseline | Final state |
+| Deliverable | Real owner and interaction evidence | Baseline | Historical recorded state |
 | --- | --- | --- | --- |
 | Entry points and first task | Installer selector, `connector-config`, managed socket default and optional `preview`; public guide stays readable without JS | Public rendered checks pass; universal Linux socket guidance fails | Fixture passed: platform choice, Windows command, common preview and Limited copy; no-JS Windows selection not measured |
 | Task/session/account hierarchy | Broker session ID and supplied identity labels; one rail; account save is explicit while paused | Existing contract/source retained | Owner map reviewed; actual account lifecycle not measured |
