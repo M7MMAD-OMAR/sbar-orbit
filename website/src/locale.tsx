@@ -2,6 +2,15 @@ import { createContext, useContext } from 'react';
 export type Locale = 'en' | 'ar';
 export const LocaleContext = createContext<Locale>('en');
 export const arabic: Record<string, string> = {
+  "Installation platform": "نظام التثبيت",
+  "Linux or macOS": "لينكس أو macOS",
+  "Development checkout": "نسخة التطوير",
+  "Bun and Chrome/Chromium are required. Linux also needs user cgroup delegation. The isolated Fedora display needs the": "تحتاج إلى Bun ومتصفح Chrome أو Chromium. ويحتاج لينكس أيضا تفويض cgroup للمستخدم. أما شاشة Fedora المعزولة فتحتاج إلى",
+  "Limited: private browser fixtures on disposable Linux, Windows and macOS hosts. External participant and published-release acceptance remain open.": "دعم محدود: اختبارات المتصفح الخاص على أجهزة اختبار مؤقتة تعمل بلينكس وWindows وmacOS. ولا يزال قبول المشاركين الخارجيين والإصدار المنشور غير مكتمل.",
+  "Native owner handoff is on hold. Do not enable owner input or load the native plugin.": "تسليم التحكم في تطبيقات سطح مكتب المالك موقوف. لا تفعل إدخال المالك ولا تحمل إضافة سطح المكتب.",
+  "Read the native hold": "اقرأ قرار الإيقاف",
+  "For the installed service, Orbit selects the socket for your OS. Copy the printed URL into your browser; no window opens automatically. A custom serve instance needs ORBIT_SOCKET set to its printed socket path in that terminal.": "للخدمة المثبتة، يختار أوربت مسار الاتصال المناسب لنظامك. انسخ الرابط الناتج وافتحه في المتصفح؛ لن تفتح نافذة تلقائيا. وإذا شغلت نسخة مخصصة بأمر serve، اضبط ORBIT_SOCKET على مسار الاتصال الذي طبعه في تلك الطرفية.",
+
   "One machine, two independent workspaces. Your desktop stays free while Orbit runs the agent’s browser.": "جهاز واحد ومساحتان مستقلتان. تابع عملك بينما يعمل الوكيل في متصفحه الخاص.",
   "ONE MACHINE. ROOM FOR BOTH.": "جهاز واحد. مساحة لكل واحد.",
   "Your space": "مساحتك الخاصة",

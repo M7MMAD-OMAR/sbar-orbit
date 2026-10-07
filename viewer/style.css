@@ -242,7 +242,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,su
 .tabs { display:flex; gap:4px; overflow:auto; scrollbar-width:thin; min-width:0; }
 .tabs[hidden] { display:none; }
 .tab { padding:6px 11px; font-size:11px; color:var(--ink-dim); background:transparent; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:none; }
-.tab[aria-selected="true"] { background:var(--level-3); color:var(--ink); }
+.tab[aria-current="page"] { background:var(--level-3); color:var(--ink); }
 #tab-hint { font-size:10px; white-space:nowrap; }
 /* Pinned to ltr on purpose: the pointer is positioned in image coordinates and
    clicks are measured from the frame's left edge. Neither mirrors. */
