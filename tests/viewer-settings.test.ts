@@ -8,6 +8,35 @@ import { join } from 'node:path';
 import { startBroker, call } from '../src/ipc';
 import { openViewerPage } from './viewer-page';
 
+
+async function captureSettledViewer(page: Awaited<ReturnType<typeof openViewerPage>>['page'], path: string, fullPage: boolean, collapsed: boolean, idle?: boolean) {
+  const snapshot = () => page.evaluate(() => {
+    const shell = document.querySelector('.shell'), rail = document.querySelector('.rail'), head = document.querySelector('.head');
+    if (!shell || !rail || !head) throw new Error('Missing viewer capture surface');
+    const style = getComputedStyle(rail);
+    return { viewport: { width: innerWidth, height: innerHeight }, collapsed: shell.classList.contains('sidebar-collapsed'),
+      railVisibility: style.visibility, railOpacity: Number(style.opacity), controlsIdle: shell.classList.contains('controls-idle'),
+      headOpacity: Number(getComputedStyle(head).opacity), fullscreen: !!document.fullscreenElement,
+      finiteMotion: shell.getAnimations({ subtree: true }).filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity && !['finished', 'idle'].includes(animation.playState)).length };
+  });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.waitForFunction(({ collapsed, idle }) => {
+    const shell = document.querySelector('.shell'), rail = document.querySelector('.rail'), head = document.querySelector('.head');
+    if (!shell || !rail || !head || shell.classList.contains('sidebar-collapsed') !== collapsed) return false;
+    const style = getComputedStyle(rail);
+    return style.visibility === (collapsed ? 'hidden' : 'visible') && Number(style.opacity) === (collapsed ? 0 : 1) &&
+      (idle === null || (shell.classList.contains('controls-idle') === idle && Number(getComputedStyle(head).opacity) === (idle ? 0 : 1))) &&
+      shell.getAnimations({ subtree: true }).every(animation => animation.effect?.getComputedTiming().iterations === Infinity || ['finished', 'idle'].includes(animation.playState));
+  }, { collapsed, idle: idle ?? null });
+  const before = await snapshot();
+  expect({ contract: 'settled-optional-capture', collapsed: before.collapsed, visibility: before.railVisibility, opacity: before.railOpacity, finiteMotion: before.finiteMotion }).toEqual({ contract: 'settled-optional-capture', collapsed, visibility: collapsed ? 'hidden' : 'visible', opacity: collapsed ? 0 : 1, finiteMotion: 0 });
+  if (idle !== undefined) expect({ idle: before.controlsIdle, headOpacity: before.headOpacity }).toEqual({ idle, headOpacity: idle ? 0 : 1 });
+  await page.screenshot({ path, fullPage });
+  const after = await snapshot();
+  expect(after).toEqual(before);
+  await writeFile(path.replace(/\.png$/, '.json'), JSON.stringify({ capture: path.split('/').pop(), before, after }, null, 2));
+}
+
 /*
  * The settings are the desktop's, so this test gives the run its own XDG_CONFIG_HOME and
  * XDG_RUNTIME_DIR and never touches the person's real panel.json. The broker spawns the schema
@@ -91,10 +120,10 @@ test('the viewer reads, writes and resets the desktop settings through the one s
     const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-viewer-settings';
     await page.evaluate(() => { (document.querySelector('.work') as HTMLElement).scrollTop = 0; });
     await mkdir(shots, { recursive: true });
-    await page.screenshot({ path: join(shots, 'settings.png'), fullPage: true });
+    await captureSettledViewer(page, join(shots, 'settings.png'), true, false);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.screenshot({ path: join(shots, 'settings-mobile.png'), fullPage: true });
+    await captureSettledViewer(page, join(shots, 'settings-mobile.png'), true, true);
     await page.setViewportSize({ width: 1280, height: 900 });
 
     // And the sessions are still one click away, from the same button.

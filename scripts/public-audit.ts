@@ -16,6 +16,8 @@ const git = async (...args: string[]) => {
  * or captures of the person's machine. A binary that is not listed here still fails, which is the whole point of the rule.
  */
 const reviewedBinaries = new Map([
+  // Reviewed 7 October 2026: viewed solid blue 32 by 24 test JPEG, JFIF only, no personal metadata.
+  ["tests/fixtures/controlled-frame-32x24.jpg", "1ab7074552f237f12bb69c219b768321ca43697df1de8d0f0e6a2ace16d3a9d8"],
   ["brand/logo/lockup-arabic-black.png", "3193c90cc1a4f8168e99e1d803d1d8068fcab8515df26d05db3152f7b4fc0b13"],
   ["brand/logo/lockup-arabic-blue.png", "37d8b8c2c2572f0abb3ab1b347db321b29c344b8b936b0e1f24a5bff65d03632"],
   ["brand/logo/lockup-arabic-reversed.png", "d1820a2268785b1a837fd9bf81f2bb2474a33f551ecb462a66a4888948be3fcf"],

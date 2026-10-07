@@ -28,6 +28,8 @@
     'Largest screen': 'أكبر شاشة',
     'Follow the desktop theme': 'اتبع لون سطح المكتب',
     'opens a tab': 'يفتح تبويبا',
+    'Try again': 'حاول مرة أخرى',
+    'Desktop mark settings are available on Linux only': 'إعدادات شعار سطح المكتب متاحة على لينكس فقط',
     'Show': 'اعرض',
     // The values a choice offers.
     'left': 'يسار', 'right': 'يمين', 'top': 'أعلى', 'bottom': 'أسفل',
@@ -41,7 +43,7 @@
   const groups = element('settings-groups');
   const status = element('settings-status');
   const search = element('settings-search');
-  let schema = [], browsers = [], monitors = [], loaded = false;
+  let schema = [], browsers = [], monitors = [], loaded = false, loading = false;
   const timers = new Map();
 
   /** Say what happened, briefly. A change that worked says so and then gets out of the way. */
@@ -52,12 +54,19 @@
   }
 
   async function load() {
+    if (loading) return;
+    loading = true;
+    view.setAttribute('aria-busy', 'true');
     try {
       const answer = await rpc('settings.list');
       schema = answer.settings || []; browsers = answer.browsers || []; monitors = answer.monitors || [];
       loaded = true;
       draw();
-    } catch { groups.replaceChildren(note(t('Settings are unavailable. Orbit is not answering.'))); }
+    } catch (error) {
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.textContent = t('Try again'); retry.onclick = load;
+      groups.replaceChildren(note(error.message ? t(error.message) : t('Settings are unavailable. Orbit is not answering.')), retry);
+    } finally { loading = false; view.setAttribute('aria-busy', 'false'); }
   }
 
   /*
@@ -98,6 +107,12 @@
   }
 
   function draw() {
+    // A schema reply replaces the controls. Preserve the person's current focus, rather
+    // than sending the next Tab back to the beginning after a save or a refusal.
+    const active = document.activeElement;
+    const focusedRow = active?.closest('.setting');
+    const focusKey = focusedRow?.dataset.key;
+    const focusIndex = focusedRow ? [...focusedRow.querySelectorAll('button,input,select')].indexOf(active) : -1;
     const wanted = schema.filter(matches);
     if (!wanted.length) { groups.replaceChildren(note(t('Nothing matches {query}', { query: search.value.trim() }))); return; }
     const named = [...new Set(wanted.map(entry => entry.group))];
@@ -110,6 +125,10 @@
       for (const entry of wanted.filter(one => one.group === name)) card.append(row(entry));
       return card;
     }));
+    if (focusKey && focusIndex >= 0) {
+      const replacement = [...groups.querySelectorAll('.setting')].find(line => line.dataset.key === focusKey);
+      replacement?.querySelectorAll('button,input,select')[focusIndex]?.focus({ preventScroll: true });
+    }
   }
 
   /** One setting: what it is called, what it does, and the control that changes it. */
@@ -117,18 +136,25 @@
     const line = document.createElement('div');
     line.className = 'setting';
     line.dataset.kind = entry.kind;
+    line.dataset.key = entry.key;
     const text = document.createElement('div');
     text.className = 'setting-text';
     const label = document.createElement('span');
     label.className = 'setting-label';
+    label.id = `setting-${entry.key}-label`;
     label.textContent = wording(entry, 'label');
     const about = document.createElement('p');
     about.className = 'setting-about';
+    about.id = `setting-${entry.key}-about`;
     about.textContent = wording(entry, 'description');
     text.append(label, about);
     const control = document.createElement('div');
     control.className = 'setting-control';
     control.append(...widgets(entry));
+    for (const widget of control.querySelectorAll('button,input,select,[role="radiogroup"]')) {
+      if (!widget.hasAttribute('aria-label') && (widget.getAttribute('role') !== 'radio')) widget.setAttribute('aria-labelledby', label.id);
+      widget.setAttribute('aria-describedby', about.id);
+    }
     line.append(text, control);
     return line;
   }
@@ -146,8 +172,8 @@
         // schema says which words; this draws one switch for each rather than knowing any of them.
         const chip = document.createElement('button');
         chip.type = 'button'; chip.className = 'segment named';
-        chip.setAttribute('role', 'radio');
-        chip.setAttribute('aria-checked', String(entry.value === named));
+        chip.setAttribute('aria-pressed', String(entry.value === named));
+        chip.setAttribute('aria-label', `${wording(entry, 'label')}: ${t('Follow the desktop theme')}`);
         chip.textContent = t('Follow the desktop theme');
         chip.onclick = () => write(entry.key, entry.value === named ? entry.default : named);
         return chip;
@@ -158,7 +184,9 @@
       const name = document.createElement('span');
       name.className = 'swatch-name';
       name.textContent = t(state);
-      pair.append(swatch(entry.value[state], next => write(`colors.${state}`, next)), name);
+      const color = swatch(entry.value[state], next => write(`colors.${state}`, next));
+      color.setAttribute('aria-label', `${wording(entry, 'label')}: ${t(state)}`);
+      pair.append(color, name);
       return pair;
     });
     if (entry.kind === 'browser') return [picker([{ value: '', label: t('Automatic') },
@@ -199,10 +227,21 @@
       button.type = 'button'; button.className = 'segment';
       button.setAttribute('role', 'radio');
       button.setAttribute('aria-checked', String(choice === current));
+      button.tabIndex = choice === current || (!choices.includes(current) && choice === choices[0]) ? 0 : -1;
       button.textContent = t(choice);
       button.onclick = () => onChange(choice);
       group.append(button);
     }
+    group.onkeydown = event => {
+      const buttons = [...group.querySelectorAll('button')];
+      const index = buttons.indexOf(document.activeElement);
+      if (index < 0 || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+      buttons[next]?.click();
+    };
     return group;
   }
 
