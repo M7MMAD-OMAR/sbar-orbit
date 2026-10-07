@@ -14,6 +14,59 @@ not push official `main`, change support claims or bypass the native release hol
 
 ## Current execution
 
+Official main remains [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
+which reconciled the accepted PR 15 evidence retained below. The startup
+diagnostic successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
+currently at `abe0d63c83461ff4d1351d4b4bf328b69ee69144`, tree
+`0628a3002ab6b45e19bb6cb9c0b22cb6f0914a0f`. It remains open and unmerged.
+PR 15 acceptance does not accept this new candidate or close the full platform.
+
+The previous candidate `c8effcd8feb51d5da1ffdcea4af6340c2d31570f`
+completed all three Ubuntu jobs in [profile diagnostic run 37646205630](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646205630).
+Its separate local full suite ran 963 cases: 914 pass, 49 skip, zero fail and
+6057 assertions. That local result remains bound to the previous source and
+is not a full-suite result for `abe0d63` or a cross-platform acceptance.
+
+The previous source also failed [direct normal run 37646274451](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646274451):
+eight jobs succeeded, while the Windows suite reported 643 pass, 318 skip and
+one failure across 962 cases in 187 files. Its sole failed case was
+`failed resource sampling stays unavailable and retains successful counters`.
+The [previous PR normal run 37646109212](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646109212)
+failed the same Windows fixture and separately failed the macOS case
+`browser frame keeps its captured page and dimensions when tab actions finish concurrently`,
+with `TIMEOUT` at the unchanged 3000 ms capture budget. The retained Mac summary
+is 655 pass, 306 skip and one failure across 962 cases in 187 files. Profile
+diagnostic success does not replace these normal-workflow failed measurements.
+
+Commit `abe0d63` changes only the Windows-sensitive resource sampling fixture:
+the test now matches the exact native `join` path used by production instead
+of a slash-only suffix. It changes no production code, assertion, skip or
+timeout. A source-pinned focused Linux child passed the named resource case:
+one pass, zero skips, zero failures and ten assertions; four filtered cases
+are excluded from those totals. The independent source/evidence review found
+no actionable findings. Receipt SHA256 is
+`10822fd7e2242adba37e91a0014e310852f1057810f71b3d2b65b26ce5ffcec9`;
+its source manifest SHA256 is
+`c426152ffde11fb2d85b8e0e8262098269c97aab3f3c0a61e0fdaf4ecfa9c07b`.
+These local-only archives are not published by the PR link.
+
+At the October 7, 2026, 8:08 PM Dubai time API observation,
+[fresh PR run 37649479046](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37649479046)
+identified head `abe0d63` and remained in progress. All six installed-browser
+and registered-hosts jobs had succeeded; the three provider suites were still
+running. The fixed Windows case, fresh complete suite totals and fresh provider
+source/log binding remain `not measured` pending terminal raw evidence review.
+The fixture correction does not repair or explain the separate Mac capture
+timeout, establish startup reliability or prove production performance gains.
+
+Public latency remains 42.942314 percent overhead against the 20 percent target,
+a failed target. Managed lifecycle and recovery, release/package parity,
+external participant acceptance and broader platform closure remain open.
+Native owner handoff and plugin activation remain unconditionally on hold;
+owner input, borrowed input/resume and alternate routes remain unauthorized.
+
+## Accepted PR 15 integration evidence
+
 Latest verified runtime integration on official main is [7458a35d380777ea5d990312dd9eadfe7cce943b](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/7458a35d380777ea5d990312dd9eadfe7cce943b), after
 [PR 15](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/15) merged the bilingual
 product interface and capture contracts with the accepted CLI pipe diagnostics.
