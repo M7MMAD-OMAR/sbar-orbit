@@ -3,7 +3,7 @@ import { test, expect } from "bun:test";
 import { linuxOnlyTest } from "./platform-support";
 import { launchChrome } from "../src/chrome";
 import { startBroker, call } from "../src/ipc";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -135,12 +135,25 @@ test("observation stays available while an agent waits for an element", async ()
 // A slow capture must not be advertised as newly captured when it completes.
 test("frame age includes capture work", async () => {
   const { BrowserBackend } = await import("../src/browser");
+  const profile = await mkdtemp(join(tmpdir(), "orbit-frame-age-"));
+  let owned: Awaited<ReturnType<typeof BrowserBackend.create>> | undefined;
+  let image: string;
+  try {
+    owned = await BrowserBackend.create(profile);
+    const fixture = owned.context.pages()[0];
+    if (!fixture) throw new Error("Owned frame age fixture page missing");
+    await fixture.setContent("<html><title>Frame age fixture</title><body>Owned capture</body></html>");
+    image = (await owned.observe()).image;
+  } finally {
+    await owned?.close();
+    await rm(profile, { recursive: true });
+  }
   const page = { url: () => "about:blank", title: async () => "", isClosed: () => false };
   // Built on the real prototype so the active-tab getter is exercised rather than bypassed.
   const fake = Object.assign(Object.create(BrowserBackend.prototype), {
-    pointers: new Map(), captureSessions: new Map(), active: page, size: { width: 1280, height: 800 }, context: {
+    pointers: new Map(), captureSessions: new Map(), observationInvalidations: new Map(), documentVersions: new Map(), metadataFlights: new Map(), active: page, size: { width: 1280, height: 800 }, context: {
       pages: () => [page], newCDPSession: async () => ({
-        send: async () => { await Bun.sleep(80); return { data: Buffer.from("fixture").toString("base64") }; }, detach: async () => {},
+        send: async () => { await Bun.sleep(80); return { data: image }; }, detach: async () => {},
       }),
     } });
   const frame = await BrowserBackend.prototype.observe.call(fake as typeof BrowserBackend.prototype);

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { CaptureRow } from "../src/browser-phase-observer";
 
+const controlledFrame = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAYACADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDjKKKK/Sj5QKKKKACiiigAooooA//Z";
 const controlledOwners = new Map<string, object>();
 const controlledLaunchProfiles: string[] = [];
 mock.module(fileURLToPath(import.meta.resolve("../src/chrome")), () => ({ launchChrome: async (profile: string) => { const owned = controlledOwners.get(profile); if (!owned) throw new Error("unowned controlled launch"); controlledLaunchProfiles.push(profile); return owned; } }));
@@ -15,12 +16,12 @@ async function makeOwnedFixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "orbit-phase-pure-"))); chmodSync(root, 0o700);
   const profile = join(root, "profile-owned"); mkdirSync(profile, { mode: 0o700 });
   let reads = 0, ready = false;
-  const capture = { send: (_method: string, _args: object): unknown => Promise.resolve({ data: "owned-stub-frame" }), detach: async () => {} };
+  const capture = { send: (_method: string, _args: object): unknown => Promise.resolve({ data: controlledFrame }), detach: async () => {} };
   const pointer = { on() {}, async send(method: string) { return method === "Page.getFrameTree" ? { frameTree: { frame: { id: "owned-stub-pointer" } } } : {}; } };
   const attachmentCalls: object[] = [], closeListeners: (() => void)[] = [];
-  const context = { setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, on() {}, pages: () => [], async newCDPSession(page: object) { if (ready) { attachmentCalls.push(page); return capture; } return pointer; } };
-  const page = { isClosed: () => false, context() { reads++; return context; } };
-  const presence: Awaited<ReturnType<BrowserBackendType["observe"]>>["presence"] = { title: "owned stub", location: "about:blank", pageCount: 1, pageIndex: 1, tabs: [], pointer: null };
+  const context: { setDefaultTimeout(): void; setDefaultNavigationTimeout(): void; on(): void; pages(): object[]; newCDPSession(page: object): Promise<typeof capture | typeof pointer> } = { setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, on() {}, pages: () => [page], async newCDPSession(page: object) { if (ready) { attachmentCalls.push(page); return capture; } return pointer; } };
+  const page = { isClosed: () => false, context() { reads++; return context; }, url: () => "about:blank", title: async () => "owned stub", on() {}, once() {} };
+  const presence: Awaited<ReturnType<BrowserBackendType["observe"]>>["presence"] = { title: "owned stub", location: "New page", pageCount: 1, pageIndex: 1, tabs: [{ tab: 1, label: "owned stub", active: true }], pointer: null };
   const owned = { context, page, browser: {}, close: () => Promise.resolve(), onClose(listener: () => void) { closeListeners.push(listener); } };
   controlledOwners.set(profile, owned);
   const controlledLaunchCount = controlledLaunchProfiles.length;
@@ -32,7 +33,6 @@ async function makeOwnedFixture() {
     expect(controlledLaunchProfiles[controlledLaunchCount]).toBe(profile);
     expect(Object.is(backend.context, context)).toBe(true);
     ready = true;
-    Object.assign(backend, { presence: async () => presence });
     return { backend, context, page, root, profile, capture, contextReads: () => reads, presence, attachmentCalls, owned, closeListeners, factorySetup() { ready = false; }, rows: [] as CaptureRow[], async dispose() { controlledOwners.delete(profile); await backend.close().catch(() => {}); rmSync(root, { recursive: true, force: true }); } };
   } catch (error) {
     if (acquiredBackend) { try { await acquiredBackend.close(); } catch {} }
@@ -77,19 +77,19 @@ test("late original settlement does not reopen registration", () => fixture(v =>
 async function actualFixture(work: (value: Awaited<ReturnType<typeof makeOwnedFixture>>) => Promise<void>) { await fixture(work); }
 test("actual observe ordinary registration remains lazy", async () => actualFixture(async v => {
   const frame = await v.backend.observe();
-  expect(frame.image).toBe("owned-stub-frame"); expect(v.contextReads()).toBe(0); expect(v.attachmentCalls.length).toBe(1);
+  expect(frame.image).toBe(controlledFrame); expect(v.contextReads()).toBe(0); expect(v.attachmentCalls.length).toBe(1);
 }));
 test("actual observe preserves CDP receiver arguments and original await", async () => actualFixture(async v => {
   const reg = registerBrowserPhases(v.backend, v.context, v.root, v.profile, () => {});
   let receiver: unknown, method: unknown, args: unknown, awaits = 0;
-  v.capture.send = function (name, input) { receiver = this; method = name; args = input; return { then(resolve: (value: { data: string }) => void) { awaits++; resolve({ data: "owned-thenable-frame" }); } }; };
+  v.capture.send = function (name, input) { receiver = this; method = name; args = input; return { then(resolve: (value: { data: string }) => void) { awaits++; resolve({ data: controlledFrame }); } }; };
   try {
     expect(reg).toBeDefined(); const frame = await v.backend.observe();
     expect(receiver).toBe(v.capture); expect(method).toBe("Page.captureScreenshot");
     expect(args).toEqual({ format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false });
-    expect(awaits).toBe(1); expect(frame.image).toBe("owned-thenable-frame"); expect(frame.presence).toBe(v.presence);
+    expect(awaits).toBe(1); expect(frame.image).toBe(controlledFrame); expect(frame.presence).toEqual(v.presence); expect({ width: frame.width, height: frame.height }).toEqual({ width: 32, height: 24 });
     expect(v.contextReads()).toBe(1); expect(reg?.snapshot().pending).toBe(0);
-    expect(reg?.snapshot().rows.map(row => row.stage)).toEqual(["begin", "attachment-before", "attachment-settled", "screenshot-before", "screenshot-settled", "race-settled", "cleanup", "presence-before", "presence-settled"]);
+    expect(reg?.snapshot().rows.map(row => row.stage)).toEqual(["begin", "attachment-before", "attachment-settled", "screenshot-before", "screenshot-settled", "presence-before", "presence-settled", "race-settled", "cleanup"]);
   } finally { reg?.close(); }
 }));
 test("actual observe preserves screenshot rejection object identity", async () => actualFixture(async v => {

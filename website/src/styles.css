@@ -67,3 +67,7 @@ html{scroll-padding-top:120px}
 
 /* Original Sbarah signature, linked to the maker's website. */
 .maker-signature{display:flex;justify-content:center;padding:30px 0 38px}.maker-signature>a{display:flex;align-items:center;flex-direction:column;gap:16px;background:#153b61;border:1px solid #ffffff20;border-radius:22px;padding:24px 36px;color:#e6eddc;min-width:184px}.maker-signature img{display:block;width:112px;height:auto}.maker-signature span{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.12em;direction:ltr}.maker-signature>a:hover{background:#1c486e}.maker-signature>a:focus-visible{outline:2px solid #bbd686;outline-offset:5px}
+
+.install-platform { display:flex; gap:6px; padding:16px 20px 0; flex-wrap:wrap; }
+.install-platform button { border:1px solid var(--line); border-radius:8px; padding:8px 12px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+.install-platform button[aria-pressed="true"] { background:var(--ink); color:var(--paper); border-color:var(--ink); }

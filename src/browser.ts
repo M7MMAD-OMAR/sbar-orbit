@@ -93,6 +93,30 @@ function label(page: Page, title: string): string {
     return (url.protocol === "about:" ? "New tab" : `${url.host}${url.pathname === "/" ? "" : url.pathname}`).slice(0, 60);
   } catch { return "New tab"; }
 }
+
+/** Dimensions belong to the JPEG pixels, not a viewport that a concurrent action can resize. */
+function capturedDimensions(image: string): Viewport {
+  const bytes = Buffer.from(image, "base64");
+  if (bytes.length >= 2 && bytes.readUInt16BE(0) === 0xffd8) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length && bytes[offset] === 0xff) {
+      while (bytes[offset] === 0xff) offset++;
+      const marker = bytes[offset++];
+      if (marker === undefined || marker === 0xda || marker === 0xd9) break;
+      if (marker === 0x01 || marker >= 0xd0 && marker <= 0xd8) continue;
+      if (offset + 2 > bytes.length) break;
+      const length = bytes.readUInt16BE(offset);
+      if (length < 2 || offset + length > bytes.length) break;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker) && length >= 7) {
+        const height = bytes.readUInt16BE(offset + 3), width = bytes.readUInt16BE(offset + 5);
+        if (width && height) return { width, height };
+        break;
+      }
+      offset += length;
+    }
+  }
+  throw new OrbitError("BACKEND_FAILED", "The owned browser returned a JPEG without capture dimensions");
+}
 export class BrowserBackend {
   static #phaseOwners = new WeakMap<object, { readonly context: object; readonly workspace: string; readonly profile: string; readonly lifetime: { live: boolean } }>();
   static phaseOwnershipMatches(backend: object, context: object, workspace: string, profile: string) {
@@ -102,7 +126,10 @@ export class BrowserBackend {
   readonly capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
   parseAction = (value: unknown) => parseAction(value, this.size);
   private pointers = new Map<Page, () => Promise<{ x: number; y: number } | null>>();
-  private captureSessions = new Map<Page, Promise<CDPSession>>();
+  private captureSessions = new Map<Page, { documentVersion: number; promise: Promise<CDPSession>; released: boolean }>();
+  private observationInvalidations = new Map<Page, Set<() => void>>();
+  private documentVersions = new Map<Page, number>();
+  private metadataFlights = new Map<Page, { documentVersion: number; promise: ReturnType<BrowserBackend["presenceOf"]> }>();
   private active: Page;
   onClose(listener: () => void) { this.owned.onClose(listener); }
   get surface(): Viewport { return this.size; }
@@ -193,9 +220,20 @@ export class BrowserBackend {
     void page.setViewportSize(this.size).catch(() => {});
   }
   private watch(page: Page) {
+    this.documentVersions.set(page, 0);
+    page.on("framenavigated", frame => {
+      if (frame === page.mainFrame()) {
+        this.documentVersions.set(page, (this.documentVersions.get(page) ?? 0) + 1);
+        for (const invalidate of this.observationInvalidations.get(page) ?? []) invalidate();
+      }
+    });
     page.once("close", () => {
+      for (const invalidate of this.observationInvalidations.get(page) ?? []) invalidate();
+      this.observationInvalidations.delete(page);
       this.pointers.delete(page);
       this.captureSessions.delete(page);
+      this.documentVersions.delete(page);
+      this.metadataFlights.delete(page);
       if (this.active !== page) return;
       const survivor = this.context.pages().filter(open => open !== page).at(-1);
       if (survivor) this.active = survivor;
@@ -314,7 +352,9 @@ export class BrowserBackend {
   }
   /** What the session is showing, without a frame. Cheap enough to poll from a desktop indicator. */
   async presence() {
-    const page = this.page;
+    return this.presenceOf(this.page);
+  }
+  private async presenceOf(page: Page) {
     try { await this.bindPointer(page); } catch {}
     const url = new URL(page.url());
     const location = url.protocol === "about:" ? "New page" : `${url.origin}${url.pathname}`;
@@ -326,62 +366,112 @@ export class BrowserBackend {
     return { title, location, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1, tabs,
       pointer: await (this.pointers.get(page) ?? (async () => null))() };
   }
+  private capturedPresence(page: Page, documentVersion: number) {
+    const existing = this.metadataFlights.get(page);
+    if (existing) {
+      if (existing.documentVersion !== documentVersion)
+        throw new OrbitError("BACKEND_FAILED", "Metadata for an obsolete document is still pending; request a fresh frame");
+      return existing.promise;
+    }
+    const flight = { documentVersion, promise: this.presenceOf(page) };
+    this.metadataFlights.set(page, flight);
+    // A timed out observer does not cancel Playwright metadata work. Retain its
+    // flight until settlement so later polls cannot accumulate pending reads.
+    void flight.promise.then(() => {
+      if (this.metadataFlights.get(page) === flight) this.metadataFlights.delete(page);
+    }, () => {
+      if (this.metadataFlights.get(page) === flight) this.metadataFlights.delete(page);
+    });
+    return flight.promise;
+  }
   async observe() {
     const capturedAt = Date.now();
     const page = this.page;
-    // JPEG at quality 80 costs about a third less to encode than PNG and a third of the bytes,
-    // which matters because every frame is captured, base64 encoded and decoded again per poll.
-    //
-    // A viewer needs the current pixels while the application loads. Playwright's screenshot
-    // waits for web fonts and can fail on a usable page with one pending font. Capture directly
-    // from this owned Chromium surface without changing the application's loading state.
+    const documentVersion = this.documentVersions.get(page) ?? 0;
+    const obsoleteError = () => new OrbitError("BACKEND_FAILED", "The captured page navigated or closed during observation; request a fresh frame");
+    const requireCapturedDocument = () => {
+      if (page.isClosed() || (this.documentVersions.get(page) ?? 0) !== documentVersion) throw obsoleteError();
+    };
     const budget = captureTimeoutMs();
-    const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
-    let capture: CDPSession | undefined;
+    const timeout = () => new OrbitError("TIMEOUT", `The page did not produce a frame within ${budget} ms (capturing pixels and metadata). A slow or loaded host needs a larger budget: set ORBIT_CAPTURE_TIMEOUT_MS on the broker.`);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
+    let obsolete = false;
+    let rejectObsolete = (error: OrbitError) => {};
+    const invalidated = new Promise<never>((_, reject) => { rejectObsolete = reject; });
+    const invalidate = () => { obsolete = true; rejectObsolete(obsoleteError()); };
+    const callbacks = this.observationInvalidations.get(page) ?? new Set<() => void>();
+    callbacks.add(invalidate);
+    this.observationInvalidations.set(page, callbacks);
     let attachment = this.captureSessions.get(page);
-    const phase = beginBrowserCapture(this, () => page.context(), page, budget, attachment !== undefined);
-    phase?.mark("attachment-before");
-    if (!attachment) {
-      try { attachment = this.context.newCDPSession(page); }
-      catch (error) { phase?.mark("attachment-rejected"); phase?.finish(); throw error; }
-      this.captureSessions.set(page, attachment);
-      void attachment.catch(() => { if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page); });
-    }
+    const cached = attachment !== undefined && attachment.documentVersion === documentVersion && !attachment.released;
+    const phase = beginBrowserCapture(this, () => page.context(), page, budget, cached);
+    const releaseAttachment = (held: NonNullable<typeof attachment>) => {
+      if (this.captureSessions.get(page) === held) this.captureSessions.delete(page);
+      if (held.released) return;
+      held.released = true;
+      // Dispatch detachment only when its original attachment actually settles.
+      void held.promise.then(channel => {
+        phase?.mark("detach-dispatched");
+        return channel.detach();
+      }).catch(() => { phase?.mark("detach-rejected"); });
+    };
     const operation = (async () => {
-      try { capture = await attachment; phase?.mark("attachment-settled"); }
-      catch (error) { phase?.mark("attachment-rejected"); phase?.finish(); throw error; }
-      // An attachment that settles after the deadline must not start a late capture.
-      if (expired) { phase?.mark("detach-dispatched"); void capture.detach().catch(() => { phase?.mark("detach-rejected"); }); phase?.finish(); throw timeout(); }
-      phase?.mark("screenshot-before");
-      try { const result = await capture.send("Page.captureScreenshot", {
-        format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
-      }); phase?.mark("screenshot-settled"); if (expired) phase?.finish(); return result.data; }
-      catch (error) { phase?.mark("screenshot-rejected"); phase?.finish(); throw error; }
+      try {
+        if (attachment && attachment.documentVersion !== documentVersion) { releaseAttachment(attachment); attachment = undefined; }
+        phase?.mark("attachment-before");
+        if (!attachment) {
+          try {
+            const held = { documentVersion, promise: this.context.newCDPSession(page), released: false };
+            attachment = held;
+            this.captureSessions.set(page, held);
+            void held.promise.catch(() => { if (this.captureSessions.get(page) === held) this.captureSessions.delete(page); });
+          } catch (error) { phase?.mark("attachment-rejected"); throw error; }
+        }
+        let capture: CDPSession;
+        try { capture = await attachment.promise; phase?.mark("attachment-settled"); }
+        catch (error) { phase?.mark("attachment-rejected"); throw error; }
+        requireCapturedDocument();
+        if (expired) throw timeout();
+        if (obsolete) throw obsoleteError();
+        phase?.mark("screenshot-before");
+        let image: string;
+        try {
+          image = (await capture.send("Page.captureScreenshot", {
+            format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
+          })).data;
+          phase?.mark("screenshot-settled");
+        } catch (error) { phase?.mark("screenshot-rejected"); throw error; }
+        if (expired) throw timeout();
+        requireCapturedDocument();
+        phase?.mark("presence-before");
+        let presence: Awaited<ReturnType<BrowserBackend["presenceOf"]>>;
+        try { presence = await this.capturedPresence(page, documentVersion); phase?.mark("presence-settled"); }
+        catch (error) { phase?.mark("presence-rejected"); throw error; }
+        requireCapturedDocument();
+        return { mimeType: "image/jpeg", image, capturedAt, ...capturedDimensions(image), presence };
+      } finally {
+        // A losing race does not settle its original CDP or metadata promise.
+        phase?.finish();
+      }
     })();
-    let image: string;
     try {
-      image = await Promise.race([operation, new Promise<never>((_, reject) => {
+      const result = await Promise.race([operation, invalidated, new Promise<never>((_, reject) => {
         timer = setTimeout(() => { expired = true; phase?.mark("timer-fired"); reject(timeout()); }, budget);
       })]);
       phase?.mark("race-settled");
-    } catch (error) { phase?.mark("race-rejected"); throw error;
+      return result;
+    } catch (error) {
+      phase?.mark("race-rejected");
+      requireCapturedDocument();
+      throw error;
     } finally {
       phase?.mark("cleanup");
       if (timer !== undefined) clearTimeout(timer);
-      if (expired) {
-        if (this.captureSessions.get(page) === attachment) this.captureSessions.delete(page);
-        if (capture) phase?.mark("detach-dispatched");
-        void capture?.detach().catch(() => { phase?.mark("detach-rejected"); });
-      }
+      callbacks.delete(invalidate);
+      if (!callbacks.size && this.observationInvalidations.get(page) === callbacks) this.observationInvalidations.delete(page);
+      if ((expired || obsolete) && attachment) releaseAttachment(attachment);
     }
-    phase?.mark("presence-before");
-    try {
-      const result = { mimeType: "image/jpeg", image, capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
-      phase?.mark("presence-settled"); return result;
-    } catch (error) { phase?.mark("presence-rejected"); throw error; }
-    finally { phase?.finish(); }
   }
   async control(value: unknown) {
     const input = record(value);

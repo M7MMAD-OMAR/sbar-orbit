@@ -1,10 +1,39 @@
 import { test, expect } from 'bun:test';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { startBroker, call } from '../src/ipc';
 import { openViewerPage } from './viewer-page';
 
 const fixture = `<!doctype html><html><head><title>Workspace library</title><style>*{box-sizing:border-box}body{margin:0;background:#f5f6f8;color:#20282f;font:16px system-ui}header{padding:26px 40px;background:white;display:flex;justify-content:space-between}main{padding:45px 60px}small{color:#71818e}h1{font-size:34px;letter-spacing:-1px;margin:8px 0}p{color:#687684}.cards{display:flex;gap:18px;margin:32px 0}.card{background:white;border-radius:16px;padding:24px;flex:1}strong{font-size:32px;display:block;margin-top:16px}table{width:100%;background:white;border-radius:16px;padding:20px;text-align:left}th,td{padding:18px;font-size:14px}th{color:#79838f;font-weight:500}.tag{background:#e7f4ec;border-radius:20px;padding:6px 12px;color:#377354}</style></head><body><header><b>Studio / Workspace</b><small>Product team</small></header><main><small>PROJECT OVERVIEW</small><h1>Workspace library</h1><p>A clear view of the work in progress.</p><div class="cards"><div class="card"><small>Active projects</small><strong>12</strong></div><div class="card"><small>In review</small><strong>4</strong></div><div class="card"><small>Completed this week</small><strong>8</strong></div></div><table><tr><th>Project</th><th>Owner</th><th>Status</th></tr><tr><td>Workspace navigation</td><td>Design team</td><td><span class="tag">In review</span></td></tr><tr><td>Account settings</td><td>Product team</td><td>In progress</td></tr><tr><td>Diagnostic reports</td><td>Engineering</td><td>Ready</td></tr></table></main></body></html>`;
+
+
+async function captureSettledViewer(page: Awaited<ReturnType<typeof openViewerPage>>['page'], path: string, fullPage: boolean, collapsed: boolean, idle?: boolean) {
+  const snapshot = () => page.evaluate(() => {
+    const shell = document.querySelector('.shell'), rail = document.querySelector('.rail'), head = document.querySelector('.head');
+    if (!shell || !rail || !head) throw new Error('Missing viewer capture surface');
+    const style = getComputedStyle(rail);
+    return { viewport: { width: innerWidth, height: innerHeight }, collapsed: shell.classList.contains('sidebar-collapsed'),
+      railVisibility: style.visibility, railOpacity: Number(style.opacity), controlsIdle: shell.classList.contains('controls-idle'),
+      headOpacity: Number(getComputedStyle(head).opacity), fullscreen: !!document.fullscreenElement,
+      finiteMotion: shell.getAnimations({ subtree: true }).filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity && !['finished', 'idle'].includes(animation.playState)).length };
+  });
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.waitForFunction(({ collapsed, idle }) => {
+    const shell = document.querySelector('.shell'), rail = document.querySelector('.rail'), head = document.querySelector('.head');
+    if (!shell || !rail || !head || shell.classList.contains('sidebar-collapsed') !== collapsed) return false;
+    const style = getComputedStyle(rail);
+    return style.visibility === (collapsed ? 'hidden' : 'visible') && Number(style.opacity) === (collapsed ? 0 : 1) &&
+      (idle === null || (shell.classList.contains('controls-idle') === idle && Number(getComputedStyle(head).opacity) === (idle ? 0 : 1))) &&
+      shell.getAnimations({ subtree: true }).every(animation => animation.effect?.getComputedTiming().iterations === Infinity || ['finished', 'idle'].includes(animation.playState));
+  }, { collapsed, idle: idle ?? null });
+  const before = await snapshot();
+  expect({ contract: 'settled-optional-capture', collapsed: before.collapsed, visibility: before.railVisibility, opacity: before.railOpacity, finiteMotion: before.finiteMotion }).toEqual({ contract: 'settled-optional-capture', collapsed, visibility: collapsed ? 'hidden' : 'visible', opacity: collapsed ? 0 : 1, finiteMotion: 0 });
+  if (idle !== undefined) expect({ idle: before.controlsIdle, headOpacity: before.headOpacity }).toEqual({ idle, headOpacity: idle ? 0 : 1 });
+  await page.screenshot({ path, fullPage });
+  const after = await snapshot();
+  expect(after).toEqual(before);
+  await writeFile(path.replace(/\.png$/, '.json'), JSON.stringify({ capture: path.split('/').pop(), before, after }, null, 2));
+}
 
 /*
  * Selectors here are ids, classes and data attributes only. The viewer's words move between Arabic
@@ -172,7 +201,7 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     const surface = await page.locator('.surface').boundingBox();
     expect(Math.abs((surface?.width ?? 0)-(focused?.width ?? 1))).toBeLessThan(1);
     await mkdir(shots,{recursive:true});
-    await page.screenshot({path:join(shots,'focus.png'),fullPage:true});
+    await captureSettledViewer(page, join(shots, 'focus.png'), true, true);
     await page.locator('#sidebar-toggle').click();
     await page.locator('#sidebar').waitFor({state:'visible'});
     await page.locator('#sidebar-toggle').click();
@@ -201,11 +230,11 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.mouse.click(viewport.width / 2, viewport.height / 2);
     await page.waitForFunction(() => document.querySelector('#shell')?.classList.contains('controls-idle'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.head') as Element).opacity === '0');
-    await page.screenshot({path:join(shots,'fullscreen-idle.png')});
+    await captureSettledViewer(page, join(shots, 'fullscreen-idle.png'), false, true, true);
     await page.mouse.move(20, 20);
     await page.waitForFunction(() => !document.querySelector('#shell')?.classList.contains('controls-idle'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.head') as Element).opacity === '1');
-    await page.screenshot({path:join(shots,'fullscreen-controls.png')});
+    await captureSettledViewer(page, join(shots, 'fullscreen-controls.png'), false, true, false);
     await page.locator('#viewer-fullscreen').click();
     await page.waitForFunction(()=>!document.fullscreenElement);
     expect(await page.locator('#expand').getAttribute('aria-pressed')).toBe('false');
@@ -225,13 +254,13 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#pause').click();
     await page.locator('#manual').waitFor({state:'visible'});
     await page.locator('#tabs button').nth(0).click();
-    await page.waitForFunction(()=>document.querySelector('#tabs button')?.getAttribute('aria-selected')==='true');
+    await page.waitForFunction(()=>document.querySelector('#tabs button')?.getAttribute('aria-current')==='page');
     const presence = await call(broker.socket,'session.presence',a) as {pageIndex:number};
     expect(presence.pageIndex).toBe(1);
     await page.locator('#resume').click();
     await page.locator('#manual').waitFor({state:'hidden'});
     expect(await page.locator('#frame').evaluate(element => element.getBoundingClientRect().bottom <= innerHeight)).toBe(true);
-    await page.screenshot({path:join(shots,'desktop.png'),fullPage:true});
+    await captureSettledViewer(page, join(shots, 'desktop.png'), true, false);
 
     // English on request, and a chosen language outranks the browser's own.
     await page.locator('#language').click();
@@ -278,7 +307,7 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#sidebar').waitFor({state:'hidden'});
     expect(await page.locator('#sidebar').isVisible()).toBe(false);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await page.screenshot({path:join(shots,'mobile.png'),fullPage:true});
+    await captureSettledViewer(page, join(shots, 'mobile.png'), true, true);
     await page.locator('#sidebar-toggle').click();
     await page.locator('#sidebar').waitFor({state:'visible'});
     await page.keyboard.press('Escape');
@@ -286,7 +315,7 @@ test('the rail is the only session list, newest first, and mirrors for Arabic', 
     await page.locator('#viewer-fullscreen').click();
     await page.waitForFunction(()=>!!document.fullscreenElement);
     await page.mouse.move(20,20);
-    await page.screenshot({path:join(shots,'mobile-fullscreen.png')});
+    await captureSettledViewer(page, join(shots, 'mobile-fullscreen.png'), false, true, false);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.locator('#sidebar-toggle').click();
     await page.locator('#sidebar').waitFor({state:'visible'});

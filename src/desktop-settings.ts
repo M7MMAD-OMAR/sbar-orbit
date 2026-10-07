@@ -28,6 +28,7 @@ export interface DesktopSetting {
  * developer's path: this file is also read by the panel, which runs under the system one.
  */
 async function config(args: string[]) {
+  if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Desktop mark settings are available on Linux only");
   // The environment is passed rather than left to the default, so a caller that points
   // XDG_CONFIG_HOME somewhere else, a test above all, is obeyed by the child that writes the file.
   const child = Bun.spawn(["/usr/bin/python3", script, ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
