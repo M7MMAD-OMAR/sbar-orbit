@@ -15,7 +15,7 @@ async function expectOwnedDisk(directory: string) {
   if (info.mode === undefined) throw new Error("Private temporary directory has no permission mode");
   expect(info.mode & 0o777).toBe(0o700);
   expect(info.isSymbolicLink()).toBe(false);
-  expect([0x01021994, 0x858458f6]).not.toContain((await statfs(directory)).type);
+  expect([0x01021994, 0x858458f6]).not.toContain(Number((await statfs(directory)).type) >>> 0);
 }
 
 test.skipIf(!linux)("failed Chrome startup removes its private temporary files", async () => {

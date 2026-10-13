@@ -61,7 +61,7 @@ export async function createWorkspaceDirectory(prefix: string, root = workspaceR
   const filesystem = await statfs(root);
   // tmpfs and ramfs magic numbers. Neither exists on Windows, where the check is a no op rather than
   // a wrong answer: statfs reports a type this list does not contain.
-  if ([0x01021994, 0x858458f6].includes(filesystem.type))
+  if ([0x01021994, 0x858458f6].includes(Number(filesystem.type) >>> 0))
     throw new OrbitError("UNSUPPORTED", "Workspace storage is on a RAM filesystem; set XDG_CACHE_HOME to a disk-backed directory");
   return mkdtemp(join(root, `${prefix}-`));
 }

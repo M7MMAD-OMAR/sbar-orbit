@@ -1,3 +1,4 @@
+import { registerBrowserStartupFixture } from "../src/browser-startup-diagnostic";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
@@ -13,6 +14,8 @@ import { chromium } from "playwright";
 import { fixturePhases } from "./fixture-phases";
 
 test("saved account survives a fresh browser, has an exclusive lease and stays private", async () => {
+  const originalStartupRoot = process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+  let releaseStartupFixture = () => {};
   const trace = fixturePhases("saved-account");
   const phase = (name: string) => trace.phase(name, "boundary");
   const step = <T>(name: string, work: () => Promise<T>): Promise<T> => {
@@ -31,6 +34,10 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
     trace.method(BrowserBackend.prototype, "close", "browser.close");
     trace.method(chromium, "connectOverCDP", "browser.cdp");
     const root = await step("workspace", () => createWorkspaceDirectory("account-test"));
+    if (process.env.ORBIT_BROWSER_STARTUP_TRACE === "1") {
+      releaseStartupFixture = registerBrowserStartupFixture(root);
+      process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = root;
+    }
     const accounts = join(root, "accounts");
     const aRoot = await step("broker-a-directory", () => mkdtemp(join(root, "broker-a-")));
     const bRoot = await step("broker-b-directory", () => mkdtemp(join(root, "broker-b-")));
@@ -91,5 +98,10 @@ test("saved account survives a fresh browser, has an exclusive lease and stays p
       await step("final-broker-b-close", () => b.close());
       server.stop(true); phase("fixture-server-stopped");
     }
-  } finally { trace.finish(); }
+  } finally {
+    releaseStartupFixture();
+    if (originalStartupRoot === undefined) delete process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT;
+    else process.env.ORBIT_BROWSER_STARTUP_TRACE_ROOT = originalStartupRoot;
+    trace.finish();
+  }
 }, 30000);

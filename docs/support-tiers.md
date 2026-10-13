@@ -6,6 +6,22 @@ This file exists so that a person installing Orbit on a machine this project has
 tell, before they file anything, whether they have found a bug or have simply become the first person
 to run it there. Those are different reports and they go to different forms.
 
+**Current qualification, October 13, 2026.** The unpublished authentic integration
+has one independently reviewed Linux non-native full-suite result: 1,117 pass,
+58 skip and zero fail on source SHA256
+`f78905839f90f7041d17ebde286275511e1ff519135509e1b216975ad22e3c2a`.
+This supports that local source run only. The corrected full82 run remains failed at proposed/nested after 26 passing
+discriminator cases. Focused oracle and compiler-wrapper controls and the
+accepted process audit do not upgrade a capability tier. Current external
+platform, participant, installed release and performance acceptance remain open.
+Native owner handoff and plugin holds remain unconditional. See the
+[completion status](completion-status.md) for the current delivery boundary.
+
+The registry, tag and latest-main statements in the October 6 snapshot below
+are dated retained observations, not fresh October 13 registry or remote CI
+checks. Publication and installed-artifact parity require fresh exact-artifact
+evidence before a current claim is made.
+
 **Evidence snapshot, 6 October 2026, documentation base `0faa05c`.** Fedora 44,
 wlroots and cgroup delegation carry the named local browser and native measurements.
 Other evidence is narrower: Linux-family containers, a Windows 11 guest and hosted

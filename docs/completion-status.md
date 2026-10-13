@@ -1,13 +1,167 @@
 # Completion status and evidence
 
+## Current integration status, October 13, 2026
+
+Official main remains `bbfb6b5b3892f920b798d212e2361d8907249c8d`.
+Before the October 13 diagnostic additions, the authentic
+`agents/platform-composition-review` snapshot had 122 staged task paths,
+66 new and 56 changed. Its reviewed application source snapshot contains
+1,057 files, SHA256 `f78905839f90f7041d17ebde286275511e1ff519135509e1b216975ad22e3c2a`.
+At preparation of this October 13 evidence snapshot, no integration commit,
+push, final Orbit installation or new publication had completed. The 1,057-file hash and staged counts above identify the prior snapshot.
+The prior Linux run below pins 1,064 working-source paths with SHA256
+`d4c8ef329a80c3a9c46decb9245d1e715b2e886e205b62e06012f3235ecbe27a`.
+The portable owned-path successor is now applied: its producer SHA256 is
+`79b165f9023d90c944a71ddc4a9084c8c1f51c97bce3fd77fc2db5948da96f18`.
+The final unfiltered non-native Linux suite for this successor exited 0. Its
+1,065 scoped source paths retained canonical SHA256
+`2ed677bf7a320d32cbef3422cbfa008cbbff403f11e3df8ff5537ef29c2c6e4e`
+before and after execution. This is the tested working-source boundary before
+this documentation refresh, not a whole future commit hash. None of these is
+final main.
+
+After the full-suite run and v7 documentation application, an integration commit attempt stopped at the public audit before creating a commit. Two test fixtures then received fictional string cleanup and matching exclusion checks; production runtime source is unchanged. The 1,199-pass full-suite record below predates both this documentation refresh and that cleanup. [Fresh source review](/var/tmp/orbit-consolidation-2026-10-06/public-fixture-repair-independent-review-v1.json), SHA256 `dcddbdd69342b5075ba4107aa8b40d6721560200df0e3edd12dfe8f72cefebca`, accepted the exact fixture repair without weakened assertions. [Affected verification](/var/tmp/orbit-consolidation-2026-10-06/public-fixture-repair-affected-verification-v1/execution.json) records typecheck exit 0 and 10 parent tests passing, zero fail, 57 assertions across two files, with Bun reporting 591 milliseconds; each observer route separately spawns its 37-control suite. [Retained audits](/var/tmp/orbit-consolidation-2026-10-06/public-fixture-final-audits-v1/execution.json) record 1,065 public-source files with no findings and gitleaks exit 0 with no leaks. These local checks precede this paragraph and the next commit hook; current-candidate full CI remains pending. No new integration commit, push, native measurement or release acceptance is recorded.
+
+| Gate | Recorded actual outcome | Remaining limit |
+| --- | --- | --- |
+| Current79 Linux non-native full suite | 1,199 pass, 57 skip, zero fail; 7,638 assertions, 1,256 tests in 216 files. Original unfiltered `bun run verify` exited 0 in 330.13 seconds; Bun reported 329.98 seconds. The 1,065 scoped source paths retained exact bytes and modes before and after. Fresh independent receipt review passed | Working-source boundary before this documentation refresh, not official main or a whole future commit hash. Skips and native execution remain `not measured`. Direct kernel launch witness and full descendant closure were not retained, so those are not certified. Review authenticates consistency of local artifacts and current candidate content; producer-recorded execution metadata is not an external trust boundary. |
+| Prior Linux non-native full suite | 1,163 pass, 57 skip, zero fail; 7,500 assertions, 1,220 tests in 215 files, 392.49 seconds. Original unfiltered `bun run verify` exited 0; 1,064 scoped source paths retained exact bytes and modes before and after. Fresh independent receipt review passed | Prior working candidate before the portable owned-path successor, not current79 or official main. Skips remain `not measured`. Direct kernel launch witness and full descendant closure were not retained in this run, so those are not certified. The historical 1,117-pass run remains retained separately. |
+| Root and website types and website build | Original type checks exited 0; website build command exited 0 | Compiler and build scope only. The build producer boundary failure remains retained. Dependency provisioning is not Orbit installation. |
+| Current79 CommonJS full82 controls | Original bounded outer command exited 0, with all three actual stages exited 0: 47 discriminator, 14 loader and 21 schema controls, 82 total, zero failed or skipped. Fresh independent review authenticated source pins, launch/wait/argv records, raw proofs and aggregate hashes. Fresh post-execution scope and recorded PID absence were observed | Synthetic module identity and control evidence only. No full descendant launch or per-child kernel membership witness, application acceptance or checkpoint engine acceptance. No browser, performance, native or release acceptance. |
+| Applied module corrections | Reviewed compiler-wrapper, CTS transform, exact JSON parse, absolute owned-path resolution and canonical portable path confinement repairs are applied. The earlier 33 tests produced 29 pass and 4 fail against unfixed source. Current79 source typecheck exited 0 and 135 affected tests passed, zero fail, 367 assertions across five files | Actual tiny isolated Bun workers, synthetic malformed receipt controls and portable path fixtures only. Current Windows and macOS execution remain `not measured`. The final unfiltered non-native Linux suite has the separate current79 terminal evidence above. Remaining delivery gates are open. |
+| Process audit | Successor A1 audit accepted with two independent review actors on its recorded prior source boundary | Process audit only. Original delivery requirements remain open; it does not certify staged Git index readiness, installation or publication. |
+| Product, platforms, performance and delivery | Private website probe exited 0 on English and Arabic at 1,440 and 390 pixels wide, 1,000 pixels high; eight screenshots, stable guide geometry without header overlap, keyboard menu/navigation/language checks and visible assets were recorded. Fresh independent visual review passed for those four recorded flows | Website flow evidence only, not full accessibility or product acceptance. Raw responsive image cancellations are retained and classified only with a verified completed mobile replacement. Current Windows/macOS CI, five matched performance pairs, restore parity, participants, installed artifact/service/update/rollback and publication remain pending. Native owner handoff and plugin holds remain unconditional. |
+
+Six reviewed opt-in Windows diagnostic files and the two-file Mac selected-fixture
+registration change are now applied to the working candidate. Root typecheck
+exited 0; 30 affected portable tests passed with zero failures and 103 assertions.
+Actual Windows and Mac execution remain not measured by these local controls.
+The prior unfiltered Linux result above includes these additions and the earlier three-path module correction. It predates the current79 portable owned-path successor. The historical 1,117-pass record retains its original scope.
+
+The historical old2a full82 run retains its original outer exit 1: all three
+stages passed, but its original validator required the new wrapper proof from a
+pinned historical baseline. Its detached validator
+regenerated 82 accepted proofs from unchanged raw files without rerunning runtime,
+with 1,198 raw files retained. That
+detached result does not replace the original failure or the current79 outer
+command evidence. No checkpoint engine acceptance is claimed.
+
+The retained public action-overhead measurement of 42.942314 percent fails the
+strict below-20-percent target. Earlier 80.99 percent evidence retains its own
+source and method. Neither historical number measures the final candidate.
+The PR19 macOS run 37683674431 remains failed at the original 3000 ms capture
+setup deadline before focus actions, with 651 pass, 305 skip and one fail.
+A local Linux pass does not replace that provider result.
+
+Evidence authorities below are local workstation files, not published artifacts:
+
+- [Current79 full Linux independent review](/var/tmp/orbit-consolidation-2026-10-06/current79-final-linux-independent-review.json), SHA256 `783a32c1f246544983dd6b54d1a889245a41ab5a37f56cb002b121ce29f82640`.
+- [Current79 original unfiltered Linux execution receipt](/var/tmp/orbit-consolidation-2026-10-06/current79-final-linux-unfiltered-20261013-v1/execution.json), SHA256 `038763971a34bd72779b6bf87de3dd1e5b3bf77492d0245aa944a1270f222b74`.
+- [Prior full Linux independent review](/var/tmp/orbit-consolidation-2026-10-06/current-final-linux-unfiltered-20261013-v1-independent-fresh-review/report.json), SHA256 `057c3cd932b48ea9c3ded8a8f43df82e38c81db30a3a6e8a94c439d03bb36db2`.
+- [Current79 full82 independent review](/var/tmp/orbit-consolidation-2026-10-06/current79-full82-independent-review.json), SHA256 `76914e58615b0ac80abc07e2f8997f4f341f849af7e83223d137b043a9252e78`.
+- [Current79 original full82 execution receipt](/var/tmp/orbit-cjs-nested-admission-diagnosis-20261013-v1/full82-portable-path-execution-receipt-v1/execution.json), SHA256 `f3a7030dc635e7cf2ecea39e1648f8a63acb8529c0578bc0040f655e23b3cc5d`. Its scope text records its earlier pre-application boundary; source application is separately retained below.
+- [Current79 source application and affected checks](/var/tmp/orbit-consolidation-2026-10-06/portable-path-source-application-20261013-v1/execution.json). The application manifest retains its initial pending verification text; these completed command receipts and raw outputs are the later verification authority.
+- [Current private UI independent review](/var/tmp/orbit-consolidation-2026-10-06/current-private-ui-actual-fresh-review-20261013.json), SHA256 `1e427c15716d7aa4b06410ee3a9a54dd5500404812b844e814f0cacae5e35517`.
+- [Current private website probe](/var/tmp/orbit-consolidation-2026-10-06/current-private-ui-evidence-20261013-v3/ui-probe.json). Failed build-help, lazy-image wait and raw cancellation observations remain retained in separate predecessor directories.
+- [Historical old2a actual82 and detached validator review](/var/tmp/orbit-cjs-nested-admission-diagnosis-20261013-v1/full82-final-actual-detached-fresh-review-v1.json), SHA256 `c991fab28124554f4f3c31aaf81dab14d680f99aec5d3e073f914c6f45c5c330`.
+- [Prior module source application and affected checks](/var/tmp/orbit-consolidation-2026-10-06/cjs-portable-source-application-20261013-v1/execution.json). Source changes and unfixed test evidence are retained beside it.
+- [Actual full Linux review](/var/tmp/orbit-consolidation-2026-10-06/authentic-git-full-linux-post-build-v3-independent-actual-review-v1/report.json), SHA256 `2d92fb39af945ed908c955faa27453e85080d457df95354f225602058932e805`.
+- [Actual capsule copy review](/var/tmp/orbit-consolidation-2026-10-06/root-cjs82-authentic-git-v18-copy-v1-independent-actual-copy-review-v1/report.json), SHA256 `bd75bdb525bfcbb170e426ca63115f4d52359fa40103ebcd96a3809f4288d3cc`.
+- [Failed full82 coordinator record](/var/tmp/orbit-consolidation-2026-10-06/coordinator-cjs82-native-mixed-failure-recovered-20261012-v1.json), SHA256 `52eab2073358558e40c90e72921b5f3efb8c3caac3644f709cea9baf3bf071ca`.
+- [Latest failed nested run and observed cleanup](/var/tmp/orbit-composition-root-v4-receipts/cjs82-corrected-current-20261012-v1-durable-parent/root-failed-nested-and-six-inner-closure-corroboration-v1.json), SHA256 `39fbaf3cbf733a0056ce0f8bd35c71676c17f3738344deb632d876067bc9a985`.
+- [Focused four-case independent review](/var/tmp/orbit-consolidation-2026-10-06/checkpoint-cjs-mixed-focused-independent-review-20261012-v1/report.json), SHA256 `a2c69d1dd6d3ec41e72fdb90981f1118ae648979e6861dd7b61c650163be3d44`.
+
+Delivery order remains: final-source gates after reviewed full82 and applied repairs;
+settled UI checks; integration commit and current remote CI; pin and test the exact
+release candidate in an isolated installation, including service/update/rollback;
+matched performance and participant evidence; portable evidence publication and
+public-distribution identity/install verification; requested separate follow-up
+tasks. Installation state alone never closes a roadmap requirement.
+
+All older sections below retain their original source, run and date scope.
+Their use of current or latest describes that historical snapshot.
+
+## Historical October 8 integration snapshot
+
+Current recorded state, October 8, 2026: local `agents/allOrbitintegration` on
+baseline `bbfb6b5`, with 84 changed task paths including the local build
+prerequisite documentation. Project and website dependencies are installed; the
+website is built. The candidate is uncommitted and unpublished. Component
+acceptance does not accept the combined candidate, current providers or final
+main. Host V3 local revision 20 and managed V12 metadata-only revision 12 remain
+scoped historical acceptance.
+
+| Current candidate gate | Actual latest outcome | Evidence and remaining limit |
+| --- | --- | --- |
+| Dependency provisioning | Root and website commands exited 0 | V8 receipts bind complete inventories and scoped cleanup; not Orbit installation. |
+| Complete Linux non-native suite | Latest run: 1058 pass, 52 skip, 0 fail, 7125 assertions | Actual exit 0 after website build and literal type fix; original missing-artifact failure retained. Later source changes require new affected gates. |
+| Website build and website types | Both exited 0 | 25 generated dist files; local output, no publication. |
+| Product UI after website build | 13 pass, 0 fail, 322 assertions | English/Arabic rendered and keyboard/focus fixtures; not participant or external desktop acceptance. |
+| Project types | Latest bounded typecheck exited 0 | Explicit literal narrowing staged; original TS2322 retained. Broader CommonJS repair remains unstaged. |
+| Actual Bun loader controls | js/jsx/mjs passed, cjs failed, ten unexecuted | Actual assertion failed; CommonJS V3 review found unconfined require.resolve. Repair and actual controls remain pending. |
+| Portable RSS source and execution | Actual V3 controller failed before any phase | Existing dangling dependency link prevented inventory. Failed outcome sealed; V4 review found cycle-fixture sealing and unknown-absence blockers. Repair and controls remain pending. |
+| Production performance and managed portability | Open | Snapshot V2 passed two static reviews, but is unstaged and unexecuted. Latency target remains failed; real lifecycle/provider and published-artifact parity remain open. |
+
+See [actual full-suite and rendered UI evidence](#october-8-combined-full-suite-and-current-rendered-ui),
+[actual provisioning and loader failure](#october-8-actual-dependency-provisioning-and-loader-fixture-failure)
+and [retained integration gates](#current-integration-and-retained-gate-limits).
+Provider records below retain their original source/run scope; none is
+automatically current-candidate or final-main acceptance.
+
 ## Current startup diagnostic candidate and provider limits
 
-The verified main baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
-which reconciled the accepted PR 15 evidence retained below. The startup
-diagnostic successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
-currently at `abe0d63c83461ff4d1351d4b4bf328b69ee69144`, tree
-`0628a3002ab6b45e19bb6cb9c0b22cb6f0914a0f`. It remains open and unmerged.
+The retained runtime evidence baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),
+which reconciled the accepted PR 15 evidence retained below. Documentation
+PR 18 subsequently merged at `bbfb6b5b3892f920b798d212e2361d8907249c8d`.
+Its successful nine-job PR run does not replace the failed actual-main run
+recorded below. Runtime acceptance remains separate from documentation publication.
+
+The startup and capture successor is [draft PR 17](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/17),
+currently at `92608f93c18fc89e351759228d8f5ffea8391b0f`, tree
+`efe3878f5a51a96f15c337d8997b2125c6e5396b`. It remains open and unmerged.
 PR 15 acceptance does not accept this new candidate or close the full platform.
+
+The retained startup/capture candidate retains the exact portable resource sampling fixture
+from `abe0d63` and integrates the five capture paths from `292cea0`.
+Nine local checks and two fresh independent reviews accepted its local contract:
+the full suite ran 963 cases with 914 pass, 49 skip, zero fail, 6063 assertions
+and 274.63 seconds. Full-suite receipt SHA256 is
+`e18c9835bece770a0fb77fb1ab9c94e762552fb58e90c7e9779a14cd8b672793`.
+This local acceptance does not accept a provider run or final official main.
+
+Its exact-source [normal run 37656562979, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37656562979)
+failed: eight jobs succeeded and the Windows suite failed. The original
+attempt archive identifies native checkout `92608f9` in all nine jobs.
+Ubuntu reported 867 pass, 95 skip and zero fail; macOS reported 656 pass,
+306 skip and zero fail; Windows reported 642 pass, 318 skip and two failures.
+The Windows failures were
+`cross child leaves real browser capture available in the shared suite`,
+with startup endpoint timeout, and
+`abrupt broker death reaps its browser tree and a fresh broker rejects stale sessions`,
+with the unchanged 20000 ms test timeout. Their causes and repaired outcomes
+remain `not measured`. The original Windows raw log SHA256 is
+`d0f4abed43005cc7ca1ab202cbed2d2242761c7c661acd77ea5cd8cb6a1da66c`.
+The authenticated attempt log archive is 495585 bytes with SHA256
+`af9d4329e7cfd492f5c81c74bb0512e65e44aba0b589e05366490632d7341333`;
+all 112 members passed CRC validation. This is a log archive, not a complete
+source archive emitted by the runner. Failed provider evidence prevents
+provider acceptance; the local result does not replace it.
+
+The documentation head `bbfb6b5` passed all nine jobs in
+[PR run 37654515558](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37654515558),
+then its separate [actual-main run 37655792956, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37655792956)
+failed. Eight jobs succeeded and Windows reported 638 pass, 317 skip,
+two failures, 957 cases across 186 files, 4305 assertions and 526.38 seconds.
+`settings retry an unavailable connection in ar` failed during fixture setup
+at `tests/product-ui.test.ts:248`, waiting for `domcontentloaded`.
+`public onboarding renders and keyboard navigation works in ar` failed at
+line 628, waiting for `networkidle`. Both navigation deadlines remained
+15000 ms. Raw Windows log SHA256 is
+`ec41fe1b1d7d565b76850ef88ab64321569a56d264d0412d8eefe861fd3cc61e`.
+The setup failure bypasses the existing caller cleanup in the settings fixture;
+this control-flow cleanup gap is distinct from the unproven initial timeout
+cause. No timeout extension, retry or repaired result is claimed. These main
+failures differ from the candidate failures and are preserved independently.
 
 The previous candidate `c8effcd8feb51d5da1ffdcea4af6340c2d31570f`
 completed all three Ubuntu jobs in [profile diagnostic run 37646205630](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37646205630).
@@ -1283,3 +1437,370 @@ The successful latest run does not erase these earlier outcomes:
 All limitations remain visible when a capability is claimed. No row closes because
 Orbit was installed, a newer version was declared, an unchanged-source rerun was
 green, or a failed test was skipped.
+
+
+## Current UI cleanup local evidence and PR20 provider failure
+
+The fixture cleanup predecessor `1b0b43e51401aa6951852922ce820d2a677577ac` was published in [draft PR20](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/20), without main acceptance. The connection recovery successor is recorded below. Its isolated fixture cleanup checkpoint had authentic old controls with two pass and four fail, current six controls passing, thirteen product UI cases and two unchanged caller cases passing. The full local suite reported 915 pass, 49 skip, zero fail and 6048 assertions across 964 cases. Fresh independent specification and ownership reviews passed, and delegated local acceptance completed. This supports local cleanup hygiene only. The original Windows timing cause, skipped scope, native activation and final-main acceptance remain `not measured`.
+
+The actual [PR20 provider run 37670328088, attempt 1](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37670328088) failed: seven jobs succeeded, while Windows and macOS suites failed. All nine checkout logs identify PR merge `424be14614f301984a7d63e83043e105c86fffa6`, merging the UI head into main `bbfb6b5b3892f920b798d212e2361d8907249c8d`. The authenticated 508218-byte log ZIP has SHA256 `8d7b581b4bf036dd261db006e89265b8e2300ae2d205ae3895d89a32f6f9c5b0`; all 111 members passed CRC verification. This is that PR merge measurement, not a final-main result.
+
+Windows reported 643 pass, 317 skip, three fail and 4344 assertions across 963 cases in 437.59 seconds. Failures were the shared-suite real browser capture child missing its browser endpoint, abrupt broker death setup, and capture while a web font remains pending. Original raw log SHA256 is `2c63345012854e9eb98567e437f0d98e3439d3b8dc4a56b6eb47f79b12340e52`. The first two failures occur before the intended capture or broker death measurement; no browser cleanup defect or timing cause is inferred from them.
+
+macOS reported 657 pass, 305 skip, one fail and 4384 assertions across 963 cases in 360.05 seconds. The selected-page focus case failed its initial paused-page readiness wait after an observed 3000 ms capture timeout. The later keyboard focus assertion was not reached. Original raw log SHA256 is `2b575302556f015199b00c1277218db2af98ac4ab22c3a4de6cfe17d46efbdef`. The underlying attachment, pixel or metadata phase remains `not measured`; cleanup hygiene does not establish the capture cause.
+
+A separate [direct-head workflow run 37671161645](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37671161645) was dispatched once for exact UI head `1b0b43e51401aa6951852922ce820d2a677577ac`. Its verified terminal result is failure: seven jobs succeeded, macOS failed and Ubuntu was cancelled during Linux selection callback dependency installation. The bounded Ubuntu suite was skipped, so its test result is `not measured`. All nine checkout logs identify that exact head. The authenticated 378732-byte archive has SHA256 `aeef79ce8a91e94b0801df7f24ba5d6cae545de865299aeb591c5d346621ae2a`; all 110 members passed CRC validation. macOS reported 657 pass, 305 skip, one fail and 4367 assertions across 963 cases in 381.03 seconds. The Arabic lifecycle and page-selection assertion failed at product-ui.test.ts:500 and :569, receiving connected true while connected false was expected. The 307254-byte raw log SHA256 is `9e046da37a91bda1bd28fd3ec26e46b1c1556d68ded07d2ae5b561a0fe9d0996`. This connection-state failure is preserved separately from the earlier initial capture failure. Current provider and whole-platform acceptance remain open.
+
+
+## Connection recovery successor and current execution limits
+
+[Draft PR20](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/20) now publishes `215d59df792b5706fab89b9413f98e3097bc48fa`, with parent `1b0b43e`. The two new paths are viewer/viewer.js and tests/viewer-polling.test.ts. The viewer marks a poll connected after observation and decoding complete and its poll error clears. A pending next frame therefore retains the prior disconnected state and visible capture error; healthy manual polling still recovers without requesting a frame. The genuine unchanged-old regression failed its assertion, while current polling passed all eleven cases with 44 assertions. Product UI passed thirteen English/Arabic cases. Related callers passed eleven cases with one existing Windows-only skip. The full local suite reported 918 pass, 49 skip, zero fail, 967 cases and 6061 assertions in 297.39 seconds. Original raw stderr SHA256 is `0a04476f2a9d3c911482102b65fa540180f2bbca364912aad19c3566d0a8660f`.
+
+Both fresh specification and standards reviews passed. The corrected audit retained the actual successful caller child and its legitimate skip after the original wrapper rejected an incorrect zero-skip expectation. Seven new parser controls and thirteen source-bound retained execution audits passed. Delegated local acceptance completed before commit; publication continuity confirmed unchanged checkout source bytes. This does not claim another full-suite invocation. Git/ref and provider identity require downstream rebinding. [PR run 37681318320](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37681318320) completed with eight successful jobs and one failed Windows suite. All nine actual checkouts were synthetic merge `774326828aa1cbe0e1099c845340d799a903138d`, merging successor `215d59d` into main `bbfb6b5`. Linux reported 871 pass, 95 skip, zero fail; macOS reported 661 pass, 305 skip, zero fail; Windows reported 648 pass, 317 skip, one fail. The Windows workspace-presence test failed at tests/workspace-presence.test.ts:13 during initial loopback fixture navigation with `DEADLINE_EXCEEDED`, before presence, pointer or privacy assertions. The original browser timeout details and fixture request traces are absent, so the underlying navigation cause is `not measured`. The full log archive SHA256 is `d29f667242cdc3eb6d1db65a22613bf22ddbc34e15b80b8ae9dd50e2735245b8`; all 112 members passed CRC verification. These terminal observations do not establish full provider acceptance. Native activation, skipped scope and final main remain open.
+
+The prior documentation head `b7c513aea79d2020e8de3c11262d6f6052a1ec14` had a separate [run 37673060886](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37673060886): eight jobs succeeded and macOS failed its Arabic connection-state assertion. All nine checkout logs identify PR merge `f5116d4a09288f1dbb12b761c68645c46090a725`. The authenticated 502909-byte archive SHA256 is `fa3d209b59a6efee08f8d8eeffd0e53f461b7ca65db44e6b038fa1e81d60ca5c`; all 112 members passed CRC validation. macOS raw SHA256 is `d68b7960777eaa5488b03027bde67e492c1c73a5ca1329418d197c9e15eb3f4e`, with 651 pass, 305 skip, one fail and 4340 assertions across 957 cases in 366.64 seconds. This is additional baseline evidence, not a repaired successor result.
+
+Historical managed lifecycle XML candidate V10 remains unaccepted. Its twenty-six prerequisite gates passed, including genuine old malformed-XML failures and four current XML cases with 536 assertions. Its full-suite child reported 979 pass, 52 skip, zero fail and 6813 assertions across 1031 cases in 321.91 seconds, but the required source-stable gate rejected 36 newly generated Python cache entries with gate exit 82. Both fresh reviews failed on that missing valid full-suite gate. Original full stderr SHA256 is `1731000df967f2c1ea48c822aa35f099fa3f33184295a135a043dea92737e0ba`. The passing child result does not replace the rejected gate. The later V12 metadata-only acceptance below does not replace this rejected runtime gate; I3, I4, I5, provider and final-main closure remain open.
+
+
+## Current integration and retained gate limits
+
+The root creation receipt `official-main-integration-root-creation-v1/result.json`
+records the provisional candidate `agents/allOrbitintegration` on exact baseline
+`bbfb6b5b3892f920b798d212e2361d8907249c8d`. It actually materialized 71 paths:
+67 exact sole-owner copies and four compositions of disjoint main-relative edits.
+The shared paths are `.github/workflows/verify.yml`, `src/browser-phase-observer.ts`,
+`src/browser.ts` and `tests/browser-phase-observer-controlled-child.ts`.
+At that creation snapshot no candidate tests had run. Later sections record
+the four performance paths and eight browser observation paths staged, plus
+actual controlled candidate tests. A full combined result remains pending.
+Earlier sections retain source-bound historical outcomes rather than transferring
+those passes to this combined source.
+
+Host V3 `local-v3` was accepted at revision 20 after the actual local controls,
+cache guard, comparator and ledger gates and fresh independent reviews. Its
+current structural/synthetic test child executed 25 methods with zero failures.
+The retained receipt explicitly limits this result to local controls. All 35
+external host and participant gates remain open; no provider, installed release,
+real account or native acceptance follows from the local checkpoint.
+
+Managed V12 `metadata-audit` was accepted at revision 12. Its actual artifact
+audits record one complete current-closure observation, seven retained V11
+receipt/refusal observations and six disposable drift observations, with zero
+new runtime tests and no new full-suite invocation. It pins the current index,
+source, tools, dependencies and generated profiles. The original runtime gate's
+index identity is still invalid for current bytes; original index bytes were
+not backed up, so a cache-only bytewise delta is not established. The retained
+979-pass, 52-skip V11 child is historical execution, not fresh runtime acceptance
+of this integration. Loaded dependency bytes at time of load remain not measured.
+The rejected V10 cache-producing full gate above remains preserved independently.
+
+Windows navigation diagnosis is also separate from native Windows provider proof.
+The actual local V4 full child reported 885 pass, 50 skip and 34 fail across 969
+cases; raw SHA256 is
+`c0516c5628242e4623bc26bd897f019e84081035862b4e8fc15750667848c1ec`.
+Its source guard also rejected a newly added empty owned `.private` directory
+with mode `0700`. The other source, Git, dependency, helper and runtime closure
+remained stable apart from the declared Vite temporary-directory timestamps. Corrected temporary-directory controls
+then passed 24 cases, and corrected child-umask controls passed 17 cases, each
+with zero failures/skips and its scoped closure unchanged. These observations
+do not retrospectively pass the failed full gate or explain every failure.
+V7 remaining controls reported 29 pass and one fail across 30 cases. The legacy
+ambient Hyprland monitor case retained zero samples and 89 monitor errors,
+failing its sample-count assertion before any monitor coverage claim. Its
+underlying cause and repaired full outcome remain not measured. No V7 full-suite
+execution is retained or claimed. These are local Linux observations on the
+navigation candidate, not native Windows measurements.
+
+The separate documentation [run 37683674431](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37683674431)
+on head `8e75fcea042daaf2f40bde3e4c0f61a9f9158891` ended with eight successful
+jobs and a failed macOS suite: 651 pass, 305 skip, one fail. All nine checkout
+logs identify merge `c1d3620449874abc2bfd1284870737cb4fe2f413`, without the
+PR20 successor. The selected-page fixture failed after an initial capture
+timeout; its later keyboard assertion was not reached. Original archive SHA256
+is `cf4ef26e2dc18a279705e3dc24e3596af2188ed0cf197025229c2e87847ab376`.
+The prior [run 37682486546](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37682486546)
+on head `a074039f6b548b028cb4c07356d7b0f0d153f946` likewise had eight successful
+jobs and a failed macOS suite: 650 pass, 305 skip, two fail. Its actual merge
+checkout was `474de7c1df89ff55b392f80bffd08b7655d3deb1`; failures were initial
+selected-page readiness and concurrent tab/capture timeout. Original archive
+SHA256 is `9ca175e5b7bcfa6de81cd3a24c7fd318f3eba0a6c3d1443f18ed9f1ea604a939`.
+Each retained original ZIP has 112 CRC-verified members. These distinct failed
+documentation baselines, authenticated provider metadata and raw logs remain
+retained; neither measures the new combined candidate or explains capture cause.
+
+The separate performance V3 helper gates now retain 38 local passes, authentic
+V2 shared-runtime control outcomes of one pass and four semantic failures versus
+five V3 passes, and two authentic V2 missing-receipt assertion failures versus
+two V3 synthetic fault passes. Eight disposable ledger observations also passed;
+they are filesystem controls, not extra performance cases. Owned dependency
+provisioning then rejected writable dependency modes even though the Bun child
+exited zero and reported 100 installed packages. The rejected attempt
+`actual-provision-7767fb47-8d01-4c57-8a8c-4ec766abd4a7` remains retained.
+Installation state is not admitted dependency identity, typecheck or a real
+five-pair performance measurement. Synthetic fault controls prove no real cleanup.
+
+Historical action overhead remains 42.942314 percent against strict under
+20 percent, a failed target. Production performance optimization remains
+unimplemented; a measured baseline and pre-action restore/queue/security
+preservation are still prerequisites. I3, I4, I5, all 35 external gates, native
+activation, candidate provider, release and final combined-main closure remain
+open. Unknown or skipped scope is `not measured`, never a pass.
+
+
+## Performance source unit staged for combined verification
+
+After the 71-path creation receipt, root admitted the four pinned performance
+source and test paths as one unit into the integration candidate. The candidate
+now materializes 75 integration paths. This source staging is recorded in
+`integration-performance-unit-stage-v1/result.json`; it is not component or
+combined acceptance. The current 38 contract tests and authentic old/current
+controls were executed against their separate original source, not this combined
+candidate. Dependency reconciliation, typecheck, real measurements and combined
+checks remain pending. Production optimization and the strict under20percent
+action-overhead target remain open; no restore, queue or security semantics
+were changed by this experimental measurement unit.
+
+
+## Owned browser experiment source staged
+
+Root next staged the eight-file owned browser observation repair, bringing the
+integration candidate to 83 materialized paths. The source removes ambient
+compositor discovery and querying, separates functional RSS from unavailable
+compositor measurements, rejects malformed or oversized numeric observations,
+and makes final sampler failures produce failed reports and test outcomes.
+The actual combined controlled run passed 12 outer cases and two nested cases,
+with zero failures or skips. Four authentic earlier-source controls each failed
+an ordinary assertion: ambient compositor access, sparse numeric observations,
+final RSS failure reporting, and repeated mutable length reads. The final RSS
+control also retained one successful normal nested case, distinguishing the
+injected failure from fixture setup failure. Source, full Git metadata and
+selected executable observations matched before and after each invocation.
+These results prove the controlled regressions discriminate the retained old
+sources from the current repair. They do not measure a real browser, screenshot,
+RSS or compositor. The synthetic report is retained separately as controlled
+evidence. Genuine private compositor focus and visibility remain not measured;
+native holds remain unconditional. Actual functional browser execution, complete
+combined checks, provider acceptance and final main merge remain pending.
+Receipts are retained under `orbit-consolidation-2026-10-06`: the summary is
+`observer-root-semantic-discrimination-summary.json`, the positive receipt is
+`combined-observer-controls-root-v1/result.json`, and the four negative receipts
+are in `observer-authentic-old-{ambient,sparse,late-rss,length}-actual-v1`.
+The source staging receipt remains
+`integration-browser-observer-v3-stage/result.json`.
+
+
+## Actual continuation gates and unresolved execution defects
+
+The separate performance continuation passed eight actual owned ledger controls
+and its actual typecheck. Its source, dependency, Git and selected executable
+observations were identical before, after and finally, with no final component
+observation errors. This typecheck belongs to the separate performance source,
+not the complete 83-path integration candidate.
+
+The next genuine real-pairs invocation was rejected: Bun 1.3.14 supplied no
+`loader` field to the module callback, and the identity instrumentation threw
+`Unsupported measured module loader: undefined`. The experiment exited 1 and
+retained an invalid measurement. No valid performance baseline or target pass
+was produced. The original action overhead of 42.942314 percent remains a
+failed result against the strict under 20 percent requirement. P8 production
+optimization remains open. Original artifacts and source are retained while a
+separate correction is prepared.
+
+The combined dependency provisioner's first actual termination control also
+failed before reaching owned child readiness. Its observer attempted to read
+all same-user process environments and rejected unrelated inaccessible entries.
+No job scope was observed, so cleanup remains `not measured or remaining`.
+The runner exited 143; no root or website install was invoked, and both
+candidate dependency directories remain absent. A separate revision must
+observe the actual owned process tree and scope without weakening rejection of
+inaccessible owned processes or claiming complete escaped process absence.
+
+The browser experiment also still needs a real portable RSS observation path:
+its unconditional `/proc` reads cannot run on Windows or macOS. Preparing an
+adapter does not accept either platform. Full combined typecheck, build,
+functional browser and suite evidence, provider acceptance, installation,
+publication and final official-main closure remain pending.
+
+Actual receipts are retained under `orbit-consolidation-2026-10-06`:
+`performance-post-reconciliation-preparation/actual-typecheck-21e665f9-3ee5-4a2e-9974-d71f2883ed89/result.json`,
+`performance-post-reconciliation-preparation/actual-real-pairs-6824e893-d53b-4929-ba47-9845b0e16625/result.json`,
+and `combined-dependency-v3-root-actual-control-refusal.json`.
+
+
+The exact loader correction has now passed independent source review and is
+staged in the combined candidate. Its identity module SHA256 is
+`70445e74e0858ab86a1bfa5121bcdf705d1b7596fef51463dfe17bb81675c2e1`.
+It derives a missing loader only from the supported extension table and keeps
+canonical confinement, exact pinned bytes, UTF8 and loaded identity checks.
+The original separate performance source and authentic failure artifacts remain
+unchanged. Fourteen real Bun callback fixture controls are prepared but have
+not run. The earlier typecheck result does not validate this corrected producer.
+
+Portable sampler review found unsafe numeric handle admission in the shared
+Windows handle converter. The V3 repair and concrete adapter controls passed
+fresh independent source review for controlled execution. No portable sampler
+repair is staged here; authored controls and actual providers have not run.
+The converter's callers include browser ownership and shared resource budgets,
+so local adapter tests alone will not establish the actual Windows boundary.
+Dependency preparation still needs complete independent refusal evidence when
+bootstrap seal, executable or Git admission rejects. No root or website
+installation and no full combined verification is claimed by these reviews.
+
+
+## Latest execution preparation review limits
+
+The V3 portable sampler packet passed a fresh isolated source review for
+controlled old/current execution only. Its expected 18 Windows and 11 macOS
+controls have not run, and actual Windows/macOS providers remain not measured.
+The loader fixture V2 capsule was rejected because its observation call can
+extend beyond the stated execution deadline before the deadline is checked.
+No V2 fixture workload was run. A corrected capsule is being prepared; the
+fourteen actual Bun callback cases remain not measured.
+
+Fresh independent review rejected dependency preparation V6: a final receipt
+persistence failure can leave a successful exit status. V6 was not executed.
+The repair and a discriminating storage-failure control are being prepared.
+Its ten authored control kinds are not executed results. Neither candidate
+root nor website dependencies are installed. These preparation events do not
+accept the combined source, close the failed performance target, publish a
+release or merge official main. Earlier failures remain retained.
+
+
+## Actual V7 dependency control invocation refusal
+
+Fresh independent review accepted the V7 source for eleven serial disposable
+control groups. Root then invoked that exact sealed command, which exited 1
+before any group or bounded child launched. Bootstrap admissions attempted to
+serialize a PosixPath returned by the Git identity guard. The TypeError left
+partial admissions JSON; the independently computed full snapshot and final
+prelaunch receipt were not persisted. Zero control groups executed. This failed
+invocation supplies no complete before/after source/Git/runtime closure proof.
+
+The complete failed result, pending-refusal bootstrap and truncated admissions
+bytes remain retained and hash-bound in
+`combined-dependency-v7-root-actual-control-refusal-v1/report.json`. Neither
+root nor website installation began, and both dependency directories remain
+absent. A new revision must make guard observations JSON-safe and preserve
+independent snapshots when another evidence write fails. Its storage regression
+baseline must disclose any bootstrap correction; unchanged V6 has not reached
+that final receipt boundary. Original failures are retained without a retry.
+
+Fresh loader capsule V3 source review also rejected two deadline gaps: launch
+identity metadata read outside the bounded worker/timer, and completed replies
+admitted without the final individual deadline check. No V3 loader workload
+ran. Corrections and fresh reviews precede actual callback execution.
+
+
+## October 8 actual dependency provisioning and loader fixture failure
+
+The later V8 provisioner completed all twelve serial disposable control groups.
+The root coordinator exited 0; the exact result is retained at
+`combined-candidate-dependency-preparation-v8/actual-disposable-controls-4e268165-865d-4ba5-96bd-ea22fdc9106e/result.json`
+with SHA256 `762fb107cdbd549a5f3f7dbb3303116b463717320c04bd0a6727cef5079b98df`.
+These scoped controls include actual storage discrimination against a separately
+sealed V6 bootstrap serialization variant, not unchanged V6 public invocation.
+Original V7 failure evidence remains retained.
+
+Root then installed project dependencies and website dependencies serially using
+Bun frozen lockfiles, ignored scripts, copied backend and private owned caches.
+Both coordinators exited 0 with admitted provisioned receipts. Root receipt
+`actual-root-5def53bf-3d87-46b4-8a74-6e61490f47d1/receipt.json` has SHA256
+`f482ffe19c573036a84c54219e8e9831584c642bf3ca6e46f30236f1fa7b0a61`;
+website receipt `actual-site-85da3e97-5156-42b8-8657-768df690a603/receipt.json`
+has SHA256 `b0aad0482ff1bfa500682f73bdf21e122eb8bb6355177730a0cb22e6ea176211`.
+Both are under the V8 preparation directory. Each receipt binds fourteen actual
+artifacts, independently hash-checked by root. Full source/Git/runtime/dependency
+and cache observations were complete without unreadable or rejected entries;
+source stayed unchanged except declared dependency parent metadata, lockfiles
+stayed unchanged and scoped owned cleanup was observed absent. These facts
+establish candidate dependency provisioning only, not Orbit installation or
+combined test, browser, native, provider, performance or publication acceptance.
+
+The V6 loader capsule actually failed before any fixture launch because its
+subprocess adapter omitted DEVNULL. Its result and observer are retained.
+After a distinct repair and fresh independent source review, root invoked V7.
+That invocation exited 1 after actual fixture execution: js, jsx and mjs passed,
+and cjs failed the required execution-value assertion with undefined instead of
+13. The remaining ten cases did not execute. The aggregate was not admitted;
+partial positive outputs do not establish fourteen-case acceptance. Result
+`loader-fixture-execution-preparation-v7/actual-fixtures-158a048e-9803-4e01-942e-a6c2c56a663c/result.json`
+has SHA256 `18ebde06e30e7265436c2ab5578cc7bed46eef6f80b4016e4600c26b7ae89cb3`.
+Its fourteen actual artifact hashes match, final artifact/observation errors are
+empty, full before/prelaunch/after-failure/final snapshots match, and scoped
+owned cleanup is observed absent. The actual CJS failure is under diagnosis;
+the success assertion has not been waived.
+
+The portable resident-memory source remains unstaged. Its first execution
+capsule was rejected by fresh source review for cleanup allowance, terminal
+artifact binding and unknown scope-state admission; a distinct correction is
+being prepared. No portable actual controls are claimed. The combined candidate
+remains local and uncommitted on baseline bbfb6b5 with 83 changed task paths.
+Full combined acceptance, actual macOS/Windows provider acceptance, publication
+and performance target P8 remain open.
+
+
+## October 8 combined full suite and current rendered UI
+
+Root ran the complete Linux non-native suite against the combined candidate:
+1056 passed, 52 skipped, two failed, 7079 assertions across 1110 tests in 203
+files. The actual coordinator exited 1. Both failures were the English/Arabic
+onboarding tests refusing absent website/dist render fixtures. Retained raw
+log SHA256 is `5a78fe91310fdb26ef8f7581388a3e438f2fa387c42e59dbf50a5b7689492532`
+in `combined-full-verify-root-v1`; its result records the actual failure.
+Selected prepared source pins stayed unchanged; that selected check alone does
+not establish whole source/runtime closure. No deadline or assertion was waived.
+
+Root then built the website through the shared budget and actual build exited 0,
+generating 25 current dist files and prerendered English/Arabic pages. A fresh
+focused product UI suite exited 0 with 13 passed, zero failed and 322 assertions.
+Its actual results and unchanged selected source plus all 25 dist hashes are
+retained in `combined-product-ui-after-build-root-v1/result.json`. This covers
+current rendered onboarding, language flows and keyboard/focus fixture behavior.
+The earlier full-suite failure stays failed. A complete final-source rerun is
+still required after remaining source repairs; focused success is not full
+combined/provider/participant/native acceptance.
+
+The actual combined bounded typecheck exited 1: identity producer line 31
+returned an unknown supplied loader value, TS2322. Its raw result is retained
+in `combined-typecheck-root-v1`. A separate CommonJS and explicit type-narrowing
+proposal is under fresh independent source review, not staged or executed.
+Production action-latency optimization is being prepared separately, preserving
+snapshot completion before backend action. Neither proposal closes performance
+or managed portability. AGENTS.md now documents frozen website installation
+and the bounded rendered build prerequisite already present in CI.
+
+
+## October 8 explicit loader type repair
+
+Root staged only the five explicit string-literal returns independently reviewed
+as repairing the TS2322 narrowing defect. No CommonJS evaluation or schema change
+was included. The stage receipt `combined-loader-type-narrowing-stage-v1/result.json`
+binds producer transition from `70445e74e0858ab86a1bfa5121bcdf705d1b7596fef51463dfe17bb81675c2e1`
+to `69648e53127f26487933f4f06079543880867c9523ee1d2723f846287f701af1`.
+A new bounded complete project typecheck exited 0; the retained original failed
+typecheck is not relabeled. Website typecheck also exited 0. Typechecks do not
+prove CommonJS execution or performance.
+
+Fresh review rejected the separate CommonJS proposal for overwritten failed
+compilation evidence, incomplete schema-2 consumers and absent schema validation.
+A distinct repair is being prepared, retaining original source and failures.
+Full combined final-source and actual provider/performance gates remain open.
+
+
+## October 8 complete combined Linux non-native suite passed
+
+After the current website build and explicit loader type narrowing, root ran
+the complete suite again. The actual coordinator exited 0 with 1058 passed,
+52 skipped, zero failed, 7125 assertions, 1110 tests across 203 files and
+369.03 seconds. The retained raw log in `combined-full-verify-root-v2` has
+SHA256 `8918087b5453a4190eaddf1e31635da0763e429d3f1e4769c4c00f942e721a27`. Its result independently checks
+all seven prepared source pins and 25 dist hashes remained unchanged. This
+selected hash check is not a claim of full source/runtime closure. The original
+V1 complete-suite failure and separate typecheck failure remain unchanged.
+
+This is complete local Linux non-native test coverage at these bytes, not final
+main publication, actual native/macOS/Windows provider acceptance, participant
+acceptance or performance target proof. New CommonJS, portable RSS and snapshot
+source proposals are still separate and unstaged. Their fresh reviews, actual
+controls and final affected source gates must precede acceptance.

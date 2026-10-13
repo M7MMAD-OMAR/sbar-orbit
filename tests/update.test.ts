@@ -1,3 +1,5 @@
+import { activateLocal } from "../src/local-install";
+import { releaseFixture } from "./managed-release-fixture";
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,26 +16,14 @@ import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compar
  */
 async function prepared(root: string, version: string) {
   const directory = join(layout(root).versions, version);
-  await mkdir(join(directory, "bin"), { recursive: true });
-  // The launcher activation actually looks for on this platform. Writing the bash name unconditionally
-  // made the Windows branch of these tests agree with itself while a real Windows run refused every
-  // activation with "is not a prepared version".
-  await writeFile(join(directory, launcherName()), "#!/usr/bin/env bash\n");
+  await releaseFixture(directory, version);
   return directory;
 }
 
 /** An archive shaped like a release: one directory below the root, with a launcher in it. */
 async function packFixture(root: string, version: string) {
   const tree = join(root, `fixture-${version}`, "package");
-  await mkdir(join(tree, "bin"), { recursive: true });
-  // Both launchers, because a real Orbit release carries both: `git ls-files bin/` on a packaged
-  // archive lists `bin/sbar-orbit` and `bin/sbar-orbit.cmd`. Writing only the bash one made this
-  // fixture a Linux-only archive, which the Windows updater then refused, correctly, with "the archive
-  // carries no bin/sbar-orbit.cmd". The refusal was right and the fixture was wrong: it was testing
-  // that a release missing this platform's launcher is rejected, not that a release is prepared.
-  await writeFile(join(tree, "bin/sbar-orbit"), "#!/usr/bin/env bash\n");
-  await writeFile(join(tree, "bin/sbar-orbit.cmd"), "@echo off\r\n");
-  await writeFile(join(tree, "package.json"), JSON.stringify({ name: "sbar-orbit", version }));
+  await releaseFixture(tree, version, false);
   const archive = join(root, `${version}.tgz`);
   const packed = Bun.spawn(["tar", "czf", archive, "-C", join(root, `fixture-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
   if (await packed.exited !== 0) throw new Error("could not pack the fixture");
@@ -143,10 +133,20 @@ test("an install that runs from a source checkout is not one the updater may swa
     expect((refused as { reason: string }).reason).toContain(checkout);
     expect((refused as { reason: string }).reason).toContain("git");
 
-    // The same machine once its launcher goes through a managed version.
     const directory = await prepared(root, "0.2.0");
     await rm(link, { force: true });
-    const managed = await installedLauncher(join(directory, launcherName()), link);
+    const unactivated = await installedLauncher(join(directory, launcherName()), link);
+    expect((await updatableInstall(root, unactivated)).updatable).toBe(false);
+
+    // Activation establishes the verified current pointer before installing the stable command.
+    const activation = await activateVersion("0.2.0", {
+      root,
+      openSessions: async () => 0,
+      restart: async () => ({ ok: true, output: "" }),
+      healthy: async () => true,
+    });
+    expect(activation.activated).toBe(true);
+    const managed = await activateLocal(layout(root).current, join(root, "prefix"));
     expect((await updatableInstall(root, managed)).updatable).toBe(true);
   } finally { await close(); }
 });
@@ -509,21 +509,28 @@ test("turning updates off during preparation prevents automatic activation", asy
   const { root, close } = await fixture();
   try {
     const current = "0.1.0-alpha.8", next = "0.1.0-alpha.9";
-    const original = await prepared(root, current);
-    const launcher = await installedLauncher(join(original, launcherName()), join(root, "command"));
+    await prepared(root, current);
+    expect(await activateVersion(current, { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true })).toMatchObject({ activated: true });
+    const launcher = process.platform === "win32"
+      ? await activateLocal(layout(root).current, join(root, "prefix"))
+      : await installedLauncher(join(layout(root).current, launcherName()), join(root, "command"));
+    expect(await updatableInstall(root, launcher)).toMatchObject({ updatable: true });
     const archive = await packFixture(root, next);
     const bytes = await Bun.file(archive).arrayBuffer();
     const integrity = `sha512-${new Bun.CryptoHasher("sha512").update(bytes).digest("base64")}`;
     const timer = async () => ({ ok: true, output: "" });
     await setAutomaticUpdates(true, root, timer);
-    let restarted = false;
+    let restarted = false, installed = false;
     const result = await runUpdate(current, { root, launcher, maturationHours: 0,
       metadata: async () => ({ versions: { [next]: { dist: { tarball: "fixture://next", integrity } } }, time: { [next]: "2026-09-01" } }),
       download: async () => bytes,
-      install: async () => { await setAutomaticUpdates(false, root, timer); return { ok: true, output: "" }; },
+      install: async () => { installed = true; await setAutomaticUpdates(false, root, timer); return { ok: true, output: "" }; },
       openSessions: async () => 0,
       restart: async () => { restarted = true; return { ok: true, output: "" }; }, healthy: async () => true });
-    expect(result.activated).toBe(false);
+    expect(result).toMatchObject({ ran: true, prepared: next, activated: false, reason: "automatic updates were turned off during preparation" });
+    expect(installed).toBe(true);
+    expect(await currentVersion(root)).toBe(current);
+    expect(await preparedVersions(root)).toContain(next);
     expect(restarted).toBe(false);
   } finally { await close(); }
 });

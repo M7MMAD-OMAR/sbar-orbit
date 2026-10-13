@@ -1,9 +1,15 @@
-import { cp, lstat, mkdir, readdir, readFile, readlink, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { cp, link, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, sep, resolve } from "node:path";
 import { call } from "./ipc";
 import { withUpdateLock } from "./update-lock";
 import { serviceSocketPath } from "./service";
+import { managedLifecycle, type ManagedLifecycle } from "./managed-lifecycle";
+import type { CommandResult } from "./lifecycle-command";
+import { preparedIdentity, pointerVersion, sealRelease, releaseDigest, sameBrokerIdentity, type BrokerIdentity } from "./managed-identity";
+import { requireUpdateAdmission } from "./update-admission";
+import { managedUpdateRoot } from "./update-admission";
+import { managedTarget } from "./managed-entry";
 // One spelling of "how Orbit finds its own Bun". This path had `process.execPath || "bun"`, which
 // drops the `Bun.which` fallback the install path keeps, so a host where `execPath` is empty behaved
 // differently depending on which of the two ran. The whole point of resolving Bun by location is
@@ -28,10 +34,7 @@ export type Layout = { root: string; versions: string; current: string; previous
 export function updateRoot() {
   // `%LOCALAPPDATA%` is the Windows equivalent of `$XDG_DATA_HOME`: per user and non roaming, so a
   // tree of prepared versions is never synced to a domain share. Same reasoning as `workspaceRoot()`.
-  if (process.platform === "win32")
-    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
-  const data = process.env.XDG_DATA_HOME || join(homedir(), ".local/share");
-  return join(data, "sbar-orbit");
+  return managedUpdateRoot();
 }
 
 /**
@@ -82,9 +85,15 @@ export async function linkTarget(path: string) {
   if (process.platform === "win32") {
     // A pointer file written by this code, not a path the user typed, so a trailing newline is the
     // only tolerance needed. An absent file means no version is current, the same as an absent link.
-    try { return (await readFile(pointerFile(path), "utf8")).trim() || null; } catch { return null; }
+    try {
+      const info = await lstat(pointerFile(path));
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error("Managed pointer must be a regular installation file");
+      const target = (await readFile(pointerFile(path), "utf8")).replace(/\r?\n$/, "");
+      if (!target || /[\r\n]/.test(target)) throw new Error("Invalid managed pointer contents");
+      return target;
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   }
-  try { return await readlink(path); } catch { return null; }
+  try { return await readlink(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
 
 /** The versions prepared on this machine, newest name last, which is not the same as newest version. */
@@ -96,13 +105,13 @@ function requireVersion(version: string) {
 export async function preparedVersions(root = updateRoot()) {
   try { return (await readdir(layout(root).versions, { withFileTypes: true }))
     .filter(entry => entry.isDirectory() && validVersion(entry.name)).map(entry => entry.name).sort(compareVersions); }
-  catch { return []; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
 }
 
 export async function currentVersion(root = updateRoot()) {
   const target = await linkTarget(layout(root).current);
   // Split on both separators: the pointer file records a Windows path, and the symlink a POSIX one.
-  return target ? target.split(/[/\\]/).filter(Boolean).at(-1) ?? null : null;
+  return target ? await pointerVersion(root, target) : null;
 }
 
 /**
@@ -110,13 +119,25 @@ export async function currentVersion(root = updateRoot()) {
  * a machine's working tree is not something an automatic swap should ever move.
  */
 export async function updatableInstall(root = updateRoot(), launcher = defaultLauncherPath()) {
-  const target = await realpath(launcher).catch(() => null);
+  let target = await realpath(launcher).catch(() => null);
+  if (process.platform === "win32" && target) {
+    const { shimTarget } = await import("./local-install");
+    const forwarded = shimTarget(await readFile(launcher, "utf8").catch(() => ""));
+    if (forwarded === join(layout(root).current, launcherName())) {
+      const managed = await managedTarget(root).catch(() => null);
+      target = managed ? join(managed, launcherName()) : null;
+    }
+  }
   if (!target) return { updatable: false as const, reason: "no sbar-orbit launcher is linked on this machine" };
   const versions = await realpath(layout(root).versions).catch(() => null);
   // Compare with the platform's own separator. On Windows `realpath` returns backslashes, so a POSIX
   // prefix test would call every managed install unmanaged and silently refuse to update it.
   if (!versions || !target.startsWith(versions + sep))
     return { updatable: false as const, reason: `this install runs from ${dirname(dirname(target))}, not from a managed version directory; a source checkout updates with git` };
+  if (process.platform !== "win32" && await readlink(launcher).catch(() => null) !== join(layout(root).current, launcherName()))
+    return { updatable: false as const, reason: "Command must point through the stable managed current path; migrate deliberately" };
+  try { await currentVersion(root); }
+  catch { return { updatable: false as const, reason: "Managed pointer or prepared release identity is invalid; migrate deliberately" }; }
   return { updatable: true as const, launcher: target };
 }
 
@@ -141,9 +162,11 @@ export type ActivationEnvironment = {
   root?: string;
   /** Open sessions the broker reports. `null` means no broker answered, which is itself a boundary. */
   openSessions?: () => Promise<number | null>;
-  restart?: () => Promise<{ ok: boolean; output: string }>;
+  restart?: () => Promise<{ ok: boolean; output: string; stopUnconfirmed?: boolean }>;
   /** Whether the broker answers after a restart. The health check that decides a rollback. */
   healthy?: () => Promise<boolean>;
+  /** Real disposable platform measurement adapter, without changing release support claims. */
+  lifecycle?: ManagedLifecycle;
 };
 
 async function brokerSessions(): Promise<number | null> {
@@ -153,28 +176,21 @@ async function brokerSessions(): Promise<number | null> {
   } catch { return null; }
 }
 
-async function restartService() {
+async function restartService(): Promise<CommandResult> {
   if (process.platform !== "linux")
     return { ok: false, output: "Managed update activation is currently supported only on Linux" };
-  try {
-    const child = Bun.spawn(["systemctl", "--user", "restart", "sbar-orbit.service"], { stdout: "pipe", stderr: "pipe" });
-    const timeout = setTimeout(() => child.kill(), 40_000);
-    try {
-      const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-      return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
-    } finally { clearTimeout(timeout); }
-  }
+  try { return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }).restart(); }
   // A missing binary is a failed restart, not an exception out of the middle of an activation: the
   // rollback below is what has to run, and it only runs if this returns.
   catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 300) : "systemctl could not be started" }; }
 }
 
 /** The broker answering is the only evidence a version works on this machine. */
-async function brokerAnswers(version?: string, attempts = 20, waitMs = 500) {
+async function brokerAnswers(identity: BrokerIdentity, attempts = 20, waitMs = 500) {
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      const doctor = await call(serviceSocketPath(), "doctor") as { version?: string };
-      if (!version || doctor.version === version) return true;
+      const doctor = await call(serviceSocketPath(), "doctor", {}, AbortSignal.timeout(waitMs)) as { managedIdentity?: unknown };
+      if (sameBrokerIdentity(doctor.managedIdentity, identity)) return true;
     } catch {}
     await new Promise(resolve => setTimeout(resolve, waitMs));
   }
@@ -200,20 +216,76 @@ export async function activateVersion(version: string, environment: ActivationEn
 
 async function activateVersionUnlocked(version: string, environment: ActivationEnvironment = {}): Promise<Activation> {
   requireVersion(version);
-  if (!environment.restart && process.platform !== "linux")
+  if (!environment.restart && !environment.lifecycle && process.platform !== "linux")
     return { activated: false, reason: "Managed update activation is currently supported only on Linux" };
   const paths = layout(environment.root);
+  const recoveryPath = join(paths.root, "activation-recovery.json");
+  if (await lstat(recoveryPath).then(() => true, error => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }))
+    return { activated: false, reason: `An earlier lifecycle stop is unconfirmed; inspect ${recoveryPath} before activation` };
   const target = join(paths.versions, version);
   const openSessions = await (environment.openSessions ?? brokerSessions)();
   if (openSessions !== null && openSessions > 0)
     return { activated: false, reason: "a session is open, and activating would end it", openSessions };
-  if (!await Bun.file(join(target, launcherName())).exists())
-    return { activated: false, reason: `${version} is not a prepared version on this machine` };
+  const storage = await lstat(target).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (!storage) return { activated: false, reason: `${version} is not a prepared version on this machine` };
+  let identity: BrokerIdentity;
+  try { identity = { ...await preparedIdentity(paths.root, version), root: resolve(paths.root), directory: target }; }
+  catch (error) { return { activated: false, reason: `${version} lacks a verified prepared identity: ${String(error)}` }; }
   const previous = await currentVersion(paths.root);
   if (previous === version) return { activated: false, reason: `${version} is already the current version` };
+  const lifecycle = environment.lifecycle ?? (!environment.restart ? managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }) : undefined);
+  if (lifecycle) {
+    if (!lifecycle.admit) return { activated: false, reason: "Lifecycle lacks exact installation identity admission" };
+    const admitted = await lifecycle.admit(identity);
+    if (!admitted.ok) return { activated: false, reason: admitted.output };
+  }
+  const rollbackIdentity = previous ? { ...await preparedIdentity(paths.root, previous), root: resolve(paths.root), directory: join(paths.versions, previous) } : null;
   // Unit tests inject the boundary. Production takes a broker lease that blocks new and queued
   // sessions before changing the pointer. Old brokers without this protocol refuse safely.
   let token: string | undefined;
+  let recoveryRequired = false;
+  let activationFailure: string | undefined;
+  let rollbackStage: "pointer" | "restart" | "health" | undefined;
+  async function syncRoot() {
+    if (process.platform === "win32") return;
+    const directory = await open(paths.root, "r");
+    try { await directory.sync(); } finally { await directory.close(); }
+  }
+  async function persistRecovery(record: Record<string, unknown>, initial = false, destination = recoveryPath) {
+    const temporary = `${destination}.${crypto.randomUUID()}.tmp`;
+    try {
+      const file = await open(temporary, "wx", 0o600);
+      try { await file.writeFile(JSON.stringify({ ...record, token: token ?? null }) + "\n"); await file.sync(); }
+      finally { await file.close(); }
+      // Exclusive creation cannot replace another operation's barrier. Later writes
+      // replace atomically, retaining the prior barrier if preparation fails.
+      if (initial) await link(temporary, destination);
+      else await rename(temporary, destination);
+      await syncRoot();
+    } finally { await rm(temporary, { force: true }).catch(() => {}); }
+  }
+  async function clearRecovery() {
+    const pending = JSON.parse(await readFile(recoveryPath, "utf8")) as Record<string, unknown>;
+    // Persist confirmed completion while the pathname still denies admission.
+    // Any fallible durability step precedes unlink. A crash can retain this
+    // completed tombstone, which remains a deliberate-recovery boundary.
+    await persistRecovery({ ...pending, phase: "completion-confirmed" });
+    await unlink(recoveryPath);
+    recoveryRequired = false;
+  }
+  async function uncertain(record: Record<string, unknown>, reason: string) {
+    try { await persistRecovery({ ...record, phase: "unconfirmed", reason }); return reason; }
+    catch (error) {
+      let failure = `${reason}; recovery evidence update failed: ${String(error)}`;
+      try { await persistRecovery({ ...record, phase: "unconfirmed", reason: failure, persistenceFailure: String(error) },
+        false, join(paths.root, "activation-failure.json")); }
+      catch (diagnosticError) { failure += `; failure diagnostic update also failed: ${String(diagnosticError)}`; }
+      return `${failure}; the pending barrier remains required`;
+    }
+  }
   if (!environment.openSessions) {
     const managed = await updatableInstall(paths.root);
     if (!managed.updatable) return { activated: false, reason: managed.reason };
@@ -222,21 +294,73 @@ async function activateVersionUnlocked(version: string, environment: ActivationE
   }
   try {
     await mkdir(paths.root, { recursive: true });
+    try { await persistRecovery({ phase: "pending", version, previous }, true); }
+    catch (error) {
+      return { activated: false, reason: `Pending recovery storage could not be established before activation: ${String(error)}` };
+    }
+    recoveryRequired = true;
     if (previous) await point(paths.previous, join(paths.versions, previous));
     await point(paths.current, target);
-    const restart = environment.restart ?? restartService;
+    const restart = environment.restart ?? lifecycle?.restart ?? restartService;
     const restarted = await restart();
-    const healthy = restarted.ok && await (environment.healthy ?? (() => brokerAnswers(version)))();
-    if (healthy) return { activated: true, version, previous };
+    if (restarted.stopUnconfirmed) {
+      const reason = await uncertain({ version, previous }, restarted.output);
+      return { activated: false, reason: `Activation requires recovery before any pointer rollback or successor restart: ${reason}` };
+    }
+    const healthy = restarted.ok && await (environment.healthy ?? (() => brokerAnswers(identity)))();
+    if (healthy) {
+      await clearRecovery();
+      return { activated: true, version, previous };
+    }
+    activationFailure = restarted.ok ? `${version} did not answer doctor after its restart` : `restarting on ${version} failed: ${restarted.output}`;
+    try { await persistRecovery({ phase: "rollback-pending", version: previous, previous: version, activationFailure }); }
+    catch (error) {
+      return { activated: false, reason: `${activationFailure}; rollback recovery storage could not be established: ${String(error)}` };
+    }
+    rollbackStage = "pointer";
     if (previous) await point(paths.current, join(paths.versions, previous));
     else await rm(process.platform === "win32" ? pointerFile(paths.current) : paths.current, { force: true });
+    rollbackStage = "restart";
     const restored = await restart();
+    if (restored.stopUnconfirmed) {
+      const combined = `${activationFailure}; rollback restart failed: ${restored.output}`;
+      const reason = await uncertain({ version: previous, previous: version, activationFailure, rollbackFailure: restored.output }, combined);
+      return { activated: false, version, previous, rolledBack: true, rollbackHealthy: false,
+        reason: `Rollback restart requires recovery before any further activation: ${reason}` };
+    }
+    rollbackStage = "health";
     const rollbackHealthy = previous && restored.ok
-      ? await (environment.healthy ?? (() => brokerAnswers(previous)))() : false;
-    return { activated: false, version, previous, rolledBack: true, rollbackHealthy: Boolean(rollbackHealthy),
-      reason: restarted.ok ? `${version} did not answer doctor after its restart` : `restarting on ${version} failed: ${restarted.output}` };
+      ? await (environment.healthy ?? (() => rollbackIdentity ? brokerAnswers(rollbackIdentity) : Promise.resolve(false)))() : false;
+    const rollbackFailure = !restored.ok ? restored.output || "rollback restart failed without diagnostic"
+      : previous && !rollbackHealthy ? `${previous} did not answer doctor after rollback restart` : null;
+    const reason = rollbackFailure ? `${activationFailure}; rollback restart failed: ${rollbackFailure}` : activationFailure;
+    if (rollbackFailure) {
+      try { await persistRecovery({ version, previous, activationFailure, rollbackFailure }, false, join(paths.root, "activation-failure.json")); }
+      catch (error) {
+        let failure = `${reason}; failure diagnostic persistence failed: ${String(error)}`;
+        try { await persistRecovery({ phase: "diagnostic-persistence-failed", version: previous, previous: version,
+          activationFailure, rollbackFailure, reason: failure }); }
+        catch (recoveryError) { failure += `; pending evidence update also failed: ${String(recoveryError)}`; }
+        return { activated: false, version, previous, rolledBack: true, rollbackHealthy: Boolean(rollbackHealthy),
+          reason: `${failure}; the pending recovery barrier remains required` };
+      }
+    }
+    try { await clearRecovery(); }
+    catch (error) { return { activated: false, version, previous, rolledBack: true, rollbackHealthy: Boolean(rollbackHealthy),
+      reason: `${reason}; recovery barrier cleanup failed: ${String(error)}` }; }
+    return { activated: false, version, previous, rolledBack: true, rollbackHealthy: Boolean(rollbackHealthy), reason };
+  } catch (error) {
+    const newest = String(error);
+    let reason = activationFailure
+      ? `${activationFailure}; rollback ${rollbackStage ?? "operation"} failed: ${newest}` : newest;
+    if (recoveryRequired) {
+      const selected = await currentVersion(paths.root).catch(() => null);
+      reason = await uncertain({ version: selected, previous, rollbackTarget: previous,
+        ...(activationFailure ? { activationFailure, rollbackFailure: newest, rollbackStage } : { activationFailure: newest }) }, reason);
+    }
+    return { activated: false, reason: `Activation requires recovery: ${reason}` };
   } finally {
-    if (token) await call(serviceSocketPath(), "update.end", { token }).catch(() => {});
+    if (token && !recoveryRequired) await call(serviceSocketPath(), "update.end", { token }).catch(() => {});
   }
 }
 
@@ -271,6 +395,7 @@ export async function pruneVersions(root = updateRoot(), keep = 1) {
 
 async function pruneVersionsUnlocked(root = updateRoot(), keep = 1) {
   const paths = layout(root);
+  await requireUpdateAdmission(root);
   const current = await currentVersion(root);
   // Both separators, for the same reason `currentVersion` splits on both: on Windows this reads a
   // pointer file holding a backslash path, and a POSIX-only split would leave `previous` unprotected
@@ -412,8 +537,15 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
   const directory = join(paths.versions, candidate.version);
   // The same launcher name activation will look for, so a version cannot be "prepared" here and then
   // refused there as not prepared.
-  if (await Bun.file(join(directory, launcherName())).exists())
+  if (await lstat(directory).catch(error => { if (error.code === "ENOENT") return null; throw error; })) {
+    try {
+      const identity = await preparedIdentity(paths.root, candidate.version);
+      if (identity.archiveIntegrity !== candidate.integrity)
+        return { prepared: false, reason: "Existing version archive identity differs; migrate deliberately" };
+    }
+    catch (error) { return { prepared: false, reason: `Existing version identity is invalid: ${String(error)}` }; }
     return { prepared: true, version: candidate.version, directory, files: 0 };
+  }
   const bytes = await (feed.download ?? (async (url: string) => {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`the archive answered ${response.status}`);
@@ -446,6 +578,7 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
       return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
     }))(staging);
     if (!installed.ok) return { prepared: false, reason: `preparing dependencies failed: ${installed.output}` };
+    await sealRelease(staging, candidate.version, process.env.ORBIT_BUN ?? process.execPath, candidate.integrity);
     await rename(staging, directory);
     return { prepared: true, version: candidate.version, directory, files: (await readdir(directory)).length };
   } finally { await rm(staging, { recursive: true, force: true }); }
@@ -479,9 +612,7 @@ async function systemdTimer(on: boolean) {
   if (on && !(await updatableInstall()).updatable)
     return { ok: false, output: "Run install --managed before enabling automatic updates" };
   try {
-    const child = Bun.spawn(["systemctl", "--user", on ? "enable" : "disable", "--now", "sbar-orbit-update.timer"], { stdout: "pipe", stderr: "pipe" });
-    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-1).join(" ").slice(0, 200) };
+    return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }).schedule(on);
   }
   catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 200) : "systemctl could not be started" }; }
 }
@@ -521,6 +652,7 @@ export async function runUpdate(current: string, environment: RunEnvironment = {
 export async function prepareManagedInstall(source: string, options: {
   root?: string; dryRun?: boolean; openSessions?: () => Promise<number | null>;
   install?: (directory: string) => Promise<{ ok: boolean; output: string }>;
+  lifecycle?: ManagedLifecycle;
 } = {}) {
   if (options.dryRun) return prepareManagedInstallUnlocked(source, options);
   return withUpdateLock(options.root ?? updateRoot(), () => prepareManagedInstallUnlocked(source, options));
@@ -529,8 +661,10 @@ export async function prepareManagedInstall(source: string, options: {
 async function prepareManagedInstallUnlocked(source: string, options: {
   root?: string; dryRun?: boolean; openSessions?: () => Promise<number | null>;
   install?: (directory: string) => Promise<{ ok: boolean; output: string }>;
+  lifecycle?: ManagedLifecycle;
 } = {}) {
-  if (process.platform !== "linux") throw new Error("Managed installation is currently supported only on Linux");
+  if (!options.dryRun && !options.lifecycle && process.platform !== "linux")
+    throw new Error("Managed installation is currently supported only on Linux");
   const origin = await realpath(source);
   if (await lstat(join(origin, ".git")).catch(() => null))
     throw new Error("Use an extracted release or registry package for install --managed; keep source checkouts on git");
@@ -538,16 +672,22 @@ async function prepareManagedInstallUnlocked(source: string, options: {
   if (manifest.name !== "sbar-orbit" || typeof manifest.version !== "string") throw new Error("Not an Orbit release");
   requireVersion(manifest.version);
   const paths = layout(options.root);
+  await requireUpdateAdmission(paths.root);
   const current = await currentVersion(paths.root);
   if (current && current !== manifest.version)
     throw new Error("A managed version is already active; use update check, stage and activate instead");
+  const sourceDigest = await releaseDigest(origin);
+  if (current && (await preparedIdentity(paths.root, current)).releaseDigest !== sourceDigest)
+    throw new Error("Same version has different shipped bytes; migrate deliberately");
   if (options.dryRun) return paths.current;
   const sessions = await (options.openSessions ?? brokerSessions)();
   if (sessions !== null && sessions > 0) throw new Error("Close Orbit sessions before adopting a managed installation");
-  if (!current && sessions !== null)
-    throw new Error("Stop the existing broker with systemctl --user stop sbar-orbit.service before first managed adoption");
+  if (!current)
+    throw new Error("First managed adoption requires deliberate owned mechanism and descendant stop admission; broker silence is insufficient");
   const directory = join(paths.versions, manifest.version);
-  if (!await Bun.file(join(directory, launcherName())).exists()) {
+  const existing = await lstat(directory).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (existing) await preparedIdentity(paths.root, manifest.version);
+  if (!existing) {
     const staging = join(paths.versions, `.${manifest.version}.${crypto.randomUUID()}.adopt`);
     await mkdir(staging, { recursive: true });
     try {
@@ -563,6 +703,7 @@ async function prepareManagedInstallUnlocked(source: string, options: {
         return { ok: code === 0, output: (output + error).slice(-300) };
       }))(staging);
       if (!result.ok) throw new Error(`Managed dependency preparation failed: ${result.output}`);
+      await sealRelease(staging, manifest.version);
       await rename(staging, directory);
     } finally { await rm(staging, { recursive: true, force: true }); }
   }

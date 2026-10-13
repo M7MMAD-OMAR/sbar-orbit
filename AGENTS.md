@@ -14,6 +14,8 @@ and what you hand back to the person. The short version is `./install.sh --dry-r
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
+(cd website && bun install --frozen-lockfile --ignore-scripts)
+(cd website && bun run ../scripts/limited.ts bun run build)
 bun run typecheck
 bun run verify                      # the suite, inside the shared resource budget
 ORBIT_TEST_NATIVE=1 bun run verify  # adds the private display tests, needs the Fedora runtime

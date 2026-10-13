@@ -4,10 +4,13 @@ import { basename, dirname, isAbsolute } from "node:path";
 
 export type CaptureLabel = "unlabelled" | "first-popup" | "after-close" | "permitted-frame" | "denied-after-narrow";
 export type CaptureStage = "begin" | "attachment-before" | "attachment-settled" | "attachment-rejected" | "screenshot-before" | "screenshot-settled" | "screenshot-rejected" | "timer-fired" | "race-settled" | "race-rejected" | "cleanup" | "detach-dispatched" | "detach-rejected" | "presence-before" | "presence-settled" | "presence-rejected";
-type Pending = "attachment" | "screenshot" | "presence" | "none";
+type Pending = "attachment" | "screenshot" | "presence" | "screenshot+presence" | "none";
 export interface CaptureRow { sequence: number; operation: number; page: number; label: CaptureLabel; stage: CaptureStage; pending: Pending; expired: boolean; cached: boolean; budget: number; elapsedMs: number; late: boolean }
 type Sink = (value: CaptureRow) => void;
 interface Registration { context: object | undefined; closed: boolean; label: CaptureLabel; pages: WeakMap<object, number>; nextPage: number; nextOperation: number; active: number; dropped: number; firstDropped: number | undefined; lastDropped: number | undefined; failed: number; rows: CaptureRow[]; sequence: number; sink: Sink }
+export interface NavigationRow { sequence: number; operation: number; page: number; stage: "before" | "settled" | "rejected"; elapsedMs: number; late: boolean; error?: { name: "TimeoutError" | "other"; api: "page.goto" | "not measured"; timeoutMs: number | null; callLog: ("navigation dispatched, destination redacted" | "domcontentloaded observed" | "load observed" | "commit observed" | "redacted")[]; truncated: boolean } }
+interface NavigationState { sequence: number; operation: number; active: number; dropped: number; rows: NavigationRow[] }
+const navigations = new WeakMap<Registration, NavigationState>();
 const registrations = new WeakMap<object, Registration>();
 let activeRegistrations = 0;
 
@@ -34,11 +37,69 @@ export function registerBrowserPhases(backend: object, context: object, workspac
     if (!boundContext || !("value" in boundContext) || boundContext.value !== context) return;
     const state: Registration = { context, closed: false, label: "unlabelled", pages: new WeakMap(), nextPage: 0, nextOperation: 0, active: 0, dropped: 0, firstDropped: undefined, lastDropped: undefined, failed: 0, rows: [], sequence: 0, sink };
     registrations.set(backend, state); activeRegistrations++;
+    const navigation: NavigationState = { sequence: 0, operation: 0, active: 0, dropped: 0, rows: [] };
+    navigations.set(state, navigation);
     return {
       label(value: CaptureLabel) { if (!state.closed) state.label = value; },
-      snapshot() { return { rows: [...state.rows], retention: { first: 32, recent: 96, emitted: state.sequence, firstDropped: state.firstDropped, lastDropped: state.lastDropped }, pending: state.active, dropped: state.dropped, sinkFailures: state.failed, complete: state.dropped === 0 && state.failed === 0 && state.active === 0 }; },
+      snapshot() { return { rows: [...state.rows], retention: { first: 32, recent: 96, emitted: state.sequence, firstDropped: state.firstDropped, lastDropped: state.lastDropped }, pending: state.active, dropped: state.dropped, sinkFailures: state.failed, complete: state.dropped === 0 && state.failed === 0 && state.active === 0,
+        navigation: { rows: structuredClone(navigation.rows), pending: navigation.active, dropped: navigation.dropped, emitted: navigation.sequence, complete: navigation.active === 0 && navigation.dropped === 0 } }; },
       close() { if (!state.closed) revokeBrowserPhases(backend); },
     };
+  } catch { return; }
+}
+
+/** Only the original goto timeout header and fixed call-log milestones survive. No raw error text. */
+function navigationError(error: unknown): NonNullable<NavigationRow["error"]> {
+  const result: NonNullable<NavigationRow["error"]> = { name: "other", api: "not measured", timeoutMs: null, callLog: [], truncated: false };
+  try {
+    if (!(error instanceof Error)) return result;
+    result.name = error.name === "TimeoutError" ? "TimeoutError" : "other";
+    const message = error.message;
+    result.truncated = message.length > 8192;
+    const lines = message.slice(0, 8192).split("\n");
+    const header = lines[0]?.match(/^page\.goto: Timeout ([0-9]{1,8})ms exceeded\.$/);
+    if (header) { result.api = "page.goto"; result.timeoutMs = Number(header[1]); }
+    const marker = lines.indexOf("Call log:");
+    if (marker < 0) return result;
+    for (const line of lines.slice(marker + 1, marker + 17)) {
+      if (!line.trim()) continue;
+      if (/^\s*- navigating to ".*", waiting until "domcontentloaded"$/.test(line)) result.callLog.push("navigation dispatched, destination redacted");
+      else if (/^\s*- "domcontentloaded" event fired$/.test(line)) result.callLog.push("domcontentloaded observed");
+      else if (/^\s*- "load" event fired$/.test(line)) result.callLog.push("load observed");
+      else if (/^\s*- "commit" event fired$/.test(line)) result.callLog.push("commit observed");
+      else result.callLog.push("redacted");
+    }
+    result.truncated ||= lines.length > marker + 17;
+  } catch { result.truncated = true; }
+  return result;
+}
+
+/** Reuses exact factory ownership admission, with no URL, action text, screenshot or presence reads. */
+export function beginBrowserNavigation(backend: object, context: () => object, page: object) {
+  try {
+    const state = registrations.get(backend);
+    if (!state || state.closed || state.context !== context()) return;
+    const navigation = navigations.get(state);
+    if (!navigation) return;
+    if (navigation.active >= 16) { navigation.dropped++; return; }
+    let ordinal = state.pages.get(page);
+    if (ordinal === undefined) { ordinal = ++state.nextPage; state.pages.set(page, ordinal); }
+    const pageOrdinal = ordinal, operation = ++navigation.operation, started = performance.now();
+    navigation.active++;
+    const mark = (stage: NavigationRow["stage"], error?: unknown) => {
+      const row: NavigationRow = { sequence: ++navigation.sequence, operation, page: pageOrdinal, stage, elapsedMs: Math.round(performance.now() - started), late: state.closed,
+        ...(stage === "rejected" ? { error: navigationError(error) } : {}) };
+      if (navigation.rows.length >= 128) { navigation.rows.splice(32, 1); navigation.dropped++; }
+      navigation.rows.push(row);
+    };
+    mark("before");
+    let finished = false;
+    return { finish(error?: unknown, rejected = false) {
+      if (finished) return;
+      finished = true;
+      try { mark(rejected ? "rejected" : "settled", error); } catch { navigation.dropped++; }
+      finally { navigation.active--; }
+    } };
   } catch { return; }
 }
 
@@ -55,10 +116,17 @@ export function beginBrowserCapture(backend: object, context: object | (() => ob
   const pageOrdinal = ordinal, operation = ++state.nextOperation, label = state.label, started = performance.now();
   state.active++;
   let pending: Pending = "attachment", expired = false, finished = false;
+  let pixelsPending = false, presencePending = false;
   const mark = (stage: CaptureStage) => {
     try {
-      if (stage === "screenshot-before") pending = "screenshot";
-      if (stage === "presence-before") pending = "presence";
+      if (stage === "attachment-settled" || stage === "attachment-rejected") pending = "none";
+      if (stage === "screenshot-before") pixelsPending = true;
+      if (stage === "screenshot-settled" || stage === "screenshot-rejected") pixelsPending = false;
+      if (stage === "presence-before") presencePending = true;
+      if (stage === "presence-settled" || stage === "presence-rejected") presencePending = false;
+      if (pixelsPending || presencePending || pending !== "attachment")
+        pending = pixelsPending && presencePending ? "screenshot+presence"
+          : pixelsPending ? "screenshot" : presencePending ? "presence" : "none";
       if (stage === "timer-fired") expired = true;
       const row: CaptureRow = { sequence: ++state.sequence, operation, page: pageOrdinal, label, stage, pending, expired, cached, budget, elapsedMs: Math.round(performance.now() - started), late: state.closed };
       if (state.rows.length >= 128) {

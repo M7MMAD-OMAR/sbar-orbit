@@ -85,7 +85,7 @@ needsCommand("git", "the fixture creates its own Git index to select package inp
         .toBe(await Bun.file(join(source, path)).text());
     const unpacked = join(fixture, "unpacked");
     await mkdir(unpacked);
-    await run(["tar", "xzf", archive, "-C", unpacked], fixture);
+    await run(["tar", "xzpf", archive, "-C", unpacked], fixture);
     // Windows has no POSIX executable permission bits; the shell entry point still ships there.
     if (process.platform !== "win32")
       expect((await stat(join(unpacked, "package/bin/orbit"))).mode & 0o111).toBe(0o111);

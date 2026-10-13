@@ -49,7 +49,7 @@ export async function registryPackage(destination: string, source = resolve(impo
     if (archives.length !== 1 || !name) throw new Error("Expected exactly one registry archive");
     const unpacked = join(staging, "unpacked");
     await mkdir(unpacked);
-    await run(["tar", "xzf", join(staging, name), "-C", unpacked]);
+    await run(["tar", "xzpf", join(staging, name), "-C", unpacked]);
     // Bun 1.4.2 excludes root lockfiles unconditionally, even explicit files entries.
     // Retain Bun's package selection, then add the source lock required by install.
     await copyFile(join(checkout, "bun.lock"), join(unpacked, "package", "bun.lock"));

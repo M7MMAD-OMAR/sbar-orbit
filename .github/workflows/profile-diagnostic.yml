@@ -12,12 +12,14 @@ concurrency:
 
 jobs:
   profile:
+    env:
+      ORBIT_TEST_NATIVE: '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        probe: [isolated, full-suite]
+        probe: [isolated, full-suite, isolation-contracts]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,19 +32,127 @@ jobs:
       - name: Install website test dependencies
         working-directory: website
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Build current website for rendered onboarding tests
+        working-directory: website
+        run: bun run ../scripts/limited.ts bun run build
       - name: Check types
         run: bun run typecheck
+      - name: Install existing Linux selection callback test dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq g++ pkg-config libwayland-dev
       - name: Record exact source and production tree identity
+        env:
+          ORBIT_DIAGNOSTIC_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
           mkdir -p output/profile-diagnostic
           git rev-parse HEAD > output/profile-diagnostic/commit.txt
+          git status --porcelain > output/profile-diagnostic/worktree-before.txt
+          bun --version > output/profile-diagnostic/bun-version.txt
+          uname -a > output/profile-diagnostic/kernel.txt
+          command -v google-chrome > output/profile-diagnostic/browser-command.txt
+          google-chrome --version > output/profile-diagnostic/browser-version.txt
+          sha256sum /opt/google/chrome/chrome > output/profile-diagnostic/browser-binary.sha256
+          printf '%s\n' '/opt/google/chrome/chrome' > output/profile-diagnostic/browser-executable.txt
+          /opt/google/chrome/chrome --version > output/profile-diagnostic/browser-executable-version.txt
+          python3 - <<'PY'
+          import json, os, platform
+          from pathlib import Path
+          fields = ["GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_SHA", "GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_WORKSPACE", "RUNNER_NAME", "RUNNER_OS", "RUNNER_ARCH", "RUNNER_TEMP", "ORBIT_DIAGNOSTIC_RUNNER_ENVIRONMENT", "ORBIT_TEST_NATIVE"]
+          identity = {key: os.environ.get(key) for key in fields}
+          identity.update({"platform": platform.system(), "machine": platform.machine(), "kernel": platform.release(), "cwd": str(Path.cwd()), "uid": os.getuid()})
+          Path("output/profile-diagnostic/owned-runner.json").write_text(json.dumps(identity, indent=2) + "\n")
+          PY
           git ls-tree -r HEAD -- src package.json bun.lock bunfig.toml scripts/limited.ts > output/profile-diagnostic/production-tree.txt
-          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-before.sha256
+          git ls-tree -r HEAD > output/profile-diagnostic/source-tree.txt
+          cat > output/profile-diagnostic/tracked-manifest.py <<'PY'
+          import hashlib, json, subprocess, sys
+          from pathlib import Path
+          root = Path.cwd()
+          phase = sys.argv[1]
+          def git(*args): return subprocess.check_output(["git", *args])
+          entries = []
+          for record in git("ls-tree", "-rz", "HEAD").split(b"\0"):
+              if not record: continue
+              metadata, name = record.split(b"\t", 1)
+              mode, kind, published = metadata.decode().split()
+              path = name.decode()
+              file = root / path
+              raw = file.read_bytes()
+              attrs = git("check-attr", "-z", "text", "eol", "--", path).decode().split("\0")
+              values = {attrs[i + 1]: attrs[i + 2] for i in range(0, len(attrs) - 1, 3)}
+              # These two declared ASCII cmd launchers have CRLF checkout bytes and LF Git bytes.
+              normalized = path in {"bin/sbar-orbit.cmd", "install.cmd"}
+              if normalized and (values != {"text": "set", "eol": "crlf"} or not raw.isascii()):
+                  raise RuntimeError("Unexpected cmd canonicalization contract: " + path)
+              canonical = raw.replace(b"\r\n", b"\n") if normalized else raw
+              blob = hashlib.sha1(b"blob " + str(len(canonical)).encode() + b"\0" + canonical).hexdigest()
+              entries.append({"path": path, "mode": mode, "rawBytes": len(raw),
+                  "rawSha256": hashlib.sha256(raw).hexdigest(), "canonicalBytes": len(canonical),
+                  "canonicalSha256": hashlib.sha256(canonical).hexdigest(), "canonicalGitBlob": blob,
+                  "publishedGitBlob": published, "normalizedCmd": normalized, "attributes": values})
+          entries.sort(key=lambda entry: entry["path"].encode("utf8"))
+          output = Path("output/profile-diagnostic")
+          (output / ("tracked-" + phase + ".json")).write_text(json.dumps(entries, indent=2) + "\n")
+          status = git("status", "--porcelain", "--untracked-files=no")
+          (output / ("tracked-status-" + phase + ".txt")).write_bytes(status)
+          if status or any(entry["canonicalGitBlob"] != entry["publishedGitBlob"] for entry in entries):
+              (output / "source-drift.txt").write_text("Tracked working source differs from exact published commit\n")
+              raise RuntimeError("Tracked source drift")
+          PY
+          python3 output/profile-diagnostic/tracked-manifest.py before
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts tests/browser-startup-diagnostic.test.ts output/profile-diagnostic/tracked-manifest.py > output/profile-diagnostic/instrumentation-before.sha256
+          sha256sum src/chrome.ts src/browser-startup-diagnostic.ts src/installed-startup-diagnostic.ts src/chrome-transport-observer.ts > output/profile-diagnostic/startup-before.sha256
       - name: Observe saved-account boundaries with the verification runtime
         env:
           PROBE: ${{ matrix.probe }}
           ORBIT_PROFILE_TRACE: '1'
+          ORBIT_BROWSER_STARTUP_TRACE: '1'
+          ORBIT_BROWSER_STARTUP_TRACE_ROOT: '__diagnostic_saved_profile_only__'
         run: |
+          if [ "${ORBIT_TEST_NATIVE:-0}" = "1" ]; then printf '%s\n' 'Unconditional native hold refuses inherited native opt-in'; exit 1; fi
+          export ORBIT_TEST_NATIVE=0
+          if [ "$PROBE" = isolation-contracts ]; then
+            if timeout --signal=TERM --kill-after=5s 120s env -u ORBIT_BROWSER_STARTUP_TRACE_ROOT bun --smol run scripts/limited.ts bun --smol test tests/viewer-setup-cleanup.test.ts tests/browser-startup-diagnostic.test.ts > output/profile-diagnostic/no-root.log 2>&1
+            then
+              result=0
+            else
+              result=$?
+            fi
+            if [ "$result" -eq 0 ]; then
+              unrelated_root=$(mktemp -d /var/tmp/orbit-profile-unrelated.XXXXXX)
+              printf '%s\n' "$unrelated_root" > output/profile-diagnostic/unrelated-owned-root.txt
+              if timeout --signal=TERM --kill-after=5s 120s env ORBIT_BROWSER_STARTUP_TRACE_ROOT="$unrelated_root" bun --smol run scripts/limited.ts bun --smol test tests/viewer-setup-cleanup.test.ts > output/profile-diagnostic/unrelated-root.log 2>&1
+              then
+                result=0
+              else
+                result=$?
+              fi
+            fi
+            cat output/profile-diagnostic/no-root.log > output/profile-diagnostic/profile.log
+            if [ -f output/profile-diagnostic/unrelated-root.log ]; then cat output/profile-diagnostic/unrelated-root.log >> output/profile-diagnostic/profile.log; fi
+            if [ -n "${unrelated_root:-}" ]; then
+              if rmdir "$unrelated_root"; then printf '%s\n' removed > output/profile-diagnostic/unrelated-owned-root-cleanup.txt; else result=2; fi
+            fi
+            sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts tests/browser-startup-diagnostic.test.ts output/profile-diagnostic/tracked-manifest.py > output/profile-diagnostic/instrumentation-after.sha256
+            sha256sum src/chrome.ts src/browser-startup-diagnostic.ts src/installed-startup-diagnostic.ts src/chrome-transport-observer.ts > output/profile-diagnostic/startup-after.sha256
+            if ! cmp -s output/profile-diagnostic/startup-before.sha256 output/profile-diagnostic/startup-after.sha256 || ! cmp -s output/profile-diagnostic/instrumentation-before.sha256 output/profile-diagnostic/instrumentation-after.sha256; then
+              printf '%s\n' 'Startup source changed during probe' > output/profile-diagnostic/source-drift.txt
+              result=2
+            fi
+            if ! python3 output/profile-diagnostic/tracked-manifest.py after || ! cmp -s output/profile-diagnostic/tracked-before.json output/profile-diagnostic/tracked-after.json; then
+              printf '%s\n' 'Tracked source manifest changed during probe' > output/profile-diagnostic/source-drift.txt
+              result=2
+            fi
+            git status --porcelain > output/profile-diagnostic/worktree-after.txt
+            sha256sum /opt/google/chrome/chrome > output/profile-diagnostic/browser-binary-after.sha256
+            /opt/google/chrome/chrome --version > output/profile-diagnostic/browser-executable-version-after.txt
+            if ! cmp -s output/profile-diagnostic/browser-binary.sha256 output/profile-diagnostic/browser-binary-after.sha256 || ! cmp -s output/profile-diagnostic/browser-executable-version.txt output/profile-diagnostic/browser-executable-version-after.txt; then
+              printf '%s\n' 'Diagnostic browser changed during probe' > output/profile-diagnostic/browser-drift.txt
+              result=2
+            fi
+            printf '%s\n' "$result" > output/profile-diagnostic/exit-code.txt
+            cat output/profile-diagnostic/profile.log
+            exit "$result"
+          fi
           if [ "$PROBE" = isolated ]; then
             set -- tests/profiles.test.ts
           else
@@ -54,7 +164,23 @@ jobs:
           else
             result=$?
           fi
-          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts > output/profile-diagnostic/instrumentation-after.sha256
+          sha256sum experiments/profile-diagnostic-preload.ts tests/profiles.test.ts tests/browser-startup-diagnostic.test.ts output/profile-diagnostic/tracked-manifest.py > output/profile-diagnostic/instrumentation-after.sha256
+          sha256sum src/chrome.ts src/browser-startup-diagnostic.ts src/installed-startup-diagnostic.ts src/chrome-transport-observer.ts > output/profile-diagnostic/startup-after.sha256
+          if ! cmp -s output/profile-diagnostic/startup-before.sha256 output/profile-diagnostic/startup-after.sha256 || ! cmp -s output/profile-diagnostic/instrumentation-before.sha256 output/profile-diagnostic/instrumentation-after.sha256; then
+            printf '%s\n' 'Startup source changed during probe' > output/profile-diagnostic/source-drift.txt
+            result=2
+          fi
+          if ! python3 output/profile-diagnostic/tracked-manifest.py after || ! cmp -s output/profile-diagnostic/tracked-before.json output/profile-diagnostic/tracked-after.json; then
+            printf '%s\n' 'Tracked source manifest changed during probe' > output/profile-diagnostic/source-drift.txt
+            result=2
+          fi
+          git status --porcelain > output/profile-diagnostic/worktree-after.txt
+          sha256sum /opt/google/chrome/chrome > output/profile-diagnostic/browser-binary-after.sha256
+          /opt/google/chrome/chrome --version > output/profile-diagnostic/browser-executable-version-after.txt
+          if ! cmp -s output/profile-diagnostic/browser-binary.sha256 output/profile-diagnostic/browser-binary-after.sha256 || ! cmp -s output/profile-diagnostic/browser-executable-version.txt output/profile-diagnostic/browser-executable-version-after.txt; then
+            printf '%s\n' 'Diagnostic browser changed during probe' > output/profile-diagnostic/browser-drift.txt
+            result=2
+          fi
           printf '%s\n' "$result" > output/profile-diagnostic/exit-code.txt
           cat output/profile-diagnostic/profile.log
           exit "$result"
@@ -62,6 +188,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: profile-diagnostic-${{ matrix.probe }}-${{ github.run_id }}
+          name: profile-diagnostic-${{ matrix.probe }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: output/profile-diagnostic/
           if-no-files-found: error

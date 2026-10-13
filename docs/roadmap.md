@@ -1,5 +1,22 @@
 # Roadmap
 
+## Current integration status, October 13, 2026
+
+Official main remains `bbfb6b5`; the combined working candidate is unpublished.
+Its prior source snapshot passed 1,117 Linux non-native tests with 58 skips.
+The corrected CommonJS full82 run remains failed at proposed/nested after
+26 passing discriminator cases. Reviewed Windows and Mac diagnostic additions
+passed root typecheck and 30 affected portable controls; actual provider
+execution and the final-source full suite remain pending.
+
+The [current completion ledger](completion-status.md#current-integration-status-october-13-2026)
+records exact source/run boundaries, failed receipts and delivery dependencies.
+Performance, participant, installation and publication gates remain open.
+Native owner handoff and plugin holds remain unconditional.
+All older sections below retain their original source, run and date scope.
+
+## Historical October 6 release and measurement snapshot
+
 **State, 6 October 2026, documentation base `0faa05c`.** The checkout declares package
 version `0.2.0`. This is source metadata, not proof of a published package, registry `latest`
 or a tag. Fresh [passive artifact inspection](published-artifact-identity.json)

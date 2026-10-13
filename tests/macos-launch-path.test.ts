@@ -27,7 +27,8 @@ for (const customLocation of ["custom runtime/bin", "runtime & tools/bin"]) {
         if (!directory) throw new Error("Fixture runtime directory missing");
         await writeFile(join(directory, "bun"), `#!/bin/sh\nprintf '%s\\n' '${label}' "$@" > "$ORBIT_FIXTURE_RECORD"\n`, { mode: 0o700 });
       }
-      const plist = brokerAgentPlist(launcher, join(root, "broker.sock"), home, bunDirectory);
+      const runtime = join(bunDirectory, "bun");
+      const plist = brokerAgentPlist(launcher, join(root, "broker.sock"), home, bunDirectory, { HOME: home, ORBIT_BUN: runtime });
       const settings = plist.match(/<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/)?.[1];
       if (!settings) throw new Error("LaunchAgent environment missing");
       const environment: Record<string, string> = { PATH: "/usr/bin:/bin", ORBIT_FIXTURE_RECORD: record };
@@ -44,7 +45,7 @@ for (const customLocation of ["custom runtime/bin", "runtime & tools/bin"]) {
       expect(code).toBe(0);
       expect((await readFile(record, "utf8")).trim().split("\n")).toEqual([
         "installer", "run", join(root, "source", "scripts", "limited.ts"),
-        "bun", "run", join(root, "source", "src", "cli.ts"), "serve", "--managed-socket",
+        runtime, "run", join(root, "source", "src", "cli.ts"), "serve", "--managed-socket",
       ]);
       expect(plist).not.toMatch(/<string>[^<]*&(?!amp;|lt;|gt;|quot;|apos;)/);
     } finally {

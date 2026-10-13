@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { test, expect } from "bun:test";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { Sessions } from "../src/session";
+import { installCaptureDiagnostic } from "./capture-diagnostic";
 
 
 const phaseNote = (value: unknown) => { try { console.error(JSON.stringify({ browserPhaseDiagnostic: value })); } catch {} };
@@ -39,6 +40,7 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     finally { console.error(JSON.stringify({observePolicyPhase:method,status:"settled",elapsedMs:Math.round(performance.now()-started)})); }
   };
   let phases: ReturnType<typeof registerBrowserPhases>;
+  const restoreCaptureDiagnostic = installCaptureDiagnostic(sessions, "observe-policy");
   try {
     const origin = `http://127.0.0.1:${fixture.port}`;
     const created = await run("session.create", {
@@ -77,7 +79,16 @@ test("a session whose policy allows no reading is refused a frame, and the refus
     expect(await run("session.presence", session)).toMatchObject({ location: expect.any(String) });
   } finally {
     phases?.close();
-    try { await sessions.close(); fixture.stop(true); }
-    finally { phaseNote({ final: phases?.snapshot() ?? { admission: "not measured" }, fixtureStopAwaited: false }); }
+    let captureCleanupConfirmed = false;
+    try {
+      const outcomes = await Promise.allSettled([Promise.resolve().then(() => sessions.close()),
+        Promise.resolve().then(() => fixture.stop(true))]);
+      const errors = outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+      captureCleanupConfirmed = errors.length === 0;
+      if (errors.length) throw new AggregateError(errors, "Observation fixture shutdown was not confirmed");
+    } finally {
+      restoreCaptureDiagnostic(captureCleanupConfirmed);
+      phaseNote({ final: phases?.snapshot() ?? { admission: "not measured" }, fixtureStopAwaited: false });
+    }
   }
 }, 60000);
