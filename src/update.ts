@@ -136,7 +136,10 @@ export async function updatableInstall(root = updateRoot(), launcher = defaultLa
     return { updatable: false as const, reason: `this install runs from ${dirname(dirname(target))}, not from a managed version directory; a source checkout updates with git` };
   if (process.platform !== "win32" && await readlink(launcher).catch(() => null) !== join(layout(root).current, launcherName()))
     return { updatable: false as const, reason: "Command must point through the stable managed current path; migrate deliberately" };
-  try { await currentVersion(root); }
+  try {
+    if (await currentVersion(root) === null)
+      return { updatable: false as const, reason: "Managed current pointer is absent; activate a prepared version before updating" };
+  }
   catch { return { updatable: false as const, reason: "Managed pointer or prepared release identity is invalid; migrate deliberately" }; }
   return { updatable: true as const, launcher: target };
 }

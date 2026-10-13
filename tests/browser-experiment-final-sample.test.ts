@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 for (const fixturePlatform of ["linux", "darwin", "win32"]) {
 test(`final RSS outcome controls use isolated ${fixturePlatform} branch`, async () => {
   const child = Bun.spawn([process.execPath, "test", "./tests/browser-experiment-final-sample-controlled-child.ts"], {
-    cwd: resolve(import.meta.dir, ".."), env: { ...process.env, ORBIT_TEST_NATIVE: "0", ORBIT_CONTROLLED_RSS_PLATFORM: fixturePlatform },
+    cwd: resolve(import.meta.dir, ".."), env: { ...process.env, ORBIT_TEST_NATIVE: "0", ORBIT_CONTROLLED_RSS_PLATFORM: fixturePlatform,
+      ORBIT_BROWSER_EXPERIMENT_OUTPUT: "latest.json" },
     stdout: "pipe", stderr: "pipe",
   });
   const timer = setTimeout(() => child.kill(), 35000);

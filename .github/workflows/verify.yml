@@ -62,6 +62,7 @@ jobs:
       - name: Run the bounded suite
         env:
           ORBIT_TEST_PIPE_RECEIPT_DIR: ${{ github.workspace }}/output/cli-pipe-receipts
+          ORBIT_BROWSER_EXPERIMENT_OUTPUT: provider.json
         run: bun experiments/verify-with-resources.ts
       - name: Capture exact provider source after workload
         if: always()
@@ -92,6 +93,15 @@ jobs:
           name: chrome-trace-${{ matrix.os }}
           path: output/chrome-trace/
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve browser experiment sampling diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-experiment-${{ matrix.os }}
+          path: output/playwright/provider.json
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Preserve owned pipe receipts

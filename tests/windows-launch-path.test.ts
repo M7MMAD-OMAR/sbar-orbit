@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { brokerTaskXml } from "../src/windows-autostart";
 import { fixtureRoot } from "./platform-support";
@@ -8,14 +8,26 @@ const windowsTest = process.platform === "win32" ? test : test.skip;
 const decode = (text: string) => text.replace(/&(amp|lt|gt|quot|apos);/g,
   (_, entity: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" }[entity] ?? ""));
 
+async function launcherDiagnostic(caseName: string, argv: string[], env: NodeJS.ProcessEnv, launcher: string, pin: string, result: { code: number; out: string; err: string }) {
+  const selected = Object.fromEntries(["ORBIT_BUN", "SystemRoot", "USERPROFILE", "LOCALAPPDATA", "PATH"].map(key => [key, env[key] ?? null]));
+  const launcherBytes = await readFile(launcher);
+  const pinExists = await stat(pin).then(value => ({ exists: true, file: value.isFile(), bytes: value.size }), error => ({ exists: false, code: (error as NodeJS.ErrnoException).code ?? "unknown" }));
+  console.log(JSON.stringify({ windowsLauncherDiagnostic: { caseName, argv, selectedEnvironment: selected,
+    launcherSha256: new Bun.CryptoHasher("sha256").update(launcherBytes).digest("hex"),
+    pin, pinExists, code: result.code, out: result.out.slice(0, 16384), err: result.err.slice(0, 16384),
+    outputLengths: { out: result.out.length, err: result.err.length }, outputLimit: 16384 } }));
+}
+
 windowsTest("Windows launcher refuses a missing pinned Bun even when PATH has Bun", async () => {
   const root = await fixtureRoot("orbit-win-pin-missing-");
   try {
     const missing = join(root, "missing-runtime", "bun.exe");
-    const child = Bun.spawn(["cmd.exe", "/d", "/v:off", "/c", join(import.meta.dir, "../bin/sbar-orbit.cmd"), "help"], {
-      env: { ...process.env, ORBIT_BUN: missing }, stdout: "pipe", stderr: "pipe",
-    });
+    const launcher = join(import.meta.dir, "../bin/sbar-orbit.cmd");
+    const argv = ["cmd.exe", "/d", "/v:off", "/c", launcher, "help"];
+    const env = { ...process.env, ORBIT_BUN: missing };
+    const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
     const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    await launcherDiagnostic("missing-pin", argv, env, launcher, missing, { code, out, err });
     expect(code).toBe(1);
     expect(out + err).toContain("the pinned ORBIT_BUN runtime does not exist");
     expect(out + err).not.toContain("Usage:");
@@ -38,12 +50,13 @@ for (const location of ["custom runtime/bin", "runtime & tools/bin"]) {
       const xml = brokerTaskXml(launcher, "S-1-5-21-1-2-3-1000", { ORBIT_BUN: runtime, ORBIT_FIXTURE_RECORD: record });
       const argumentsText = decode(/<Arguments>([^<]*)<\/Arguments>/.exec(xml)?.[1] ?? "");
       expect(argumentsText.startsWith("/c ")).toBe(true);
-      const child = Bun.spawn(["cmd.exe", "/d", "/v:off", "/c", argumentsText.slice(3)], {
-        env: { SystemRoot: process.env.SystemRoot, USERPROFILE: root,
-          LOCALAPPDATA: join(root, "appdata"), PATH: join(process.env.SystemRoot ?? "C:\\Windows", "System32") },
-        stdout: "pipe", stderr: "pipe",
-      });
+      const argv = ["cmd.exe", "/d", "/v:off", "/c", argumentsText.slice(3)];
+      const env = { SystemRoot: process.env.SystemRoot, USERPROFILE: root,
+        LOCALAPPDATA: join(root, "appdata"), PATH: join(process.env.SystemRoot ?? "C:\\Windows", "System32") };
+      const child = Bun.spawn(argv, { env, stdout: "pipe", stderr: "pipe" });
       const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+      await launcherDiagnostic(location, argv, env, launcher, runtime, { code, out, err });
+      console.log(JSON.stringify({ windowsTaskArgumentsDiagnostic: { location, argumentsText } }));
       expect({ code, out, err }).toEqual({ code: 0, out: "", err: "" });
       const selected = JSON.parse(await readFile(record, "utf8"));
       expect(selected.runtime.toLowerCase()).toBe(runtime.toLowerCase());

@@ -21,8 +21,9 @@ async function prepared(root: string) {
 for (const state of ["expired lease", "successor broker", "unknown storage"]) {
   test(`durable admission refuses session create with ${state}`, async () => {
     const root = await fixtureRoot("orbit-durable-admission-");
-    const prior = process.env.XDG_DATA_HOME;
+    const prior = { xdg: process.env.XDG_DATA_HOME, local: process.env.LOCALAPPDATA };
     process.env.XDG_DATA_HOME = join(root, "data");
+    process.env.LOCALAPPDATA = join(root, "data");
     const sessions = new Sessions(join(root, "workspace"));
     let clock: ReturnType<typeof spyOn> | undefined;
     try {
@@ -39,7 +40,8 @@ for (const state of ["expired lease", "successor broker", "unknown storage"]) {
         .rejects.toMatchObject({ code: "PROFILE_BUSY" });
     } finally {
       clock?.mockRestore();
-      if (prior === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = prior;
+      if (prior.xdg === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = prior.xdg;
+      if (prior.local === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = prior.local;
       await sessions.close(); await fs.rm(root, { recursive: true, force: true });
     }
   });
@@ -47,8 +49,9 @@ for (const state of ["expired lease", "successor broker", "unknown storage"]) {
 
 test("durable admission refuses native.open without executing its implementation", async () => {
   const root = await fixtureRoot("orbit-native-admission-");
-  const prior = process.env.XDG_DATA_HOME;
+  const prior = { xdg: process.env.XDG_DATA_HOME, local: process.env.LOCALAPPDATA };
   process.env.XDG_DATA_HOME = join(root, "data");
+  process.env.LOCALAPPDATA = join(root, "data");
   const sessions = new Sessions(join(root, "workspace"), undefined, undefined,
     { planPath: "/fixture/host.json", controlDirectory: "/fixture/control" });
   let calls = 0;
@@ -63,7 +66,8 @@ test("durable admission refuses native.open without executing its implementation
     expect(calls).toBe(0);
   } finally {
     opening.mockRestore();
-    if (prior === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = prior;
+    if (prior.xdg === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = prior.xdg;
+    if (prior.local === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = prior.local;
     await sessions.close(); await fs.rm(root, { recursive: true, force: true });
   }
 });
@@ -199,7 +203,9 @@ for (const stage of ["pointer", "restart", "health"]) {
       try {
         await prepared(root);
         const cause = `rollback ${stage} EIO`;
+        let injectedCalls = 0;
         const fail = async () => {
+          injectedCalls++;
           if (storageFailure) {
             const blocked = "00000000-0000-0000-0000-000000000000";
             await fs.mkdir(join(root, `activation-recovery.json.${blocked}.tmp`));
@@ -211,7 +217,8 @@ for (const stage of ["pointer", "restart", "health"]) {
           const original = fs.rename;
           let currentRenames = 0;
           renamed = spyOn(fs, "rename").mockImplementation(async (...args: Parameters<typeof fs.rename>) => {
-            if (args[1] === join(root, "current") && ++currentRenames === 2) return fail();
+            const destination = join(root, process.platform === "win32" ? "current.txt" : "current");
+            if (args[1] === destination && ++currentRenames === 2) return fail();
             return original(...args);
           });
         }
@@ -222,6 +229,7 @@ for (const stage of ["pointer", "restart", "health"]) {
             if (stage === "restart") return fail();
             return { ok: true, output: "" };
           }, healthy: async () => stage === "health" ? fail() : true });
+        expect(injectedCalls).toBe(1);
         const reason = (result as { reason: string }).reason;
         expect(reason).toContain("initial activation EIO");
         expect(reason).toContain(cause);

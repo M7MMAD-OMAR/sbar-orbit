@@ -306,7 +306,7 @@ const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit,
   "sbar-orbit-update.service": updateServiceUnit, "sbar-orbit-update.timer": updateTimerUnit } as const;
 
 /** Write the units atomically. Enabling is a separate function, and `service install` calls it by default. */
-export async function installService(launcher: string, unitDirectory: string) {
+export async function installService(launcher: string, unitDirectory: string, env = process.env, bunDirectory = dirname(process.execPath)) {
   const source = resolve(launcher);
   try { if (!(await stat(source)).isFile()) throw new Error("Launcher is not a regular file"); }
   catch { throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file"); }
@@ -315,7 +315,7 @@ export async function installService(launcher: string, unitDirectory: string) {
   for (const [name, build] of Object.entries(units)) {
     const target = join(unitDirectory, name);
     const temporary = `${target}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temporary, build(source, unitDirectory), { mode: 0o644 });
+    await writeFile(temporary, build(source, unitDirectory, env, bunDirectory), { mode: 0o644 });
     await rename(temporary, target);
     written.push(target);
   }
@@ -355,7 +355,7 @@ export function installedPathDefaults(unit: string) {
   for (const key of ["ORBIT_MANAGED_ENV_SCHEMA", "HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "ORBIT_BUN", "PATH"]) {
     if (!defaults[key]) throw new Error(`Missing service path assignment: ${key}`);
   }
-  const bunDirectory = process.platform === "win32" ? dirname(process.execPath) : defaults.PATH?.split(":")[0];
+  const bunDirectory = defaults.PATH?.split(":")[0];
   if (!bunDirectory || !(posix.isAbsolute(bunDirectory) || win32.isAbsolute(bunDirectory)))
     throw new Error("Invalid service Bun search directory");
   return { defaults, bunDirectory };

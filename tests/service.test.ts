@@ -2,8 +2,12 @@ import { test, expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { installService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
+import { installService as writeService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
 import { tmpdir } from "node:os";
+
+const fixtureBunDirectory = "/fixture/runtime/bin";
+const fixtureEnvironment = (): NodeJS.ProcessEnv => ({ ...process.env, ORBIT_BUN: `${fixtureBunDirectory}/bun` });
+const installService = (launcher: string, units: string) => writeService(launcher, units, fixtureEnvironment(), fixtureBunDirectory);
 
 /** Never the real unit directory: every case works inside a disposable prefix. */
 async function prefix() {

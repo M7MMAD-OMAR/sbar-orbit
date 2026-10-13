@@ -14,7 +14,11 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
   const root = await createWorkspaceDirectory("browser-experiment");
   const profiles = [join(root, "a"), join(root, "b")];
   await Bun.write(join(output, "latest.json"), JSON.stringify({ status: "running", pid: process.pid, profileRoot: root, startedAt: new Date().toISOString() }) + "\n");
-  const checkpoint = (phase: string) => Bun.write(join(output, "latest.json"), JSON.stringify({ status: "running", pid: process.pid, profileRoot: root, phase }) + "\n");
+  let currentPhase = "before-launch";
+  const checkpoint = (phase: string) => {
+    currentPhase = phase;
+    return Bun.write(join(output, "latest.json"), JSON.stringify({ status: "running", pid: process.pid, profileRoot: root, phase }) + "\n");
+  };
   const contexts: BrowserContext[] = [];
   const ownedBrowsers: Awaited<ReturnType<typeof launchChrome>>[] = [];
   const started = performance.now();
@@ -28,17 +32,32 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
   const focusSamples: { activePid: number; clientPids: readonly number[] }[] = [];
   let report: Record<string, unknown> = {};
   let bodyFailed = false;
+  let sampleOrdinal = 0;
+  let rssBoundary: { stage: string; browserOrdinal?: number } = { stage: "before-sample" };
+  const rssFailures: { originalError: unknown; sampleOrdinal: number; phaseAtStart: string;
+    phaseAtCatch: string; stage: string; browserOrdinal?: number; samplerPid: number;
+    observation: "sample" | "final-residual" }[] = [];
+  let rssFailuresDropped = 0;
+  const retainRssFailure = (originalError: unknown, ordinal: number, phaseAtStart: string,
+    observation: "sample" | "final-residual" = "sample") => {
+    if (rssFailures.length >= 32) { rssFailuresDropped++; return; }
+    rssFailures.push({ originalError, sampleOrdinal: ordinal, phaseAtStart, phaseAtCatch: currentPhase,
+      ...rssBoundary, samplerPid: process.pid, observation });
+  };
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     fetch: () => new Response(Bun.file(join(import.meta.dir, "fixture.html"))),
   });
   const processStats = async () => {
+    rssBoundary = { stage: "platform-admission" };
     if (process.platform !== "linux") {
       if (!["darwin", "win32"].includes(process.platform)) throw new Error("Browser experiment platform has no owned RSS sampler");
       let rssKiB = 0;
-      for (const browser of ownedBrowsers) {
+      for (const [index, browser] of ownedBrowsers.entries()) {
+        rssBoundary = { stage: "owned-browser-rss", browserOrdinal: index + 1 };
         if (!browser.sampleResidentProcesses) throw new Error("Owned browser did not provide its platform RSS sampler");
         const sample = await browser.sampleResidentProcesses();
+        rssBoundary = { stage: "returned-sample-validation", browserOrdinal: index + 1 };
         if (!Number.isFinite(sample.rssKiB) || sample.rssKiB < 0 || sample.pids.length > 512)
           throw new Error("Owned browser returned an invalid or oversized RSS sample");
         for (const pid of sample.pids) owned.add(pid);
@@ -47,6 +66,7 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
       return rssKiB;
     }
     let rss = 0;
+    rssBoundary = { stage: "linux-profile-processes" };
     for (const entry of await readdir("/proc")) {
       if (!/^\d+$/.test(entry)) continue;
       try {
@@ -60,11 +80,13 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
     return rss;
   };
   const sampleOnce = async () => {
+    const ordinal = ++sampleOrdinal;
+    const phaseAtStart = currentPhase;
     try {
       const rssKiB = await processStats();
       if (samples.length < 1024) samples.push({ at: performance.now() - started, rssKiB });
       else monitorErrors++;
-    } catch { monitorErrors++; }
+    } catch (error) { monitorErrors++; retainRssFailure(error, ordinal, phaseAtStart); }
     if (observer && focusMonitoring) {
       try {
         const value = await observer.read();
@@ -166,8 +188,9 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
     await sample();
     server.stop(true);
     let residualMatchedProcessRssKiB: number | "not measured" = "not measured";
+    const residualPhaseAtStart = currentPhase;
     try { residualMatchedProcessRssKiB = await processStats(); }
-    catch { monitorErrors++; }
+    catch (error) { monitorErrors++; retainRssFailure(error, sampleOrdinal, residualPhaseAtStart, "final-residual"); }
     let finalSamplingFailure: Error | undefined;
     if (monitorErrors !== 0 || (observer && focusErrors !== 0)) {
       finalSamplingFailure = new Error("Browser experiment sampling failed");
@@ -177,6 +200,21 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
     const gaps = samples.slice(1).map((s, i) => s.at - (samples[i]?.at ?? s.at));
     const final = { ...report, date: "2026-09-10", platform: process.platform,
       elapsedMs: Math.round(performance.now() - started), samples: samples.length, monitorErrors,
+      rssSamplingDiagnostics: { failures: rssFailures.map(({ originalError, ...metadata }) => {
+        try {
+          const ownText = (field: string, bound: number) => {
+            if (!originalError || (typeof originalError !== "object" && typeof originalError !== "function")) return undefined;
+            const descriptor = Object.getOwnPropertyDescriptor(originalError, field);
+            const value = descriptor && "value" in descriptor ? descriptor.value : undefined;
+            return typeof value === "string" ? value.slice(0, bound) : undefined;
+          };
+          const name = ownText("name", 128);
+          const message = typeof originalError === "string" ? originalError.slice(0, 1024) : ownText("message", 1024);
+          const code = ownText("code", 128);
+          return { ...metadata, originalError: { ...(name ? { name } : {}),
+            ...(message !== undefined ? { message } : { status: "unavailable" }), ...(code ? { code } : {}) } };
+        } catch { return { ...metadata, originalError: { status: "unavailable" } }; }
+      }), dropped: rssFailuresDropped, limit: "Caught RSS errors only; bounded metadata; causal sampler branch remains unmeasured until reported." },
       maxSampleGapMs: Math.round(Math.max(0, ...gaps)),
       rssObservationSource: process.platform === "linux" ? "owned profile command line matched processes" :
         process.platform === "win32" ? "owned Windows job working set" : "owned macOS process group resident memory",
@@ -196,7 +234,7 @@ export async function runBrowserExperiment(observerFactory?: ExperimentObserverF
         "No native desktop backend, live viewer, real account or agent-host connector tested.",
         "Temporary test profiles are never reused as personal profiles; sbar-orbit clean removes them after an hour."],
     };
-    await Bun.write(join(output, "latest.json"), JSON.stringify(final, null, 2) + "\n");
+    await Bun.write(join(output, process.env.ORBIT_BROWSER_EXPERIMENT_OUTPUT === "provider.json" ? "provider.json" : "latest.json"), JSON.stringify(final, null, 2) + "\n");
     console.log(JSON.stringify(final, null, 2));
     if (finalSamplingFailure && !bodyFailed) throw finalSamplingFailure;
   }
