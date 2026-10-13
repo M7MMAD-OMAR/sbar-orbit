@@ -6,12 +6,15 @@ const state = {
   starts: new Map([[11, 1100], [22, 2200]]), groups: new Map([[11, 100], [22, 100]]),
   resident: 2048, missing: 0, reads: [] as number[], lists: 0,
   duringRead: (_pid: number) => {}, finalLeaderChange: false,
-  startFault: "unexpected-size" as "unexpected-size" | "invalid-seconds", startReturnBytes: 0, groupReads: [] as number[],
+  startFault: "unexpected-size" as "unexpected-size" | "invalid-seconds", startReturnBytes: 0, groupReads: [] as number[], startErrno: 3,
+  stateReads: [] as number[], stateThrows: false, relistPids: undefined as number[] | undefined,
+  relistComplete: undefined as boolean | undefined,
+  stateResult: { returnBytes: 136, errno: 0, pid: 11, pgid: 100, status: 5, startedAtMs: 1100 } as import("../src/macos").ProcessMemberStateDiagnostic,
 };
 mock.module("../src/macos", () => ({
   processGroupMembers: (pgid: number) => {
     expect(pgid).toBe(100); state.lists++;
-    return { pids: [...state.pids], complete: state.complete, failed: state.failed };
+    return { pids: [...(state.lists > 1 ? state.relistPids ?? state.pids : state.pids)], complete: state.lists > 1 ? state.relistComplete ?? state.complete : state.complete, failed: state.failed };
   },
   groupIsStillOurs: (pgid: number, identity: { startedAtMs: number; executable: string }) => {
     expect(pgid).toBe(100); expect(identity.startedAtMs).toBe(1000); expect(identity.executable).toBe("/owned/bun");
@@ -20,11 +23,13 @@ mock.module("../src/macos", () => ({
   processStartedAtMs: (pid: number, diagnostic?: import("../src/macos").ProcessStartDiagnostic) => {
     const value = pid === 100 ? state.leader : state.starts.get(pid) ?? null;
     if (diagnostic) {
+      diagnostic.errno = value === null ? state.startErrno : 0;
       diagnostic.returnBytes = value === null ? state.startReturnBytes : 136;
       diagnostic.reason = value === null ? state.startFault : "valid";
     }
     return value;
   },
+  processMemberStateDiagnostic: (pid: number) => { state.stateReads.push(pid); if (state.stateThrows) throw new Error("controlled optional diagnostic fault"); return { ...state.stateResult }; },
   processGroupOf: (pid: number) => { state.groupReads.push(pid); return state.groups.get(pid) ?? null; },
   processUsage: (pid: number) => {
     state.reads.push(pid); state.duringRead(pid);
@@ -39,7 +44,9 @@ function reset() {
   state.starts = new Map([[11, 1100], [22, 2200]]); state.groups = new Map([[11, 100], [22, 100]]);
   state.resident = 2048; state.missing = 0; state.reads = []; state.lists = 0;
   state.duringRead = () => {}; state.finalLeaderChange = false;
-  state.startFault = "unexpected-size"; state.startReturnBytes = 0; state.groupReads = [];
+  state.startFault = "unexpected-size"; state.startReturnBytes = 0; state.groupReads = []; state.startErrno = 3;
+  state.stateReads = []; state.stateThrows = false; state.relistPids = undefined; state.relistComplete = undefined;
+  state.stateResult = { returnBytes: 136, errno: 0, pid: 11, pgid: 100, status: 5, startedAtMs: 1100 };
 }
 test("actual group sampler sums resident bytes, never footprint and only enumerated owned members", async () => {
   reset(); expect(await sampleRecordedGroup(identity, false)).toEqual({ pids: [11, 22], rssKiB: 4,
@@ -130,4 +137,49 @@ test("unreadable group diagnostics distinguish null from mismatch using one exis
     expect(message).toContain(`group=${group === null ? "unknown" : group}, relist=complete-present`);
     expect(state.groupReads).toEqual([11]); expect(state.reads).toEqual([]); expect(state.lists).toBe(2);
   }
+});
+
+// A later state observation is diagnostic only, including zombie and PID reuse outcomes.
+test("later state and errno never admit unknown original start identity", async () => {
+  for (const result of [
+    { returnBytes: 136, errno: 0, pid: 11, pgid: 100, status: 5, startedAtMs: 1100 },
+    { returnBytes: 136, errno: 0, pid: 11, pgid: 999, status: 2, startedAtMs: 9999 },
+    { returnBytes: 0, errno: 3, pid: null, pgid: null, status: null, startedAtMs: null },
+    { returnBytes: 0, errno: 1, pid: null, pgid: null, status: null, startedAtMs: null },
+  ]) {
+    reset(); state.starts.delete(11); state.stateResult = result;
+    let error: unknown;
+    try { await sampleRecordedGroup(identity, false); } catch (value) { error = value; }
+    expect(error).toBeInstanceOf(Error);
+    expect(error instanceof Error ? error.message : "").toContain("startErrno=3");
+    expect(error instanceof Error ? error.message : "").toContain(`stateReturnBytes=${result.returnBytes}, stateErrno=${result.errno}`);
+    expect(state.stateReads).toEqual([11]); expect(state.reads).toEqual([]);
+  }
+});
+test("state diagnostic never queries a member absent from a fresh complete relist", async () => {
+  reset(); state.starts.delete(11); state.relistPids = [22];
+  expect((await sampleRecordedGroup(identity, false)).pids).toEqual([22]);
+  expect(state.stateReads).toEqual([]); expect(state.reads).toEqual([22]);
+});
+test("incomplete relist fails before optional member state diagnostic", async () => {
+  reset(); state.starts.delete(11); state.relistComplete = false;
+  await expect(sampleRecordedGroup(identity, false)).rejects.toThrow("unavailable or truncated");
+  expect(state.stateReads).toEqual([]); expect(state.reads).toEqual([]);
+});
+test("known wrong member group rejects without an optional state lookup", async () => {
+  reset(); state.groups.set(11, 999);
+  await expect(sampleRecordedGroup(identity, false)).rejects.toThrow("identity is unreadable");
+  expect(state.stateReads).toEqual([]); expect(state.reads).toEqual([]);
+});
+
+test("optional state lookup failure preserves original unavailable error and never reads RSS", async () => {
+  reset(); state.starts.delete(11); state.stateThrows = true;
+  let error: unknown;
+  try { await sampleRecordedGroup(identity, false); } catch (value) { error = value; }
+  expect(error).toMatchObject({ code: "RESOURCE_STATUS_UNAVAILABLE" });
+  expect(error instanceof Error ? error.message : "").toContain("Owned browser group member identity is unreadable");
+  expect(error instanceof Error ? error.message : "").toContain("stateObservation=unavailable, stateReturnBytes=not-measured");
+  expect(error instanceof Error ? error.message : "").not.toContain("controlled optional diagnostic fault");
+  expect(state.stateReads).toEqual([11]); expect(state.groupReads).toEqual([]);
+  expect(state.reads).toEqual([]); expect(state.lists).toBe(2);
 });

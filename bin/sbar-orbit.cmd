@@ -16,17 +16,17 @@ for %%I in ("%orbit_bin%..") do set "orbit_root=%%~fI"
 
 rem Bun by location, not by the caller's PATH, for the same reason the bash launcher gives: a service
 rem or an agent host starts this with its own PATH, which need not carry Bun at all.
-set "orbit_bun="
+set "orbit_bun_executable="
 if defined ORBIT_BUN if not exist "%ORBIT_BUN%" goto :missing_pinned_bun
-if defined ORBIT_BUN set "orbit_bun=%ORBIT_BUN%"
-for /f "delims=" %%I in ('where bun.exe 2^>nul') do if not defined orbit_bun set "orbit_bun=%%I"
-if not defined orbit_bun if defined BUN_INSTALL if exist "%BUN_INSTALL%\bin\bun.exe" set "orbit_bun=%BUN_INSTALL%\bin\bun.exe"
-if not defined orbit_bun if exist "%USERPROFILE%\.bun\bin\bun.exe" set "orbit_bun=%USERPROFILE%\.bun\bin\bun.exe"
-if not defined orbit_bun if exist "%LOCALAPPDATA%\Programs\bun\bun.exe" set "orbit_bun=%LOCALAPPDATA%\Programs\bun\bun.exe"
+if defined ORBIT_BUN set "orbit_bun_executable=%ORBIT_BUN%"
+for /f "delims=" %%I in ('where bun.exe 2^>nul') do if not defined orbit_bun_executable set "orbit_bun_executable=%%I"
+if not defined orbit_bun_executable if defined BUN_INSTALL if exist "%BUN_INSTALL%\bin\bun.exe" set "orbit_bun_executable=%BUN_INSTALL%\bin\bun.exe"
+if not defined orbit_bun_executable if exist "%USERPROFILE%\.bun\bin\bun.exe" set "orbit_bun_executable=%USERPROFILE%\.bun\bin\bun.exe"
+if not defined orbit_bun_executable if exist "%LOCALAPPDATA%\Programs\bun\bun.exe" set "orbit_bun_executable=%LOCALAPPDATA%\Programs\bun\bun.exe"
 rem A single line branch, for the reason given at :status: a multi line ( ) block is what stops
 rem behaving when a batch file is checked out with LF endings, and the one path that must never fail
 rem obscurely is the one that says Bun is missing.
-if not defined orbit_bun goto :no_bun
+if not defined orbit_bun_executable goto :no_bun
 
 set "orbit_command=%~1"
 if "%orbit_command%"=="" set "orbit_command=help"
@@ -61,15 +61,15 @@ if "%orbit_command%"=="settings" goto :no_desktop
 if "%orbit_command%"=="config" goto :no_desktop
 
 rem doctor, clean, diagnostics and anything else the CLI grows.
-"%orbit_bun%" run "%orbit_root%\src\cli.ts" %*
+"%orbit_bun_executable%" run "%orbit_root%\src\cli.ts" %*
 exit /b %errorlevel%
 
 :preflight
-"%orbit_bun%" run "%orbit_root%\scripts\preflight.ts" %orbit_rest%
+"%orbit_bun_executable%" run "%orbit_root%\scripts\preflight.ts" %orbit_rest%
 exit /b %errorlevel%
 
 :serve
-"%orbit_bun%" run "%orbit_root%\scripts\limited.ts" "%orbit_bun%" run "%orbit_root%\src\cli.ts" serve %orbit_rest%
+"%orbit_bun_executable%" run "%orbit_root%\scripts\limited.ts" "%orbit_bun_executable%" run "%orbit_root%\src\cli.ts" serve %orbit_rest%
 exit /b %errorlevel%
 
 :status
@@ -83,11 +83,11 @@ rem breaks when a batch file is checked out with LF endings, and this one did on
 rem was never taken and `status --json --watch` ran the one shot. .gitattributes now ships this file
 rem with CRLF, and the branch does not depend on that being true.
 if not "%orbit_rest%"=="%orbit_rest:--watch=%" goto :watch
-"%orbit_bun%" run "%orbit_root%\src\cli.ts" status %orbit_rest%
+"%orbit_bun_executable%" run "%orbit_root%\src\cli.ts" status %orbit_rest%
 exit /b %errorlevel%
 
 :watch
-"%orbit_bun%" run "%orbit_root%\src\status.ts" --watch
+"%orbit_bun_executable%" run "%orbit_root%\src\status.ts" --watch
 exit /b %errorlevel%
 
 :adapter
@@ -95,11 +95,11 @@ rem The path this launcher was invoked by, so generated agent configuration name
 rem rather than the version behind it. Set only here, because every other subcommand starts a
 rem browser and a path under the person's home has no business in a browser's environment.
 set "ORBIT_LAUNCHER=%~f0"
-"%orbit_bun%" run "%orbit_root%\src\%orbit_command%.ts" %orbit_rest%
+"%orbit_bun_executable%" run "%orbit_root%\src\%orbit_command%.ts" %orbit_rest%
 exit /b %errorlevel%
 
 :install
-"%orbit_bun%" run "%orbit_root%\scripts\limited.ts" "%orbit_bun%" run "%orbit_root%\scripts\install.ts" %orbit_rest%
+"%orbit_bun_executable%" run "%orbit_root%\scripts\limited.ts" "%orbit_bun_executable%" run "%orbit_root%\scripts\install.ts" %orbit_rest%
 exit /b %errorlevel%
 
 :no_bun

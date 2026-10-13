@@ -27,7 +27,7 @@
  * the question this whole project exists to answer correctly.
  */
 
-import { dlopen, FFIType, ptr, read } from "bun:ffi";
+import { dlopen, FFIType, ptr, read, toArrayBuffer } from "bun:ffi";
 import { OrbitError } from "./errors";
 
 const { i32, u32, u64, ptr: pointer } = FFIType;
@@ -43,6 +43,7 @@ function libSystem() {
     proc_listpids: { args: [u32, u32, pointer, i32], returns: i32 },
     proc_listchildpids: { args: [i32, pointer, i32], returns: i32 },
     proc_pidpath: { args: [i32, pointer, u32], returns: i32 },
+    __error: { args: [], returns: pointer },
     proc_pidinfo: { args: [i32, i32, u64, pointer, i32], returns: i32 },
     getpgid: { args: [i32], returns: i32 },
     setpgid: { args: [i32, i32], returns: i32 },
@@ -293,14 +294,75 @@ const BSDINFO_START_USEC = 128;
 
 export interface ProcessStartDiagnostic {
   returnBytes: number | null;
+  errno?: number | null;
   reason: "not-measured" | "invalid-pid" | "unexpected-size" | "invalid-seconds" | "valid";
 }
 
+// Optional diagnostic preparation and memory reads cannot replace mandatory kernel outcomes.
+function optionalThreadErrnoView(symbols: ReturnType<typeof libSystem>): Int32Array | undefined {
+  try {
+    const address = symbols.__error();
+    if (typeof address !== "number" || !Number.isSafeInteger(address) || address <= 0) return;
+    const view = new Int32Array(toArrayBuffer(address, 0, 4));
+    view[0] = 0;
+    return view;
+  } catch { return; }
+}
+function optionalThreadErrnoRead(view: Int32Array | undefined): number | null {
+  try { return view?.[0] ?? null; } catch { return null; }
+}
+
+export interface ProcessMemberStateDiagnostic {
+  returnBytes: number | null;
+  errno: number | null;
+  pid: number | null;
+  pgid: number | null;
+  status: number | null;
+  startedAtMs: number | null;
+}
+
+/** Diagnostic only, after a complete owned-group relist. Nonzero arg includes zombie lookup.
+ * Apple sys/proc_info.h describes this layout; hosted kernel compatibility is not yet measured.
+ * A later snapshot grants no sampling, omission or signalling permission.
+ */
+export function processMemberStateDiagnostic(pid: number): ProcessMemberStateDiagnostic {
+  const result: ProcessMemberStateDiagnostic = { returnBytes: null, errno: null,
+    pid: null, pgid: null, status: null, startedAtMs: null };
+  if (!Number.isSafeInteger(pid) || pid <= 1) return result;
+  const buffer = new Uint8Array(PROC_BSDINFO_SIZE);
+  const symbols = system();
+  const address = ptr(buffer);
+  const errnoView = optionalThreadErrnoView(symbols);
+  const written = symbols.proc_pidinfo(pid, PROC_PIDTBSDINFO, 1n, address, buffer.byteLength);
+  const nativeErrno = optionalThreadErrnoRead(errnoView);
+  result.returnBytes = written;
+  result.errno = nativeErrno;
+  if (written !== PROC_BSDINFO_SIZE) return result;
+  // Decode numeric identity and state only, never names or commands.
+  result.pid = read.u32(address, 12);
+  result.pgid = read.u32(address, 100);
+  result.status = read.u32(address, 4);
+  const seconds = Number(read.u64(address, BSDINFO_START_SEC));
+  const microseconds = Number(read.u64(address, BSDINFO_START_USEC));
+  if (Number.isSafeInteger(seconds) && seconds > 0 && Number.isSafeInteger(microseconds) &&
+      microseconds >= 0 && microseconds < 1000000) {
+    const startedAtMs = seconds * 1000 + Math.floor(microseconds / 1000);
+    if (Number.isSafeInteger(startedAtMs)) result.startedAtMs = startedAtMs;
+  }
+  return result;
+}
+
 export function processStartedAtMs(pid: number, diagnostic?: ProcessStartDiagnostic): number | null {
-  if (diagnostic) { diagnostic.returnBytes = null; diagnostic.reason = "invalid-pid"; }
+  if (diagnostic) { diagnostic.returnBytes = null; diagnostic.errno = null; diagnostic.reason = "invalid-pid"; }
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const buffer = new Uint8Array(PROC_BSDINFO_SIZE);
-  const written = system().proc_pidinfo(pid, PROC_PIDTBSDINFO, 0n, ptr(buffer), buffer.byteLength);
+  const symbols = system();
+  const address = ptr(buffer);
+  // Observe the calling thread's errno with no intervening native call.
+  const errnoView = diagnostic ? optionalThreadErrnoView(symbols) : undefined;
+  const written = symbols.proc_pidinfo(pid, PROC_PIDTBSDINFO, 0n, address, buffer.byteLength);
+  const nativeErrno = optionalThreadErrnoRead(errnoView);
+  if (diagnostic) diagnostic.errno = nativeErrno;
   if (diagnostic) { diagnostic.returnBytes = written; diagnostic.reason = "unexpected-size"; }
   // A partial answer is not an answer. Decoding a short buffer would read whatever happened to be
   // in the tail as a timestamp, and this value gates a kill.

@@ -21,15 +21,15 @@ if "%orbit_root:~-1%"=="\" set "orbit_root=%orbit_root:~0,-1%"
 
 rem Bun by location rather than by the caller's PATH, the same search bin\sbar-orbit.cmd uses: an
 rem agent host starts this with its own environment, which need not carry Bun at all.
-set "orbit_bun="
-for /f "delims=" %%I in ('where bun.exe 2^>nul') do if not defined orbit_bun set "orbit_bun=%%I"
-if not defined orbit_bun if defined BUN_INSTALL if exist "%BUN_INSTALL%\bin\bun.exe" set "orbit_bun=%BUN_INSTALL%\bin\bun.exe"
-if not defined orbit_bun if exist "%USERPROFILE%\.bun\bin\bun.exe" set "orbit_bun=%USERPROFILE%\.bun\bin\bun.exe"
-if not defined orbit_bun if exist "%LOCALAPPDATA%\Programs\bun\bun.exe" set "orbit_bun=%LOCALAPPDATA%\Programs\bun\bun.exe"
-if not defined orbit_bun goto :no_bun
+set "orbit_bun_executable="
+for /f "delims=" %%I in ('where bun.exe 2^>nul') do if not defined orbit_bun_executable set "orbit_bun_executable=%%I"
+if not defined orbit_bun_executable if defined BUN_INSTALL if exist "%BUN_INSTALL%\bin\bun.exe" set "orbit_bun_executable=%BUN_INSTALL%\bin\bun.exe"
+if not defined orbit_bun_executable if exist "%USERPROFILE%\.bun\bin\bun.exe" set "orbit_bun_executable=%USERPROFILE%\.bun\bin\bun.exe"
+if not defined orbit_bun_executable if exist "%LOCALAPPDATA%\Programs\bun\bun.exe" set "orbit_bun_executable=%LOCALAPPDATA%\Programs\bun\bun.exe"
+if not defined orbit_bun_executable goto :no_bun
 
 pushd "%orbit_root%"
-"%orbit_bun%" run scripts\limited.ts "%orbit_bun%" run scripts\install.ts %*
+"%orbit_bun_executable%" run scripts\limited.ts "%orbit_bun_executable%" run scripts\install.ts %*
 set "orbit_status=%ERRORLEVEL%"
 popd
 exit /b %orbit_status%

@@ -17,7 +17,7 @@ export function sampleConfirmedClosedJob(evidence: import("./owned-cleanup").Sto
 
 /** Only query the group established by this browser's supervisor. */
 export async function sampleRecordedGroup(identity: RecordedGroupIdentity, exited: boolean): Promise<OwnedResidentSample> {
-  const { processGroupMembers, groupIsStillOurs, processUsage, processStartedAtMs, processGroupOf } = await import("./macos");
+  const { processGroupMembers, groupIsStillOurs, processUsage, processStartedAtMs, processGroupOf, processMemberStateDiagnostic } = await import("./macos");
   const fail = (message: string): never => { throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", message); };
   if (!Number.isSafeInteger(identity.pgid) || identity.pgid <= 1 ||
       !Number.isFinite(identity.startedAtMs) || identity.startedAtMs <= 0 ||
@@ -48,11 +48,22 @@ export async function sampleRecordedGroup(identity: RecordedGroupIdentity, exite
     if (before === null || beforeGroup !== identity.pgid) {
       const relisted = members();
       if (!relisted.includes(pid)) continue;
+      // Original unknown stays rejected. State is a later, diagnostic-only snapshot.
+      let stateDiagnostic: import("./macos").ProcessMemberStateDiagnostic | undefined;
+      let stateObservation: "not-requested" | "sampled" | "unavailable" = "not-requested";
+      if (before === null) {
+        try { stateDiagnostic = processMemberStateDiagnostic(pid); stateObservation = "sampled"; }
+        catch { stateObservation = "unavailable"; }
+      }
+      const numeric = (value: number | null | undefined) => value === null || value === undefined ? "not-measured" : value;
       fail(`Owned browser group member identity is unreadable (memberPid=${pid}, ownedPgid=${identity.pgid}, ` +
         `start=${before === null ? "unknown" : "valid"}, startReason=${startDiagnostic.reason}, ` +
         `startReturnBytes=${startDiagnostic.returnBytes === null ? "not-measured" : startDiagnostic.returnBytes}, ` +
         `group=${beforeGroup === undefined ? "not-read" : beforeGroup === null ? "unknown" : beforeGroup}, ` +
-        `relist=complete-present, relistCount=${relisted.length})`);
+        `relist=complete-present, relistCount=${relisted.length}, startErrno=${numeric(startDiagnostic.errno)}, ` +
+        `errnoObservation=thread-local-best-effort, stateObservation=${stateObservation}, stateReturnBytes=${numeric(stateDiagnostic?.returnBytes)}, stateErrno=${numeric(stateDiagnostic?.errno)}, ` +
+        `statePid=${numeric(stateDiagnostic?.pid)}, statePgid=${numeric(stateDiagnostic?.pgid)}, ` +
+        `stateStatus=${numeric(stateDiagnostic?.status)}, stateStartedAtMs=${numeric(stateDiagnostic?.startedAtMs)})`);
     }
     const usage = processUsage(pid);
     const after = processStartedAtMs(pid);
