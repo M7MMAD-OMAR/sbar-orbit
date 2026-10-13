@@ -25,7 +25,7 @@ test("collector preserves closure evidence and rejects changed terminal identity
   if (result.error) throw result.error;
   expect(result.signal).toBeNull();
   expect(result.stderr).toBe("");
-  const report = JSON.parse(result.stdout) as { results: ContractResult[]; contractMatches: boolean };
+  const report = JSON.parse(result.stdout) as { results: ContractResult[]; contractMatches: boolean; diagnostics: { case: string; firstBrowserRejection: unknown; firstRejectionPreserved: boolean; identityRejected: boolean; commandsCleared: boolean }[] };
   expect(report.results).toHaveLength(32);
   const mismatches = report.results.filter(row => !row.contractMatches).map(row => ({
     case: row.case, expectedAccepted: row.expectedAccepted, accepted: row.accepted,
@@ -38,4 +38,14 @@ test("collector preserves closure evidence and rejects changed terminal identity
     expect({ case: row.case, accepted: row.accepted }).toEqual({ case: row.case, accepted: row.expectedAccepted });
     if (row.subsequentAbsencePreserved !== undefined) expect(row.subsequentAbsencePreserved).toBe(true);
   }
+  expect(report.diagnostics.find(row => row.case === "owner_read")).toEqual({
+    case: "owner_read", firstBrowserRejection: { stage: "owner_read", exceptionClass: "OSError",
+      errno: 13, priorPinObserved: true, censusIdentity: { pid: 171, parent: 170, start: 2000, kernelState: "S" } },
+    firstRejectionPreserved: true, identityRejected: true, commandsCleared: true,
+  });
+  expect(report.diagnostics.find(row => row.case === "live_executable")).toEqual({
+    case: "live_executable", firstBrowserRejection: { stage: "live_executable", exceptionClass: "ValueError",
+      errno: null, priorPinObserved: true, censusIdentity: { pid: 171, parent: 170, start: 2000, kernelState: "S" } },
+    firstRejectionPreserved: true, identityRejected: true, commandsCleared: true,
+  });
 }, 10_000);

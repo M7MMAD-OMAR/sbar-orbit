@@ -48,6 +48,7 @@ class Simulation:
     def __init__(self, code):
         self.witness = copy.deepcopy(WITNESS)
         self.owner = {'pid': BROWSER}
+        self.owner_read_error = False
         self.writes = {}
         self.records = {
             ROOT: {'state': 'S', 'parent': 1, 'start': '900', 'rss': 8},
@@ -82,6 +83,8 @@ class Simulation:
                 if self.path == '/fixture/browser.json':
                     return json.dumps(sim.witness)
                 if self.path == '/fixture/owner.json':
+                    if sim.owner_read_error:
+                        raise PermissionError(13, 'simulated owner read refusal')
                     return json.dumps(sim.owner)
                 match = re.fullmatch(r'/proc/(\d+)/(stat|cgroup|task/\d+/children)', self.path)
                 if not match:
@@ -137,7 +140,10 @@ class Simulation:
             'isinstance': isinstance, 'len': len, 'any': any,
             'FileNotFoundError': FileNotFoundError, 'OSError': OSError,
             'ValueError': ValueError, 'TypeError': TypeError, 'KeyError': KeyError,
-            'list': list,
+            'list': list, 'type': type, 'str': str,
+            'PermissionError': PermissionError, 'ProcessLookupError': ProcessLookupError,
+            'IsADirectoryError': IsADirectoryError, 'NotADirectoryError': NotADirectoryError,
+            'InterruptedError': InterruptedError, 'BlockingIOError': BlockingIOError, 'TimeoutError': TimeoutError,
         }.items()}
         self.env = {
             '__builtins__': allowed_builtins,
@@ -149,7 +155,7 @@ class Simulation:
             'group': 'fixture-budget\n', 'boundary_lost': False,
             'browser_observations': {}, 'browser_commands': {},
             'browser_identity': {'status': 'invalid', 'reason': 'Missing live owned browser witness'},
-            'pinned_witness': None, 'pin_observed': False,
+            'pinned_witness': None, 'pin_observed': False, 'first_browser_rejection': None,
             'witness_path': FakePath('/fixture/browser.json'), 'report': FakePath('/fixture/tree.json'),
         }
         exec(code, self.env)
@@ -238,7 +244,27 @@ def main():
             result['subsequentAbsencePreserved'] = sim.env['browser_identity']['status'] == 'verified' and bool(sim.env['browser_commands'])
             result['contractMatches'] = result['contractMatches'] and result['subsequentAbsencePreserved']
         results.append(result)
-    print(json.dumps({'results': results, 'contractMatches': all(row['contractMatches'] for row in results)}))
+    diagnostics = []
+    for name in ('owner_read', 'live_executable'):
+        sim = Simulation(code)
+        sim.sample()
+        if sim.env['browser_identity']['status'] != 'verified' or not sim.env['pin_observed']:
+            raise RuntimeError('Diagnostic fixture initial live pin failed')
+        if name == 'owner_read':
+            sim.owner_read_error = True
+        else:
+            sim.executable = '/fixture/other'
+        sim.sample()
+        first = copy.deepcopy(sim.env['first_browser_rejection'])
+        sim.owner_read_error = False
+        sim.executable = EXE
+        sim.witness['browserVersion'] = 'changed after first rejection'
+        sim.sample()
+        diagnostics.append({'case':name, 'firstBrowserRejection':first,
+            'firstRejectionPreserved':first is not None and sim.env['first_browser_rejection'] == first,
+            'identityRejected':sim.env['browser_identity']['status'] == 'invalid',
+            'commandsCleared':not bool(sim.env['browser_commands'])})
+    print(json.dumps({'results': results, 'contractMatches': all(row['contractMatches'] for row in results), 'diagnostics': diagnostics}))
     return 0 if all(row['contractMatches'] for row in results) else 1
 
 

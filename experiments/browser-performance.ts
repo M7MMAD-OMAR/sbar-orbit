@@ -87,6 +87,7 @@ python_before = python_identity()
 witness_path = report.with_name("browser.json")
 browser_identity = {"status":"invalid", "reason":"Missing live owned browser witness"}
 pinned_witness = None
+first_browser_rejection = None
 group = Path(f"/proc/{root}/cgroup").read_text()
 boundary_lost = False
 deadline, failed, root_status = last + 25, False, None
@@ -113,62 +114,100 @@ def census():
         except FileNotFoundError: pass
     return result
 def validate_browser(processes):
-    global browser_identity, pinned_witness, pin_observed
+    global browser_identity, pinned_witness, pin_observed, first_browser_rejection
     if not witness_path.exists(): return
+    _rejection_identity = None
+    _rejection_stage = "witness_read"
     try:
         witness = json.loads(witness_path.read_text())
+        _rejection_stage = "witness_unchanged"
         if pinned_witness is not None and witness != pinned_witness:
             raise ValueError("Browser witness changed")
         if browser_identity.get("reason") == "Browser witness rejected": return
+        _rejection_stage = "witness_source_worker"
         if witness.get("source") != "owned-browser-cdp" or witness.get("workerPid") != child.pid:
             raise ValueError("Witness source or worker mismatch")
+        _rejection_stage = "witness_pid"
         pid = witness.get("pid")
         if not isinstance(pid, int) or pid <= 0 or witness.get("cdpPid") != pid or witness.get("executable") != sys.argv[-1]:
             raise ValueError("Witness CDP PID or executable mismatch")
         live = {process["pid"]:process for process in processes}
+        _rejection_stage = "census_presence"
         if pid not in live:
             if pinned_witness is not None: return
             raise ValueError("Browser witness was not observed live")
+        _rejection_stage = "ancestry_shape"
         ancestry = witness.get("ancestry")
         if not isinstance(ancestry, list) or len(ancestry) < 2:
             raise ValueError("Missing full worker ancestry")
         expected = pid
         for index, identity in enumerate(ancestry):
+            _rejection_stage = "ancestry_identity"
             actual = live.get(expected)
             if not actual or identity != {key:actual[key] for key in ("pid", "parent", "start")}:
                 raise ValueError("Witness ancestry identity mismatch")
+            _rejection_stage = "ancestry_end"
             if expected == child.pid:
                 if index != len(ancestry)-1: raise ValueError("Ancestry extends beyond worker")
             elif index == len(ancestry)-1:
                 raise ValueError("Ancestry does not reach worker")
             expected = actual["parent"]
+        _rejection_stage = "root_identity"
         if witness.get("start") != live[pid]["start"] or witness.get("parent") != live[pid]["parent"]:
             raise ValueError("Witness root identity mismatch")
+        _rejection_row = live[pid]
+        _rejection_birth = _rejection_row["start"]
+        if (type(pid) is int and 0 < pid <= 2147483647 and
+            type(_rejection_row["parent"]) is int and 0 <= _rejection_row["parent"] <= 2147483647 and
+            type(_rejection_birth) is str and 0 < len(_rejection_birth) <= 20 and
+            _rejection_birth.isascii() and _rejection_birth.isdecimal() and
+            int(_rejection_birth) <= 18446744073709551615 and
+            _rejection_row.get("kernelState") in ("R", "S", "D", "Z", "T", "t", "X", "x", "K", "W", "P", "I")):
+            _rejection_identity = {"pid":pid, "parent":_rejection_row["parent"],
+                "start":int(_rejection_birth), "kernelState":_rejection_row["kernelState"]}
         owner_path = witness.get("ownerPath")
         if owner_path is not None:
+            _rejection_stage = "owner_read"
             owner = json.loads(Path(owner_path).read_text())
+            _rejection_stage = "owner_identity"
             if owner.get("pid") != pid or witness.get("ownerPid") != pid:
                 raise ValueError("Orbit owner record mismatch")
         state = live[pid].get("kernelState")
         if state in ("Z", "X"):
+            _rejection_stage = "terminal_pin"
             if pinned_witness is None or not pin_observed or browser_identity.get("status") != "verified":
                 raise ValueError("Terminal process has no verified live pin")
             return
+        _rejection_stage = "live_executable"
         if os.path.realpath(f"/proc/{pid}/exe") != witness["executable"]:
 
             raise ValueError("Live executable mismatch")
+        _rejection_stage = "live_cmdline"
         argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode().split("\0")[:-1]
+        _rejection_stage = "root_command"
         if not argv or any(re.search(r"(?:^|\s)--type=", arg) for arg in argv):
             raise ValueError("Browser root command mismatch")
+        _rejection_stage = "headless_command"
         if not any(arg in ("--headless", "--headless=new", "--headless=old", "--headless=chrome") for arg in argv):
             raise ValueError("Headless mode not demonstrated")
         if not pin_observed:
+            _rejection_stage = "pin_write"
             report.with_name("browser-validated.json").write_text(json.dumps({"pid":pid,"start":witness["start"],"witness":witness}))
             pin_observed = True
         pinned_witness = witness
         browser_identity = {"status":"verified", "witness":witness}
         browser_commands[f"{pid}:{witness['start']}"] = argv
-    except (OSError, ValueError, TypeError, KeyError):
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        if first_browser_rejection is None:
+            _rejection_exception = "OSError" if isinstance(error, OSError) else "ValueError" if isinstance(error, ValueError) else "TypeError" if isinstance(error, TypeError) else "KeyError"
+            _rejection_errno = None
+            if type(error) in (OSError, FileNotFoundError, PermissionError, ProcessLookupError,
+                               IsADirectoryError, NotADirectoryError, InterruptedError, BlockingIOError, TimeoutError):
+                _rejection_value = error.errno
+                if type(_rejection_value) is int and 0 < _rejection_value <= 4095:
+                    _rejection_errno = _rejection_value
+            first_browser_rejection = {"stage":_rejection_stage, "exceptionClass":_rejection_exception,
+                "errno":_rejection_errno, "priorPinObserved":pin_observed, "censusIdentity":_rejection_identity}
         browser_identity = {"status":"invalid", "reason":"Browser witness rejected"}
         browser_commands.clear()
 def stop(signum, frame):
@@ -204,7 +243,7 @@ report.write_text(json.dumps({"root":root, "worker":child.pid, "exitCode":root_s
     "cpuMethod":"RUSAGE_SELF plus RUSAGE_CHILDREN after subreaper wait to ECHILD",
     "sampleFailures":failures, "maxSampleGapMs":max_gap, "samples":rows,
     "browserCommands":browser_commands, "browserObservations":browser_observations,
-    "browserIdentity":browser_identity, "pinObserved":pin_observed,
+    "browserIdentity":browser_identity, "pinObserved":pin_observed, "firstBrowserRejection":first_browser_rejection,
     "pythonBefore":python_before, "pythonAfter":python_identity(), "cleanup":"wait returned ECHILD"}))
 sys.exit(1 if failed or root_status != 0 else 0)
 `;
