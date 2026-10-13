@@ -100,7 +100,7 @@ def census():
         try:
             fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
             result.append({"pid":pid, "parent":int(fields[1]), "start":fields[19],
-                           "rssBytes":int(fields[21])*page_size})
+                           "rssBytes":int(fields[21])*page_size, "kernelState":fields[0]})
             if Path(f"/proc/{pid}/cgroup").read_text() != group: boundary_lost = True
             try:
                 if os.path.realpath(f"/proc/{pid}/exe") == sys.argv[-1]:
@@ -129,8 +129,6 @@ def validate_browser(processes):
         if pid not in live:
             if pinned_witness is not None: return
             raise ValueError("Browser witness was not observed live")
-        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-        if state in ("Z", "X") and pinned_witness is not None: return
         ancestry = witness.get("ancestry")
         if not isinstance(ancestry, list) or len(ancestry) < 2:
             raise ValueError("Missing full worker ancestry")
@@ -146,18 +144,24 @@ def validate_browser(processes):
             expected = actual["parent"]
         if witness.get("start") != live[pid]["start"] or witness.get("parent") != live[pid]["parent"]:
             raise ValueError("Witness root identity mismatch")
+        owner_path = witness.get("ownerPath")
+        if owner_path is not None:
+            owner = json.loads(Path(owner_path).read_text())
+            if owner.get("pid") != pid or witness.get("ownerPid") != pid:
+                raise ValueError("Orbit owner record mismatch")
+        state = live[pid].get("kernelState")
+        if state in ("Z", "X"):
+            if pinned_witness is None or not pin_observed or browser_identity.get("status") != "verified":
+                raise ValueError("Terminal process has no verified live pin")
+            return
         if os.path.realpath(f"/proc/{pid}/exe") != witness["executable"]:
+
             raise ValueError("Live executable mismatch")
         argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode().split("\0")[:-1]
         if not argv or any(re.search(r"(?:^|\s)--type=", arg) for arg in argv):
             raise ValueError("Browser root command mismatch")
         if not any(arg in ("--headless", "--headless=new", "--headless=old", "--headless=chrome") for arg in argv):
             raise ValueError("Headless mode not demonstrated")
-        owner_path = witness.get("ownerPath")
-        if owner_path is not None:
-            owner = json.loads(Path(owner_path).read_text())
-            if owner.get("pid") != pid or witness.get("ownerPid") != pid:
-                raise ValueError("Orbit owner record mismatch")
         if not pin_observed:
             report.with_name("browser-validated.json").write_text(json.dumps({"pid":pid,"start":witness["start"],"witness":witness}))
             pin_observed = True

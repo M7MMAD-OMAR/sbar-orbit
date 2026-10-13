@@ -1,6 +1,51 @@
 # Completion status and evidence
 
-## Current integration status, October 13, 2026
+## Latest published candidate evidence, October 13, 2026
+
+[Draft PR 21](https://github.com/M7MMAD-OMAR/sbar-orbit/pull/21) contains the
+integration and platform fixes. Its measured head is
+`d500c7d8c802b72cf9df38894a2a8ac4ac6e5227`. Official main remains
+`bbfb6b5b3892f920b798d212e2361d8907249c8d`; the draft is not merged.
+
+[Actual CI run 38343164976](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/38343164976)
+completed all nine jobs successfully. The full suites reported:
+
+| Platform | Passed | Skipped | Failed |
+| --- | ---: | ---: | ---: |
+| Windows | 904 | 351 | 0 |
+| macOS | 931 | 324 | 0 |
+| Ubuntu | 1153 | 102 | 0 |
+
+Registered-hosts and installed-browser jobs also passed on each platform.
+CI tested the PR merge checkout; the seven changed-file hashes match the
+reviewed head. Skips remain unmeasured capabilities. Later collector changes
+do not inherit this source boundary or its local affected counts.
+
+The same measured head passed local typecheck, 46 affected tests with 20 skips
+and zero failures, public audit over 1,065 files, secret scan and two independent
+sbar-checkpoint source reviews. The previous 1,199-pass local full suite belongs
+to preceding source, not a fresh measurement of this head.
+
+Windows's original 23 failures reached zero after the recorded source repairs.
+Earlier macOS sampler and presence failures did not recur in this run. Their
+historical failing PID state and cause remain not measured; this is not a
+causal repair claim. Existing raw failures and bounded capture rows are retained.
+
+Default performance and the five matched comparisons remain open. The rejected
+software-profile attempt and successful single-worker diagnostic do not meet
+that requirement. The earlier isolated no-service candidate install is
+installation state on older source, not published installation acceptance.
+Native owner and plugin holds, real participant acceptance, published managed
+installation, release and final-main verification remain open. Diagnostic
+research is separate from these delivery gates.
+
+Local evidence is retained under `/var/tmp/orbit-consolidation-2026-10-06` in
+`current21-fourth-ci-root-v1`, `current21-fourth-ci-macos-v1` and
+`checkpoint-current21-launcher-diagnostics-20261013-v1/run`. These workstation
+paths are not published artifacts. All sections below retain their historical
+source boundaries; their use of current or pending describes that snapshot.
+
+## Historical October 13 snapshot before publication
 
 Official main remains `bbfb6b5b3892f920b798d212e2361d8907249c8d`.
 Before the October 13 diagnostic additions, the authentic
