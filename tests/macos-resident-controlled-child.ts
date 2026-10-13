@@ -6,6 +6,7 @@ const state = {
   starts: new Map([[11, 1100], [22, 2200]]), groups: new Map([[11, 100], [22, 100]]),
   resident: 2048, missing: 0, reads: [] as number[], lists: 0,
   duringRead: (_pid: number) => {}, finalLeaderChange: false,
+  startFault: "unexpected-size" as "unexpected-size" | "invalid-seconds", startReturnBytes: 0, groupReads: [] as number[],
 };
 mock.module("../src/macos", () => ({
   processGroupMembers: (pgid: number) => {
@@ -16,8 +17,15 @@ mock.module("../src/macos", () => ({
     expect(pgid).toBe(100); expect(identity.startedAtMs).toBe(1000); expect(identity.executable).toBe("/owned/bun");
     return state.own;
   },
-  processStartedAtMs: (pid: number) => pid === 100 ? state.leader : state.starts.get(pid) ?? null,
-  processGroupOf: (pid: number) => state.groups.get(pid) ?? null,
+  processStartedAtMs: (pid: number, diagnostic?: import("../src/macos").ProcessStartDiagnostic) => {
+    const value = pid === 100 ? state.leader : state.starts.get(pid) ?? null;
+    if (diagnostic) {
+      diagnostic.returnBytes = value === null ? state.startReturnBytes : 136;
+      diagnostic.reason = value === null ? state.startFault : "valid";
+    }
+    return value;
+  },
+  processGroupOf: (pid: number) => { state.groupReads.push(pid); return state.groups.get(pid) ?? null; },
   processUsage: (pid: number) => {
     state.reads.push(pid); state.duringRead(pid);
     if (state.finalLeaderChange) state.leader = 1001;
@@ -31,6 +39,7 @@ function reset() {
   state.starts = new Map([[11, 1100], [22, 2200]]); state.groups = new Map([[11, 100], [22, 100]]);
   state.resident = 2048; state.missing = 0; state.reads = []; state.lists = 0;
   state.duringRead = () => {}; state.finalLeaderChange = false;
+  state.startFault = "unexpected-size"; state.startReturnBytes = 0; state.groupReads = [];
 }
 test("actual group sampler sums resident bytes, never footprint and only enumerated owned members", async () => {
   reset(); expect(await sampleRecordedGroup(identity, false)).toEqual({ pids: [11, 22], rssKiB: 4,
@@ -94,4 +103,31 @@ test("poststop zero requires exited supervisor and a fresh complete kernel-empty
   reset(); state.own = false; await expect(sampleRecordedGroup(identity, true)).rejects.toThrow("no longer verifiable");
   reset(); state.pids = []; state.failed = true; await expect(sampleRecordedGroup(identity, true)).rejects.toThrow();
   reset(); state.pids = []; state.complete = false; await expect(sampleRecordedGroup(identity, true)).rejects.toThrow();
+});
+
+// These are controlled diagnostic distinctions, not native failure measurements.
+test("unreadable start diagnostics retain the existing native result without an extra group read", async () => {
+  for (const [reason, bytes] of [["unexpected-size", 0], ["unexpected-size", 120], ["invalid-seconds", 136]] as const) {
+    reset(); state.starts.delete(11); state.startFault = reason; state.startReturnBytes = bytes;
+    let error: unknown;
+    try { await sampleRecordedGroup(identity, false); } catch (value) { error = value; }
+    expect(error).toBeInstanceOf(Error);
+    const message = error instanceof Error ? error.message : "";
+    expect(message).toContain("memberPid=11, ownedPgid=100, start=unknown");
+    expect(message).toContain(`startReason=${reason}, startReturnBytes=${bytes}, group=not-read`);
+    expect(message).toContain("relist=complete-present, relistCount=2");
+    expect(state.groupReads).toEqual([]); expect(state.reads).toEqual([]); expect(state.lists).toBe(2);
+  }
+});
+test("unreadable group diagnostics distinguish null from mismatch using one existing group read", async () => {
+  for (const group of [null, 999]) {
+    reset(); if (group === null) state.groups.delete(11); else state.groups.set(11, group);
+    let error: unknown;
+    try { await sampleRecordedGroup(identity, false); } catch (value) { error = value; }
+    expect(error).toBeInstanceOf(Error);
+    const message = error instanceof Error ? error.message : "";
+    expect(message).toContain("start=valid, startReason=valid, startReturnBytes=136");
+    expect(message).toContain(`group=${group === null ? "unknown" : group}, relist=complete-present`);
+    expect(state.groupReads).toEqual([11]); expect(state.reads).toEqual([]); expect(state.lists).toBe(2);
+  }
 });

@@ -291,16 +291,25 @@ const PROC_BSDINFO_SIZE = 136;
 const BSDINFO_START_SEC = 120;
 const BSDINFO_START_USEC = 128;
 
-export function processStartedAtMs(pid: number): number | null {
+export interface ProcessStartDiagnostic {
+  returnBytes: number | null;
+  reason: "not-measured" | "invalid-pid" | "unexpected-size" | "invalid-seconds" | "valid";
+}
+
+export function processStartedAtMs(pid: number, diagnostic?: ProcessStartDiagnostic): number | null {
+  if (diagnostic) { diagnostic.returnBytes = null; diagnostic.reason = "invalid-pid"; }
   if (!Number.isInteger(pid) || pid <= 0) return null;
   const buffer = new Uint8Array(PROC_BSDINFO_SIZE);
   const written = system().proc_pidinfo(pid, PROC_PIDTBSDINFO, 0n, ptr(buffer), buffer.byteLength);
+  if (diagnostic) { diagnostic.returnBytes = written; diagnostic.reason = "unexpected-size"; }
   // A partial answer is not an answer. Decoding a short buffer would read whatever happened to be
   // in the tail as a timestamp, and this value gates a kill.
   if (written !== PROC_BSDINFO_SIZE) return null;
   const seconds = Number(read.u64(ptr(buffer), BSDINFO_START_SEC));
   const microseconds = Number(read.u64(ptr(buffer), BSDINFO_START_USEC));
+  if (diagnostic) diagnostic.reason = "invalid-seconds";
   if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  if (diagnostic) diagnostic.reason = "valid";
   return seconds * 1000 + Math.floor(microseconds / 1000);
 }
 

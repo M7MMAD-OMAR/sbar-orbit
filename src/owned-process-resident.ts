@@ -41,10 +41,18 @@ export async function sampleRecordedGroup(identity: RecordedGroupIdentity, exite
   const pids: number[] = [];
   let residentBytes = 0;
   for (const pid of listed) {
-    const before = processStartedAtMs(pid);
-    if (before === null || processGroupOf(pid) !== identity.pgid) {
-      if (!members().includes(pid)) continue;
-      fail("Owned browser group member identity is unreadable");
+    const startDiagnostic: import("./macos").ProcessStartDiagnostic = { returnBytes: null, reason: "not-measured" };
+    const before = processStartedAtMs(pid, startDiagnostic);
+    // Keep the original short circuit: no group read when the start identity is unknown.
+    const beforeGroup = before === null ? undefined : processGroupOf(pid);
+    if (before === null || beforeGroup !== identity.pgid) {
+      const relisted = members();
+      if (!relisted.includes(pid)) continue;
+      fail(`Owned browser group member identity is unreadable (memberPid=${pid}, ownedPgid=${identity.pgid}, ` +
+        `start=${before === null ? "unknown" : "valid"}, startReason=${startDiagnostic.reason}, ` +
+        `startReturnBytes=${startDiagnostic.returnBytes === null ? "not-measured" : startDiagnostic.returnBytes}, ` +
+        `group=${beforeGroup === undefined ? "not-read" : beforeGroup === null ? "unknown" : beforeGroup}, ` +
+        `relist=complete-present, relistCount=${relisted.length})`);
     }
     const usage = processUsage(pid);
     const after = processStartedAtMs(pid);
