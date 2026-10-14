@@ -1,5 +1,15 @@
 # Completion status and evidence
 
+## 14 October 2026 desktop pilot
+
+[The desktop guide pilot](desktop-guide.md) records owner-authorized direct
+application opening, an editor save and a later calculator accessibility sequence.
+Tier: Limited, one workstation. The initial shared-pointer attempt was rejected.
+The visible guide is an overlay and sends no input. Existing Chrome control on
+workspace 4 did not complete. This adds no native handoff acceptance and leaves
+the release hold in force. The optional guide is retained in release 0.2.1.
+
+
 ## Current startup diagnostic candidate and provider limits
 
 The verified main baseline is [834f3f6dbbda77aa8b002432e9b462b2702a2282](https://github.com/M7MMAD-OMAR/sbar-orbit/commit/834f3f6dbbda77aa8b002432e9b462b2702a2282),

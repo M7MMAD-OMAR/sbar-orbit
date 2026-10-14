@@ -1,5 +1,15 @@
 # Support tiers
 
+## 14 October 2026 desktop pilot
+
+[The desktop guide pilot](desktop-guide.md) records owner-authorized direct
+application opening, an editor save and a later calculator accessibility sequence.
+Tier: Limited, one workstation. The initial shared-pointer attempt was rejected.
+The visible guide is an overlay and sends no input. Existing Chrome control on
+workspace 4 did not complete. This adds no native handoff acceptance and leaves
+the release hold in force. The optional guide is retained in release 0.2.1.
+
+
 What Orbit is known to do, on which host class, on what evidence, and as of when.
 
 This file exists so that a person installing Orbit on a machine this project has never touched can

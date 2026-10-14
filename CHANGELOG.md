@@ -2,6 +2,20 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.2.1 (14 October 2026)
+
+Preserves the local desktop pilot and its approved compact Orbit badge, Codex
+pointer label and softer border as an optional, visual-only preview. The preview
+sends no input, requires private validated position state and the shared budget,
+and does not enable native handoff or start automatically.
+
+The pilot's four application openings, editor save and later calculator actions
+are documented at Limited scope. The rejected shared-pointer attempt and failed
+existing Chrome control remain visible. Universal application control remains
+not measured. Frame-consistency test fixtures now wait within a bound for
+transient Windows profile locks after browser closure, preserving errors when
+cleanup does not finish. [Release notes](docs/release-0.2.1.md).
+
 ## 0.2.0 (1 October 2026)
 
 Checkpoint release of the application integration work since 0.1.1. Includes

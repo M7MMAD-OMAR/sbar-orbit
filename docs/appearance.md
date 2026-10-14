@@ -38,3 +38,10 @@ The person's session bus stays unreachable from the private display. Orbit now s
 The settings portal is not reachable, so applications that read the colour scheme only from the portal and ignore both `settings.ini` and the libadwaita variable stay light. None of the applications tried did.
 
 A theme file is observed content. The cursor name is validated before it reaches the compositor configuration, and no value from any copied file is placed in a command line.
+
+## Optional desktop guide preview
+
+[The visual guide](desktop-guide.md#reusable-visual-preview) retains the approved
+compact Orbit badge and Codex pointer label. It is owner-started, visual-only,
+click-through and time-bounded. It is not a session control capability and does
+not start automatically or change the native handoff hold.
