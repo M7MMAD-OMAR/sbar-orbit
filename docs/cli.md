@@ -467,3 +467,10 @@ Mutation outcomes and request fingerprints remain retained. The 10000-request
 session bound still applies. Native theme acceptance, owner activation and
 comparative CPU, memory and latency remain unmeasured. See the source-bound
 [private live view proof](../experiments/ghost-cursor/NATIVE-LIVE-VIEW.md).
+
+## Optional desktop guide preview
+
+[The visual guide](desktop-guide.md#reusable-visual-preview) retains the approved
+compact Orbit badge and Codex pointer label. It is owner-started, visual-only,
+click-through and time-bounded. It is not a session control capability and does
+not start automatically or change the native handoff hold.

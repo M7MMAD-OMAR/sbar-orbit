@@ -38,7 +38,7 @@ writes the MCP configuration for detected Claude Code, Codex and Hermes hosts, a
 the installed broker answers. Restart those hosts to load Orbit's tools. Nothing needs root, and
 `--dry-run` reports every step without changing anything.
 
-Current version: **0.1.0** ([release notes](docs/release-0.1.0.md) ·
+Current version: **0.2.1** ([release notes](docs/release-0.2.1.md) ·
 [changelog](CHANGELOG.md)).
 
 ## Use it
@@ -131,3 +131,10 @@ host class, so `sbar-orbit doctor --report` from another system is evidence it c
 itself.
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Changelog](CHANGELOG.md) · [Apache-2.0](LICENSE)
+
+## Desktop guide pilot
+
+The [14 October desktop pilot](docs/desktop-guide.md) retains four real application
+openings and a limited calculator accessibility sequence. Its approved visual
+guide is optional and sends no input. Existing owner Chrome control was not
+completed; native handoff remains held.
