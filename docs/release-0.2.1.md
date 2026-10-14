@@ -27,3 +27,9 @@ running sessions must finish before restarting the shared broker.
 Local checks, independent review, archive integrity and installation receipts
 are retained separately. A published release is a tested source delivery at its
 stated scope, not acceptance of unmeasured owner handoff or external platforms.
+
+The first provider run passed eight jobs but failed the Windows suite during
+fixture profile removal with EBUSY after the stale-frame rejection assertion
+had succeeded. Frame-consistency fixtures now use bounded Windows-only cleanup
+waits. Persistent locks and nontransient errors still reject. This fixture repair
+does not change production browser cleanup or the capture timeout.

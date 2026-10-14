@@ -1,10 +1,11 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserBackend, captureTimeoutMs } from '../src/browser';
 import type { Page } from 'playwright';
 import { fixturePhases } from './fixture-phases';
+import { removeFixtureProfile } from './fixture-profile-cleanup';
 
 test('browser frame keeps its captured page and dimensions when tab actions finish concurrently', async () => {
   const trace = fixturePhases('first-frame-consistency');
@@ -99,7 +100,7 @@ test('browser frame keeps its captured page and dimensions when tab actions fini
       trace.phase('backend-close', 'start');
       await backend?.close();
       trace.phase('backend-close', 'done');
-      await trace.observe('profile-remove', rm(profile, { recursive: true }));
+      await trace.observe('profile-remove', removeFixtureProfile(profile));
     } finally {
       server.stop(true); trace.phase('server-stop', 'done');
       try { restorePointer(); } catch {}
@@ -192,7 +193,7 @@ for (const change of ['navigate', 'close'] as const) {
       mark('finally-gate-release');
       release();
       capturedPage?.off('framenavigated', committed);
-      try { await backend?.close(); await rm(profile, { recursive: true }); }
+      try { await backend?.close(); await removeFixtureProfile(profile); }
       finally {
         server.stop(true);
         const output = process.env.ORBIT_QA_OUTPUT ?? join(tmpdir(), 'orbit-frame-consistency');
@@ -283,7 +284,7 @@ test('browser observation bounds real pending pointer metadata without accumulat
     release(); await navigating?.catch(() => {});
     if (previousBudget === undefined) delete process.env.ORBIT_CAPTURE_TIMEOUT_MS;
     else process.env.ORBIT_CAPTURE_TIMEOUT_MS = previousBudget;
-    try { await backend?.close(); await rm(profile, { recursive: true }); }
+    try { await backend?.close(); await removeFixtureProfile(profile); }
     finally { server.stop(true); }
   }
 }, 30000);
@@ -365,7 +366,7 @@ for (const change of ['navigate', 'close'] as const) {
       release();
       await observing;
       page?.off('framenavigated', committed);
-      try { await backend?.close(); await rm(profile, { recursive: true }); }
+      try { await backend?.close(); await removeFixtureProfile(profile); }
       finally {
         server.stop(true);
         const evidence = { change, atAssertion, trace };
@@ -434,7 +435,7 @@ test('browser obsolete metadata stays single-flight until real settlement and th
     expect(backend['observationInvalidations'].size).toBe(0);
   } finally {
     release(); await observing;
-    try { await backend?.close(); await rm(profile, { recursive: true }); }
+    try { await backend?.close(); await removeFixtureProfile(profile); }
     finally { server.stop(true); try { console.log(JSON.stringify({ obsoleteMetadataFlight: trace })); } catch {} }
   }
 }, 30000);
@@ -487,7 +488,7 @@ test('browser obsolete late attachment releases its own channel without capturin
     try { console.log(JSON.stringify({ obsoleteLateAttachment: { detached, oldCaptures, freshAttachmentRetained: true } })); } catch {}
   } finally {
     release(); await observing;
-    try { await backend?.close(); await rm(profile, { recursive: true }); }
+    try { await backend?.close(); await removeFixtureProfile(profile); }
     finally { server.stop(true); }
   }
 }, 30000);

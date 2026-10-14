@@ -12,7 +12,9 @@ and does not enable native handoff or start automatically.
 The pilot's four application openings, editor save and later calculator actions
 are documented at Limited scope. The rejected shared-pointer attempt and failed
 existing Chrome control remain visible. Universal application control remains
-not measured. [Release notes](docs/release-0.2.1.md).
+not measured. Frame-consistency test fixtures now wait within a bound for
+transient Windows profile locks after browser closure, preserving errors when
+cleanup does not finish. [Release notes](docs/release-0.2.1.md).
 
 ## 0.2.0 (1 October 2026)
 
