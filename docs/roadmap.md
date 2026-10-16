@@ -29,11 +29,13 @@ uses the definitions in [support tiers](support-tiers.md).
    recipes across relocated installations and altered XDG paths. Ambiguous,
    disappeared or unsupported targets must fail explicitly. A new private HOME
    must never be reported as preserved owner state.
-2. **Validate native accessibility.** The private read-only integration is in
-   progress, pending validation. Verify bounded traversal, exact process and
-   element identities, stale-handle refusal and session lifecycle behavior on
-   owned applications. Semantic mutation is not established by read-only access.
-   The earlier [calculator demonstration](native-desktop-demonstration.md) is
+2. **Review and broaden native accessibility.** Private read-only inspection is
+   implemented. An owned GTK3 fixture measured button name/role readback, foreign
+   window refusal, replacement of inherited AT_SPI routing and helper cleanup.
+   Independent review remains pending. Extend evidence for multiple windows,
+   duplicate titles, changing trees and other toolkits. Document text, per-node
+   actions and semantic mutations are unsupported. The earlier
+   [calculator demonstration](native-desktop-demonstration.md) remains historical
    supporting evidence, not general application acceptance.
 3. **Close the existing-owner incident.** Distinguish corrected code from measured
    safety. Follow the source-bound regression, client, isolation and cleanup gates

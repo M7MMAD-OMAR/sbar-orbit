@@ -1,483 +1,184 @@
-> Current contract: Orbit is desktop-only. `session create` defaults to `system`.
-> `session create browser`, `profiles` and browser account saving are retired.
-> Browser examples retained below are historical and refused by the public broker.
-> See [desktop-only migration](desktop-only.md).
+# Desktop CLI
 
-# Local broker and CLI
+Use the installed `sbar-orbit` launcher or `./bin/sbar-orbit` from a checkout.
+Windows provides `bin/sbar-orbit.cmd` for supported installation and metadata
+contracts. Native desktop control currently requires Linux and its native runtime.
+The public interface is desktop-only; retired browser routes refuse.
 
-Implemented: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; the installer can register the executable and user service.
+## Install and prerequisites
 
-`sbar-orbit applications [QUERY]` lists verified installed executable paths and
-available current-user usage metadata without launching applications. Results
-include discovery sources and platform limits. See [application discovery](application-discovery.md).
+```sh
+./install.sh --dry-run --json
+./install.sh --connect auto --json
+sbar-orbit preflight
+```
+
+Windows uses `install.cmd`. The installer reports prerequisites, installation
+steps, requested host registrations and broker health. Read its actual result;
+installation is not application acceptance. See [agent installation](agent-install.md)
+for report fields and [packaging](packaging.md) for source and runtime prerequisites.
+
+## Broker and diagnostics
+
+```sh
+sbar-orbit serve
+sbar-orbit status
+sbar-orbit status --watch
+sbar-orbit doctor
+sbar-orbit doctor --report
+sbar-orbit diagnostics
+```
+
+`serve` starts a foreground broker and prints its socket. Point clients at that
+socket with `ORBIT_SOCKET`. Without that variable, clients use the platform's
+managed socket. `doctor` queries the broker; `doctor --report` describes the local
+machine without requiring a running broker. `diagnostics` can also prepare an
+offline report. Review a report before sharing it; creation sends nothing.
+
+## Discover and create a private desktop
+
+```sh
+sbar-orbit applications
+sbar-orbit applications QUERY
+sbar-orbit session create system
+sbar-orbit session list
+```
+
+`session create` defaults to `system`; `fedora` is its legacy alias. Discovery
+reports application registration and process metadata, not input authority.
+Use a discovered registration ID to launch a new private Linux application:
+
+```sh
+sbar-orbit act SESSION_ID '{"type":"launch-installed","applicationId":"discovered-registration.desktop"}'
+sbar-orbit act SESSION_ID '{"type":"list-windows"}'
+sbar-orbit act SESSION_ID '{"type":"desktops"}'
+```
+
+Replace example identifiers with returned values. The launch resolver uses installed
+metadata, not guessed paths. Unsupported activation recipes fail explicitly. A
+new private process does not inherit the person's existing session, and private
+HOME is not a universal filesystem sandbox. See [application discovery](application-discovery.md).
+
+Desktop selection uses `{"type":"desktop","desktopId":"RETURNED_ID"}`.
+Moving a private window uses `{"type":"move-window","windowId":"RETURNED_ID","desktopId":"RETURNED_ID"}`.
+Only use session-bound identifiers from the current result. These operations do
+not move the person's own windows.
+
+## Action documents and observation
+
+```sh
+sbar-orbit act SESSION_ID @/absolute/path/action.json
+sbar-orbit act SESSION_ID -
+sbar-orbit session observe SESSION_ID --metadata
+sbar-orbit session observe SESSION_ID --output /absolute/new-image.jpg
+```
+
+`act` accepts inline JSON, a regular JSON file prefixed with `@`, or standard input
+with `-`. File/stdin forms avoid shell quoting differences. `ORBIT_REQUEST_ID`
+provides an explicit request identity; otherwise the CLI generates one. After an
+uncertain mutation result, observe state before deciding whether another action
+is appropriate.
+
+Metadata observation does not capture pixels and is not visual verification.
+The output-file form preserves original image bytes, creates a new file and prints
+metadata. Existing files and symlinks are refused. The parent directory must exist.
+`--metadata` and `--output` are mutually exclusive. Without either option, the CLI
+returns its image result as JSON including base64. Use the encoding reported by
+`mimeType`, not the filename extension, as the authority.
+
+## Session lifecycle and conversation labels
+
+```sh
+sbar-orbit session pause SESSION_ID
+sbar-orbit session resume SESSION_ID
+sbar-orbit session journal SESSION_ID
+sbar-orbit session restore SESSION_ID SEQUENCE
+sbar-orbit session stop SESSION_ID
+```
+
+Restore is backend-dependent and may refuse; the command is not a guarantee that
+arbitrary desktop effects can be undone. Stopping a session closes its owned work.
+Broker restart closes sessions; they do not persist across it.
+
+Creation accepts `ORBIT_AGENT_NAME`, `ORBIT_TASK_NAME`,
+`ORBIT_CONVERSATION_NAME` and `ORBIT_PROJECT_NAME` as display labels. These are
+caller-supplied descriptions, not authenticated identities.
 
 ## Conversation usage
 
-`usage on|off|status [ID]` controls one explicit conversation, without contacting
-or stopping the broker. Set `ORBIT_CONVERSATION_ID` to that same unique ID on
-later commands. Missing IDs on usage commands are refused. See
-[agent interface](agent-interface.md) for MCP scope, reconnect behavior, the
-portable skill and host limitations. Client RPC commands default to the managed
-socket; `ORBIT_SOCKET` selects a different broker. `ORBIT_NATIVE_RENDERER` and
-`ORBIT_NATIVE_RENDER_DEVICE` opt the private display into a pinned GPU renderer, read once when the
-broker starts; a managed broker takes them from `$XDG_CONFIG_HOME/sbar-orbit/broker.env`,
-falling back to `$HOME/.config/sbar-orbit/broker.env` when XDG is unset. The installer preserves
-this user configuration file. The service records the selected `HOME`, `XDG_CONFIG_HOME` and
-unit directory so a user manager with a different environment still uses these paths, including
-an explicit `ORBIT_UNIT_DIR` or installer `unitDirectory` option. Reinstall after changing these
-paths. The broker and update services also preserve explicitly selected absolute
-`XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `FLATPAK_USER_DIR`,
-`FLATPAK_SYSTEM_DIR` and `BUN_INSTALL`. Their `PATH` starts with the installing Bun's
-directory and preserves absolute application search directories, with standard system
-directories as fallbacks. Relative search entries and unrelated environment variables
-are not copied. `broker.env` values override these recorded defaults. `XDG_RUNTIME_DIR`
-comes from the user manager so a temporary installer runtime directory is not persisted.
-Pixman is the
-default and the measured choice, see [fedora results](fedora-results.md).
-`ORBIT_CAPTURE_TIMEOUT_MS` sets how long a single frame capture may take, default 3000, floored at
-500 and capped at 120000, and it lives in the same file for the same reason: it is a property of the
-host rather than of the product. Raise it on a machine that paints slowly, a small CI runner, a
-software rendered guest, or a workstation running several agents against one budget. The default was
-a hardcoded 3000 until a 2 vCPU GitHub runner beat it on the first capture after a cold navigate,
-which reached the agent as an unattributable `BACKEND_ERROR`; a capture that runs out of budget now
-answers `TIMEOUT` and names both the budget and this variable.
-Browser frames capture the current Chromium surface directly, without waiting for web fonts or
-application readiness. A fallback font or incomplete page can therefore appear in a loading frame.
-The private capture connection stays with its owned tab and is detached after a capture timeout;
-closing the tab or session closes it as well.
-
-## Install
-
-From the project directory, one command:
-
 ```sh
-./install.sh
+sbar-orbit usage status UNIQUE_CONVERSATION_ID
+sbar-orbit usage off UNIQUE_CONVERSATION_ID
+sbar-orbit usage on UNIQUE_CONVERSATION_ID
 ```
 
-It checks prerequisites, prepares dependencies, links `sbar-orbit` into `~/.local/bin`, installs and
-starts the broker service and the desktop mark, writes `~/.config/sbar-orbit/mcp.json`, `%APPDATA%\sbar-orbit\mcp.json` on Windows, and then asks
-the broker it started for a `doctor` report. Every step is shown as it runs, and anything only a
-package manager can supply is printed at the end with its remedy rather than failing quietly.
-`./install.sh --dry-run` reports the same steps and changes nothing, and `--no-service` keeps systemd
-out of it. See [packaging](packaging.md) for the step table and what the run deliberately does not
-claim.
+Alternatively set `ORBIT_CONVERSATION_ID` on every command for that conversation.
+Only re-enable when requested. Off blocks subsequent broker-bound calls from the
+same scope, but does not stop accepted work or the shared service. Different host
+processes must share the same ID and usage directory to share this preference.
+See [agent interface](agent-interface.md) for enforcement limits.
 
-## Run
-
-From the project directory:
-
-```sh
-bun install --frozen-lockfile
-bun run serve
-```
-
-The command prints a unique socket path and stays running. In another terminal, set `ORBIT_SOCKET` to that printed path. Then:
-
-```sh
-bun run src/cli.ts doctor
-bun run src/cli.ts session create
-```
-
-Set `ORBIT_SESSION_ID` to the returned session ID. Examples:
-
-```sh
-bun run src/cli.ts act "$ORBIT_SESSION_ID" '{"type":"navigate","url":"https://example.com"}'
-bun run src/cli.ts act "$ORBIT_SESSION_ID" '{"type":"read","selector":"h1"}'
-bun run src/cli.ts session pause "$ORBIT_SESSION_ID"
-bun run src/cli.ts session resume "$ORBIT_SESSION_ID"
-bun run src/cli.ts session stop "$ORBIT_SESSION_ID"
-```
-
-The quoted form above is the readable one and works in any POSIX shell. It is not the only one, because quoting is the host shell's business and some hosts lose: PowerShell strips the inner quotes before the process sees them, and a Windows CI job that already routed the command back through `cmd /c` with doubled quotes still answered `CLI_ERROR: JSON Parse error: Unterminated string` the first time it ran on a GitHub runner. So `act` also takes the document from a file or from standard input, and those two forms are the ones to prefer from any script, any agent host, and anything running on Windows:
-
-```sh
-bun run src/cli.ts act "$ORBIT_SESSION_ID" @action.json   # read it from a file
-echo '{"type":"read","selector":"h1"}' | bun run src/cli.ts act "$ORBIT_SESSION_ID" -
-```
-
-A document that will not parse says where it came from and what to use instead, rather than passing the parser's own message up with no context.
-
-`session observe ID` retains JPEG base64 JSON for existing scripts. Prefer `session observe ID --output /absolute/new-image.jpg` for an agent: it returns metadata and a file path without base64 text. Use `session observe ID --metadata` for tab/window and pointer information without capturing. The `mimeType` field names the actual image encoding. Nothing opens automatically. Use Ctrl+C in the broker terminal to close its browsers and stop the service.
-
-Watching a session is the viewer's job:
-
-```sh
-bun run src/cli.ts preview           # print the link and open nothing
-bun run src/cli.ts preview open      # open it in the chosen browser, in a window of its own
-bun run src/cli.ts preview browsers  # the browsers this desktop has, and which can do that
-```
-
-The link carries an access token in its fragment, so `preview open` hands it straight to the browser rather than through anything that only wanted a window. The browser runs the viewer in a profile of Orbit's own under `~/.local/state/sbar-orbit/viewer/`, never in the person's profile. Which browser, and whether it gets a window of its own, are settings; see [preview](preview.md).
-
-Two commands are for reading a run back rather than driving one:
-
-```sh
-bun run src/cli.ts session journal "$ORBIT_SESSION_ID"
-bun run src/cli.ts session restore "$ORBIT_SESSION_ID" 12
-```
-
-`session journal` returns every decision the session made, the policy it was judged against, the origins
-a page reached for and the lease refused, whether a page has spoken to the session yet, which layer held
-the origin lease, and the restore points it holds. It identifies actions by class, type, destination
-origin and the size of what they carried, and quotes neither typed text nor page content.
-
-`session restore` puts a paused session back to one of those points, named by the sequence the journal
-reports, or the most recent one when no sequence is given. It refuses far more often than it grants, and
-the refusal is the point: a point is only taken before an action a snapshot could undo, and a restore is
-refused outright if anything since has left the machine. Restoring a profile after a message was sent
-would put the browser back, leave the message sent, and report success. See
-[autonomy](autonomy.md) for what that reduces to in practice.
-
-A capability report needs no broker at all, which is deliberate: the most commonly reported problem is a
-broker that will not start.
-
-```sh
-sbar-orbit doctor --report > ~/orbit-report.json
-```
-
-It prints the platform, the session type, whether a secret service answered, whether a browser can be
-confined to a network of its own, one line per browser install with its cookie scheme and row count, the
-distribution id and version, and the tier this host class may claim. It collapses the home directory to
-`~` and carries no cookie names, hosts or values, no account names and no viewer tokens. Write it outside
-the work tree, as above: it is built from a browser profile. See [support tiers](support-tiers.md) for
-which report to file.
-
-## Starting with the desktop
+## Service, settings and updates
 
 ```sh
 sbar-orbit service install
-```
-
-installs the units and turns Orbit on: the broker at login, and the mark with the graphical session.
-That is the default because a person who installs something meant to be waiting for their agents should
-not have to read documentation to discover it is not running. `sbar-orbit service install --no-autostart`
-writes the units and enables nothing, which is what this command used to do.
-
-```sh
 sbar-orbit autostart status
+sbar-orbit autostart enable
+sbar-orbit autostart disable
+sbar-orbit config list
+sbar-orbit config search WORD
+sbar-orbit config get KEY
+sbar-orbit config set KEY VALUE
 ```
 
-answers the only question that matters, `startsWithTheDesktop`, and says what it cannot see. It reports
-on two paths, because a desktop honours one or the other and Orbit cannot tell which from here: a systemd
-user unit wanting `graphical-session.target`, and an XDG autostart entry for the desktops that never
-reach it. Both may be enabled at once. The panel claims a socket at startup, so a second copy hands over
-its request and exits with status zero rather than drawing a second mark; that is also why the unit can
-carry `Restart=on-failure` without retrying the loser of a race forever.
+Service and desktop settings are platform-specific. On Linux, `service install`
+enables autostart by default; `--no-autostart` leaves it disabled. Uninstallation
+uses `service uninstall`. Do not restart or remove a shared service to stop one
+conversation. `panel` opens the desktop session mark; `settings` shows the native
+configuration notice and `config` edits its supported settings.
 
-A compositor that starts the panel from its own configuration, a Hyprland `exec-once` line for example,
-is invisible to this status. It reports what Orbit installed, not everything on the machine that might
-start it. Surviving a full logout rather than only a login needs `loginctl enable-linger $USER`, which
-requires elevation and is therefore never done for you.
+Managed Linux version-directory installations also support `update status`,
+`update check`, `update stage`, `update activate VERSION`, `update on`, `update off`
+and `update prune`. Staging prepares a version; activation changes the active
+version and restarts the broker, refusing while sessions are open. macOS and
+Windows managed activation and scheduling remain unsupported. Publishing a new
+package does not activate this machine. `clean` removes abandoned Orbit workspace
+and temporary transport storage while preserving live broker-owned directories.
 
-`sbar-orbit autostart disable` turns both paths off. The launcher entry stays: it is how a person finds
-Orbit, not how it starts.
-
-## Settings
-
-Every setting is described in one place, `desktop/orbit_settings.py`, which the panel, the settings
-window and the command line all read. A value the command line accepts is therefore the value the panel
-keeps, rather than one it silently clamps afterwards.
+## MCP hosts
 
 ```sh
-sbar-orbit settings              # the settings, searchable, in the viewer, through a running panel or a new one
-sbar-orbit config list           # every setting, its value and its default
-sbar-orbit config search glow    # or search توهج, or boot, or transparent
-sbar-orbit config get size
-sbar-orbit config set size 14
-sbar-orbit config reset          # one setting, or all of them
+sbar-orbit connector-config
+sbar-orbit connector-config --no-launcher
+sbar-orbit mcp
 ```
 
-`config` needs no broker and no GTK, so it works over ssh and inside a service. The panel watches its
-settings file, so a change from a terminal is on screen before the command returns. Out of range values
-are clamped and the clamp is printed; an unusable one is refused rather than stored.
+The connector command prints configuration; `mcp` starts the stdio adapter.
+Prefer the stable launcher in host configuration so upgrades do not leave a stale
+source path. The installer changes selected host registrations only with explicit
+`--connect`. See [connectors](connectors.md).
 
-The search answers the description and a list of terms, in English and in Arabic, not only the label:
-"boot" finds the startup switch, whose window says neither word, and "توهج" finds the three glow
-settings. Labels are English, like all shipped text here; the person searching often is not.
+## Experimental native interfaces and release hold
 
-## Keeping a broker available
+The CLI retains `native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY` with optional
+`--plugin-manifest ABSOLUTE_PRIVATE_JSON`, `native-plugin status|load|unload|resume
+ABSOLUTE_PREPARATION_DIRECTORY`, and `native-settings`. These are owner
+configuration interfaces, not instructions to bypass a capability hold.
 
-`sbar-orbit serve` runs in the foreground and binds a fresh socket each time, so every client must be told the new path. A managed broker instead binds one fixed socket at `$XDG_RUNTIME_DIR/sbar-orbit/broker.sock`, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so generated host configuration survives a restart.
+Configured native paths include `session create native`, `native-candidates
+WORKSPACE`, `native-open JSON|@FILE|-`, and `session handoff JSON|@FILE|-`.
+Existing-owner handoff remains blocked by the
+[compositor incident release hold](native-handoff-incident.md). Preparation or
+successful metadata discovery does not remove that hold.
 
-```sh
-sbar-orbit service install
-systemctl --user daemon-reload
-systemctl --user enable --now sbar-orbit.service
-```
-
-`service install` writes two files into `~/.config/systemd/user`: `sbarorbit.slice` carrying the shared CPU, memory, swap and task budget, and `sbar-orbit.service` bound to that slice. The budget must live on the slice because the broker looks for `sbarorbit.slice` in its own cgroup path. Enabling, starting and stopping stay with `systemctl`, so nothing changes your session without you running the command. Stop with `systemctl --user stop sbar-orbit.service`, and remove the units with `sbar-orbit service uninstall` followed by `systemctl --user daemon-reload`.
-
-Note that `~/.config` is a Git repository on this workstation, so the written units appear as changes there.
-
-What this does and does not give you. The broker starts at login and restarts on failure; surviving a full logout additionally needs `loginctl enable-linger`, which requires elevation. Only one managed broker can run: a second refuses with `PROFILE_BUSY` rather than displacing the first, while a socket file nothing answers on is treated as stale and replaced. Sessions do not survive a broker restart: `Sessions.close` stops every session on shutdown, so a restarted broker comes back empty. The per-lifetime caps of 32 sessions and 10,000 action IDs were written assuming restarts, so a long-lived broker eventually refuses new work and must be restarted.
-
-## Updating without ending a session
-
-This interface requires a managed version-directory installation. On Linux use `install --managed`
-from an extracted release or registry package, then invoke `~/.local/bin/sbar-orbit` so the command
-follows the active version. Linux upgrade and rollback are measured in a disposable Fedora systemd
-container. macOS and Windows managed activation and scheduling currently refuse. See
-[installation and migration](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0).
-
-```sh
-sbar-orbit update status     # which version is running, which are prepared, whether one is waiting
-sbar-orbit update check      # what the registry has, and whether it is eligible yet
-sbar-orbit update stage      # prepare it beside the running version, activate nothing
-sbar-orbit update activate VERSION
-sbar-orbit update on|off     # check daily by itself, or stop doing that
-```
-
-A session is state inside the broker process, so pointing the launcher at another version and restarting
-ends every open one. Activation therefore refuses while any session is open, and there is no flag to
-waive that. Preparing is the opposite and is the half that runs by itself: versions sit side by side in
-their own directories with one symlink saying which is current, so a new one is downloaded, verified,
-unpacked and given its dependencies without anything being written into the tree the running broker is
-executing from.
-
-If the broker does not answer `doctor` after its restart, the link goes back to the version that was
-working, the broker is restarted again, and the report says `rolledBack` rather than reporting a success.
-The version that failed is kept, because it is the evidence.
-
-Automatic updates are off until `update on`, and absence of the switch means off. `update off` is read
-before the feed and before anything else, so it stops a run with no network and no broker, which is the
-state a kill switch exists for. A published version is not eligible until it has been public for 72
-hours: a compromised publishing account reached about 6,000 machines in under 40 minutes on another
-registry, and a signature verifies all of them, because the attacker holds the credentials. A different
-release line is reported and never taken by itself.
-
-An install running from a source checkout is refused by name: its updater is git, and an automatic swap
-has no business moving somebody's working tree. The desktop mark is a separate process that keeps
-running its own version until the person's next login, which `status` reports rather than hides. See
-[automatic updates](updates.md).
-
-## Disk that sessions leave behind
-
-Every session gets a fresh profile directory under `~/.cache/sbar-orbit/workspaces`, on disk rather than in RAM, since a browser profile is written constantly. The profile is removed when the session stops, and the broker removes its whole workspace when it closes, so a clean shutdown leaves nothing. A broker that was killed or crashed does leave its workspace behind, and older versions retained every profile: this workstation had accumulated 4.5 GB of them from test runs.
-
-```sh
-sbar-orbit clean
-```
-
-removes the workspaces no running broker owns. Each workspace records the socket of the broker that made it; a directory whose broker still answers on that socket is kept, a directory from before that record is kept while it was modified within the last hour, and everything else is removed. It needs no socket and reads nothing inside a profile. Saved accounts live elsewhere, under `~/.local/state/sbar-orbit/accounts`, and are never touched.
-
-## Contract
-
-`sbar-orbit diagnostics` prepares a metadata-only support report and a prefilled GitHub issue link,
-including offline recovery when the broker cannot answer. Nothing is sent automatically. See
-[diagnostic reports](diagnostics.md) for privacy, storage bounds and coverage.
-
-The Unix socket accepts `POST /rpc` with `{method, params}`. Responses are `{ok:true,result}` or `{ok:false,error:{code,message}}`. The TypeScript client is `call(socket, method, params)` in `src/ipc.ts`.
-
-| Method | Parameters |
-|---|---|
-| `doctor`, `session.list` | `{}` |
-| `profiles.list` | `{}`, the person's own browser profiles and, for each, whether a session may start from it. A clonable entry carries the `cloneOf` path to pass to `session.create`; a refused one carries the reason `canCloneProfile` gave, which is the same verdict creation applies |
-| `session.create` | `{backend:"browser"|"fedora"|"system", profileKey?:string, accountName?:string}`; `cloneOf` is an absolute path to a Chrome or Chromium profile to clone, browser backend only, bounded origins required, and `cloneExtensions: false` leaves the profile's extensions dormant in the clone: measured 14 September 2026, a proxy extension set its own proxy inside a confined clone and every origin failed as disconnected, the lease failing closed |
-| `session.account.save` | `{sessionId}`, paused named browser session only |
-| `session.act` | `{sessionId, requestId, action}` |
-| `session.observe`, `session.pause`, `session.resume`, `session.stop`, `session.journal` | `{sessionId}` |
-| `session.forget` | `{sessionId}`, a finished session only: drops the broker's list entry and keeps its journal file. An id the broker does not know succeeds with `forgotten:false`; a session that has not finished is refused with `SESSION_OPEN` |
-| `session.narrow` | `{sessionId, origins?:string[], allow?:ActionClass[]}`, tightening only |
-| `session.restore` | `{sessionId, sequence?}`, paused browser session only |
-| `preview.open` | `{launch?:boolean, browser?:string, appWindow?:boolean}`; without `launch` it returns the link and opens nothing |
-| `viewer.browsers` | `{}`, the browsers installed on this desktop and the stored choice |
-
-`session.list` reports each session's `createdAt` and `lastActivityAt` as epoch milliseconds, the second stamped at the start and the settle of every action, so a long action does not leave a session looking untouched while it runs. The viewer orders its list by the later of the two; `session.list` itself still answers in creation order, which is what its other readers expect.
-
-Actions: `navigate` with HTTP/HTTPS `url`, `fill` with `selector` and `text`, `click` or `read` with `selector`, `upload` with `selector` and `files` (1 to 32 absolute paths to existing regular files; the selector may name an `<input type=file>`, visible or not, or a button whose click opens the chooser, which is caught and answered; upload is in the irreversible class, so it runs only in a session whose policy allows `irreversible`), `scroll` with integer viewport `x`, `y` and nonzero integer `deltaY` from -20 to 20, and `select-tab` or `close-tab` with the 1-based `tab` number that observation reports. A tab the site opens by itself, such as a login or consent window, becomes the followed tab, so read observation before assuming which tab an action targets. The last remaining tab cannot be closed; stop the session instead. The private display backend supports `launch`, `pointer`, `scroll`, ASCII `text`, Unicode `paste` and a limited `key` set; see [native commands](fedora-results.md). Ask for it as `system` or as `fedora`: `system` exists because a caller should not have to name a distribution to ask for a private desktop, and it is an alias rather than a wider claim, since the backend still needs the wlroots runtime this project builds and has run on one host class. Everything reported back, in `session.list`, observation and the journal, says `fedora`, so one thing keeps one name; `doctor` lists the aliases. Host input is rejected. Retry an uncertain CLI action with the same `ORBIT_REQUEST_ID`; a reused ID with different arguments is rejected. IDs are cached for the session lifetime, including failed outcomes.
-
-Browser `navigate` and `open-tab` with a URL return after the document's `DOMContentLoaded` event. Images and other resources may still be loading. A successful navigation does not prove that the application's data or interface is ready; inspect it before acting. Locator actions keep their normal element readiness checks. A document that never reaches this event still times out.
-
-`profileKey` is currently a mutual-exclusion label, not a persistent account profile. Use `accountName` for [saved account state](accounts.md). Every browser receives a fresh temporary profile; no existing directory can be supplied. The profile is removed when the session stops; see the section on disk below.
-
-Pause blocks new actions immediately and acknowledges after accepted actions drain. Resume during draining is rejected. Stop closes the browser to cancel in-flight work and invalidates queued work. The service listens only on a Unix socket inside a mode-700 directory; socket mode is 600. Same-user programs can connect, which is intentional for local agents.
-
-## Verification and limits
-
-```sh
-bun run typecheck
-bun run verify tests
-```
-
-Four session integration tests cover separate sessions, profile contention, duplicate clicks, conflicting retries, unsupported input, pause ordering, timeout recovery, cancellation, socket permissions and CLI create/navigate/read/observe/stop.
-
-Google Chrome is required. `doctor` reports broker capabilities, session count and live aggregate Orbit resource limits/counters; it does not preflight Chrome installation. See [resource limits](resources.md) for the counter scope and limitations. Browser startup waits up to 15 seconds for Chrome's endpoint and 20 more for its connection; navigation has 15 seconds and locator operations 5. Backends start one at a time, and a creation that has waited 30 seconds behind others is refused with `DEADLINE_EXCEEDED` rather than started for a caller that has given up.
-
-Session state and retry records are in memory. A graceful SIGINT/SIGTERM closes owned browsers; abrupt broker kill now passes a browser-tree cleanup and fresh-session test; broader crash scenarios remain open. At most 32 sessions can be created per broker lifetime and 10,000 distinct action IDs per session. Restart after reaching those limits. Synthetic account persistence and bounded resource probes pass. Real-service accounts, sustained resource baselines, 100-action stress runs and model-driven host tasks remain next work. The [live preview](preview.md) now supports observation and paused manual control. The [MCP adapter](connectors.md) now passes its separate protocol integration test.
-
-## Repository launcher
-
-From this checkout, use `./bin/sbar-orbit --help`, `./bin/sbar-orbit serve`, then `ORBIT_SOCKET=... ./bin/sbar-orbit doctor`. `connector-config` prints the same temporary MCP configuration and `mcp` starts the stdio adapter. An absolute path or symlink to the launcher works from other directories; it resolves source paths relative to its real location and preserves the caller's working directory.
-
-The launcher uses the existing shared resource wrapper for `serve`, including graceful signal forwarding when already inside the Orbit slice. A browser-free test passed 8 assertions: a symlink in a directory containing spaces, startup outside the repository, doctor, connector configuration and SIGTERM shutdown with a refused connection afterward. Reproduce with `bun run verify tests/launcher.test.ts`.
-
-This is a checkout launcher, not a standalone release. It requires Bun and the installed project dependencies. Versioned packaging, installation and uninstall remain separate work. No global `orbit` command was created or replaced.
-
-Browser workspace files are created in fresh private directories under `$XDG_CACHE_HOME/sbar-orbit/workspaces`, defaulting to `~/.cache/sbar-orbit/workspaces`. This must be disk-backed storage, not tmpfs. Broker sockets stay in short private `/tmp` directories. Profiles are removed when their session stops, the workspace when its broker closes, and `sbar-orbit clean` reclaims what a killed broker left.
-
-## Wheel input
-
-Both adapters accept `{"type":"scroll","x":400,"y":300,"deltaY":3}`. Positive steps scroll down, negative steps up. Browser sessions move their owned pointer to the viewport point and send 100 CSS pixels per step through Playwright wheel input. Native sessions send wheel steps through the private Wayland pointer. Applications can consume or change the resulting movement, so acknowledgement does not prove a specific final offset. Nested scrollable elements are selected by the target point.
-
-The same input is available through `session.control` only while paused and through the viewer's wheel gesture. The browser integration test uses a local fixture's scroll-event readback to verify agent down/up, input validation, paused viewer down/up and no viewer control after resume.
-
-## Conversation and project names
-
-Session creation accepts `conversationName` and `projectName` as optional display labels, each 1 to 80 printable characters. The viewer uses them on conversation buttons and its browser title. A missing conversation name falls back to `taskName`; a missing project is shown as not provided.
-
-CLI callers can supply `ORBIT_CONVERSATION_NAME` and `ORBIT_PROJECT_NAME`, alongside `ORBIT_AGENT_NAME` and `ORBIT_TASK_NAME`. These labels identify the work visually and do not attach Orbit to a host conversation. Existing sessions keep the labels they were created with.
-
-## Experimental native GTK viewing
-
-When the owner has fixed a prepared `ORBIT_NATIVE_PLAN` and
-`ORBIT_NATIVE_CONTROL` at broker startup, a native session can launch owned
-applications and return generated application/window handles. `system` still
-means the private Fedora display. Native sessions refuse browser accounts,
-profiles, viewport selection and bounded network origins. This experimental
-backend does not enforce native network origin lists.
-
-The owner can prepare those paths using:
-
-```sh
-sbar-orbit native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY
-```
-
-The existing directory must be canonical, owned by the current user and mode
-`0700`. The Linux command checks the current Hyprland endpoints and ABI, writes
-an exclusive private `host.json`, initializes protected controls, and emits a
-`broker-native.env` file and unapplied `service-drop-in.conf` template. A final
-`preparation.json` records successful preparation and source hashes. Partial
-failure artifacts are retained; a nonempty directory is refused on a later run.
-The command is an owner CLI entry, without an agent RPC counterpart. It accepts
-no mode argument. Preparation leaves the broker service and compositor plugin
-unchanged. Applying the template, matching plugin preparation and the final
-consented owner-desktop acceptance remain separate steps. A compositor restart
-invalidates the saved endpoint identity; the plan must be prepared again.
-
-An optional owner build manifest stages a pinned plugin with that preparation:
-
-```sh
-sbar-orbit native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY --plugin-manifest ABSOLUTE_PRIVATE_JSON
-```
-
-The manifest is a canonical, user-owned `0600` JSON file in a `0700` directory.
-Its exact fields are `schema: 1`, absolute `binary` and `source` paths,
-`binary_sha256`, `source_sha256`, `abi_hash`, `commit` and `version`. Digests are
-lowercase SHA256; the declared build identity must match the live prepared host.
-Inputs must be regular, single-link files owned by this user, without group or
-other write permission. Binary and source inputs are bounded to 64 MiB each.
-This Linux option currently accepts ELF64 little-endian x86-64 shared objects.
-The binary is copied exclusively as private `plugin.so`, read back against its
-pin, and included in the final preparation result. Its identity and digest are
-checked again immediately before publishing the success manifest. Changed, linked or mismatched
-inputs refuse preparation and retain any partial bundle without a success manifest.
-
-Build identity remains owner-supplied metadata, not compiler attestation. The
-compositor loader must still validate the actual plugin ABI during a separately
-authorized activation. Staging loads nothing, changes no mode and restarts no
-service. Activation must reverify the artifact because preparation does not make
-it immutable. A copied artifact does not complete owner-session acceptance.
-File-identity components are decimal strings so JSON clients preserve large
-inode and nanosecond values exactly. Older bundles with numeric identity
-components must be prepared again.
-
-The owner can inspect and load a successful pinned preparation:
-
-```sh
-sbar-orbit native-plugin status ABSOLUTE_PREPARATION_DIRECTORY
-sbar-orbit native-plugin load ABSOLUTE_PREPARATION_DIRECTORY
-sbar-orbit native-plugin unload ABSOLUTE_PREPARATION_DIRECTORY
-sbar-orbit native-plugin resume ABSOLUTE_PREPARATION_DIRECTORY
-```
-
-These Linux owner commands have no agent RPC counterpart. The launcher applies
-the existing shared budget. Status creates no files and sends no input. Load
-rechecks the host and artifact, takes a lock shared by all preparations for the
-same compositor, and durably records intent and outcome in the preparation's
-private `plugin-owner.jsonl` and a compositor-wide `orbit-plugin-owner.jsonl`
-in its private Hyprland runtime directory. Global intent precedes private intent;
-global completion follows private completion. An interrupted operation blocks
-mutations from every preparation for that compositor. It loads only that
-preparation's `plugin.so`.
-A verified repeated load sends no further load request. The loaded build stamp,
-ABI, artifact pin and exact kernel mapping device/inode must all agree.
-The prototype must be compiled through its snapshot `build.sh` to embed the stamp.
-This stamp remains self-reported provenance, not compiler attestation.
-
-Failed acknowledgement or outcome retention after any mutation explicitly
-reports uncertain compositor state and requires owner review. Inspect status
-and the retained journal before recovery. Status cannot resolve an unfinished
-journal. Loaded status includes the validated admission/readiness snapshot.
-Unload takes the same lock and durable journal, pauses enrollment, then requires
-empty retained scopes, no live roots and no legacy registration before sending
-the exact unload path. It confirms the plugin is absent afterward. An already
-absent plugin produces an audited no-op. Refusal after pausing leaves admission
-paused; an initial verification failure sends no pause. The
-owner can inspect status and explicitly resume admission through the same
-lock and journal. Resume never loads an absent plugin. No automatic rollback,
-service restart or mode change is performed. Final owner acceptance remains
-outstanding. The strict mapping check currently refuses the observed btrfs
-mapping-device discrepancy; private runtime storage passed the guarded lab
-proof. This command does not establish complete owner appearance or performance.
-
-The current prototype also exposes fixed `ghost-admission pause|resume` and
-read-only `ghost-unload-info` compositor commands. Paused admission refuses new
-enrollment while existing targets remain available for cleanup. Readiness
-requires paused admission, no live registered roots and empty retained cgroup
-subtrees. Retained scopes survive root-registration pruning, so live orphan
-descendants continue to prevent readiness. Any legacy unscoped registration
-prevents verified unload for that loaded generation. The prototype retains at
-most 128 distinct scope identities until unload. Missing population evidence
-is a refusal. These commands are not agent RPC operations; owner lifecycle
-commands use them under the shared lock and journal. A ready result is
-cooperative registered-scope evidence, not a guarantee against hostile process
-migration or proof of complete owner acceptance.
-
-The owner may also set `ORBIT_NATIVE_APPEARANCE` at broker startup to an absolute
-prepared private settings snapshot. The directory and GTK subdirectories must
-be canonical, user-owned and mode `0700`; files must be single-link regular
-files with mode `0600`. Only filtered literal GTK3, GTK4 and KDE visual settings
-are loaded. Each session retains immutable defaults; explicit application
-configuration overrides them before worker validation and protected approval.
-An agent action cannot choose the snapshot path. Invalid snapshots refuse
-startup. These settings do not include CSS, theme assets or portal preferences,
-so exact owner appearance remains unmeasured.
-
-The native-view caller may use that same fixed `ORBIT_NATIVE_APPEARANCE`
-environment setting. Its viewer receives a fresh private copy of the filtered
-settings as `XDG_CONFIG_HOME`, then removes it after the child closes. The raw
-snapshot is never used as GTK's configuration directory or modified. A viewer
-that cannot be reaped retains its configuration with an explicit cleanup error.
-The snapshot path is not an action or native-view command argument.
-
-An explicit owner command displays one owned native target and its acknowledged
-agent cursor in a GTK window:
-
-```sh
-sbar-orbit session native-view SESSION_ID APP_ID WINDOW_ID
-sbar-orbit session native-view SESSION_ID APP_ID WINDOW_ID --frames 3
-```
-
-The launcher runs this Linux-only viewer inside the shared budget. Direct
-`bun run src/cli.ts` callers must supply that budget themselves. This command
-opens a native application window on its caller's display, so agents developing
-Orbit run it only inside their private lab. It has no input forwarding. Closing
-the window stops new captures and closes the viewer; the application session
-remains available for its owner to stop separately. `--frames` closes after the
-requested number of actual draws, from 1 to 10000.
-
-One explicit-target capture waits for the matching GTK draw acknowledgement
-before the next, with at least one second between draws and no queued screenshots.
-Closing cancels the client wait; a capture already admitted by the broker retains
-its own existing cleanup bound. The CLI prints small draw metadata, not image
-bytes. The worker retains only the most recent image reply. An older capture ID
-returns `REPLAY_EXPIRED`, and a fresh observation ID requests a new capture.
-Mutation outcomes and request fingerprints remain retained. The 10000-request
-session bound still applies. Native theme acceptance, owner activation and
-comparative CPU, memory and latency remain unmeasured. See the source-bound
-[private live view proof](../experiments/ghost-cursor/NATIVE-LIVE-VIEW.md).
+`session native-view SESSION APP WINDOW [--frames COUNT]` is the experimental
+native GTK viewer for returned owned application/window handles. It requires
+its configured backend and runtime; it does not establish universal desktop
+viewing or existing-owner support. See the [current desktop contract](desktop-only.md)
+for the exact supported boundary.
 
 ## Optional desktop guide preview
+
 
 [The visual guide](desktop-guide.md#reusable-visual-preview) retains the approved
 compact Orbit badge and Codex pointer label. It is owner-started, visual-only,

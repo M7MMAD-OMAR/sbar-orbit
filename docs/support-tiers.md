@@ -29,7 +29,7 @@ A passing suite covers only tests that actually executed, not its skipped cases.
 | Private desktop workspaces | Limited to numbered Sway private workspaces and exact session-scoped window moves. This does not establish movement of owner windows on arbitrary desktop environments. |
 | Application discovery | OS metadata adapters cover Linux registrations and processes, macOS bundles and Windows App Paths. Metadata does not establish launch, account continuity or native control. See [application discovery](application-discovery.md). |
 | Installed application launch | A Linux registration-based route is implemented for supported literal launch recipes and bounded literal forwarders. It creates new private state. Complex scripts, Flatpak, terminal and DBus activation remain explicitly unsupported by this route. Acceptance is specific to the executed fixture and source revision. |
-| Private accessibility inspection | Read-only integration is in progress, pending validation. It does not establish semantic mutation or existing owner application control. |
+| Private accessibility inspection | Limited: an owned GTK3 fixture returned button names and roles, refused a foreign window, replaced inherited AT_SPI routing and cleaned up its helper processes. Independent static review passed within the private inspection scope. No document text, per-node actions, mutations or existing owner application control are supported by this operation. |
 | Existing owner application handoff | Refused under the compositor crash [release hold](native-handoff-incident.md). Isolated fixture results do not authorize owner activation. |
 | Windows and macOS native control | Unsupported: native desktop control adapters are not implemented. Discovery and installation contracts do not establish native runtime support. |
 
@@ -53,6 +53,10 @@ Run `bun run verify` for the selected desktop product contracts. On a prepared
 isolated Fedora runtime, `ORBIT_TEST_NATIVE=1 bun run verify` enables its gated
 native cases. Run one bounded command at a time. Record source identity, actual
 executed cases, failures, skips, platform, cleanup and limitations with each result.
+
+The final local native-enabled suite reported 127 passed, 4 skipped, 0 failed and
+543 assertions. This is a local run, not installed-service, cross-platform or
+whole-project release acceptance. Independent static review passed within the private inspection scope.
 
 The [roadmap](roadmap.md) lists remaining acceptance work. The incident contract
 governs owner handoff independently of installation or ordinary contract tests.

@@ -21,7 +21,7 @@ test("semantic inspection is classified as read without mutation authority", () 
   expect(classify("inspect")).toBe("read");
 });
 
-import { accessibilityEnvironment, accessibilityProcess } from "../src/private-accessibility";
+import { accessibilityEnvironment, accessibilityProcess, accessibilityReply } from "../src/private-accessibility";
 import { FedoraBackend } from "../src/fedora";
 import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -68,6 +68,15 @@ nativeTest("private desktop inspection reads only its exact window and reaps the
     const environment = await Bun.file(report).json();
     expect(environment.bus).toBe(`unix:path=${environment.runtime}/at-spi/bus`);
     const services = await Bun.file(join(environment.runtime, "accessibility-ready.json")).json();
+    process.kill(services.service[0], "SIGTERM");
+    for (let attempt = 0; attempt < 100 && backend.capabilities.includes("inspect"); attempt++) await Bun.sleep(20);
+    expect(backend.capabilities).not.toContain("inspect");
+    await expect(backend.act({ type: "inspect", windowId: window.windowId })).rejects.toThrow("unavailable");
+    await expect(backend.act({ type: "pointer", x: 20, y: 20 })).resolves.toBeDefined();
+    await expect(backend.act({ type: "list-windows" })).resolves.toBeDefined();
+    const afterFailure = join(root, "after-failure.json");
+    await backend.act({ type: "launch", argv: ["/usr/bin/python3", script, afterFailure], toolkit: "wayland" });
+    expect((await Bun.file(afterFailure).json()).bus).toBeNull();
     await backend.close(); backend = undefined;
     for (const [pid, start] of [services.service, services.launcher, services.registry, services.socket[2]]) {
       expect(await accessibilityProcess(pid).catch(() => undefined)).not.toBe(start);
@@ -78,3 +87,40 @@ nativeTest("private desktop inspection reads only its exact window and reaps the
     await backend?.close(); await rm(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
+test("accessibility waits for final stdout bytes after process exit", async () => {
+  const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true });
+  const reply = accessibilityReply(child);
+  child.stdout.write('{"nodes":[]');
+  child.emit("exit", 0);
+  child.stdout.end(',"truncated":false}');
+  child.emit("close", 0);
+  expect(await reply).toEqual({ nodes: [], truncated: false });
+});
+
+linuxTest("optional accessibility startup failure cleans up without closing the desktop", async () => {
+  const directory = await mkdtemp("/tmp/orbit-a11y-failure-");
+  let desktopClosed = false;
+  const backend = Object.assign(Object.create(FedoraBackend.prototype), {
+    directory, env: { PATH: "/usr/bin:/bin", XDG_RUNTIME_DIR: directory }, bus: {},
+    capabilities: [], children: [], cleanupFailures: [],
+    close: async () => { desktopClosed = true; },
+    wait: async () => { throw new Error("injected readiness failure"); },
+  }) as { startAccessibility(): Promise<void>; capabilities: string[] };
+  try {
+    await expect(backend.startAccessibility()).resolves.toBeUndefined();
+    expect(desktopClosed).toBe(false);
+    expect(backend.capabilities).not.toContain("inspect");
+  } finally {
+    // Only clean up the fixture's captured supervisor if the pre-fix implementation left it running.
+    const service = (backend as unknown as { accessibility?: { child: import("node:child_process").ChildProcess } }).accessibility;
+    if (service?.child.pid && service.child.exitCode === null && service.child.signalCode === null) {
+      const exited = new Promise<void>(resolve => service.child.once("exit", () => resolve()));
+      service.child.stdin?.end(); await exited;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});

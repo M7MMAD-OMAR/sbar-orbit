@@ -32,8 +32,9 @@ native session viewer still require implementation and private-display acceptanc
 
 The earlier [native accessibility demonstration](native-desktop-demonstration.md)
 successfully exercised GNOME Calculator through AT-SPI according to the retained
-conversation. That experimental route is distinct from compositor plugin handoff
-and has not yet been integrated into the public session adapter.
+conversation. That experimental mutation route is distinct from compositor plugin
+handoff and remains outside the public session adapter. The public private-desktop
+adapter now supports read-only inspection as described below.
 
 | Requirement | State |
 | --- | --- |
@@ -78,3 +79,27 @@ be running this source before the admission guarantee applies to it. Restarting 
 host is needed to refresh MCP schemas, while broker enforcement also applies to
 older adapters once the desktop-only broker is activated. Record that separately
 from source tests. Do not describe an old running service as migrated.
+
+## Read-only native inspection
+
+On a private Linux session that advertises `inspect`, request `list-windows`, then
+use an exact returned window identity with `orbit_act`:
+
+```json
+{"sessionId":"SESSION_ID","requestId":"UNIQUE_REQUEST_ID","action":{"type":"inspect","windowId":"RETURNED_WINDOW_ID"}}
+```
+
+The snapshot contains bounded node names, roles, states and parent relationships.
+Element identifiers belong to that snapshot; they are not action handles. The
+response reports `mutations: "unsupported"` and empty per-node action lists.
+Document text is not returned. Inspection revalidates the private window, process
+and supervisor scope and uses the session's private accessibility bus. A missing
+service, ambiguous match or foreign window produces an explicit error.
+
+Limited runtime evidence covers a private GTK3 fixture's button name/role readback,
+foreign window refusal, replacement of inherited AT_SPI routing and helper process
+cleanup. The final local native-enabled suite reported 127 passed, 4 skipped,
+0 failed and 543 assertions. Independent static review passed within the private
+inspection scope. This does not
+establish arbitrary application coverage, native semantic mutations, owner-session
+access or Windows/macOS native support.

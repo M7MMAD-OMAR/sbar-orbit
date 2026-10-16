@@ -86,6 +86,26 @@ on a shared desktop can interfere. Owner input isolation needs its own evidence;
 a virtual workspace is not an independent input seat.
 [Microsoft desktop concurrency guidance](https://learn.microsoft.com/en-nz/windows/apps/dev-tools/winapp-cli/ui-automation).
 
+## Implemented private inspection slice
+
+The private Linux desktop adapter exposes `inspect` only when its accessibility
+services are available. Obtain a window identity through `list-windows`, then send
+`{ "type": "inspect", "windowId": "RETURNED_WINDOW_ID" }` through the session's
+normal action API. See [the usage contract](desktop-only.md#read-only-native-inspection).
+
+The result is a bounded read-only snapshot of names, roles, states and parent
+relationships. It includes a snapshot identity, empty per-node action lists and
+`mutations: "unsupported"`. No document text or callable element actions are
+returned. Window and process identities are checked against the private session,
+and inherited AT_SPI routing is replaced with the private bus. Unavailable or
+ambiguous targets fail explicitly.
+
+An owned GTK3 runtime fixture measured button name/role readback, foreign window
+refusal, replacement of inherited AT_SPI routing and helper process cleanup.
+Independent review remains pending. This is Limited evidence for inspection,
+not completion of the semantic mutation architecture described above, existing
+owner acquisition or native control on other operating systems.
+
 ## Window management is a separate adapter
 
 Accessibility describes controls and actions. Window systems describe mapped

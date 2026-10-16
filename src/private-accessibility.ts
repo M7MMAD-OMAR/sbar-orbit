@@ -1,3 +1,5 @@
+import type { EventEmitter } from "node:events";
+import type { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -18,9 +20,13 @@ export async function accessibilityProcess(pid: number): Promise<string> {
 }
 
 export async function inspectAccessibility(directory: string, env: NodeJS.ProcessEnv, pid: number, start: string, title: string) {
-  return await new Promise<Record<string, unknown>>((resolve, reject) => {
-    const child = spawn("/usr/bin/python3", [join(import.meta.dir, "native/private_accessibility.py"), "inspect", directory, String(pid), start, title],
-      { env: accessibilityEnvironment(directory, env), stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("/usr/bin/python3", [join(import.meta.dir, "native/private_accessibility.py"), "inspect", directory, String(pid), start, title],
+    { env: accessibilityEnvironment(directory, env), stdio: ["ignore", "pipe", "pipe"] });
+  return accessibilityReply(child);
+}
+
+export function accessibilityReply(child: Pick<EventEmitter, "once"> & { stdout: Readable; stderr: Readable; kill(signal: NodeJS.Signals): boolean }) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
     const chunks: Buffer[] = []; let bytes = 0, exceeded = false;
     const timer = setTimeout(() => { exceeded = true; child.kill("SIGKILL"); }, 6000);
     child.stdout.on("data", (chunk: Buffer) => {
@@ -30,7 +36,7 @@ export async function inspectAccessibility(directory: string, env: NodeJS.Proces
     });
     child.stderr.resume();
     child.once("error", error => { clearTimeout(timer); reject(error); });
-    child.once("exit", code => {
+    child.once("close", code => {
       clearTimeout(timer);
       if (code !== 0 || exceeded) { reject(new OrbitError("UNSUPPORTED", "Private accessibility inspection is unavailable, ambiguous, or exceeded its bounds")); return; }
       try {
