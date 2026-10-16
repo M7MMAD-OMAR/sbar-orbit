@@ -187,13 +187,13 @@ try {
     // Deliberately local, and before the branch that requires a socket. The most common thing a person
     // reports is a broker that will not start, which is exactly the case a broker RPC cannot answer.
     // Nothing here needs Orbit to be running, and nothing here leaves the machine on its own.
-    const { describeMachine, hostClassTier } = await import("./platform");
+    const { describeDesktopMachine, desktopHostClassTier } = await import("./desktop-machine");
     const { version } = await import("../package.json");
     console.log(JSON.stringify({
-      ...await describeMachine(),
+      ...await describeDesktopMachine(),
       orbitVersion: version,
       // What this host class may claim, which is never what it managed to run.
-      tier: { ...await hostClassTier(), reference: "docs/support-tiers.md" },
+      tier: { ...await desktopHostClassTier(), reference: "docs/desktop-only.md" },
       paste: "This report is safe to paste into a public issue. Read it first anyway.",
     }, null, 2));
   } else if (command === "serve") {
@@ -240,11 +240,11 @@ try {
     let method: string;
     let params: unknown = {};
     if (command === "doctor") method = "doctor";
-    // Which of the person's own browser profiles a session may start from. On the command line for
-    // the same reason it is on the agent surface: the capability is unusable if there is no way to
-    // learn a profile path, and a person deciding whether to hand an agent their logins should be
-    // able to see the same verdicts the agent will.
-    else if (command === "profiles") method = "profiles.list";
+    else if (command === "profiles") throw new OrbitError("UNSUPPORTED", "Browser profile APIs are retired. Orbit is desktop-only.");
+    else if (command === "applications") {
+      if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use applications [QUERY]");
+      method = "applications.list"; params = verb === undefined ? {} : { query: verb };
+    }
     else if (command === "native-open") {
       if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-open JSON|@FILE|-");
       const opening = (await import("./errors")).record(await actionDocument(verb));
@@ -264,22 +264,24 @@ try {
       params = { backend: "native", handoff, ...(policy === undefined ? {} : { policy }),
         agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME };
     }
-    else if (command === "preview" && verb === "browsers") method = "viewer.browsers";
-    // `preview` prints the link and opens nothing, which is what a script wants. `preview open` is the
-    // person's command: it opens their chosen browser, in a window of its own where that browser has one.
-    else if (command === "preview") { method = "preview.open"; params = { launch: verb === "open", browser: arg }; }
-    else if (command === "account" && verb === "save") { method = "session.account.save"; params = { sessionId: arg }; }
+    else if (command === "preview")
+      throw new OrbitError("UNSUPPORTED", "Browser viewers are retired. Use sbar-orbit panel or session observe.");
+    else if (command === "account" && verb === "save") throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired. Orbit is desktop-only.");
     else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
+      if (verb === "create" && arg !== undefined && !["system", "fedora", "native"].includes(arg))
+        throw new OrbitError("UNSUPPORTED", "Orbit is desktop-only. Choose system or configured native application control.");
+      if (verb === "create" && fourth !== undefined)
+        throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired.");
       method = observation?.mode === "metadata" ? "session.presence" : `session.${verb}`;
       // The journal is how an autonomous run is reviewed after it finishes, and a restore is how one is
       // put back, so both belong on the command line a person uses rather than in the agent API alone.
-      params = verb === "create" ? { backend: arg ?? "browser", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME, conversationName: process.env.ORBIT_CONVERSATION_NAME, projectName: process.env.ORBIT_PROJECT_NAME }
+      params = verb === "create" ? { backend: arg ?? "system", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME, conversationName: process.env.ORBIT_CONVERSATION_NAME, projectName: process.env.ORBIT_PROJECT_NAME }
         : verb === "restore" && fourth !== undefined ? { sessionId: arg, sequence: Number(fourth) }
         : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, profiles, native-candidates WORKSPACE, session handoff JSON|@FILE|-, preview, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
     await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }

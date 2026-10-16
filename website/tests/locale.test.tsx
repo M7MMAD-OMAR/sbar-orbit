@@ -29,13 +29,18 @@ test('English remains available with an Arabic language link', () => {
   expect(html).toContain('href="/ar/" lang="ar"');
 });
 
-test('onboarding uses the managed socket default and states the native hold', () => {
+test('onboarding offers desktop discovery and states measured support and the native hold', () => {
   for (const locale of ['en', 'ar'] as const) {
     const html = renderToString(<App locale={locale} />);
     expect(html).not.toContain('export ORBIT_SOCKET');
     expect(html).not.toContain('Version 0.1.1');
     expect(html).toContain('native-handoff-incident.md');
     expect(html).toContain('support-tiers.md');
+    expect(html).toContain('sbar-orbit applications');
+    expect(html).not.toMatch(/browser|chrome|chromium|متصفح/i);
+    expect(html).toContain('Fedora');
+    expect(html).toContain('Windows');
+    expect(html).toContain('macOS');
   }
 });
 
@@ -45,7 +50,7 @@ test('essential guidance is visible without disclosures or JavaScript', () => {
   expect(html).toContain('id="architecture"');
   expect(html).toContain('id="guide"');
   expect(html).toContain('sbar-orbit connector-config');
-  expect(html).toContain('sbar-orbit preview');
+  expect(html).toContain('sbar-orbit applications');
 });
 
 test('presentation has no task-selection buttons and has a static reading mode', () => {

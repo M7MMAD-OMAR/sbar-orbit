@@ -1,15 +1,16 @@
 import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { OrbitError } from "./errors";
 import { openPublicWebLease, type PublicWebLease, type PublicWebLeaseRequest } from "./egress";
 import { snapshotZenProfile, type ZenProfileSnapshot } from "./native-zen";
 import { quietZenSync } from "./native-zen-sync";
+import { discoverApplications, selectApplication, type Application, type DiscoveryOptions } from "./application-discovery";
 
-type ZenLocation = { home?: string; deploymentFiles?: string;
+type ZenLocation = { home?: string; deploymentFiles?: string; discovery?: DiscoveryOptions;
   leaseProbe?: Pick<PublicWebLeaseRequest, "resolveHost" | "routeForTest"> };
-type ZenInstallation = { deploymentFiles: string; profile: string; appRoot: string };
+type ZenInstallation = { deploymentFiles: string; profile: string; appRoot: string; executableDirectory?: string; executableName?: string };
 
 async function renderDeviceMounts(): Promise<string[]> {
   let names: string[];
@@ -29,7 +30,7 @@ async function renderDeviceMounts(): Promise<string[]> {
   return nodes.length ? ["--dir", "/dev/dri", ...nodes.flatMap(node => ["--dev-bind", node, node])] : [];
 }
 
-function selectedProfile(ini: string): string {
+function selectedProfile(ini: string, profileName?: string): string {
   const sections = new Map<string, Map<string, string>>();
   let current: Map<string, string> | undefined;
   for (const raw of ini.split(/\r?\n/)) {
@@ -39,6 +40,13 @@ function selectedProfile(ini: string): string {
     if (section) { current = new Map(); sections.set(section, current); continue; }
     const equal = line.indexOf("=");
     if (current && equal > 0) current.set(line.slice(0, equal).trim(), line.slice(equal + 1).trim());
+  }
+  if (profileName !== undefined) {
+    const named = [...sections.entries()].filter(([name, values]) => name.startsWith("Profile") && values.get("Name") === profileName)
+      .map(([, values]) => values.get("Path"));
+    if (named.length !== 1 || !named[0] || named[0].includes("\0"))
+      throw new OrbitError("UNSUPPORTED", "Zen named running profile cannot be resolved unambiguously");
+    return named[0];
   }
   const installDefaults = [...sections.entries()].filter(([name, values]) => name.startsWith("Install") && values.get("Default"))
     .map(([, values]) => values.get("Default"));
@@ -54,29 +62,99 @@ function selectedProfile(ini: string): string {
 export async function discoverZenInstallation(location: ZenLocation = {}): Promise<ZenInstallation> {
   if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Zen private launch requires Linux");
   const home = location.home ?? homedir();
-  const base = resolve(home, ".var/app/app.zen_browser.zen/config/zen");
-  const baseEntry = await lstat(base).catch(() => undefined);
+  const discoveryEnv = { ...(location.home === undefined ? process.env : {
+    HOME: home, PATH: "", XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+    FLATPAK_USER_DIR: process.env.FLATPAK_USER_DIR, FLATPAK_SYSTEM_DIR: process.env.FLATPAK_SYSTEM_DIR,
+  }), ...location.discovery?.env };
+  const inventory = location.deploymentFiles ? undefined : await discoverApplications({
+    home, ...(location.home === undefined ? {} : { env: { HOME: home, PATH: "" }, includeRunning: false, applicationDirectories: [] }),
+    ...location.discovery, env: discoveryEnv, query: "zen",
+  });
+  if (inventory?.truncated) throw new OrbitError("UNSUPPORTED", "Zen installation discovery is incomplete; selection is refused");
+  const applications = inventory?.applications ?? [];
+  if (applications.some(app => app.packaging === "unknown" && app.runningPids.length && /^(?:zen|zen-bin)$/.test(basename(app.executable))))
+    throw new OrbitError("UNSUPPORTED", "Running Zen deployment identity is unavailable; local profile fallback is refused");
+  const localApplications = applications.filter(app => app.packaging === "local" && /^(?:zen|zen-bin)$/.test(basename(app.executable)));
+  const conventionalExecutable = await realpath(join(home, ".local/share/zen/zen")).catch(() => "");
+  if (!location.deploymentFiles && conventionalExecutable && !localApplications.some(app => app.executable === conventionalExecutable)) {
+    const entry = await lstat(conventionalExecutable).catch(() => undefined);
+    if (entry?.isFile() && entry.mode & 0o111) localApplications.push({
+      id: "zen", name: "Zen", executable: conventionalExecutable, packaging: "local", sources: ["standard-user-layout"],
+      runningPids: [], profileDirectories: [], channel: "not measured",
+    });
+  }
+  const flatpakApplications = applications.filter(app => app.packaging === "flatpak" && app.id === "app.zen_browser.zen" && app.flatpak);
+  const running = [...localApplications, ...flatpakApplications].filter(app => app.runningPids.length);
+  if (running.length > 1) throw new OrbitError("UNSUPPORTED", "Zen running installation is ambiguous");
+  const active = running[0];
+  const localApplication: Application | undefined = active?.packaging === "local" ? active : active ? undefined :
+    localApplications.length ? selectApplication(localApplications, "zen") : undefined;
+  const flatpakApplication = active?.packaging === "flatpak" ? active :
+    active ? undefined : flatpakApplications.length === 1 ? flatpakApplications[0] : undefined;
+  if (!active && flatpakApplications.length > 1) throw new OrbitError("UNSUPPORTED", "Zen Flatpak deployment is ambiguous");
+  if (!active && localApplication && flatpakApplication)
+    throw new OrbitError("UNSUPPORTED", "Zen installation is ambiguous between local and Flatpak installations");
+  const selectedLocal = active?.packaging === "flatpak" ? undefined : localApplication;
+  const selected = active ?? selectedLocal ?? flatpakApplication;
+  if (selected?.profileResolutionFailed) throw new OrbitError("UNSUPPORTED", "Zen explicit running profile is unavailable; default fallback is refused");
+  const profileNames = selected?.profileNames ?? [];
+  if (profileNames.length > 1) throw new OrbitError("UNSUPPORTED", "Zen running profile name is ambiguous");
+  const explicitProfiles = selected?.profileDirectories ?? [];
+  if (explicitProfiles.length > 1) throw new OrbitError("UNSUPPORTED", "Zen running profile is ambiguous");
+  const explicitProfile = explicitProfiles[0];
+  if (explicitProfile && profileNames.length) throw new OrbitError("UNSUPPORTED", "Zen has conflicting running profile selectors");
+  if (explicitProfile && selected) {
+    const profile = await realpath(explicitProfile);
+    const entry = await lstat(profile);
+    if (!entry.isDirectory() || entry.uid !== process.getuid?.())
+      throw new OrbitError("UNSUPPORTED", "Zen running profile must be a directory owned by the current user");
+    if (selected.flatpak) return { deploymentFiles: selected.flatpak.deploymentFiles, profile, appRoot: profile };
+    const executableDirectory = dirname(selected.executable);
+    return { deploymentFiles: executableDirectory, executableDirectory, profile, appRoot: profile,
+      ...(basename(selected.executable) === "zen" ? {} : { executableName: basename(selected.executable) }) };
+  }
+  let base = resolve(home, ".var/app/app.zen_browser.zen/config/zen");
+  let baseEntry = await lstat(base).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  // The local Linux archive uses ~/.zen, independently of the Flatpak profile.
+  const local = location.deploymentFiles === undefined && flatpakApplication === undefined && (selectedLocal !== undefined || baseEntry === undefined);
+  if (local) {
+    base = resolve(home, ".zen");
+    baseEntry = await lstat(base).catch(() => undefined);
+  }
   if (!baseEntry?.isDirectory() || baseEntry.isSymbolicLink())
-    throw new OrbitError("UNSUPPORTED", "Zen Flatpak profile directory is unavailable");
-  const profileName = selectedProfile(await readFile(join(base, "profiles.ini"), "utf8"));
+    throw new OrbitError("UNSUPPORTED", "Zen profile directory is unavailable for the installed Flatpak or local archive");
+  const profileName = selectedProfile(await readFile(join(base, "profiles.ini"), "utf8"), profileNames[0]);
   const baseReal = await realpath(base);
-  const appRoot = await realpath(resolve(home, ".var/app/app.zen_browser.zen"));
-  if (!baseReal.startsWith(appRoot + sep))
+  const appRoot = local ? baseReal : await realpath(resolve(home, ".var/app/app.zen_browser.zen"));
+  if (!local && !baseReal.startsWith(appRoot + sep))
     throw new OrbitError("UNSUPPORTED", "Zen profile directory escaped its application data root");
   const profile = await realpath(resolve(base, profileName)).catch(() => "");
   if (!profile.startsWith(baseReal + sep) || !(await lstat(profile).catch(() => undefined))?.isDirectory())
     throw new OrbitError("UNSUPPORTED", "Zen active profile must be a real directory inside its installation");
+  if (local) {
+    const executableDirectory = selectedLocal ? dirname(selectedLocal.executable) : "";
+    const executableName = selectedLocal ? basename(selectedLocal.executable) : "zen";
+    const executable = executableDirectory && await lstat(join(executableDirectory, executableName)).catch(() => undefined);
+    if (!executable || !executable.isFile() || !(executable.mode & 0o111))
+      throw new OrbitError("UNSUPPORTED", "No verified local Zen executable was discovered");
+    return { deploymentFiles: executableDirectory, executableDirectory, profile, appRoot,
+      ...(executableName === "zen" ? {} : { executableName }) };
+  }
   const architecture = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : "";
   if (!architecture) throw new OrbitError("UNSUPPORTED", "Zen installation architecture is unsupported");
   const absoluteEnvironment = (name: string): string | undefined => {
-    const value = process.env[name];
+    const value = discoveryEnv[name];
     return value && isAbsolute(value) ? value : undefined;
   };
   const dataHome = absoluteEnvironment("XDG_DATA_HOME") ?? join(home, ".local/share");
   const userRoot = absoluteEnvironment("FLATPAK_USER_DIR") ?? join(dataHome, "flatpak");
   const systemRoot = absoluteEnvironment("FLATPAK_SYSTEM_DIR") ?? "/var/lib/flatpak";
   const deploymentPath = `app/app.zen_browser.zen/${architecture}/stable/active/files`;
-  const candidates = location.deploymentFiles ? [location.deploymentFiles] : [
+  const selectedDeployment = location.deploymentFiles ?? flatpakApplication?.flatpak?.deploymentFiles;
+  const candidates = selectedDeployment ? [selectedDeployment] : [
     join(systemRoot, deploymentPath),
     join(userRoot, deploymentPath),
   ];
@@ -212,7 +290,8 @@ export async function prepareZenLaunch(
       "--dir", "/etc",
       "--ro-bind", "/etc/fonts", "/etc/fonts", "--ro-bind", "/etc/passwd", "/etc/passwd",
       "--ro-bind", "/etc/group", "/etc/group", "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",
-      "--ro-bind", installation.deploymentFiles, "/app", "--ro-bind", libraries, "/runtime-lib",
+      "--ro-bind", installation.deploymentFiles, installation.executableDirectory ? "/app/zen" : "/app",
+      "--ro-bind", libraries, "/runtime-lib",
       "--dir", "/orbit", "--bind", privateDirectory, "/orbit/zen",
       "--ro-bind", socket, "/orbit/zen/runtime/wayland-0",
       ...(lease ? ["--ro-bind", lease.socketPath, "/orbit/zen/runtime/lease.sock"] : []),
@@ -226,7 +305,7 @@ export async function prepareZenLaunch(
       "--setenv", "LANG", "C.UTF-8", "--chdir", "/orbit/zen",
       // The shell, bridge, and Zen all run under the same bubblewrap PID and network namespaces.
       ...(lease ? ["/usr/bin/sh", "-c", publicWebScript, "orbit-zen"] : []),
-      "/app/zen/zen", "--no-remote", "--profile", profileInside,
+      `/app/zen/${installation.executableName ?? "zen"}`, "--no-remote", "--profile", profileInside,
     ];
     const uid = process.getuid?.();
     if (sharedFiles.length && uid === undefined)

@@ -1,10 +1,38 @@
 # Agent connectors
 
+Orbit is desktop-only. Standalone browser sessions and browser profile APIs are
+retired from the public broker and MCP contract. Use `system` or configured
+`native` sessions, and never fall back to browser automation. See
+[desktop-only migration](desktop-only.md) for current capabilities and limits.
+The browser connector examples and host trials below are historical evidence
+from earlier releases and are not instructions for current agents.
+
+Use `orbit_applications` before planning native application work. It exposes the
+same metadata as `sbar-orbit applications [QUERY]`, including verified paths,
+running evidence and platform limits. Discovery grants no capture or input
+authority. Create a `system` session for private desktop work and report launch
+failures without silently substituting a browser session. See
+[application discovery](application-discovery.md).
+
 `orbit_diagnostics` prepares a local metadata-only report and a prefilled GitHub issue link. Failed
 operations return a `diagnosticId` matching the report's trace ID. It sends nothing. See
 [diagnostic reports](diagnostics.md) for collection scope and privacy.
 
-Orbit exposes twelve MCP tools over stdio, including `orbit_usage` for conversation preference and `orbit_diagnostics` for local reports. `orbit_create` takes `browser` or `system`, and `fedora` is still accepted for the same private display; the alias is vocabulary, not a wider platform claim, and every reply says `fedora`. Seven drive a session: `orbit_create`, `orbit_act`, `orbit_observe`, `orbit_pause`, `orbit_resume`, `orbit_stop` and `orbit_status`. Three are for an agent working without a person to ask: `orbit_journal` reads back every decision the session made, `orbit_narrow` tightens what it may do for the rest of its life, and `orbit_restore` puts a paused session back to a restore point, which it refuses more often than it grants. The adapter connects to the local broker; disconnecting it leaves broker-owned sessions alive.
+The desktop-only MCP adapter exposes application discovery, session lifecycle,
+observations, actions, diagnostics, usage preferences, policy narrowing and the
+configured native application interfaces. `orbit_create` accepts `system`, its
+`fedora` alias, or `native`; the default is `system`. Standalone browser sessions,
+DOM actions, `orbit_profiles`, `cloneOf`, `cloneExtensions` and browser account
+snapshots are retired. Previously connected adapters are also refused by the
+public broker when they request those paths.
+
+Private workspace actions are `desktops`, `list-windows`, `desktop` with an opaque
+`desktopId`, and `move-window` with the session-bound `windowId` returned by
+`list-windows`. The Sway adapter currently uses numbered desktop IDs. Movement
+verifies the destination and preserves the active private desktop. These actions
+do not grant access to owner windows. Existing owner application handoff remains
+under the crash release hold. Windows and macOS native adapters are not implemented.
+
 
 ## Conversation choice and compact observations
 
@@ -47,7 +75,10 @@ calling Node's `child_process.spawn` without `shell: true` cannot. For that host
 and the configuration names Bun and `src/mcp.ts` instead, which is the same entry point one level
 down and gives up the upgrade safety the launcher buys.
 
-On this workstation the server is registered for Claude Code at user scope (`claude mcp add --scope user orbit ...` with the managed socket), and for Hermes in its `mcp_servers`, so every conversation on the machine has the tools. The machine-wide agent instructions in `~/AGENTS.md` and the `sbar-orbit` skill in `~/.claude/skills` say when to use them, and the answer is narrower than "anything with a browser": the person's own browser and logged-in accounts, a private session of their own to watch or take over, and real desktop applications go through an Orbit session, and nothing ever goes through the person's own screen. Opening a link to read it, reviewing a public site or research is the host's own web tools' job: fetch or extract, search, or an embedded browser tool such as Playwright. Those start instantly and cost no session, where a session costs an owned browser and a slice of the shared budget. Both halves of the rule have a measured reason behind them. The prohibition exists because an agent that merely has the tool available still reaches for a host screenshot unless it is told not to; that happened in a Claude conversation before the rule was written. The routing exists because the trial below measured the opposite case and found it normal: a generic browser request stayed with the host's generic browser tool, while the instructions of that day told the agent to use Orbit whenever a task needed a browser.
+Use the current desktop contract in every host. An application failure is reported
+at its actual capability boundary; it must never route the task into a standalone
+browser or copy a personal profile. Existing host trials below describe their dated
+source and do not override this contract.
 
 An agent can do the whole installation itself, including this file, by following
 [agent-install.md](agent-install.md). Passing `--connect` explicitly authorizes registration;

@@ -10,7 +10,7 @@
     "preview": "bun scripts/preview.ts",
     "deploy": "wrangler deploy",
     "deploy:check": "wrangler deploy --dry-run",
-    "qa": "bun scripts/qa-orbit.ts"
+    "qa": "bun test tests"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

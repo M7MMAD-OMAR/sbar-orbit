@@ -176,7 +176,7 @@ class TransportTests(unittest.TestCase):
         prefix = "ghost-type 0x123 "
         for length in (1023, 2046, 4092):
             request = prefix + "x" * (length - len(prefix))
-            self.assertEqual(self.transport.execute(request, self.control), "ok")
+            self.assertEqual(self.control.execute(request, lambda: self.transport._exchange(request)), "ok")
         self.assertEqual([len(request) for request in self.actions()], [1023, 2046, 4092])
 
     def test_scope_enrollment_checks_membership_before_and_after(self):

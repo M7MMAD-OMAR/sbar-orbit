@@ -112,11 +112,11 @@ exit /b 2
 
 :no_desktop
 echo sbar-orbit: the panel, the settings window and the config command are GTK and Python, and are 1>&2
-echo Linux only. The broker, the browser sessions and the MCP adapter are not. 1>&2
+echo Linux only. Standalone browser sessions are retired; native Windows desktop control is not implemented. 1>&2
 exit /b 2
 
 :help
-echo Sbar Orbit, a private browser for your AI agent ^(Windows^)
+echo Sbar Orbit, desktop application control ^(Windows adapter not implemented^)
 echo.
 echo   sbar-orbit serve               Start the broker with the shared job object budget
 echo   sbar-orbit status              Sessions, tabs and windows

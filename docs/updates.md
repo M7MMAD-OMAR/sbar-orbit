@@ -10,7 +10,7 @@ A real Fedora systemd container has exercised upgrade, deliberately broken start
 private browser session refusal, retained state and timer controls. This is scoped evidence for the
 current schema and service contract, not a promise about every future release or distribution.
 
-See [alpha.8 installation, migration and update instructions](release-alpha8.md) for the current
+See [alpha.8 installation, migration and update instructions](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8) for the current
 contract. Source checkouts use Git. macOS and Windows managed activation and automatic scheduling
 explicitly refuse until their service integration is implemented and measured. A failed timer enable
 leaves the opt-in flag off. Registry publication and GitHub source releases are separate actions.

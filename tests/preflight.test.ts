@@ -20,32 +20,29 @@ test("Windows preflight rejects the runtime that exhausted the shared MCP budget
   expect(report.checks.find(check => check.id === "bun-version")?.remedy).toBeNull();
 });
 
-test("preflight distinguishes browser, native and common missing prerequisites", async () => {
+test("preflight checks native and common prerequisites without a browser requirement", async () => {
   const all = await inspectPrerequisites("/fixture", complete);
-  expect(all.browserPrerequisitesFound).toBe(true);
+  expect(all.browserPrerequisitesFound).toBe(false);
   expect(all.nativePrerequisitesFound).toBe(true);
   expect(all.startsApplications).toBe(false);
   expect(all.notVerified).toContain("shared libraries and executable startup");
   const noBrowser = await inspectPrerequisites("/fixture", { ...complete, file: async path => !path.includes("chrom") });
   expect(noBrowser.browserPrerequisitesFound).toBe(false);
   expect(noBrowser.nativePrerequisitesFound).toBe(true);
-  const browser = noBrowser.checks.find(check => check.id === "chrome-or-chromium")?.remedy;
-  // A remedy an agent can branch on: the elevation flag is the boundary, not a sentence about one.
-  expect(browser).toMatchObject({ id: "no-browser", needsElevation: true, agentMayRun: false });
-  expect(browser?.command).toContain("chromium");
+  expect(noBrowser.checks.some(check => check.group === "browser")).toBe(false);
   expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
   // A machine with neither runtime. Named by the two files rather than by a directory, because the
   // runtime is shared between versions now and is no longer under a `.runtime` path. Both separators,
   // because `join` produces backslashes on Windows and a POSIX-only pattern matched nothing there,
   // so the fixture claimed a runtime the mock meant to remove.
   const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !/[/\\](sway|pointer)$/.test(path) });
-  expect(noNative.browserPrerequisitesFound).toBe(true);
+  expect(noNative.browserPrerequisitesFound).toBe(false);
   expect(noNative.nativePrerequisitesFound).toBe(false);
   // The fresh-machine failure: a compositor that is built and cannot load, which is a package
   // manager's job and is named as one, library by library.
   const unloadable = await inspectPrerequisites("/fixture", { ...complete, missingLibraries: () => ["libevdev.so.2", "libinput.so.10"] });
   expect(unloadable.nativePrerequisitesFound).toBe(false);
-  expect(unloadable.browserPrerequisitesFound).toBe(true);
+  expect(unloadable.browserPrerequisitesFound).toBe(false);
   const libraries = unloadable.checks.find(check => check.id === "private-runtime-libraries");
   expect(libraries?.remedy).toMatchObject({ id: "no-native-libraries", needsElevation: true });
   expect(libraries?.remedy?.message).toContain("libevdev.so.2, libinput.so.10");
@@ -58,20 +55,20 @@ test("preflight distinguishes browser, native and common missing prerequisites",
 test("a package remedy follows the package manager that is actually on the machine", async () => {
   const missing = { platform: "linux", module: () => false, which: () => null, userManager: async () => false, missingLibraries: () => [] as string[] };
   const only = (manager: string) => inspectPrerequisites("/fixture", { ...missing, file: async (path: string) => path === manager });
-  const browserOn = async (manager: string) =>
-    (await only(manager)).checks.find(check => check.id === "chrome-or-chromium")?.remedy;
+  const captureOn = async (manager: string) =>
+    (await only(manager)).checks.find(check => check.id === "grim")?.remedy;
 
-  expect((await browserOn("/usr/bin/dnf"))?.command).toBe("sudo dnf install -y chromium");
-  expect((await browserOn("/usr/bin/apt-get"))?.command).toBe("sudo apt-get install -y chromium");
-  expect((await browserOn("/usr/bin/pacman"))?.command).toBe("sudo pacman -S --needed chromium");
+  expect((await captureOn("/usr/bin/dnf"))?.command).toBe("sudo dnf install -y grim wl-clipboard");
+  expect((await captureOn("/usr/bin/apt-get"))?.command).toBe("sudo apt-get install -y grim wl-clipboard");
+  expect((await captureOn("/usr/bin/pacman"))?.command).toBe("sudo pacman -S --needed grim wl-clipboard");
   // Package names are not the same everywhere, so the portable field is the software, not the command.
   const arch = (await only("/usr/bin/pacman")).checks.find(check => check.id === "xwayland")?.remedy;
   expect(arch?.command).toBe("sudo pacman -S --needed xorg-xwayland");
   expect(arch?.packages).toEqual(["xwayland"]);
   // An unrecognised system gets the names and no command. A wrong command is worse than none.
-  const unknown = await browserOn("none");
+  const unknown = await captureOn("none");
   expect(unknown?.command).toBeUndefined();
-  expect(unknown?.packages).toEqual(["chromium"]);
+  expect(unknown?.packages).toEqual(["grim", "wl-clipboard"]);
 });
 
 test("a systemd tool with no user manager behind it is not availability", async () => {
@@ -121,7 +118,7 @@ test("standalone preflight runs without a broker socket and emits no personal pa
   });
   const raw = await new Response(child.stdout).text();
   const report = JSON.parse(raw);
-  expect(await child.exited).toBe(report.browserPrerequisitesFound ? 0 : 1);
+  expect(await child.exited).toBe(report.nativePrerequisitesFound ? 0 : 1);
   expect(report.check).toBe("prerequisite-availability");
   expect(report.startsApplications).toBe(false);
   expect(raw).not.toContain(resolve(import.meta.dir, ".."));

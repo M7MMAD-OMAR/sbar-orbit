@@ -61,9 +61,10 @@ const reviewedBinaries = new Map([
   ["website/public/brand/logo.png", "9f2fd99fdc6f92921d73a515c15199b652d741d35038ea776c7160298b020277"],
   ["website/public/fonts/dm-sans-latin.woff2", "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543"],
   ["website/public/images/coffee-button.webp", "3ac30a2d7298247e8b8e5a1b98588384d605a97ab3c7cfb0524d321bf7f2ab77"],
-  ["website/public/images/hero-workspaces-mobile.webp", "670cf3ce1faaf062c3bf54fb922ead94469f17ebb1df235b2c270e62507d9ca0"],
-  ["website/public/images/hero-workspaces.webp", "95f1abd83e4eae7af815a471d6250f0f466b48c38156685c666ca896598e8a61"],
-  ["website/public/images/private-spaces.webp", "b8bc68bee393dca90f60f5b65468a34a6b2c356096acf505d4553853425c361e"],
+  // Reviewed 16 October 2026: generic desktop illustrations, VP8 image chunks only.
+  ["website/public/images/hero-desktop-mobile.webp", "1bf6972d6a3edcc0f380a61d4669dea292298fa3bc544cf182ece6753c9c7fa9"],
+  ["website/public/images/hero-desktop.webp", "eab968771819305a822b71cb3c4e9b4d2c2fe50f893a9749a833af5e20b38f69"],
+  ["website/public/images/private-desktop-apps.webp", "45860c7087e653d49a24109b6682861044ecff0ece96979b8bfe1cedd4c02619"],
   ["website/public/images/viewer-control.webp", "055956a37290e6724564a84ad16decdb1ef09f5ec3e6dbe24a535524dfc4f8e7"],
 ]);
 

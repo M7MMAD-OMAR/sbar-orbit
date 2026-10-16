@@ -43,7 +43,7 @@ export const actionClasses: ActionClass[] = ["read", "navigate", "write", "irrev
 /** Orbit's action vocabulary, mapped to what each one does. Unknown actions are never assumed safe. */
 const classOfAction: Record<string, ActionClass> = {
   read: "read", observe: "read", scroll: "read", resize: "read", "select-tab": "read",
-  windows: "read", state: "read",
+  windows: "read", state: "read", desktops: "read", "list-windows": "read", inspect: "read",
   navigate: "navigate", "open-tab": "navigate",
   // Everything that changes state inside the session's own workspace. `launch` belongs here rather
   // than in the irreversible class: it starts an application on the private display, which is
@@ -51,7 +51,7 @@ const classOfAction: Record<string, ActionClass> = {
   // That is a statement about the display, not about the program: the native launcher is not
   // permission containment and does not make an arbitrary same-user command safe.
   fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
-  pointer: "write", window: "write", launch: "write", "launch-app": "write",
+  pointer: "write", window: "write", launch: "write", "launch-installed": "write", "launch-app": "write", desktop: "write", "move-window": "write",
   cursor: "write", move: "write", "hide-cursor": "write", "close-application": "write",
   // Leaves the workspace for the filesystem, so stopping the session does not take it back.
   download: "irreversible",

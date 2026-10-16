@@ -29,7 +29,7 @@ archive, outside production application launch and the registry package.
 The Nextcloud namespace investigation is saved at a stopped checkpoint;
 its latest native synchronization attempt is not a pass.
 
-[Release notes](docs/release-0.2.0.md). Fresh release verification and archive
+[Release notes](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.2.0). Fresh release verification and archive
 checksums are recorded with the published release.
 
 ## 0.1.1 (22 September 2026)
@@ -62,7 +62,7 @@ place.
 
 Local suite at this commit, Fedora 44: **468 pass, 0 fail, 27 skip, 495 tests across 100 files,
 218 s** with `ORBIT_TEST_NATIVE=1`; without the native tests, 454 pass, 0 fail, 41 skip, 182 s.
-[Release notes](docs/release-0.1.1.md).
+[Release notes](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.1).
 
 ## 0.1.0 (21 September 2026)
 
@@ -77,7 +77,7 @@ recorded in [release readiness](docs/release-readiness.md) as unexplained rather
 The first release without an alpha tag. No persisted schema and no service unit contract changed, so
 an existing installation upgrades in place. An automatic update will not cross from a prerelease to a
 release by itself: `sameLine` treats them as different lines, so an alpha machine is told a newer
-version exists and left alone. [Release notes](docs/release-0.1.0.md).
+version exists and left alone. [Release notes](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0).
 
 Two failures with one symptom, found on 21 September 2026 when an agent driving Orbit through the MCP
 adapter answered that Orbit cannot use the person's own browser or their signed-in accounts:
@@ -116,10 +116,10 @@ Two more, from reading the project as somebody meeting it for the first time:
 
 ## 0.1.0-alpha.9 (20 September 2026)
 
-Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9), tagged at `ed355d8`, where all nine CI jobs passed with 491 tests on each platform. The published tarball was downloaded back and is byte identical to the built one; the package smoke test was refused by the shared budget and is not measured. See [the release notes](docs/release-alpha9.md).
+Published to the npm registry as `latest` and to [GitHub](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9), tagged at `ed355d8`, where all nine CI jobs passed with 491 tests on each platform. The published tarball was downloaded back and is byte identical to the built one; the package smoke test was refused by the shared budget and is not measured. See [the release notes](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.9).
 
 A fix release. No persisted schema and no service unit contract changed, so the update path and the
-migration instructions in [0.1.0-alpha.8](docs/release-alpha8.md) apply unchanged. Four fixes, three of
+migration instructions in [0.1.0-alpha.8](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8) apply unchanged. Four fixes, three of
 them found by measurement on 20 September 2026 rather than by reading:
 
 - The Windows descendant walk in `browser-crash.test.ts` trusted a `Win32_Process` snapshot, and that
@@ -158,7 +158,7 @@ Published to the npm registry as `latest` and to [GitHub](https://github.com/M7M
 - Failed timer enablement leaves automatic updates off. macOS and Windows refuse unsupported managed
   activation and scheduling instead of reporting success.
 - A disposable Fedora systemd gate verifies real upgrade, broken-startup rollback, private browser
-  session refusal, retained data and timer controls. See [installation and migration](docs/release-alpha8.md).
+  session refusal, retained data and timer controls. See [installation and migration](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8).
 
 ### Latest verification and platform fixes
 

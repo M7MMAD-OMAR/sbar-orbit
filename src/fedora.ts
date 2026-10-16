@@ -15,14 +15,18 @@ import { prepareZenLaunch } from "./native-zen-launch";
 import { usableNativeRuntime } from "./runtime-paths";
 import { sweepOwnedGroup } from "./owned-group";
 import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./native-renderer";
+import { parseDesktopAction, SwayWorkspaceAdapter, type DesktopAction } from "./desktop-workspaces";
+import { accessibilityEnvironment, accessibilityProcess, inspectAccessibility } from "./private-accessibility";
+import { resolveInstalledApplication } from "./application-launch";
 
-export type NativeAction = { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
+export type NativeAction = { type: "inspect"; windowId: string } | { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
+  | { type: "launch-installed"; applicationId: string; toolkit?: "wayland" | "x11" }
   | { type: "launch-app"; app: "vscode"; profile: "default"; extensions: string[]; openPath?: string }
   | { type: "launch-app"; app: "codex"; profile: "active" }
   | { type: "launch-app"; app: "zen"; profile: "active"; network?: "offline" | "public-web"; sharedFiles?: string[] }
   | { type: "pointer"; x: number; y: number } | { type: "text" | "paste"; text: string }
   | { type: "key"; key: string } | { type: "resize"; width: number; height: number }
-  | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput;
+  | { type: "window"; command: WindowCommand; tab?: number } | ScrollInput | DesktopAction;
 export function nativeSupervisorSafetyFlags(action: NativeAction): string[] {
   return action.type === "launch-app" && (action.app === "zen" || action.app === "codex")
     ? ["--coredump-filter-zero"] : [];
@@ -33,7 +37,22 @@ export type WindowCommand = (typeof windowCommands)[number];
 const nativeKey = /^(?:Ctrl\+)?(?:Alt\+)?(?:Shift\+)?(?:[A-Z]|[0-9]|F(?:[1-9]|1[0-2])|Enter|Tab|Escape|Backspace|Delete|Space|Home|End|PageUp|PageDown|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Minus|Equal)$/u;
 export function parseNativeAction(value: unknown, size: Viewport = defaultViewport): NativeAction {
   const a = record(value);
+  if (a.type === "inspect") {
+    if (Object.keys(a).some(key => !["type", "windowId"].includes(key)) || typeof a.windowId !== "string" || a.windowId.length < 1 || a.windowId.length > 128 || a.windowId.includes("\0"))
+      throw new OrbitError("INVALID_REQUEST", "Inspect requires an exact private window ID");
+    return { type: "inspect", windowId: a.windowId };
+  }
+  const desktop = parseDesktopAction(a);
+  if (desktop) return desktop;
   if (a.type === "resize") return { type: "resize", ...parseViewport(a) };
+  if (a.type === "launch-installed") {
+    if (Object.keys(a).some(key => !["type", "applicationId", "toolkit"].includes(key)) ||
+        typeof a.applicationId !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,250}\.desktop$/.test(a.applicationId) ||
+        (a.toolkit !== undefined && a.toolkit !== "wayland" && a.toolkit !== "x11"))
+      throw new OrbitError("INVALID_REQUEST", "Select an exact installed desktop registration ID; this operation launches a new private application");
+    return { type: "launch-installed", applicationId: a.applicationId,
+      ...(a.toolkit === undefined ? {} : { toolkit: a.toolkit }) };
+  }
   if (a.type === "window") {
     if (!windowCommands.includes(a.command as WindowCommand))
       throw new OrbitError("UNSUPPORTED", `Window command must be one of ${windowCommands.join(", ")}`);
@@ -137,7 +156,12 @@ async function sessionOf(pid: number): Promise<number | undefined> {
 export class FedoraBackend {
   parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
-  readonly capabilities = ["launch", "launch-app", "pointer", "scroll", "text", "paste", "key", "resize", "window", "observe", "pause", "resume", "stop"];
+  readonly capabilities = ["launch", "launch-installed", "launch-app", "pointer", "scroll", "text", "paste", "key", "resize", "window", "desktops", "desktop", "list-windows", "move-window", "observe", "pause", "resume", "stop"];
+  private readonly workspaces = new SwayWorkspaceAdapter({
+    tree: () => this.ipc("-t", "get_tree"),
+    desktops: () => this.ipc("-t", "get_workspaces"),
+    command: value => this.ipc(value),
+  });
   private closed = false;
   private listeners: (() => void)[] = [];
   private listenersNotified = false;
@@ -158,6 +182,10 @@ export class FedoraBackend {
   private swaySocket = "";
   private waylandDisplay = "";
   private clipboard?: ChildProcessWithoutNullStreams;
+  private accessibilityReady = false;
+  private accessibilityStopping?: Promise<void>;
+  private accessibilityCleanupError?: unknown;
+  private accessibility?: { child: ChildProcessWithoutNullStreams; group?: number };
   private bus?: { child: ChildProcessWithoutNullStreams; group?: number };
   private keyringProxy?: { child: ChildProcessWithoutNullStreams; group?: number; address: string };
   readonly busServices: string[] = [];
@@ -189,7 +217,7 @@ export class FedoraBackend {
     const hostRuntime = process.env.XDG_RUNTIME_DIR;
     const env = { ...process.env };
     try {
-    for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", ...inheritedAppearance])
+    for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", "AT_SPI_BUS_ADDRESS", "AT_SPI_REGISTRY", "AT_SPI_DISPLAY", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE", ...inheritedAppearance])
       delete env[key];
     // Keep application state private so a launch cannot restore the person's own drafts. System
     // XDG_DATA_DIRS still resolve normally, and GSettings preferences are copied separately.
@@ -265,6 +293,7 @@ export class FedoraBackend {
         catch { return false; }
       });
       await backend.startBus();
+      await backend.startAccessibility();
       const device = spawn(join(runtime, "pointer"), [join(directory, backend.waylandDisplay)], { env });
       backend.device = device; device.stderr.resume();
       device.once("exit", () => { void backend.close(); });
@@ -322,6 +351,76 @@ export class FedoraBackend {
     });
     child.once("exit", () => { void this.close(); });
   }
+  private stopAccessibility(): Promise<void> {
+    this.accessibilityReady = false;
+    const index = this.capabilities.indexOf("inspect");
+    if (index >= 0) this.capabilities.splice(index, 1);
+    delete this.env.AT_SPI_BUS_ADDRESS;
+    delete this.env.GTK_A11Y;
+    delete this.env.QT_LINUX_ACCESSIBILITY_ALWAYS_ON;
+    this.env.NO_AT_BRIDGE = "1";
+    if (this.accessibilityStopping) return this.accessibilityStopping;
+    const service = this.accessibility;
+    if (!service) return Promise.resolve();
+    const stopping = (async () => {
+      const child = service.child;
+      if (child.pid && child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>(resolve => child.once("close", () => resolve()));
+        child.kill("SIGTERM");
+        const timer = setTimeout(() => child.kill("SIGKILL"), 4000);
+        try { await exited; } finally { clearTimeout(timer); }
+      }
+      // Read the supervisor report after exit too: readiness can fail before the first poll.
+      if (service.group === undefined) {
+        try {
+          const info = record(JSON.parse(await readFile(join(this.directory, "accessibility.json"), "utf8")));
+          if (Number.isSafeInteger(info.pid) && Number(info.pid) > 0) service.group = Number(info.pid);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+      if (service.group !== undefined) await sweepOwnedGroup(service.group, this.directory);
+      this.accessibility = undefined;
+    })();
+    this.accessibilityStopping = stopping;
+    void stopping.catch(error => { this.accessibilityCleanupError = error; });
+    return stopping;
+  }
+
+  private async startAccessibility() {
+    if (!this.bus || !await Bun.file("/usr/libexec/at-spi-bus-launcher").exists() || !await Bun.file("/usr/libexec/at-spi2-registryd").exists()) return;
+    const environment = accessibilityEnvironment(this.directory, this.env);
+    const report = join(this.directory, "accessibility.json");
+    const child = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), report,
+      "/usr/bin/python3", join(project, "src/native/private_accessibility.py"), "serve", this.directory], { env: environment, detached: true });
+    this.accessibility = { child };
+    let spawnError: unknown;
+    child.on("error", error => { spawnError = error; });
+    child.stdout.resume(); child.stderr.resume();
+    try {
+      await this.wait(async () => {
+        if (spawnError || child.exitCode !== null || child.signalCode !== null) throw new OrbitError("UNSUPPORTED", "Private accessibility service is unavailable");
+        try {
+          const info = record(JSON.parse(await readFile(report, "utf8")));
+          if (!Number.isSafeInteger(info.pid) || Number(info.pid) < 1) return false;
+          if (this.accessibility) this.accessibility.group = Number(info.pid);
+          await readFile(join(this.directory, "accessibility-ready.json"));
+          return true;
+        } catch { return false; }
+      });
+      if (spawnError || child.exitCode !== null || child.signalCode !== null || this.closed)
+        throw new OrbitError("UNSUPPORTED", "Private accessibility service is unavailable");
+      Object.assign(this.env, environment);
+      delete this.env.NO_AT_BRIDGE;
+      this.accessibilityReady = true;
+      this.capabilities.push("inspect");
+      child.once("exit", () => { void this.stopAccessibility().catch(() => {}); });
+    } catch {
+      // Accessibility is optional. Cleanup failure remains fatal and is never hidden.
+      await this.stopAccessibility();
+    }
+  }
+
   private async codeKeyringProxy(): Promise<string> {
     if (this.keyringProxy) return this.keyringProxy.address;
     const upstream = process.env.DBUS_SESSION_BUS_ADDRESS;
@@ -364,8 +463,9 @@ export class FedoraBackend {
   }
   private async ipc(...args: string[]) {
     this.ensureOpen();
-    const tree = args[0] === "-t" && args[1] === "get_tree";
-    const result = await swayRequest(this.swaySocket, tree ? 4 : 0, tree ? "" : args.join(" "));
+    const query = args[0] === "-t" ? args[1] : undefined;
+    const type = query === "get_tree" ? 4 : query === "get_workspaces" ? 1 : 0;
+    const result = await swayRequest(this.swaySocket, type, query ? "" : args.join(" "));
     if (Array.isArray(result) && result.some(v => v.success === false)) throw new OrbitError("BACKEND_FAILED", "Private display rejected command");
     return result;
   }
@@ -393,6 +493,7 @@ export class FedoraBackend {
   private async socketPolicy(toolkit: "wayland" | "x11", keyring: boolean) {
     const paths = [join(this.directory, this.waylandDisplay)];
     if (this.bus) paths.push(join(this.directory, "bus"));
+    if (this.accessibilityReady) paths.push(join(this.directory, "at-spi/bus"));
     if (keyring) {
       if (!this.keyringProxy) throw new OrbitError("UNSUPPORTED", "Private keyring proxy is unavailable");
       paths.push(join(this.directory, "keyring-proxy"));
@@ -413,8 +514,35 @@ export class FedoraBackend {
     }));
   }
   async act(value: unknown): Promise<unknown> {
-    const action = this.parseAction(value);
+    let action = this.parseAction(value);
     this.ensureOpen();
+    await this.accessibilityStopping;
+    if (this.accessibilityCleanupError) throw new OrbitError("BACKEND_FAILED", "Private accessibility cleanup failed");
+    let installed: Awaited<ReturnType<typeof resolveInstalledApplication>> | undefined;
+    if (action.type === "launch-installed") {
+      installed = await resolveInstalledApplication(action.applicationId);
+      action = { type: "launch", argv: installed.argv, toolkit: action.toolkit ?? "wayland" };
+      this.ensureOpen();
+    }
+    if (action.type === "inspect") {
+      if (!this.accessibilityReady) throw new OrbitError("UNSUPPORTED", "Private accessibility services are unavailable");
+      const window = (await this.workspaces.listWindows()).find(window => window.windowId === action.windowId);
+      if (!window) throw new OrbitError("INVALID_REQUEST", "Window does not belong to this private session");
+      const start = await accessibilityProcess(window.pid);
+      const group = await sessionOf(window.pid);
+      if (!this.children.some(entry => entry.group === group && entry.child.exitCode === null && entry.child.signalCode === null))
+        throw new OrbitError("UNSUPPORTED", "Window has no live private application supervisor");
+      const result = await inspectAccessibility(this.directory, this.env, window.pid, start, window.title);
+      const current = (await this.workspaces.listWindows()).find(item => item.windowId === action.windowId);
+      if (!current || current.pid !== window.pid || current.title !== window.title || await accessibilityProcess(window.pid) !== start || await sessionOf(window.pid) !== group)
+        throw new OrbitError("UNSUPPORTED", "Private window changed during accessibility inspection");
+      this.ensureOpen();
+      return { ...result, windowId: action.windowId, snapshotId: crypto.randomUUID(), mutations: "unsupported" };
+    }
+    if (action.type === "desktops") return { desktops: await this.workspaces.listDesktops() };
+    if (action.type === "list-windows") return { windows: await this.workspaces.listWindows() };
+    if (action.type === "desktop") return { desktops: await this.workspaces.selectDesktop(action.desktopId) };
+    if (action.type === "move-window") return { window: await this.workspaces.moveWindow(action.windowId, action.desktopId) };
     if (action.type === "resize") {
       // The private display has one output, so resizing it is what gives an application more room.
       // The pointer position is kept only if it still lands on the new surface.
@@ -461,11 +589,18 @@ export class FedoraBackend {
       // Keep shells in our inherited resource budget and supervisor instead. Only
       // its discovery probe is disabled; explicit systemd-run calls still use the real binary.
       let launchEnv = applicationEnv;
+      if (action.type === "launch") {
+        // XDG directories alone do not isolate applications such as Zen, which reads ~/.zen.
+        // A generic launch must never inherit the owner's default HOME-based profile.
+        const home = join(this.directory, "home");
+        await mkdir(home, { recursive: true, mode: 0o700 });
+        launchEnv = { ...applicationEnv, HOME: home };
+      }
       if (action.type === "launch" && executable === "/usr/bin/ptyxis") {
         const bin = join(this.directory, "ptyxis-bin");
         await mkdir(bin, { recursive: true, mode: 0o700 });
         await writeFile(join(bin, "systemd-run"), '#!/bin/sh\nif [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then exit 1; fi\nexec /usr/bin/systemd-run "$@"\n', { mode: 0o700 });
-        launchEnv = { ...applicationEnv, PATH: `${bin}:${applicationEnv.PATH ?? "/usr/bin:/bin"}` };
+        launchEnv = { ...launchEnv, PATH: `${bin}:${applicationEnv.PATH ?? "/usr/bin:/bin"}` };
       }
       const pidFile = join(this.directory, `app-${crypto.randomUUID()}.json`);
       // Inkscape and Writer spawn glycin, whose own bubblewrap needs to make mounts. Keep the
@@ -490,7 +625,7 @@ export class FedoraBackend {
         ...("zenFilePolicy" in prepared && prepared.zenFilePolicy
           ? ["--zen-file-policy", JSON.stringify(prepared.zenFilePolicy)] : []),
         ...socketPolicy, executable, ...prepared.argv.slice(1)],
-      { env: { ...launchEnv, GDK_BACKEND: prepared.toolkit,
+      { ...(installed?.cwd ? { cwd: installed.cwd } : {}), env: { ...launchEnv, GDK_BACKEND: prepared.toolkit,
         ...(prepared.toolkit === "x11" && socketPolicy.length ? { DISPLAY: this.x11SocketPath() } : {}) }, detached: true });
       child.on("error", () => {}); child.stdout.resume(); child.stderr.resume();
       const supervised: SupervisedApplication = { child, ...("release" in prepared ? { release: prepared.release } : {}) };
@@ -534,6 +669,7 @@ export class FedoraBackend {
       await sleep(500);
       if ("zenSnapshot" in prepared) this.zenRefusedAuthorities = prepared.refusedAuthorities;
       return { pid: applicationPid, applied: true, selectedFiles,
+        ...(installed ? { applicationId: installed.applicationId, applicationState: "new", runtimeHome: "private" } : {}),
         ...("snapshot" in prepared ? { profileSnapshot: prepared.snapshot } : {}),
         ...("accountSnapshot" in prepared ? { profileSnapshot: prepared.accountSnapshot } : {}),
         ...("zenSnapshot" in prepared ? { profileSnapshot: prepared.zenSnapshot } : {}) };
@@ -657,8 +793,11 @@ export class FedoraBackend {
     this.closed = true;
     const closing = (async () => {
       const failures: unknown[] = [];
+      if (this.accessibilityStopping) {
+        try { await this.accessibilityStopping; } catch (error) { failures.push(error); }
+      }
       const supervised = [...this.children];
-      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.keyringProxy ? [this.keyringProxy.child] : []), ...(this.bus ? [this.bus.child] : []), this.compositor];
+      const children = [...supervised.map(entry => entry.child), ...(this.device ? [this.device] : []), ...(this.clipboard ? [this.clipboard] : []), ...(this.keyringProxy ? [this.keyringProxy.child] : []), ...(this.bus ? [this.bus.child] : []), ...(this.accessibility ? [this.accessibility.child] : []), this.compositor];
       const stopped = await Promise.allSettled(children.map(async child => {
         if (child.exitCode !== null || child.signalCode !== null || !child.pid) return;
         const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
@@ -667,12 +806,16 @@ export class FedoraBackend {
         try { await exited; } finally { clearTimeout(timer); }
       }));
       for (const result of stopped) if (result.status === "rejected") failures.push(result.reason);
+      // Service exit can start optional cleanup while the desktop is closing. Join it before removing the runtime.
+      if (this.accessibilityStopping) {
+        try { await this.accessibilityStopping; } catch (error) { failures.push(error); }
+      }
       // A live supervisor reaps its own tree on the way out, so by here every group is normally
       // gone already. The exception is the supervisor that was killed rather than asked, and that
       // is the one case where an application would otherwise survive the display it was given.
       const released = await Promise.allSettled(supervised.map(entry => this.reap(entry)));
       for (const result of released) if (result.status === "rejected") failures.push(result.reason);
-      for (const group of [this.keyringProxy?.group, this.bus?.group, this.compositorGroup])
+      for (const group of [this.keyringProxy?.group, this.accessibility?.group, this.bus?.group, this.compositorGroup])
         if (group !== undefined) {
           try { await sweepOwnedGroup(group, this.directory); }
           catch (error) { failures.push(error); }

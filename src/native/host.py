@@ -39,8 +39,16 @@ def peer(connection):
     return list(process)
 
 
-def inspect_host(environment):
+def deadline_timeout(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Native operation exceeded its deadline")
+    return min(3, remaining)
+
+
+def inspect_host(environment, deadline=None):
     """Only connect endpoints and send j/version. Never enumerate or act on windows."""
+    deadline = time.monotonic() + 3 if deadline is None else deadline
     runtime_text = environment.get("XDG_RUNTIME_DIR", "")
     if not isinstance(runtime_text, str):
         raise HostError("Runtime directory must be a string")
@@ -55,16 +63,16 @@ def inspect_host(environment):
     wayland = runtime / display
     ipc_identity, wayland_identity = metadata(ipc), metadata(wayland)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(3)
+        connection.settimeout(deadline_timeout(deadline))
         connection.connect(str(wayland))
         wayland_peer = peer(connection)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        deadline = time.monotonic() + 3
-        connection.settimeout(3)
+        connection.settimeout(deadline_timeout(deadline))
         connection.connect(str(ipc))
         ipc_peer = peer(connection)
         if ipc_peer != wayland_peer:
             raise HostError("IPC and Wayland endpoints belong to different compositor processes")
+        connection.settimeout(deadline_timeout(deadline))
         connection.sendall(b"j/version")
         data = bytearray()
         while True:
@@ -96,12 +104,12 @@ def inspect_host(environment):
             "performance": "not measured"}
 
 
-def verify_host(plan):
+def verify_host(plan, deadline=None):
     if not isinstance(plan, dict) or type(plan.get("schema")) is not int or plan.get("schema") != 1:
         raise HostError("Unknown native preparation plan")
     current = inspect_host({"XDG_RUNTIME_DIR": plan.get("runtime"),
                             "HYPRLAND_INSTANCE_SIGNATURE": plan.get("signature"),
-                            "WAYLAND_DISPLAY": plan.get("display")})
+                            "WAYLAND_DISPLAY": plan.get("display")}, deadline=deadline)
     keys = ("runtime", "signature", "display", "compositor", "ipc_socket", "wayland_socket", "abi_hash", "commit", "version")
     if any(plan.get(key) != current[key] for key in keys):
         raise HostError("Native preparation plan is stale")

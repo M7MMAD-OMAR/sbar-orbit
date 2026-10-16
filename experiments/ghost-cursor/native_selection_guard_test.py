@@ -130,6 +130,18 @@ struct SClipboardGuard { CWlDataDevice* device; ClipboardHandler original;
     wl_listener destroy{}; };
 static std::map<wl_resource*, SClipboardGuard> clipboardGuards;
 static std::map<wl_client*, wl_listener> selectionClients;
+// Keyboard behavior has its own fixture. These collaborators verify that the
+// extracted selection callbacks forward the exact event and client lifetime.
+static std::vector<wl_client*> retiredKeyboardClients;
+static void retireKeyboardClient(wl_client* client) { retiredKeyboardClients.push_back(client); }
+static size_t keyboardTransitionCalls = 0;
+static wl_protocol_logger_type keyboardTransitionDirection{};
+static const wl_protocol_logger_message* keyboardTransitionMessage = nullptr;
+static void keyboardProtocolTransition(wl_protocol_logger_type direction, const wl_protocol_logger_message* message) {
+    ++keyboardTransitionCalls;
+    keyboardTransitionDirection = direction;
+    keyboardTransitionMessage = message;
+}
 '''
 
 MAIN = r'''
@@ -152,7 +164,11 @@ template<typename T> static SP<T> device(wl_client* client) {
 }
 template<typename T> static void request(SP<T> raw) {
     wl_protocol_logger_message message{}; message.resource = raw->handle; message.message = &selectionMessage;
+    const auto previousTransitions = keyboardTransitionCalls;
     selectionRequest(nullptr, WL_PROTOCOL_LOGGER_REQUEST, &message);
+    if (keyboardTransitionCalls != previousTransitions + 1 ||
+        keyboardTransitionDirection != WL_PROTOCOL_LOGGER_REQUEST || keyboardTransitionMessage != &message)
+        throw std::runtime_error("selection request did not forward the exact keyboard protocol event");
     raw->requests.setSelection(raw.get(), nullptr, 7);
 }
 int main(int argc, char** argv) {
@@ -205,6 +221,9 @@ int main(int argc, char** argv) {
         if (!primaryGuards.empty()) { std::cerr << "destroyed device retained"; return 10; }
         wl_client_destroy(agent);
         if (!selectionClients.empty() || !clipboardGuards.empty()) { std::cerr << "destroyed client retained"; return 11; }
+        if (retiredKeyboardClients != std::vector<wl_client*>{agent}) {
+            std::cerr << "client destruction did not retire the matching keyboard client once"; return 18;
+        }
         wl_client_destroy(owner); close(agentSockets[1]); close(ownerSockets[1]); wl_display_destroy(display);
         return 0;
     } else return 12;

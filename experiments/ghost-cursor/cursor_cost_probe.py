@@ -10,6 +10,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.budget import require_budget
+from src.native.mapping import kernel_file_identity
+from src.native.plugin_bundle import fingerprint
 from action_control import ActionControl
 from ghost import clients, hypr
 from harness import StandIn
@@ -31,14 +33,22 @@ def loaded_plugin(pid, source_hash):
         raise RuntimeError("Expected exactly one loaded ghostinput library")
     path, (device, inode) = next(iter(mappings.items()))
     binary = Path(path)
-    info = binary.stat()
     major, minor = (int(part, 16) for part in device.split(":"))
-    if info.st_ino != inode or info.st_dev != os.makedev(major, minor):
-        raise RuntimeError("Loaded library differs from the file being hashed")
+    descriptor = os.open(binary, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'rb') as retained:
+        before = fingerprint(os.fstat(retained.fileno()))
+        if kernel_file_identity(retained.fileno()) != (os.makedev(major, minor), inode):
+            raise RuntimeError("Loaded library differs from the file being hashed")
+        data = retained.read(33554433)
+        if len(data) > 33554432:
+            raise RuntimeError('Loaded library exceeds the artifact bound')
+        digest = hashlib.sha256(data).hexdigest()
+        if fingerprint(os.fstat(retained.fileno())) != before or fingerprint(binary.lstat()) != before:
+            raise RuntimeError('Loaded library changed during hashing')
     build_source = Path(path + ".source.sha256").read_text().split()[0]
     if build_source != source_hash:
         raise RuntimeError("Loaded library build source differs from current plugin source")
-    return {"path": path, "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+    return {"path": path, "binary_sha256": digest,
             "build_source_sha256": build_source, "optimization": "O0 prototype build"}
 
 

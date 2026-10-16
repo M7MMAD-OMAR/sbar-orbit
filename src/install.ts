@@ -231,7 +231,7 @@ export async function runInstall(options: InstallOptions = {}) {
       // Not fatal: a machine without the native runtime still runs browser sessions, and saying so at
       // the end is more use than refusing to install.
       remedies: remediesOf(missing),
-      data: { browser: report.browserPrerequisitesFound, native: report.nativePrerequisitesFound, missing: missing.map(check => check.id) },
+      data: { browser: false, native: report.nativePrerequisitesFound, missing: missing.map(check => check.id) },
     };
   });
   if (prerequisites.state === "failed") return finish();
@@ -257,7 +257,7 @@ export async function runInstall(options: InstallOptions = {}) {
     // Opt-in, because it downloads packages and compiles, and because it has only ever been run on
     // Fedora. A machine without it still runs browser sessions, and the prerequisites step already
     // says how to get it.
-    if (!options.native) return { state: "skipped", detail: "not requested; --native builds it, browser sessions do not need it" };
+    if (!options.native) return { state: "skipped", detail: "not requested; --native builds the private desktop runtime" };
     return buildNativeRuntime(source, { dryRun, bootstrap: options.bootstrap });
   });
 
@@ -441,7 +441,7 @@ export async function runInstall(options: InstallOptions = {}) {
       dryRun,
       steps: records,
       capabilities: {
-        browserSessions: prerequisiteData?.browser === true,
+        browserSessions: false,
         nativeSessions: prerequisiteData?.native === true,
       },
       remedies,

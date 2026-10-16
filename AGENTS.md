@@ -1,7 +1,10 @@
 # Orbit, for agents
 
-Orbit gives an agent its own private browser or Fedora display so the person can keep working. If you
-are reading this inside a session an agent host started, you are probably here for one of two reasons.
+Orbit is desktop-only. It gives an agent an owned private desktop so the person can keep working.
+Standalone browser sessions, DOM automation and browser profile copying are retired. Never fall back
+to browser automation after a desktop failure. Existing owner application handoff remains disabled
+under the compositor crash release hold. If you are reading this inside an agent session, you are
+probably here for one of two reasons.
 
 **You were asked to install Orbit.** Read [docs/agent-install.md](docs/agent-install.md) and follow
 it. It is the contract: the commands, the JSON, the exit codes, and the line between what you may run
@@ -15,7 +18,7 @@ and what you hand back to the person. The short version is `./install.sh --dry-r
 ```sh
 bun install --frozen-lockfile --ignore-scripts
 bun run typecheck
-bun run verify                      # the suite, inside the shared resource budget
+bun run verify                      # desktop product suite, inside the shared resource budget
 ORBIT_TEST_NATIVE=1 bun run verify  # adds the private display tests, needs the Fedora runtime
 ```
 

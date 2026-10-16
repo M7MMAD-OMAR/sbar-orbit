@@ -3,12 +3,10 @@ import { requireResourceBudget } from "./resource-budget";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Sessions } from "./session";
+import { DesktopSessions } from "./desktop-session";
 import { OrbitError } from "./errors";
 import { restrictSocketToOwner } from "./socket-acl";
-import { startPreview } from "./preview";
 import { settingsRequest } from "./desktop-settings";
-import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
 import { Diagnostics, diagnosticRoot } from "./diagnostics";
@@ -38,8 +36,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     socket = join(privateRoot, "broker.sock");
   }
   const workspace = await createWorkspaceDirectory("broker");
-  const sessions = new Sessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native);
-  let preview: ReturnType<typeof startPreview> | undefined;
+  const sessions = new DesktopSessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native);
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
     async fetch(request) {
@@ -47,25 +44,10 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       if (request.method !== "POST" || new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
       try {
         const body = await request.json();
-        // The viewer's own browser is a host concern, not a session one, so it is answered here rather
-        // than in the session dispatcher the agent API shares.
-        if (body?.method === "viewer.browsers") return Response.json({ ok: true, result: { browsers: await listHostBrowsers(), ...await viewerPreference() } });
-        // The desktop's own settings, which are a host concern for the same reason the browser list is.
-        if (body?.method === "settings.list" || body?.method === "settings.write") return Response.json({ ok: true, result: await settingsRequest(body) });
-        if (body?.method === "preview.open") {
-          preview ??= startPreview(sessions);
-          const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean; view?: string };
-          // Which part of the viewer to land on. A named view rather than a free URL, so the only
-          // thing a caller can ask for is a page this project ships, and the preview server builds it.
-          const url = params.view === "settings" ? preview.link("settings") : preview.url;
-          // The link carries an access token, so opening it here keeps it out of any caller that only
-          // wanted a window. A caller that asks for the URL alone still gets the URL alone.
-          if (!params.launch) return Response.json({ ok: true, result: { url } });
-          const preference = await viewerPreference();
-          const opened = await openViewer(url, params.browser ?? preference.browser,
-            params.appWindow ?? preference.appWindow);
-          return Response.json({ ok: true, result: { url, ...opened } });
-        }
+        if (body?.method === "preview.open" || body?.method === "viewer.browsers")
+          throw new OrbitError("UNSUPPORTED", "Browser viewers are retired. Use the native desktop panel and session observations.");
+        if (body?.method === "settings.list" || body?.method === "settings.write")
+          return Response.json({ ok: true, result: await settingsRequest(body) });
         return Response.json({ ok: true, result: await sessions.dispatch(body) });
       }
       catch (error) {
@@ -88,7 +70,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   // Recorded once the socket answers, since answering is what marks the workspace as owned.
   await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {
-    preview?.close(); server.stop(true); await sessions.close();
+    server.stop(true); await sessions.close();
     await sessions.diagnostics.flush();
     await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});

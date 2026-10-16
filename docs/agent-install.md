@@ -1,5 +1,9 @@
 # Installing Orbit with an agent
 
+Orbit is desktop-only. Standalone browser sessions, browser prerequisites and
+profile copying are retired. Native runtime availability is not application
+acceptance. Desktop adapters for Windows and macOS are not implemented.
+
 This file is the contract an agent follows to install Orbit. It is written for a program, not for a
 person, and it is deliberately the only thing the copy and paste prompt has to carry: a prompt that
 restates the procedure goes stale the first time the installer changes, while a prompt that points
@@ -40,7 +44,7 @@ Install Sbar Orbit on this machine and connect detected agent hosts.
 
 | Command | Purpose | Output | Exit |
 |---|---|---|---|
-| `./bin/sbar-orbit preflight` | What this machine has, reads only, starts nothing | Prerequisite report | 0 when browser prerequisites are found, else 1 |
+| `./bin/sbar-orbit preflight` | What this machine has, reads only, starts nothing | Prerequisite report | 0 when native prerequisites are found, else 1 |
 | `./install.sh --dry-run --json` | The plan. Changes nothing | Install report | 0 when nothing would fail, else 1 |
 | `./install.sh --json` | The installation itself | Install report | 0 installed, 1 not installed |
 | `install.cmd --dry-run --json` | The same plan, on Windows | Install report | 0 when nothing would fail, else 1 |
@@ -98,9 +102,8 @@ it, `--reinstall-deps` to force a dependency install.
   "launcher": "~/.local/bin/sbar-orbit",
   "dryRun": false,
   "steps": [{ "id": "prerequisites", "title": "...", "state": "done", "detail": "...", "elapsedMs": 12 }],
-  "capabilities": { "browserSessions": true, "nativeSessions": true },
-  "remedies": [{ "id": "no-browser", "message": "...", "packages": ["chromium"],
-                 "command": "sudo dnf install -y chromium", "needsElevation": true, "agentMayRun": false }],
+  "capabilities": { "browserSessions": false, "nativeSessions": true },
+  "remedies": [],
   "verified": "Installation steps only. ..."
 }
 ```
@@ -108,7 +111,7 @@ it, `--reinstall-deps` to force a dependency install.
 - `steps[].id` is one of `prerequisites`, `dependencies`, `native`, `launcher`, `service`,
   `connector`, `verify`, `hosts`, always in that order, and a run that fails early simply carries fewer of them.
   `native` is skipped unless `--native` was passed: it downloads pinned Fedora packages and compiles
-  the pointer helper, and browser sessions do not need it. When the build tools are missing it fails
+  the pointer helper, and private desktop sessions need it unless a usable runtime is already present. When the build tools are missing it fails
   with the `dnf` line that installs them, which needs elevation and is yours to hand back.
 - `steps[].state` is `done`, `skipped` or `failed`. `skipped` is never a failure: a dry run skips
   everything that writes, and `--no-service` skips the two steps that need a broker.
@@ -170,7 +173,6 @@ measures. On another distribution the names are the person's to translate.
 | `no-systemd-user-session` | No user manager is running for this account, so there is no slice to install into | No | No, it is a login or a host problem, not a package |
 | `incomplete-source` | This source tree is missing files a release carries | No | No, report it |
 | `dependencies-missing` | Project dependencies are not installed | No | Yes |
-| `no-browser` | No Chrome or Chromium at a supported launcher location | Yes | No |
 | `no-native-runtime` | The private compositor and pointer helper are not in a source release. This one is genuinely tied to a system: the bootstrap pins Fedora packages and has been run nowhere else | Yes | No, and the person reads the bootstrap before running it |
 | `no-capture-tools` | grim or wl-clipboard missing, native sessions only | Yes | No |
 | `no-xwayland` | Xwayland missing, X11 applications on the private display only | Yes | No |

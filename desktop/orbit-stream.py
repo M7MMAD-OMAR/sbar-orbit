@@ -13,12 +13,9 @@ Timestamps are excluded from that comparison, or every second would be a change.
 reads stretches when nothing is happening, because a bar that is drawing nothing needs no news.
 
     orbit-stream.py                 stream until killed
-    orbit-stream.py --open-viewer   ask the broker to open the viewer in its own window, then exit
+    orbit-stream.py --open-viewer   show desktop sessions in the native panel, then exit
 
-The link carries a fresh access token, so it is requested at the moment of the click and never
-written down, and only a loopback link is ever opened. The broker opens it in a browser window that
-is Orbit's own, never a tab of the person's browser; xdg-open is only the fallback for a broker that
-is too old to do that.
+The shell click starts the native panel. Browser links and browser fallbacks are retired.
 
 The shape:
 
@@ -31,20 +28,18 @@ and when the broker is not there, the same keys with `reachable` false, zero cou
 the summary "Orbit not running".
 """
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 
-from orbit_client import BrokerClient, broker_socket, counts, read_status, rpc, summarize, viewer_link_is_local
+from orbit_client import BrokerClient, broker_socket, counts, read_status, summarize
 
-# Presence is the expensive half. For a private display it is a compositor tree query, 0.18 ms all
-# told; for a browser session it is two round trips that wake the headless renderer, measured at 5.3
-# to 7.0 ms of processor time per call, and browser is the default backend. Nothing on the collapsed
-# capsule depends on it: the colour comes from the session list, and the title and the view count are
-# read in a popup that is open for a moment. So it is read every ten seconds, the same trade the
-# panel makes while its cards are closed. The cost is that a blink for a newly opened window can be
-# up to ten seconds late, which is the latency the panel already ships with.
+# Compositor presence queries are needed while session details are visible. Polling them less often
+# while the capsule is collapsed keeps idle overhead down. A new window can take up to ten seconds
+# to appear in this feed.
 PRESENCE_SECONDS = 10.0
 
 
@@ -85,36 +80,13 @@ def unreachable(path):
 
 
 def open_viewer(path):
-    """The broker opens the viewer in a window of Orbit's own, in the browser and the app window
-    setting the panel's settings name. Until 14 September 2026 this handed the link to xdg-open,
-    which is the person's default browser and their own profile, the one place the viewer must not
-    open; and from a shell that carries no xdg-open on its PATH it opened nothing and said nothing.
-    The launcher below is the fallback for a broker too old to open the viewer itself."""
+    """Route the shell click to the native panel without requesting a URL."""
     try:
-        from orbit_settings import load
-        settings, _ = load()
-    except Exception:
-        settings = {}
-    try:
-        answer = rpc(path, "preview.open", {"launch": True,
-                                            "browser": settings.get("viewerBrowser", ""),
-                                            "appWindow": settings.get("viewerAppWindow", True)})
-    except Exception as error:
-        print(f"orbit-stream: could not open the viewer: {error}", file=sys.stderr)
-        return 1
-    url = answer.get("url", "") if isinstance(answer, dict) else ""
-    if not viewer_link_is_local(url):
-        print("orbit-stream: the broker returned something other than a local viewer link", file=sys.stderr)
-        return 1
-    if answer.get("opened"):
-        print(f"orbit-stream: viewer opened in {answer.get('browser') or 'the chosen browser'}"
-              f"{' as a window of its own' if answer.get('appWindow') else ' as a tab'}", file=sys.stderr)
-        return 0
-    print("orbit-stream: the broker did not open the viewer; handing the link to the desktop", file=sys.stderr)
-    try:
-        subprocess.Popen(["xdg-open", url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen([sys.executable, str(Path(__file__).with_name('panel.py')), '--sessions'],
+                         env={**os.environ, 'ORBIT_SOCKET': path}, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as error:
-        print(f"orbit-stream: xdg-open is not available: {error}", file=sys.stderr)
+        print(f"orbit-stream: native panel could not start: {error}", file=sys.stderr)
         return 1
     return 0
 

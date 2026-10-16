@@ -252,7 +252,7 @@ class NativeSession:
                 command, arguments = "ghost-key", address + " " + action["key"]
             else:
                 command, arguments = "ghost-" + kind, address
-            response = action_response(command, self.transport._exchange(command + " " + arguments))
+            response = self.transport._perform(command + " " + arguments)
             if kind in ("cursor", "move", "click", "scroll"):
                 target["pointer"] = {"x": action["x"], "y": action["y"]}
             elif kind == "hide-cursor":

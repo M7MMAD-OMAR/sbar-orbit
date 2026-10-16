@@ -49,6 +49,97 @@ async function withFlatpakEnvironment(values: Record<string, string | undefined>
   }
 }
 
+nativeTest("Zen local installation prepares a copied profile without Flatpak", async () => {
+  const f = await fixture("local user home");
+  let prepared: Awaited<ReturnType<typeof prepareZenLaunch>> | undefined;
+  try {
+    await rm(join(f.home, ".var"), { recursive: true });
+    const appRoot = join(f.home, ".zen");
+    const profile = join(appRoot, "fixture.default");
+    const executableDirectory = join(f.home, ".local/share/zen");
+    await mkdir(profile, { recursive: true });
+    await mkdir(executableDirectory, { recursive: true });
+    await writeFile(join(appRoot, "profiles.ini"), "[Installfixture]\nDefault=fixture.default\n");
+    await writeFile(join(executableDirectory, "zen"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    expect(await discoverZenInstallation({ home: f.home })).toEqual({
+      deploymentFiles: executableDirectory, executableDirectory, profile, appRoot,
+    });
+    prepared = await prepareZenLaunch(f.session, f.wayland, f.libraries, { home: f.home });
+    expect(prepared.argv).toContain("/app/zen/zen");
+    const binding = prepared.argv.indexOf(executableDirectory);
+    expect(prepared.argv[binding - 1]).toBe("--ro-bind");
+    expect(prepared.argv[binding + 1]).toBe("/app/zen");
+    expect(prepared.argv).not.toContain(profile);
+    expect(prepared.zenSnapshot.network).toBe("offline");
+  } finally {
+    await prepared?.release();
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+nativeTest("Zen local discovery rejects a profile outside its application data", async () => {
+  const f = await fixture();
+  try {
+    await rm(join(f.home, ".var"), { recursive: true });
+    const appRoot = join(f.home, ".zen");
+    await mkdir(appRoot);
+    await writeFile(join(appRoot, "profiles.ini"), "[Installfixture]\nDefault=../outside\n");
+    await mkdir(join(f.home, "outside"));
+    await expect(discoverZenInstallation({ home: f.home })).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      message: "Zen active profile must be a real directory inside its installation",
+    });
+  } finally {
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+nativeTest("Zen discovery follows a moved executable registered on PATH", async () => {
+  const f = await fixture("another account");
+  try {
+    await rm(join(f.home, ".var"), { recursive: true });
+    const appRoot = join(f.home, ".zen");
+    const profile = join(appRoot, "fixture.default");
+    const executableDirectory = join(f.root, "relocated stable archive");
+    const bin = join(f.home, "bin");
+    await mkdir(profile, { recursive: true });
+    await mkdir(executableDirectory);
+    await mkdir(bin);
+    await writeFile(join(appRoot, "profiles.ini"), "[Installfixture]\nDefault=fixture.default\n");
+    await writeFile(join(executableDirectory, "zen"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await symlink(join(executableDirectory, "zen"), join(bin, "zen"));
+    const result = await discoverZenInstallation({ home: f.home,
+      discovery: { env: { PATH: bin, HOME: f.home }, includeRunning: false, applicationDirectories: [] } } as Parameters<typeof discoverZenInstallation>[0]);
+    expect(result).toEqual({ deploymentFiles: executableDirectory, executableDirectory, profile, appRoot });
+  } finally {
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+nativeTest("Zen uses an explicit running profile instead of guessing profiles.ini", async () => {
+  const f = await fixture();
+  try {
+    await rm(join(f.home, ".var"), { recursive: true });
+    const executableDirectory = join(f.root, "active archive");
+    const profile = join(f.home, "explicit profile");
+    const proc = join(f.root, "processes");
+    await mkdir(executableDirectory); await mkdir(profile); await mkdir(join(proc, "123"), { recursive: true });
+    const executable = join(executableDirectory, "zen");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await symlink(executable, join(proc, "123/exe"));
+    await writeFile(join(proc, "123/cmdline"), [executable, "--profile", profile].join("\0"));
+    const result = await discoverZenInstallation({ home: f.home,
+      discovery: { env: { HOME: f.home, PATH: "" }, procRoot: proc, includeRunning: true, applicationDirectories: [] } });
+    expect(result).toEqual({ deploymentFiles: executableDirectory, executableDirectory, profile, appRoot: profile });
+  } finally {
+    await new Promise<void>(resolve => f.server.close(() => resolve()));
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 for (const layout of ["xdg", "default", "empty-xdg", "relative-xdg", "user-override", "system-override"] as const) {
   nativeTest(`Zen stable discovery uses a disposable home with spaces and ${layout} Flatpak data`, async () => {
     const f = await fixture("external user home");
@@ -356,3 +447,56 @@ test("Zen discovery rejects a default profile outside its Flatpak state", async 
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+for (const idleLocal of [false, true]) {
+  nativeTest(`running Flatpak Zen retains its deployment and profile with idle local profile ${idleLocal}`, async () => {
+    const f = await fixture();
+    try {
+      const userRoot = join(f.root, "flatpak installation");
+      const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const files = join(userRoot, "app/app.zen_browser.zen", arch, "stable/commit/files");
+      await mkdir(join(files, "zen"), { recursive: true });
+      const executable = join(files, "zen/zen-bin");
+      await writeFile(executable, "fixture", { mode: 0o755 });
+      await writeFile(join(files, "zen/zen"), "fixture", { mode: 0o755 });
+      const proc = join(f.root, "proc"); await mkdir(join(proc, "123"), { recursive: true });
+      await symlink(executable, join(proc, "123/exe"));
+      if (idleLocal) {
+        await mkdir(join(f.home, ".zen/idle"), { recursive: true });
+        await writeFile(join(f.home, ".zen/profiles.ini"), "[Installfixture]\nDefault=idle\n");
+      }
+      const discovery = { env: { HOME: f.home, PATH: "", FLATPAK_USER_DIR: userRoot },
+        includeRunning: true, procRoot: proc, applicationDirectories: [] };
+      const result = await discoverZenInstallation({ home: f.home, discovery });
+      expect(result.deploymentFiles).toBe(files); expect(result.profile).toBe(f.profile);
+      expect(result.executableDirectory).toBeUndefined();
+    } finally {
+      await new Promise<void>(resolve => f.server.close(() => resolve()));
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const selector of ["named", "relative", "unavailable", "empty"] as const) {
+  nativeTest(`Zen running ${selector} selector never silently chooses the default profile`, async () => {
+    const f = await fixture();
+    try {
+      await rm(join(f.home, ".var"), { recursive: true });
+      const base = join(f.home, ".zen");
+      const selected = join(base, "selected");
+      await mkdir(selected, { recursive: true }); await mkdir(join(base, "default"));
+      await writeFile(join(base, "profiles.ini"), "[Installfixture]\nDefault=default\n[Profile0]\nName=default\nPath=default\nDefault=1\n[Profile1]\nName=Selected\nPath=selected\n");
+      const archive = join(f.home, ".local/share/zen"); await mkdir(archive, { recursive: true });
+      const executable = join(archive, "zen"); await writeFile(executable, "fixture", { mode: 0o755 });
+      const proc = join(f.root, "proc"); await mkdir(join(proc, "123"), { recursive: true });
+      await symlink(executable, join(proc, "123/exe")); await symlink(base, join(proc, "123/cwd"));
+      await writeFile(join(proc, "123/cmdline"), [executable, ...(selector === "named" ? ["-P", "Selected"] : selector === "empty" ? ["--profile="] : ["--profile", selector === "relative" ? "selected" : "missing"])].join("\0"));
+      const location = { home: f.home, discovery: { env: { HOME: f.home, PATH: "" }, includeRunning: true, procRoot: proc, applicationDirectories: [] } };
+      if (selector === "unavailable" || selector === "empty") await expect(discoverZenInstallation(location)).rejects.toThrow("default fallback is refused");
+      else expect((await discoverZenInstallation(location)).profile).toBe(selected);
+    } finally {
+      await new Promise<void>(resolve => f.server.close(() => resolve()));
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
+}

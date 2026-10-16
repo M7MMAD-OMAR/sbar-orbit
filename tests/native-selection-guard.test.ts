@@ -7,6 +7,6 @@ import { join } from "node:path";
   const [output, error, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
-  expect({ code, output }).toEqual({ code: 0, output: "" });
+  expect({ code, output }, error).toEqual({ code: 0, output: "" });
   expect(error).toContain("Ran 8 tests");
 }, 45_000);

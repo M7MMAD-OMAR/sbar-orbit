@@ -57,6 +57,7 @@ def binary_pin(path):
 
 
 def mapped_binary(path, descriptor, identity, digest, compositor):
+    from src.native.mapping import kernel_file_identity
     assert fingerprint(os.fstat(descriptor)) == fingerprint(identity) and fingerprint(path.lstat()) == fingerprint(identity)
     os.lseek(descriptor, 0, os.SEEK_SET)
     assert hashlib.sha256(os.read(descriptor, identity.st_size + 1)).hexdigest() == digest
@@ -69,7 +70,7 @@ def mapped_binary(path, descriptor, identity, digest, compositor):
         if len(fields) == 6 and "ghostinput" in Path(fields[5]).name:
             major, minor = (int(value, 16) for value in fields[3].split(":"))
             matches[fields[5]] = (os.makedev(major, minor), int(fields[4]))
-    assert matches == {str(path): (identity.st_dev, identity.st_ino)}, "Exact loaded prototype mapping is required"
+    assert matches == {str(path): kernel_file_identity(descriptor)}, "Exact loaded prototype mapping is required"
     assert fingerprint(os.fstat(descriptor)) == fingerprint(identity) and fingerprint(path.lstat()) == fingerprint(identity)
 
 
