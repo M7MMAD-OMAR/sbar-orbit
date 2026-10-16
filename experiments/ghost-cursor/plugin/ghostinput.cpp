@@ -18,11 +18,15 @@
 #define private public
 #include <hyprland/protocols/wayland.hpp>
 #undef private
+#define private public
+#include <hyprland/src/protocols/core/Seat.hpp>
+#undef private
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #define private public
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #undef private
 #include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/Popup.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
 #include <hyprland/src/desktop/rule/Engine.hpp>
@@ -254,6 +258,11 @@ class CAgentKeyboard : public IKeyboard {
 static SP<CAgentKeyboard> agentKeyboard;
 static std::map<CWLPointerResource*, WP<CWLPointerResource>> scrollPointers;
 static std::map<CWLKeyboardResource*, WP<CWLKeyboardResource>> agentKeyboards;
+static void cancelKeyboardClient(wl_client* client);
+static void retireKeyboardClient(wl_client* client);
+static void retireKeyboardLease(const std::string& id);
+static void keyboardProtocolTransition(wl_protocol_logger_type, const wl_protocol_logger_message*);
+
 
 using PrimaryHandler = std::function<void(CZwpPrimarySelectionDeviceV1*, wl_resource*, uint32_t)>;
 struct SPrimaryGuard {
@@ -323,6 +332,7 @@ static SApplicationLease* applicationLeaseForClient(wl_client* client) {
 }
 static void recordApplicationFailure(wl_client* client, const char* reason) noexcept {
     if (auto lease = applicationLeaseForClient(client)) {
+        cancelKeyboardClient(client);
         lease->paused = true;
         std::snprintf(lease->failure.data(), lease->failure.size(), "%s", reason);
     }
@@ -582,6 +592,7 @@ static bool privateSelectionClient(wl_client* client) {
     auto [it, inserted] = selectionClients.try_emplace(client);
     it->second.notify = [](wl_listener* listener, void* data) {
         wl_list_remove(&listener->link);
+        retireKeyboardClient(static_cast<wl_client*>(data));
         selectionClients.erase(static_cast<wl_client*>(data));
     };
     wl_client_add_destroy_listener(client, &it->second);
@@ -720,6 +731,7 @@ static void restoreDataControlGuards(Guards& guards, wl_client* client) {
     }
 }
 static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_protocol_logger_message* message) {
+    keyboardProtocolTransition(direction, message);
     if (direction != WL_PROTOCOL_LOGGER_REQUEST ||
         (std::strcmp(message->message->name, "set_selection") != 0 && std::strcmp(message->message->name, "set_primary_selection") != 0 && std::strcmp(message->message->name, "start_drag") != 0))
         return;
@@ -781,6 +793,7 @@ static void handbackApplication(const std::string& id) {
     if (found == applicationLeases.end())
         throw std::runtime_error("application lease is unavailable");
     auto& lease = *found->second;
+    cancelKeyboardClient(lease.client);
     lease.paused = true;
     // Keep dead offer resources valid until the toolkit destroys them. Normal
     // compositor focus sends the person's current selections after handback.
@@ -836,6 +849,7 @@ static void handbackApplication(const std::string& id) {
         awake = awakeWindows.erase(awake);
     }
     wl_list_remove(&lease.destroy.link);
+    retireKeyboardLease(id);
     applicationLeases.erase(found);
 }
 
@@ -954,6 +968,7 @@ static std::string claimApplication(const std::string& address, const std::strin
     auto [entry, inserted] = applicationLeases.emplace(id, std::move(retained));
     auto& lease = *entry->second;
     lease.destroy.notify = [](wl_listener* listener, void* destroyed) {
+        retireKeyboardClient(static_cast<wl_client*>(destroyed));
         wl_list_remove(&listener->link);
         for (auto entry = applicationLeases.begin(); entry != applicationLeases.end(); ++entry)
             if (entry->second->client == destroyed) { clearApplicationCursors(entry->first); applicationLeases.erase(entry); return; }
@@ -984,6 +999,9 @@ static std::string claimApplication(const std::string& address, const std::strin
 static CFunctionHook* keyboardFocusHook = nullptr;
 static CFunctionHook* pointerFocusHook = nullptr;
 static CFunctionHook* popupGrabHook = nullptr;
+static CFunctionHook* popupMapHook = nullptr;
+static CFunctionHook* simulatedMotionHook = nullptr;
+static unsigned privatePopupMapDepth = 0;
 static CFunctionHook* staticRulesHook = nullptr;
 static CFunctionHook* staticRecheckHook = nullptr;
 static CFunctionHook* wlrSelectionHook = nullptr;
@@ -997,23 +1015,53 @@ static void handbackFocusedApplication(SP<CWLSurfaceResource> surface) {
             return;
         }
 }
-static void beforeKeyboardFocus(CSeatManager* manager, SP<CWLSurfaceResource> surface) {
+#if !defined(__linux__) || !defined(__x86_64__)
+#error "Native lifecycle detours require the verified Linux x86_64 ABI"
+#endif
+// These detours bridge the pinned x86_64 nontrivial-argument ABI. The caller owns
+// the supplied shared-pointer objects and can cache their control blocks for
+// destruction. Borrow their storage without moving or destroying them here.
+// Forwarding through new owning temporaries would release the same ownership
+// again when the optimized original caller performs its cached cleanup.
+static void beforeKeyboardFocus(CSeatManager* manager, SP<CWLSurfaceResource>& surface) {
     handbackFocusedApplication(surface);
-    using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>);
-    reinterpret_cast<Original>(keyboardFocusHook->m_original)(manager, std::move(surface));
+    using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>&);
+    reinterpret_cast<Original>(keyboardFocusHook->m_original)(manager, surface);
 }
-static void beforePointerFocus(CSeatManager* manager, SP<CWLSurfaceResource> surface, const Vector2D& local) {
+static void beforePointerFocus(CSeatManager* manager, SP<CWLSurfaceResource>& surface, const Vector2D& local) {
     handbackFocusedApplication(surface);
-    using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>, const Vector2D&);
-    reinterpret_cast<Original>(pointerFocusHook->m_original)(manager, std::move(surface), local);
+    using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>&, const Vector2D&);
+    reinterpret_cast<Original>(pointerFocusHook->m_original)(manager, surface, local);
 }
-static void privatePopupGrab(CXDGShellProtocol* protocol, SP<CXDGPopupResource> popup) {
+static void privatePopupGrab(CXDGShellProtocol* protocol, SP<CXDGPopupResource>& popup) {
     auto xdg = popup ? popup->m_surface.lock() : SP<CXDGSurfaceResource>{};
     auto surface = xdg ? xdg->m_surface.lock() : SP<CWLSurfaceResource>{};
     if (surface && applicationLeaseForClient(surface->client()))
         return; // Client-local actor input never acquires the person's shared grab.
-    using Original = void (*)(CXDGShellProtocol*, SP<CXDGPopupResource>);
-    reinterpret_cast<Original>(popupGrabHook->m_original)(protocol, std::move(popup));
+    using Original = void (*)(CXDGShellProtocol*, SP<CXDGPopupResource>&);
+    reinterpret_cast<Original>(popupGrabHook->m_original)(protocol, popup);
+}
+
+static void privatePopupMap(Desktop::View::CPopup* popup) {
+    auto owner = popup->getT1Owner();
+    auto surface = owner ? owner->resource() : SP<CWLSurfaceResource>{};
+    const bool isolated = surface && applicationLeaseForClient(surface->client());
+    // The compositor maps popup geometry normally. Only its synchronous shared
+    // pointer refocus is suppressed for the leased client, never physical input.
+    struct Scope {
+        bool active;
+        explicit Scope(bool value) : active(value) { if (active) ++privatePopupMapDepth; }
+        ~Scope() { if (active) --privatePopupMapDepth; }
+    } scope{isolated};
+    using Original = void (*)(Desktop::View::CPopup*);
+    reinterpret_cast<Original>(popupMapHook->m_original)(popup);
+}
+
+class CInputManager;
+static void privateSimulatedMotion(CInputManager* manager) {
+    if (privatePopupMapDepth) return;
+    using Original = void (*)(CInputManager*);
+    reinterpret_cast<Original>(simulatedMotionHook->m_original)(manager);
 }
 
 static void enforceApplicationRules(Desktop::Rule::CWindowRuleApplicator* rules) {
@@ -1049,21 +1097,21 @@ static void privateStaticRecheck(Desktop::Rule::CWindowRuleApplicator* rules) {
     reinterpret_cast<Original>(staticRecheckHook->m_original)(rules);
     enforceApplicationRules(rules);
 }
-static void privateWlrSelection(CDataDeviceWLRProtocol* protocol, SP<CWLRDataDevice> device, SP<IDataSource> source, bool primary) {
+static void privateWlrSelection(CDataDeviceWLRProtocol* protocol, SP<CWLRDataDevice>& device, SP<IDataSource>& source, bool primary) {
     if (device && applicationLeaseForClient(device->client())) {
         recordApplicationFailure(device->client(), "data-control is unsupported during application handoff");
         return;
     }
-    using Original = void (*)(CDataDeviceWLRProtocol*, SP<CWLRDataDevice>, SP<IDataSource>, bool);
-    reinterpret_cast<Original>(wlrSelectionHook->m_original)(protocol, std::move(device), std::move(source), primary);
+    using Original = void (*)(CDataDeviceWLRProtocol*, SP<CWLRDataDevice>&, SP<IDataSource>&, bool);
+    reinterpret_cast<Original>(wlrSelectionHook->m_original)(protocol, device, source, primary);
 }
-static void privateExtSelection(CExtDataDeviceProtocol* protocol, SP<CExtDataDevice> device, SP<IDataSource> source, bool primary) {
+static void privateExtSelection(CExtDataDeviceProtocol* protocol, SP<CExtDataDevice>& device, SP<IDataSource>& source, bool primary) {
     if (device && applicationLeaseForClient(device->client())) {
         recordApplicationFailure(device->client(), "data-control is unsupported during application handoff");
         return;
     }
-    using Original = void (*)(CExtDataDeviceProtocol*, SP<CExtDataDevice>, SP<IDataSource>, bool);
-    reinterpret_cast<Original>(extSelectionHook->m_original)(protocol, std::move(device), std::move(source), primary);
+    using Original = void (*)(CExtDataDeviceProtocol*, SP<CExtDataDevice>&, SP<IDataSource>&, bool);
+    reinterpret_cast<Original>(extSelectionHook->m_original)(protocol, device, source, primary);
 }
 static CFunctionHook* applicationHook(const std::string& qualified, void* replacement) {
     const auto matches = HyprlandAPI::findFunctionsByName(PHANDLE, qualified.substr(qualified.rfind("::") + 2));
@@ -1082,13 +1130,16 @@ static void installApplicationHooks() {
     keyboardFocusHook = applicationHook("CSeatManager::setKeyboardFocus", reinterpret_cast<void*>(beforeKeyboardFocus));
     pointerFocusHook = applicationHook("CSeatManager::setPointerFocus", reinterpret_cast<void*>(beforePointerFocus));
     popupGrabHook = applicationHook("CXDGShellProtocol::addOrStartGrab", reinterpret_cast<void*>(privatePopupGrab));
+    popupMapHook = applicationHook("Desktop::View::CPopup::onMap", reinterpret_cast<void*>(privatePopupMap));
+    simulatedMotionHook = applicationHook("CInputManager::simulateMouseMovement", reinterpret_cast<void*>(privateSimulatedMotion));
     staticRulesHook = applicationHook("Desktop::Rule::CWindowRuleApplicator::readStaticRules", reinterpret_cast<void*>(privateStaticRules));
     staticRecheckHook = applicationHook("Desktop::Rule::CWindowRuleApplicator::recheckStaticRules", reinterpret_cast<void*>(privateStaticRecheck));
     wlrSelectionHook = applicationHook("CDataDeviceWLRProtocol::sendSelectionToDevice", reinterpret_cast<void*>(privateWlrSelection));
     extSelectionHook = applicationHook("CExtDataDeviceProtocol::sendSelectionToDevice", reinterpret_cast<void*>(privateExtSelection));
 }
 static void removeApplicationHooks() {
-    for (auto slot : {&keyboardFocusHook, &pointerFocusHook, &popupGrabHook, &staticRulesHook, &staticRecheckHook, &wlrSelectionHook, &extSelectionHook}) {
+    for (auto slot : {&keyboardFocusHook, &pointerFocusHook, &popupGrabHook, &popupMapHook, &simulatedMotionHook,
+                      &staticRulesHook, &staticRecheckHook, &wlrSelectionHook, &extSelectionHook}) {
         if (!*slot) continue;
         if (!HyprlandAPI::removeFunctionHook(PHANDLE, *slot))
             throw std::runtime_error("cannot remove application lifecycle hook");
@@ -1282,29 +1333,177 @@ struct SStroke {
     uint32_t group;
 };
 
-static bool sendStrokes(const STarget& t, const std::vector<SStroke>& strokes) {
-    int sent = 0;
+struct SKeyboardPreparation {
+    wl_client* client = nullptr;
+    std::string token;
+    PHLWINDOWREF window;
+    WP<CWLSurfaceResource> surface;
+    WP<CXDGSurfaceResource> xdg;
+    WP<CWLSeatResource> seat;
+    std::vector<WP<CWLKeyboardResource>> keyboards;
+    CHyprSignalListener ack, unmap, destroy, seatDestroy, popup;
+    std::chrono::steady_clock::time_point expires;
+    uint32_t serial = 0;
+    bool acknowledged = false;
+    bool invalid = false;
+    bool arming = false;
+};
+static std::map<std::string, std::unique_ptr<SKeyboardPreparation>> keyboardPreparations;
+// One high-water counter per producer, live client and scope, not per key.
+static std::map<std::pair<wl_client*, std::string>, std::map<std::string, uint64_t>> keyboardSequences;
+
+
+static void cancelKeyboardClient(wl_client* client) {
+    std::erase_if(keyboardPreparations, [client](const auto& entry) {
+        if (entry.second->client != client) return false;
+        entry.second->invalid = true;
+        return !entry.second->arming;
+    });
+}
+
+static void retireKeyboardClient(wl_client* client) {
+    cancelKeyboardClient(client);
+    std::erase_if(keyboardSequences, [client](const auto& entry) { return entry.first.first == client; });
+}
+
+static void retireKeyboardLease(const std::string& id) {
+    std::erase_if(keyboardSequences, [&id](const auto& entry) { return entry.first.second == "lease-" + id; });
+}
+
+static void pruneKeyboardPreparations() {
+    const auto now = std::chrono::steady_clock::now();
+    std::erase_if(keyboardPreparations, [now](const auto& entry) {
+        const auto& value = *entry.second;
+        return !value.arming && (value.invalid || now >= value.expires || !value.window.lock() ||
+               !value.surface.lock() || !value.xdg.lock() || !value.seat.lock());
+    });
+}
+
+static void keyboardProtocolTransition(wl_protocol_logger_type direction, const wl_protocol_logger_message* message) {
+    if (!message || !message->resource || !message->message || direction != WL_PROTOCOL_LOGGER_EVENT ||
+        std::strcmp(wl_resource_get_class(message->resource), "wl_keyboard") != 0) return;
+    const auto name = message->message->name;
+    if (std::strcmp(name, "enter") && std::strcmp(name, "leave") && std::strcmp(name, "keymap")) return;
+    const auto client = wl_resource_get_client(message->resource);
+    for (auto& [handle, value] : keyboardPreparations)
+        if (value->client == client && !value->arming) value->invalid = true;
+}
+
+static std::vector<SP<CWLKeyboardResource>> targetKeyboards(const STarget& target) {
+    std::vector<SP<CWLKeyboardResource>> result;
+    for (const auto& weak : target.seat->m_keyboards)
+        if (auto keyboard = weak.lock(); keyboard && keyboard->good() && keyboard->m_owner.lock() == target.seat)
+            result.push_back(keyboard);
+    return result;
+}
+
+static bool preparationMatches(const SKeyboardPreparation& value, const STarget& target) {
+    if (value.invalid || std::chrono::steady_clock::now() >= value.expires ||
+        value.window.lock() != target.window || value.surface.lock() != target.surface ||
+        value.xdg.lock() != target.window->m_xdgSurface.lock() || value.seat.lock() != target.seat ||
+        value.client != target.surface->client()) return false;
+    const auto keyboards = targetKeyboards(target);
+    if (keyboards.empty() || keyboards.size() != value.keyboards.size()) return false;
+    for (size_t index = 0; index < keyboards.size(); ++index)
+        if (value.keyboards[index].lock() != keyboards[index] || keyboards[index]->m_currentSurface.lock() != target.surface)
+            return false;
+    return true;
+}
+
+static std::string keyboardPreparationReply(const SKeyboardPreparation& value) {
+    return std::format("{{\"schema\":1,\"status\":\"{}\",\"token\":\"{}\",\"serial\":{}}}",
+                       value.acknowledged ? "ready" : "pending", value.token, value.serial);
+}
+
+static std::string cmdKeyboardPreparation(eHyprCtlOutputFormat, std::string request) {
+    pruneKeyboardPreparations();
+    std::istringstream input(request);
+    std::string command, handle, token, extra;
+    if (!(input >> command >> handle >> token) || (input >> extra) || handle.find('@') == std::string::npos ||
+        !std::regex_match(token, std::regex{"[0-9a-f]{48}"}))
+        return "refused: guarded target and operation identity required";
+    auto existing = keyboardPreparations.find(handle);
+    if (command == "ghost-keyboard-cancel") {
+        if (existing == keyboardPreparations.end()) return "ok";
+        if (existing->second->token != token) return "refused: keyboard operation identity changed";
+        keyboardPreparations.erase(existing);
+        return "ok";
+    }
+    auto target = resolve(handle);
+    if (!target.error.empty()) return target.error;
+    if (existing != keyboardPreparations.end()) {
+        if (existing->second->token != token) return "refused: another keyboard operation is pending";
+        if (!preparationMatches(*existing->second, target)) {
+            keyboardPreparations.erase(existing);
+            return "refused: keyboard preparation target changed";
+        }
+        return keyboardPreparationReply(*existing->second);
+    }
+    const auto producer = token.substr(0, 32);
+    const auto sequence = std::stoull(token.substr(32), nullptr, 16);
+    if (!sequence) return "refused: invalid keyboard operation sequence";
+    if (!privateSelectionClient(target.surface->client())) return "refused: keyboard client is unavailable";
+    auto& producers = keyboardSequences[{target.surface->client(), handle.substr(handle.rfind('@') + 1)}];
+    const auto previous = producers.find(producer);
+    if ((previous != producers.end() && sequence <= previous->second) ||
+        (previous == producers.end() && producers.size() >= 64))
+        return "refused: replayed or excessive keyboard producer";
+    const auto xdg = target.window->m_xdgSurface.lock();
+    const auto keyboards = targetKeyboards(target);
+    if (!xdg || !xdg->m_toplevel || keyboards.empty()) return "refused: native keyboard preparation unavailable";
+    if (keyboardPreparations.size() >= 64) return "refused: too many pending keyboard operations";
+    auto value = std::make_unique<SKeyboardPreparation>();
+    value->client = target.surface->client(); value->token = token; value->window = target.window;
+    value->surface = target.surface; value->xdg = xdg; value->seat = target.seat;
+    value->expires = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    for (const auto& keyboard : keyboards) value->keyboards.emplace_back(keyboard);
+    auto raw = value.get();
+    value->ack = xdg->m_events.ack.listen([raw](uint32_t serial) {
+        if (serial == raw->serial) raw->acknowledged = true;
+        else if (raw->acknowledged) raw->invalid = true;
+    });
+    value->unmap = xdg->m_events.unmap.listen([raw] { raw->invalid = true; });
+    value->destroy = xdg->m_events.destroy.listen([raw] { raw->invalid = true; });
+    value->seatDestroy = target.seat->m_events.destroy.listen([raw] { raw->invalid = true; });
+    value->popup = xdg->m_events.newPopup.listen([raw](SP<CXDGPopupResource>) { raw->invalid = true; });
+    keyboardPreparations.emplace(handle, std::move(value));
+    producers[producer] = sequence;
+    raw->arming = true;
     wl_array keys;
     wl_array_init(&keys);
-    for (auto const& kw : t.seat->m_keyboards) {
-        auto k = kw.lock();
-        if (!k)
-            continue;
-        ++sent;
-        k->sendKeymap(agentKeyboard);
-        k->sendEnter(t.surface, &keys);
-        for (auto const& s : strokes) {
-            // Our own modifier state, never the seat's: a Shift the person holds must not leak in.
-            k->sendMods(s.mods, 0, 0, s.group);
-            k->sendKey(nowMs(), s.evdev, WL_KEYBOARD_KEY_STATE_PRESSED);
-            k->sendKey(nowMs(), s.evdev, WL_KEYBOARD_KEY_STATE_RELEASED);
-        }
-        k->sendMods(0, 0, 0, 0);
-        // Keep the target resource stable until the task has read back its result.
-        agentKeyboards[k.get()] = k;
+    for (const auto& keyboard : keyboards) {
+        keyboard->sendKeymap(agentKeyboard);
+        keyboard->sendEnter(target.surface, &keys);
+        keyboard->sendMods(0, 0, 0, 0);
+        agentKeyboards[keyboard.get()] = keyboard;
     }
     wl_array_release(&keys);
-    return sent > 0;
+    raw->arming = false;
+    raw->serial = xdg->scheduleConfigure();
+    return keyboardPreparationReply(*raw);
+}
+
+static bool consumeKeyboardPreparation(const STarget& target, const std::string& handle, const std::string& token) {
+    pruneKeyboardPreparations();
+    const auto found = keyboardPreparations.find(handle);
+    if (found == keyboardPreparations.end() || found->second->token != token) return false;
+    const bool ready = found->second->acknowledged && preparationMatches(*found->second, target);
+    keyboardPreparations.erase(found);
+    return ready;
+}
+
+static bool sendStrokes(const STarget& target, const std::vector<SStroke>& strokes) {
+    const auto keyboards = targetKeyboards(target);
+    if (keyboards.empty()) return false;
+    for (const auto& keyboard : keyboards) {
+        for (const auto& stroke : strokes) {
+            keyboard->sendMods(stroke.mods, 0, 0, stroke.group);
+            keyboard->sendKey(nowMs(), stroke.evdev, WL_KEYBOARD_KEY_STATE_PRESSED);
+            keyboard->sendKey(nowMs(), stroke.evdev, WL_KEYBOARD_KEY_STATE_RELEASED);
+        }
+        keyboard->sendMods(0, 0, 0, 0);
+    }
+    return true;
 }
 
 static xkb_keymap* seatKeymap() {
@@ -1334,13 +1533,15 @@ static bool findKeysym(xkb_keymap* km, xkb_keysym_t sym, SStroke& out) {
 
 static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
     std::istringstream in(req);
-    std::string        cmd, address;
+    std::string        cmd, address, token;
     in >> cmd >> address;
+    if (cmd != "ghost-texthex-prepared") return "refused: keyboard preparation required";
+    if (!(in >> token)) return "refused: keyboard operation identity required";
     std::string text;
     std::getline(in, text);
     if (!text.empty() && text[0] == ' ')
         text.erase(0, 1);
-    if (cmd == "ghost-texthex") {
+    if (cmd == "ghost-texthex-prepared") {
         if (text.size() > 131072 || text.size() % 2)
             return "invalid hex text length";
         std::string decoded;
@@ -1359,7 +1560,7 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
         }
         text = std::move(decoded);
     }
-    auto t = resolve(address);
+    auto t = resolve(address, false);
     if (!t.error.empty())
         return t.error;
     auto km = seatKeymap();
@@ -1389,6 +1590,7 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
             return std::format("no key for U+{:04X} in the seat keymap", cp);
         strokes.push_back(s);
     }
+    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     if (!sendStrokes(t, strokes))
         return "target has no keyboard resource";
     return std::format("ok {} keys", strokes.size());
@@ -1396,9 +1598,11 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
 
 static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     std::istringstream in(req);
-    std::string        cmd, address, combo;
-    in >> cmd >> address >> combo;
-    auto t = resolve(address);
+    std::string        cmd, address, token, combo, extra;
+    in >> cmd >> address;
+    if (cmd != "ghost-key-prepared") return "refused: keyboard preparation required";
+    if (!(in >> token >> combo) || (in >> extra)) return "refused: one prepared key combination required";
+    auto t = resolve(address, false);
     if (!t.error.empty())
         return t.error;
     auto km = seatKeymap();
@@ -1425,6 +1629,7 @@ static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     if (!findKeysym(km, sym, s))
         return "no key for " + key;
     s.mods |= mods;
+    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     if (!sendStrokes(t, {s}))
         return "target has no keyboard resource";
     return "ok";
@@ -1573,8 +1778,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             const auto found = applicationLeases.find(id);
             if (found == applicationLeases.end()) return std::string{operation == "handback" && retiredApplicationLeases.contains(id) ? "ok" : "refused: application lease unavailable"};
             try {
-                if (operation == "pause") found->second->paused = true;
+                if (operation == "pause") { cancelKeyboardClient(found->second->client); found->second->paused = true; }
                 else if (operation == "resume") {
+                    cancelKeyboardClient(found->second->client);
                     if (found->second->failure.front()) return std::string{"refused: failed application lease requires handback"};
                     found->second->paused = false;
                 }
@@ -1712,6 +1918,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             suspended ? "true" : "false",
             target.window->m_ruleApplicator->renderUnfocused().valueOrDefault() ? "true" : "false");
     }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-prepare", false, cmdKeyboardPreparation});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-cancel", false, cmdKeyboardPreparation});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-key-prepared", false, cmdKey});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-texthex-prepared", false, cmdType});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-type", false, cmdType});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-texthex", false, cmdType});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-key", false, cmdKey});
@@ -1725,6 +1935,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         auto target = resolve(address);
         if (!target.error.empty())
             return target.error;
+        cancelKeyboardClient(target.surface->client());
         for (const auto& weak : target.seat->m_pointers) {
             if (auto pointer = weak.lock()) {
                 if (!scrollPointers.contains(pointer.get()))
@@ -1789,6 +2000,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         throw std::runtime_error("active application leases must be handed back before unload");
     if (!g_pSeatManager || !g_pHyprRenderer || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("native cleanup protocols are unavailable; cleanup remains incomplete");
+    keyboardPreparations.clear();
+    keyboardSequences.clear();
     removeApplicationHooks();
     privateClipboardOffers.retire(nullptr, PROTO::data->m_offers);
     privatePrimaryOffers.retire(nullptr, PROTO::primarySelection->m_offers);

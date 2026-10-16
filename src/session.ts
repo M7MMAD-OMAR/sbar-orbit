@@ -1,4 +1,5 @@
 import { OwnedCleanupError } from "./owned-cleanup";
+import { discoverApplications } from "./application-discovery";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
@@ -10,7 +11,8 @@ import { NativeBackend, parseHandoff, parseNativeOpen } from "./hyprland";
 import { nativeOptionsFromEnv, type NativeOptions } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
-import { canCloneProfile, describeMachine, detectPlatform, type PlatformCapabilities } from "./platform";
+import { canCloneProfile, detectPlatform, type PlatformCapabilities } from "./platform";
+import { describeDesktopMachine } from "./desktop-machine";
 import { openEgressLease, type EgressLease } from "./egress";
 import { defaultChromeExecutable } from "./chrome";
 import { cloneProfile } from "./clone";
@@ -498,7 +500,7 @@ export class Sessions {
    */
   /** Page content entering the session is what taints it, whichever action carried it in. */
   private taintedBy(session: Session, actionType: string) {
-    if (!session.tainted && ["read", "observe"].includes(actionType)) session.tainted = true;
+    if (!session.tainted && ["read", "observe", "list-windows", "desktops", "inspect"].includes(actionType)) session.tainted = true;
   }
   private async guarded(session: Session, action: { type: string }) {
     if (session.restoreStore) {
@@ -614,6 +616,12 @@ export class Sessions {
   private async dispatchRequest(value: unknown): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
+    if (request.method === "applications.list") {
+      if (Object.keys(params).some(key => key !== "query") ||
+          (params.query !== undefined && (typeof params.query !== "string" || params.query.length > 80)))
+        throw new OrbitError("INVALID_REQUEST", "Application discovery accepts only an optional query up to 80 characters");
+      return discoverApplications({ query: params.query as string | undefined });
+    }
     if (request.method === "update.begin") {
       if (this.updateLease && this.updateLease.expires > Date.now())
         throw new OrbitError("PROFILE_BUSY", "Another update is in progress");
@@ -629,7 +637,7 @@ export class Sessions {
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
     if (request.method === "doctor") return { version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora", ...(this.native ? ["native"] : [])], backendAliases: { system: "fedora" },
-      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine(),
+      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeDesktopMachine(),
       // Whether the units on disk are the ones this version writes. A managed broker that was
       // installed before a directive existed does not carry it, and nothing else on the machine
       // says so: the development host was running a unit with no EnvironmentFile, so every

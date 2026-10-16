@@ -9,8 +9,10 @@ from pathlib import Path
 import re
 import socket
 import time
+import threading
 
-from .host import HostError, metadata, peer, verify_host
+from .host import HostError, metadata, peer, verify_host, deadline_timeout
+from .keyboard import KEYBOARD_ACTIONS, prepared_input
 from .budget import require_budget
 
 
@@ -50,18 +52,24 @@ def action_response(command, response):
 class NativeTransport:
     def __init__(self, plan):
         self._plan = copy.deepcopy(plan)
+        self._input_lock = threading.RLock()
         verify_host(self._plan)
 
-    def _exchange(self, request):
+    def _exchange(self, request, deadline=None):
         plan = self._plan
-        verify_host(plan)
+        shared_deadline = deadline
+        if deadline is None:
+            verify_host(plan)
+            deadline = time.monotonic() + 3
+        else:
+            verify_host(plan, deadline=deadline)
         path = Path(plan["runtime"]) / "hypr" / plan["signature"] / ".socket.sock"
-        deadline = time.monotonic() + 3
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-            connection.settimeout(3)
+            connection.settimeout(deadline_timeout(deadline))
             connection.connect(str(path))
             if metadata(path) != plan["ipc_socket"] or peer(connection) != plan["compositor"]:
                 raise HostError("Compositor changed before native request")
+            connection.settimeout(deadline_timeout(deadline))
             connection.sendall(request.encode("utf-8"))
             # Hyprland reads again after each complete 1023-byte input chunk.
             # EOF terminates exact chunk multiples without waiting for a reply.
@@ -78,13 +86,30 @@ class NativeTransport:
                 response.extend(chunk)
                 if len(response) > 65536:
                     raise HostError("Native response is too large")
-        verify_host(plan)
+        if shared_deadline is None:
+            verify_host(plan)
+        else:
+            verify_host(plan, deadline=deadline)
         return response.decode("utf-8")
 
     def execute(self, request, control):
         require_budget()
+        action_request(request)
+        return control.execute(request, lambda: self._perform(request))
+
+    def _perform(self, request):
+        """Internal operation inside an already admitted durable action."""
+        require_budget()
         command = action_request(request)
-        return control.execute(request, lambda: action_response(command, self._exchange(request)))
+        if command not in KEYBOARD_ACTIONS:
+            return action_response(command, self._exchange(request))
+        deadline = time.monotonic() + 3
+        if not self._input_lock.acquire(timeout=deadline_timeout(deadline)):
+            raise TimeoutError("Native keyboard action is busy")
+        try:
+            return action_response(command, prepared_input(request, self._exchange, deadline))
+        finally:
+            self._input_lock.release()
 
     def enroll(self, lease, process, control):
         request = self._enrollment_request(lease, process)

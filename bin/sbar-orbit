@@ -32,10 +32,9 @@ sbar-orbit $1 is a Linux desktop surface and does not exist on $orbit_uname.
 The panel and the settings window are GTK, and Orbit will not spawn /usr/bin/python3 here: on macOS
 that path can raise the Command Line Tools installer as a window on your screen.
 
-Everything else works. Sessions, the viewer and the whole CLI do not need any of this:
+Native desktop support on this platform is not implemented. Metadata commands remain available:
 
   sbar-orbit status
-  sbar-orbit preview
   sbar-orbit doctor
 REFUSED
   exit 64
@@ -57,7 +56,7 @@ export PATH="$(dirname -- "$orbit_bun"):$PATH"
 case "${1:-help}" in
   help|--help|-h)
     cat <<'HELP'
-Sbar Orbit, a private browser and desktop for your AI agent
+Sbar Orbit, desktop application control for your AI agent
 
   sbar-orbit install             Do the whole installation in one command
   sbar-orbit install --dry-run   Show every step without changing anything
@@ -75,8 +74,8 @@ Sbar Orbit, a private browser and desktop for your AI agent
   sbar-orbit status              Sessions, tabs and windows, for a glance or a bar
   sbar-orbit status --watch      Print a line whenever that changes
   sbar-orbit panel               Dock the session mark to the desktop edge
-                                 (right click it for the settings window)
-  sbar-orbit settings            Open the settings window, searchable
+                                 (click it to show desktop sessions)
+  sbar-orbit settings            Show the native configuration notice; use config to edit
   sbar-orbit native-settings     Open protected/full native controls and the action log
   sbar-orbit native-prepare DIR  Prepare native owner configuration without activation
   sbar-orbit native-plugin status|load|unload|resume DIR
@@ -97,28 +96,21 @@ Sbar Orbit, a private browser and desktop for your AI agent
   sbar-orbit update prune        Remove prepared versions nothing would roll back to
   sbar-orbit clean               Remove workspaces no running broker owns
   sbar-orbit doctor              Inspect the running broker and its resources
-  sbar-orbit profiles            Which of your browser profiles a session can start from,
-                                 and the reason for each one it cannot
+  sbar-orbit applications        Discover installed and running application metadata
   sbar-orbit diagnostics         Prepare a private report and a GitHub issue link, also offline
   sbar-orbit preflight           Check prerequisites without starting applications
-  sbar-orbit preview             Print the optional viewer link
-  sbar-orbit preview open        Open the viewer in a window of its own, in a profile that is Orbit's
-  sbar-orbit preview browsers    Which browsers the viewer can open in
-  sbar-orbit session create      Create an owned browser session
+  sbar-orbit session create      Create an owned private desktop session
   sbar-orbit session create fedora
-  sbar-orbit session create browser ACCOUNT
-                                 Start from a saved account snapshot
   sbar-orbit session list
   sbar-orbit session observe ID  One screenshot and what the session shows
   sbar-orbit session native-view ID APP WINDOW [--frames COUNT]
                                  Show the owned target and agent cursor in a native GTK window
-  sbar-orbit session pause ID    Hand the session to a person in the viewer
+  sbar-orbit session pause ID    Pause agent actions for the session
   sbar-orbit session resume ID
   sbar-orbit session journal ID  Every decision the session made
   sbar-orbit session restore ID [SEQUENCE]
                                  Return to a restore point, when allowed
   sbar-orbit session stop ID
-  sbar-orbit account save ID     Snapshot a paused session's login state
   sbar-orbit act ID JSON         Execute a session action
   sbar-orbit connector-config    Print MCP configuration for this broker
   sbar-orbit connector-config --no-launcher
@@ -133,7 +125,9 @@ Sbar Orbit, a private browser and desktop for your AI agent
 
 Client commands default to the managed socket; ORBIT_SOCKET selects another broker.
 Set ORBIT_CONVERSATION_ID uniquely per conversation to share CLI/MCP usage state.
-Requires Bun and a Chromium browser. The private display is Linux only; see docs/support-tiers.md.
+Requires Bun. Private desktop sessions currently require Linux and the native runtime.
+Standalone browser sessions are retired. Existing owner handoff is release-blocked.
+Native desktop adapters for Windows and macOS are not implemented. See docs/desktop-only.md.
 HELP
     ;;
   preflight)
@@ -185,8 +179,7 @@ HELP
     # installation links a stable name in a prefix and switches the source underneath it on every
     # upgrade, so the link is what generated agent configuration has to name; resolving it would
     # write down the one version that happens to be current and break on the next one. Exported only
-    # here, because every other subcommand starts a broker and a browser, and a path under the
-    # person's home has no business in a browser's environment.
+    # here so connector setup can name the stable launcher path.
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec bun run "$orbit_root/src/$orbit_entry.ts" "$@"
     ;;

@@ -4,16 +4,19 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import threading
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.native.control import ActionControl, ControlError
 from src.native.existing import ExistingApplicationSession
 from src.native.session import NativeSession, SessionError
+from src.native.transport import NativeTransport
 
 
 class Compositor:
     def __init__(self):
+        self._input_lock = threading.RLock()
         self.lease_id = None
         self.active = False
         self.requests = []
@@ -22,7 +25,9 @@ class Compositor:
         self.text = "Already open unsaved content مرحبا"
         self.address = "0x100"
 
-    def _exchange(self, request):
+    _perform = NativeTransport._perform
+
+    def _exchange(self, request, deadline=None):
         self.requests.append(request)
         if request == "j/clients":
             return json.dumps([{"address": self.address, "stableId": "ab", "workspace": {"id": 8},
@@ -48,8 +53,12 @@ class Compositor:
             return "ok"
         if request.startswith("ghost-target-check "):
             return "ok"
-        if request.startswith("ghost-texthex "):
-            self.text += bytes.fromhex(request.split()[2]).decode()
+        if request.startswith("ghost-keyboard-prepare "):
+            return json.dumps({"schema": 1, "status": "ready", "token": request.split()[2], "serial": 9})
+        if request.startswith("ghost-keyboard-cancel "):
+            return "ok"
+        if request.startswith("ghost-texthex-prepared "):
+            self.text += bytes.fromhex(request.split()[3]).decode()
             return "ok 1 keys"
         raise AssertionError("Unexpected operation: " + request)
 

@@ -1,6 +1,8 @@
 # Orbit landing page design QA
 
-final result: passed
+Historical result: passed for the earlier source and captures below.
+
+Current desktop-only content, metadata and replacement illustrations have static render, type and build checks. Current visual layout and interactive behavior are not measured. Do not use this historical report to certify the current source.
 
 ## Scope and reference
 

@@ -1,17 +1,14 @@
-# Live workspace preview
+# Browser workspace preview, historical
+
+> Retired in the current desktop-only product. All `preview` commands and browser
+> viewer launch requests refuse. The desktop mark opens the native session list,
+> and settings remain available through `sbar-orbit config`. See the current
+> [desktop contract and measured limits](desktop-only.md). The instructions and
+> measurements below describe the former browser viewer; do not use them as
+> current setup instructions. A full native session viewer remains unimplemented.
 
 **Measurements:** Current resource and sustained-run results are summarized in [validation](validation.md). Older timing numbers below describe their individual trials.
 Implemented for browser and Fedora native sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open`, and the desktop mark, open it in the person's chosen browser.
-
-## Use
-
-With the broker running and `ORBIT_SOCKET` configured:
-
-```sh
-bun run src/cli.ts preview
-```
-
-Open the complete returned URL. Its fragment contains a per-broker access token. The viewer runs on an automatically allocated loopback port. Closing the page leaves sessions running. Stopping the broker closes the preview server as well.
 
 ## Opening it as its own window
 

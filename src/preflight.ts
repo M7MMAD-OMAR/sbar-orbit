@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { chromeExecutables, darwinBrowserInstalls, nativeRuntimeLocations, nativeRuntimePackages, windowsBrowserInstalls } from "./runtime-paths";
+import { nativeRuntimeLocations, nativeRuntimePackages } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -108,7 +108,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   const nativePossible = probe.platform === "linux";
   add("supported-platform", "common", probe.platform === "linux" || windows || darwin,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
-      message: "This alpha runs on Linux, and at the Limited tier on Windows and macOS. Nothing here can install it on another platform." });
+      message: "Metadata tooling supports Linux, Windows and macOS. Native desktop control currently requires Linux; other desktop adapters are not implemented." });
   if (windows) {
     const runtime = probe.bunVersion ?? "";
     add("bun-version", "common", /^\d+\.\d+\.\d+/.test(runtime) && Bun.semver.satisfies(runtime, ">=1.4.2"),
@@ -163,20 +163,6 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     add(name, "common", probe.module(name, project),
       { id: "dependencies-missing", needsElevation: false, agentMayRun: true, command: "bun install --frozen-lockfile --ignore-scripts",
         message: "Project dependencies are not installed. Run this in the source directory; the one command install does it for you." });
-  // The same resolver `doctor` uses, so a Windows install and a Windows doctor cannot disagree about
-  // whether a browser exists. `chromeExecutables` is a list of Linux paths and finds nothing there.
-  //
-  // Still asked through `probe.file`, one path at a time, rather than by calling the resolver for a
-  // yes or no: the probe is the seam every test injects, and answering from the real machine instead
-  // made this check unmockable and silently ignored the caller's probe.
-  const browserCandidates = windows ? windowsBrowserInstalls().map(install => install.executable)
-    : darwin ? darwinBrowserInstalls().map(install => install.executable)
-    : chromeExecutables;
-  const browsers = await Promise.all(browserCandidates.map(path => probe.file(path, true)));
-  add("chrome-or-chromium", "browser", browsers.some(Boolean),
-    await systemPackages(probe, "no-browser",
-      "Browser sessions need Chrome or Chromium at a supported launcher location. See docs/packaging.md for the paths Orbit looks at.",
-      { any: ["chromium"] }));
   // Which runtime this machine would use, resolved through the probe rather than the filesystem, so an
   // injected probe still decides everything. `in-source` means one built before 14 September 2026,
   // inside a source tree, still usable and adopted by `./install.sh --native`.
@@ -197,7 +183,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
         // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
         // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
         { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
-          message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Native sessions are unavailable until then; browser sessions are not affected." });
+          message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Private desktop sessions are unavailable until the native runtime is ready." });
     // A runtime that is present and cannot load is the fresh-machine failure the container found: the
     // bootstrap unpacks packages and the libraries they need are the machine's own. ldd is the same
     // question the dynamic loader will ask, asked before a session does.
@@ -212,7 +198,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     for (const name of ["grim", "wl-copy", "wl-paste"])
       add(name, "native", await probe.file(`/usr/bin/${name}`, true),
         await systemPackages(probe, "no-capture-tools",
-          "Native sessions capture with grim and paste through wl-clipboard. Browser sessions do not need either.",
+          "Private desktop sessions capture with grim and paste through wl-clipboard.",
           { any: ["grim", "wl-clipboard"] }));
     const xwayland = probe.which("Xwayland");
     add("xwayland", "native", !!xwayland && await probe.file(xwayland, true),
@@ -227,7 +213,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // possibility, so it is stated as false, for every platform that cannot nest a compositor rather
   // than for Windows alone.
   const nativePrerequisitesFound = nativePossible && available("native");
-  return { check: "prerequisite-availability", browserPrerequisitesFound: available("browser"), nativePrerequisitesFound, checks,
+  return { check: "prerequisite-availability", browserPrerequisitesFound: false, nativePrerequisitesFound, checks,
     nativeRuntime: { source: runtimeSource },
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],
     startsApplications: false };

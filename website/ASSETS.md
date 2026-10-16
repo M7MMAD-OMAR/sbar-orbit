@@ -6,14 +6,14 @@
 
 ## Illustrations
 
-Generated with the built-in image generation tool on September 12, 2026 from the user-approved navy ink landing design. They are decorative illustrations, not screenshots or evidence of product behavior.
+The original illustrations were generated with the built-in image generation tool on September 12, 2026 from the user-approved navy ink landing design. Three were edited with the same built-in tool on October 15, 2026 to replace the retired browser imagery with native application windows. Exact prompts and reference commit paths are recorded in [desktop-assets.json](desktop-assets.json). They are decorative illustrations, not screenshots or evidence of product behavior.
 
-- `hero-workspaces.webp`: navy pen-and-ink human desk on the left, agent browser and native app workspace on the right, ivory paper, wide clear separation, no connecting lines or text.
-- `hero-workspaces-mobile.webp`: the same artwork recomposed vertically, human desk above and agent workspace below.
-- `private-spaces.webp`: navy pen drawing of a browser window, an image editor window with mountain artwork and a small cactus, ivory background, no text.
-- `viewer-control.webp`: off-white ink drawing of a person watching browser and app windows, solid navy background, no text or rendered controls.
+- `hero-desktop.webp`: human desk on the left, agent file manager and image editor on the right, ivory paper, navy ink and small orange accents.
+- `hero-desktop-mobile.webp`: the same two desktop scenes arranged vertically, with a file manager replacing the old rear window.
+- `private-desktop-apps.webp`: text editor with a file sidebar, image editor with mountain artwork and a small cactus, navy ink on ivory paper.
+- `viewer-control.webp`: the original off-white ink drawing of a person watching application windows, solid navy background, no rendered controls.
 
-WebP conversion preserves the generated artwork. Original PNG copies used during production are not shipped to the website.
+WebP encoding preserves the generated dimensions. Original generated PNG files remain outside the shipped assets. The three superseded WebP assets are removed from `public/images` and are not shipped by the new build.
 
 ## Support button
 

@@ -1,0 +1,22 @@
+{
+  "tool": "Built-in image_gen",
+  "purpose": "Replace browser imagery with native application windows while preserving the existing illustrations.",
+  "edits": [
+    {
+      "asset": "public/images/hero-desktop.webp",
+      "prompt": "Use case: precise-object-edit. Edit target is the supplied wide pen and ink website illustration. Change ONLY the floating rear browser window above the robot's desk on the right: replace its address bar and globe/web page with a native file manager window, with a narrow folder sidebar and a grid of simple document/file icons. No globe, URL bar, browser navigation arrows or browser tabs anywhere in that window. Preserve everything else: person, robot, both desks, mountain artwork front window, plants, lamps, coffee, the wide landscape layout, ivory paper background, fine navy pen hatching and small orange accents. Do not add any text, logos, watermarks, extra objects or connecting lines. This is for a desktop-only application product, with no browser feature.",
+      "reference_path": "public/images/hero-workspaces.webp"
+    },
+    {
+      "asset": "public/images/hero-desktop-mobile.webp",
+      "prompt": "Use case: precise-object-edit. Edit target is the supplied portrait pen and ink website illustration. Change ONLY the floating rear browser window above the robot's desk in the lower half: replace its address bar and globe/web page with a native file manager window, with a narrow folder sidebar and grid of simple document/file icons. No globe, URL bar, browser navigation arrows or browser tabs in that window. Preserve everything else: person, robot, desks, mountain artwork front window, plants, lamps, coffee, the two vertically stacked scenes, portrait layout, ivory paper background, fine navy pen hatching and small orange accents. Do not add text, logos, watermarks, extra objects or connecting lines.",
+      "reference_path": "public/images/hero-workspaces-mobile.webp"
+    },
+    {
+      "asset": "public/images/private-desktop-apps.webp",
+      "prompt": "Use case: precise-object-edit. Edit target is the supplied navy pen and ink illustration of two application windows with a cactus. Replace ONLY the left browser window contents and browser toolbar with a native text editor application: a simple file sidebar, a document with a few indented lines, and a plain application title bar with three small circular controls. No globe, address bar, browser navigation arrows or browser tabs. Preserve the exact existing composition, window proportions and perspective, right image editor with mountain scene and drawing tools, cactus, ivory background and navy pen hatching. No text, logos, watermarks, extra objects or orange accents. This image will represent native applications on a private desktop.",
+      "reference_path": "public/images/private-spaces.webp"
+    }
+  ],
+  "reference_commit": "bbfb6b5b3892f920b798d212e2361d8907249c8d"
+}

@@ -8,23 +8,22 @@ all applications or model hosts.
 
 ## What belongs in an Orbit session
 
-The routing decision, before any call is made. Orbit exists for three things: the
-person's own browser and logged-in accounts, reached through `orbit_profiles` and
-`cloneOf`; a private session of their own that they can watch or take over; and
-real desktop applications on the private display. Anything the person asks to run
-on the system, in their browser or in their other applications belongs here, and
-nothing belongs on their own screen.
+Orbit is desktop-only. Discover applications with `orbit_applications`, use a
+`system` session for an owned private desktop, or an explicitly configured
+`native` session for application/window control. The public broker rejects
+`browser`, profile-copy and saved-browser-account requests, including requests
+from previously connected adapters. MCP no longer exposes DOM actions or browser
+profile tools. The CLI defaults to `system`.
 
-Everything that only needs the content of the web does not. Opening a link to
-read it, reviewing a public site, research and page checks are the host's own web
-tools' job: fetch or extract, search, or the host's embedded browser tool such as
-Playwright. They start instantly and cost no session, no owned browser and no
-slice of the shared budget. Reach for Orbit when those cannot do the job, when the
-person's identity is what the task needs, when the work must stay watchable in the
-viewer or bounded by a policy and a journal, or when the person asks for an Orbit
-session. `tests/mcp.test.ts` pins both halves of this rule in the adapter's own
-instructions and in the `orbit_create` description, so it cannot drift away from
-what an agent reads.
+A private desktop is not access to the person's existing applications. Existing
+application handoff is under the [crash release hold](native-handoff-incident.md).
+Do not substitute standalone browser automation after a native failure. Other
+platforms need native desktop adapters and real runtime evidence; historical
+browser measurements do not establish desktop support.
+
+The migration status and acceptance boundaries are in
+[desktop-only](desktop-only.md). Historical experiments below describe prior
+releases, not supported routes in the desktop-only public API.
 
 ## One conversation can opt out
 
@@ -117,31 +116,23 @@ controls are how to remove schema overhead when their wider scope is intended.
 
 ## Observation contracts
 
-For a Fedora private display, a VS Code Default Profile launch can use
-`orbit_act` with this action, or `sbar-orbit act ID 'JSON'` from the CLI:
+For a new private Linux application, first discover its registration ID with
+`orbit_applications`, create a `system` session, then use `orbit_act`:
 
 ```json
-{"type":"launch-app","app":"vscode","profile":"default","extensions":["pkief.material-icon-theme-5.38.1"],"openPath":"/absolute/path/to/work"}
+{"type":"launch-installed","applicationId":"discovered-registration.desktop"}
 ```
 
-`extensions` names exact installed extension folders. The action copies the
-Default Profile settings, keybindings, snippets, a consistent account database
-and selected extensions into the private session. Up to four extensions and
-256 MiB of files can be copied, with a 64 MiB limit per file. `openPath` may be
-an existing file or directory. The result reports what was copied as
-`profileSnapshot`. When account state was copied, launch requires the host's
-unlocked VS Code keyring item and gives the private VS Code process access to
-the host secret service. That service can expose other keyring items too.
-Stopping the session removes the private snapshot and bus proxy. One GitHub
-identity was observed in the private account menu; Copilot access, token
-refresh and other VS Code profiles have not been verified.
+Use an ID returned by discovery, not the example placeholder. The resolver uses
+registered installation metadata. Unsupported activation recipes fail explicitly.
+The result is a new process with private HOME, not existing session handoff or a
+universal filesystem sandbox. Do not copy owner profiles or use DOM actions.
 
 | Need | MCP | CLI | Result |
 |---|---|---|---|
 | Tab/window labels and pointer | `orbit_observe` with `mode: "metadata"` | `session observe ID --metadata` | Presence JSON, no screenshot call |
 | Visual evidence | `orbit_observe` (default `image`) | `session observe ID --output PATH` | Image plus metadata, no base64 text in model context |
 | Existing script compatibility | Image MCP block stays first | `session observe ID` | Original base64 JSON CLI contract |
-| Specific browser text | `orbit_act` with `read`, narrow selector | `act ID '{"type":"read","selector":"h1"}'` | Text only |
 
 Image metadata includes `mimeType`, `width`, `height`, `capturedAt`, and `presence`
 with the title, location, page count, active page index, tab/window labels and

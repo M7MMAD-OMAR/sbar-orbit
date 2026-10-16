@@ -1,4 +1,9 @@
-# Release readiness work
+# Historical release readiness work
+
+This records earlier releases and their browser-era acceptance. For the current
+desktop-only product and CI boundary, use the [documentation index](README.md).
+The historical statements about disabled CI below describe their dated runs; the
+`verify` workflow is currently active.
 
 Goal: one clear installation command per supported operating system, working agent
 connections, realistic application tests, and measured resource and recovery behavior.
@@ -99,7 +104,7 @@ browser creation/capture and timer enable/disable.
 The initial publication failure was a credential-selection error: the CLI used a different configured
 credential instead of the existing project publishing credential. The existing credential was valid;
 no token rotation or new security key was needed. CLI authentication was corrected before publishing.
-See [the alpha.8 guide](release-alpha8.md) for installation, migration and platform limits.
+See [the alpha.8 guide](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0-alpha.8) for installation, migration and platform limits.
 
 ## Managed broker abort, 20 September 2026
 

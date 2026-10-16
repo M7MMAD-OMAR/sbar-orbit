@@ -15,11 +15,13 @@ bun run scripts/limited.ts bun run --cwd website build
 bun run scripts/limited.ts bun run --cwd website dev
 ```
 
-The site runs on port 4196 and refuses to displace another service. Browser verification uses an Orbit private session.
+The site runs on port 4196 and refuses to displace another service. Current content describes the desktop-only runtime and keeps existing-application handoff and platform limits visible.
 
-## Verify in Orbit
+## Verify static content
 
-With the production preview running, run `bun run scripts/limited.ts bun run --cwd website qa` from the repository root. The QA command creates a private session, temporarily adds local diagnostics, captures four viewport sizes, tests interactions, then removes diagnostics and closes its session. Do not deploy while QA is running.
+Run `bun run scripts/limited.ts bun run --cwd website qa` from the repository root. This runs the English and Arabic render tests without creating an Orbit session, starting a preview, contacting the broker or injecting diagnostics. Then run the typecheck and production build commands above.
+
+These checks cover source types, localization and generated HTML. They do not measure visual layout or interactive behavior. The old standalone browser automation scripts have been removed. Historical captures in `design-qa.md` describe earlier source and do not certify the current page.
 
 ## Publish
 
@@ -29,6 +31,13 @@ WRANGLER_SEND_METRICS=false ESBUILD_WORKER_THREADS=0 NODE_OPTIONS=--max-old-spac
 ```
 
 Wrangler requires an authenticated Cloudflare account. The Worker is named `sbar-orbit-site`. Asset routing returns a real 404 for unknown pages.
+
+Deployment uses the machine's Wrangler login. Credentials must remain outside the
+repository. `deploy:check` performs a dry run. There is no automatic website deploy
+workflow: pushing to `main` does not publish the site.
+
+The custom domain is configured in `wrangler.jsonc`; canonical metadata, robots and
+sitemap use https://orbit.sbarah.com/.
 
 ## Content and assets
 
@@ -44,25 +53,6 @@ The viewer controls explain capabilities, they do not connect to an actual Orbit
 
 The source illustration reference is the user-approved long ivory and navy landing mockup (`exec-84293ea4-fd30-411e-b415-cbda3ec8ea34.png`). The final layout adds the user-requested problem, benefits and support sections. Generated imagery is illustrative, not a product screenshot.
 
-## Deployment
-
-Deployment is one command from this directory, run by a person:
-
-```sh
-bun run build
-bun run deploy
-```
-
-`wrangler deploy` uses the Wrangler login already on the machine, so nothing in the
-repository holds a credential and no Cloudflare API token is stored as a repository
-secret. `bun run deploy:check` is the same deployment as a dry run.
-
-There is no GitHub Actions workflow for this. A push to `main` deploys nothing, which
-is deliberate: the site goes out when somebody decides it goes out.
-
-The custom domain is managed in `wrangler.jsonc`; canonical metadata, robots and
-sitemap use https://orbit.sbarah.com/.
-
 ## Languages
 
 English lives at `/`, Arabic at `/ar/`. Both are prerendered with their own
@@ -72,16 +62,16 @@ written in `src/locale.tsx`; linked technical documents remain English and are
 labelled accordingly. Terminal commands remain LTR in both layouts.
 
 Run `bun run scripts/limited.ts bun test website/tests/locale.test.tsx` from the
-repository root. Set `QA_LOCALE=ar` for the browser QA command to test Arabic.
+repository root. The test file checks both locales without a graphical session.
 
 The landing page includes an illustrated bento overview, an always-visible
 architecture diagram and a three-step quick guide in both languages. The viewer
-tabs explain session controls; they do not control a live agent. Deeper technical
+walkthrough explains session controls; it does not control a live agent. Deeper technical
 reference stays on GitHub. No essential guidance is hidden in disclosures.
 
 The large viewer illustration uses its full aspect ratio. Its walkthrough advances
-every seven seconds, with a pause control and progress indicators. The architecture
-highlights an explanatory stage every 2.6 seconds. Both pause on hover, keyboard
+every four seconds, with a pause control and progress indicators. The architecture
+highlights an explanatory stage every 1.8 seconds. Both pause on hover, keyboard
 focus, hidden tabs and offscreen placement. Reduced-motion users receive static
 content, including all four viewer descriptions. These are illustrations, not live
 session state.

@@ -15,7 +15,8 @@ if __package__ in (None, ""):
 from src.native.handoff_release import require_owner_handoff
 from src.native.budget import require_budget
 from src.native.host import verify_host
-from src.native.plugin_bundle import input_file, unchanged, unique_fields, verify_staged_plugin
+from src.native.plugin_bundle import fingerprint, input_file, unchanged, unique_fields, verify_staged_plugin
+from src.native.mapping import kernel_file_identity
 from src.native.transport import NativeTransport
 
 
@@ -131,17 +132,26 @@ def mapped_identity(bundle):
     mappings = {}
     for line in data.decode().splitlines():
         fields = line.split(maxsplit=5)
-        if len(fields) == 6 and (Path(fields[5]).name == "plugin.so" or "ghostinput" in Path(fields[5]).name):
+        if len(fields) == 6 and (Path(fields[5]).name.removesuffix(" (deleted)") == "plugin.so" or "ghostinput" in Path(fields[5]).name):
             mappings[fields[5]] = (fields[3], int(fields[4]))
     path = bundle.artifact["path"]
     if set(mappings) != {path}:
         raise RuntimeError("Expected only the exact prepared plugin mapping")
     device, inode = mappings[path]
     major, minor = (int(part, 16) for part in device.split(":"))
-    info = os.stat("plugin.so", dir_fd=bundle.fd, follow_symlinks=False)
-    if info.st_ino != inode or info.st_dev != os.makedev(major, minor):
-        raise RuntimeError("Loaded plugin kernel identity differs from preparation")
-    bundle.verify()
+    descriptor = os.open("plugin.so", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=bundle.fd)
+    try:
+        identity = [str(value) for value in fingerprint(os.fstat(descriptor))]
+        if identity != bundle.artifact["file_identity"]:
+            raise RuntimeError("Mapped plugin descriptor differs from preparation")
+        expected = kernel_file_identity(descriptor)
+        if expected != (os.makedev(major, minor), inode):
+            raise RuntimeError("Loaded plugin kernel identity differs from preparation")
+        bundle.verify()
+        if [str(value) for value in fingerprint(os.fstat(descriptor))] != identity:
+            raise RuntimeError("Mapped plugin descriptor changed during verification")
+    finally:
+        os.close(descriptor)
 
 
 def status(bundle, transport):

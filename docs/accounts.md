@@ -1,23 +1,13 @@
-# Saved browser accounts
+# Saved browser accounts, historical
+
+> Retired in the current desktop-only product. Browser sessions, browser profile
+> copying and saved browser account operations refuse. Existing signed-in native
+> application support requires separate runtime acceptance; the historical account
+> measurements below do not prove it. See the current
+> [desktop contract and measured limits](desktop-only.md). The instructions below
+> document the former browser account flow and are not current setup instructions.
 
 Orbit can save its own browser account state and restore it into a new temporary profile on the next run. It never reopens a fixed browser profile or copies the personal browser's cookies. This preserves the workstation's one-profile-per-run rule.
-
-## Use
-
-Start the broker, set its printed `ORBIT_SOCKET`, then create a named browser session:
-
-```sh
-bun run src/cli.ts session create browser work-account
-bun run src/cli.ts preview
-```
-
-Open the returned viewer link yourself. Navigate the session to the desired site through your agent or CLI, pause the agent, and sign in through the viewer. Select **Save account state** while paused. Resume or stop when ready. The CLI equivalent is:
-
-```sh
-bun run src/cli.ts account save "$ORBIT_SESSION_ID"
-```
-
-Create another session with the same account name to restore the last saved state. Closing a session does not automatically save changes. A second session or broker receives `PROFILE_BUSY` while the name is leased. Different names stay independent.
 
 ## Storage and boundaries
 

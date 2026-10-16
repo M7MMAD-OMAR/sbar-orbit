@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.budget import require_budget
 from src.native.host import inspect_host, verify_host
 from src.native.lease import process_identity
-from src.native.plugin_bundle import verify_staged_plugin
+from src.native.plugin_bundle import fingerprint, verify_staged_plugin
+from src.native.mapping import kernel_file_identity
 from lab import guard
 import native_broker_probe as broker_probe
 
@@ -35,16 +36,25 @@ def prepared_binding(plan, artifact, pid, source_hash):
         mappings = {}
         for line in Path(f"/proc/{pid}/maps").read_text().splitlines():
             fields = line.split(maxsplit=5)
-            if len(fields) == 6 and (Path(fields[5]).name == "plugin.so" or "ghostinput" in Path(fields[5]).name):
+            if len(fields) == 6 and (Path(fields[5]).name.removesuffix(" (deleted)") == "plugin.so" or "ghostinput" in Path(fields[5]).name):
                 mappings[fields[5]] = (fields[3], int(fields[4]))
         if set(mappings) != {str(path)}:
             raise RuntimeError("Expected only the exact prepared plugin mapping")
         device, inode = mappings[str(path)]
         major, minor = (int(part, 16) for part in device.split(":"))
-        info = path.stat()
-        if info.st_ino != inode or info.st_dev != os.makedev(major, minor):
-            raise RuntimeError("Prepared plugin kernel mapping differs from its file")
-        verify_staged_plugin(directory, artifact)
+        descriptor = os.open('plugin.so', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            identity = [str(value) for value in fingerprint(os.fstat(descriptor))]
+            if identity != artifact['file_identity']:
+                raise RuntimeError('Prepared plugin descriptor differs from its pin')
+            expected = kernel_file_identity(descriptor)
+            if expected != (os.makedev(major, minor), inode):
+                raise RuntimeError("Prepared plugin kernel mapping differs from its file")
+            verify_staged_plugin(directory, artifact)
+            if [str(value) for value in fingerprint(os.fstat(descriptor))] != identity:
+                raise RuntimeError('Prepared plugin descriptor changed during verification')
+        finally:
+            os.close(descriptor)
         return {"path": str(path), "binary_sha256": artifact["binary_sha256"],
                 "build_source_sha256": source_hash, "optimization": "O0 prototype build",
                 "binding": "prepared identity/digest plus exact kernel maps device/inode"}

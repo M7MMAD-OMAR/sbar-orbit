@@ -5,8 +5,8 @@ runs, the working colour while an agent works, amber when a session is paused, d
 is off. The mark can be traded for a plain capsule, a dot or a dot with a count. It
 blinks once when a session or an application appears. Resting the pointer on it draws a card out of
 the capsule, one row per session, joined to it by a neck that thins as the two separate; clicking a
-card opens the viewer. A left click on the mark opens the viewer, a right click opens Orbit's
-settings in the viewer, and dragging the mark carries it to another screen edge, with a landing strip
+card keeps the native session list open. A left click opens that list, a right click exposes its
+configuration notice, and dragging the mark carries it to another screen edge, with a landing strip
 on each edge and the drop reaching for the nearest one. Everything is adjustable and persists in the
 person's config.
 
@@ -36,9 +36,10 @@ import threading
 # The layer-shell library must be loaded before GTK resolves its Wayland symbols, which for a Python
 # process means before the interpreter starts. Re-run once with it preloaded; without it the panel
 # would silently become an ordinary window.
-LAYER_SHELL_LIBRARY = next((p for p in ("/usr/lib64/libgtk4-layer-shell.so", "/usr/lib/libgtk4-layer-shell.so",
-                                        "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so", "/usr/lib/aarch64-linux-gnu/libgtk4-layer-shell.so")
-                            if os.path.exists(p)), None)
+# Runtime packages provide the versioned soname; the unversioned link may require development files.
+LAYER_SHELL_LIBRARY = next((path for directory in ("/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu")
+                            for name in ("libgtk4-layer-shell.so.0", "libgtk4-layer-shell.so")
+                            if os.path.isfile(path := os.path.join(directory, name))), None)
 if os.environ.get("ORBIT_PANEL_PRELOADED") != "1" and LAYER_SHELL_LIBRARY:
     preload = os.environ.get("LD_PRELOAD", "")
     if LAYER_SHELL_LIBRARY not in preload.split(":"):
@@ -80,7 +81,7 @@ import cairo  # noqa: E402
 import math  # noqa: E402
 
 from panel_broker import (BrokerClient, broker_socket, claim_the_mark, command_socket_path, launcher_json,
-                           notify, read_status, rpc, session_shape, viewer_link_is_local)  # noqa: E402
+                           notify, read_status, rpc, session_shape)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 
@@ -107,7 +108,7 @@ GRIP_SLACK = 9.0
 DROP_TARGET = 78.0
 EDGES = {"left": LayerShell.Edge.LEFT, "right": LayerShell.Edge.RIGHT, "top": LayerShell.Edge.TOP, "bottom": LayerShell.Edge.BOTTOM}
 # Defaults, ranges, validation and the words a person might search for all live in one module, which the
-# settings view in the viewer, `sbar-orbit config` and this file all read. A setting described in only one of the
+# `sbar-orbit config` and this file both read. A setting described in only one of the
 # three is a setting one of them silently disagrees about.
 STYLES = orbit_settings.STYLES
 STATE_KEYS = orbit_settings.STATE_KEYS
@@ -353,7 +354,7 @@ class Panel(Gtk.Application):
         self.hover.connect("notify::contains-pointer", lambda controller, _: self.hover_changed(controller.get_property("contains-pointer")))
         self.shell.add_controller(self.hover)
         # One gesture for both, because a click gesture and a drag gesture on the same widget and the
-        # same button fight over the press and the viewer stops opening. A press that stays put is a
+        # same button fight over the press and the session list stops opening. A press that stays put is a
         # click, a press that travels is the mark being carried to another edge.
         carry = Gtk.GestureDrag(button=1)
         carry.connect("drag-begin", self.drag_begin)
@@ -384,24 +385,10 @@ class Panel(Gtk.Application):
     def footer(self):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         row.add_css_class("orbit-foot")
-        viewer = Gtk.Button(label="Open the viewer")
-        viewer.add_css_class("flat")
-        viewer.connect("clicked", lambda *_: self.open_viewer())
-        # "A browser of my own" is gone. It read as a choice between the viewer and the person's own
-        # browser, next to a button that opens the viewer, and that is not what it did: it created an
-        # Orbit session, paused it, and opened the viewer on it. Two buttons that both end in the
-        # viewer, one of them named after the thing this project exists NOT to touch.
-        #
-        # A private browser to drive by hand is still one click away, from inside the viewer where
-        # every other session action already lives, so nothing was removed except the ambiguity.
-        settings = Gtk.Button(label="Settings")
-        settings.add_css_class("flat")
-        settings.connect("clicked", lambda *_: self.open_settings())
-        row.append(viewer)
+        settings = Gtk.Label(label="Configure with sbar-orbit config")
+        settings.set_selectable(True)
         row.append(settings)
         return row
-
-    # --- Placement -------------------------------------------------------------------------------
 
     def monitor_for(self, window):
         """The chosen monitor by index or connector name, else the largest one: the person's main
@@ -618,7 +605,7 @@ class Panel(Gtk.Application):
 
     def drag_end(self, gesture, offset_x, offset_y):
         if self.drag is None:
-            # It never travelled, so it was a click, and only a click on the mark opens the viewer.
+            # It never travelled, so it was a click, and only a click on the mark opens the native session list.
             if self.carrying:
                 self.open_viewer()
             return
@@ -1059,35 +1046,11 @@ class Panel(Gtk.Application):
     # --- Actions ---------------------------------------------------------------------------------
 
     def open_viewer(self, view=None):
-        # The viewer link carries an access token, so it is requested now and handed straight to the
-        # browser rather than written anywhere. Which session to show is selected in the viewer.
-        try:
-            answer = rpc(self.path, "preview.open", {"launch": True, "view": view or "sessions",
-                                                     "browser": self.settings["viewerBrowser"],
-                                                     "appWindow": self.settings["viewerAppWindow"]})
-        except Exception as error:
-            print(f"panel: could not open the viewer: {error}", file=sys.stderr)
+        """Keep session inspection in the native panel."""
+        if view == "settings":
+            self.open_settings()
             return
-        url = answer.get("url", "")
-        if not viewer_link_is_local(url):
-            print("panel: the broker returned something other than a local viewer link; not opening it", file=sys.stderr)
-            return
-        # The broker opened it in the chosen browser, which is the only path that can give the viewer a
-        # window of its own. The launcher below is the fallback for a broker too old to have opened it,
-        # and it always produces a tab in whatever the desktop's default browser is.
-        if answer.get("opened"):
-            return
-
-        def done(launcher, result):
-            try:
-                launcher.launch_finish(result)
-            except Exception as error:
-                print(f"panel: the browser did not open the viewer: {error}", file=sys.stderr)
-
-        # No parent window. Handing a layer surface to a launcher makes GTK ask the compositor to
-        # export it as a toplevel, which a layer surface is not, and the protocol error ends the
-        # panel the moment the person clicks the mark.
-        Gtk.UriLauncher.new(url).launch(None, None, done)
+        self.set_expanded(True)
 
     def listen_for_commands(self):
         """Do what another invocation asked for, rather than letting it start a second mark."""
@@ -1098,9 +1061,9 @@ class Panel(Gtk.Application):
                 message = self.listener.recv(64)
             except OSError:
                 return True
-            if message.strip() == b"settings":
+            if message.strip() in (b"native-settings-notice", b"settings"):
                 GLib.idle_add(self.open_settings)
-            elif message.strip() == b"viewer":
+            elif message.strip() in (b"native-sessions", b"viewer"):
                 GLib.idle_add(self.open_viewer)
             return True
         # GLibUnix where the bindings have it, GLib where they do not: the function moved and the old
@@ -1109,13 +1072,10 @@ class Panel(Gtk.Application):
         (adder or GLib.unix_fd_add_full)(GLib.PRIORITY_DEFAULT, self.listener.fileno(), GLib.IOCondition.IN, ready)
 
     def publish_monitors(self):
-        """Say which monitors exist, for the settings page in the viewer.
+        """Publish compositor monitor metadata for desktop configuration.
 
-        Only a client of the compositor can answer this, and the viewer is a web page. So the mark,
-        which is already such a client, writes the list where the broker can read it, and rewrites it
-        when a screen is plugged in or unplugged. It lives in the runtime directory because it
-        describes this login session and should not survive it: a stale list of yesterday's monitors is
-        worse than no list, which the page renders as the monitor's name in a plain box.
+        The native panel is already a compositor client. The broker reads this runtime
+        metadata without selecting a monitor or opening an application.
         """
         monitors = self.display.get_monitors()
         runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
@@ -1135,7 +1095,7 @@ class Panel(Gtk.Application):
                     json.dump(listed, handle)
                 os.replace(temporary, path)
             except OSError as error:
-                print(f"panel: could not publish the monitor list ({error}); the settings page will ask for a name instead", file=sys.stderr)
+                print(f"panel: could not publish the monitor list ({error}); desktop configuration requires an explicit name instead", file=sys.stderr)
 
         monitors.connect("items-changed", publish)
         publish()
@@ -1182,20 +1142,15 @@ class Panel(Gtk.Application):
         return False
 
     def open_settings(self):
-        """Settings live in the viewer, which is where the rest of Orbit's interface already lives.
-
-        The mark keeps what only a mark can do, and one interface is designed, translated and tested
-        instead of two. Nothing about the settings themselves moved: the file is still the source of
-        truth, the Python schema still validates every value, and `sbar-orbit config` still works over
-        ssh, inside a service, and while no browser is running at all.
-        """
-        self.open_viewer(view="settings")
+        """Show the native panel and its configuration command."""
+        self.set_expanded(True)
 
 
 def main():
     settings = load_settings()
     args = sys.argv[1:]
     open_settings = False
+    open_sessions = False
     while args:
         flag = args.pop(0)
         if flag == "--edge" and args and args[0] in EDGES:
@@ -1221,24 +1176,28 @@ def main():
             settings["motion"] = False
         elif flag == "--no-notifications":
             settings["notifications"] = False
+        elif flag == "--sessions":
+            open_sessions = True
         elif flag == "--settings":
             open_settings = True
         elif flag in ("-h", "--help"):
             print("usage: sbar-orbit panel [--edge left|right|top|bottom] [--monitor N|CONNECTOR] [--style mark|bar|dot|count]")
             print("                        [--position 0..1] [--frame|--no-frame] [--no-pulse] [--frame-color CSS] [--no-motion]")
-            print("                        [--no-notifications] [--settings]")
-            print(f"settings persist in {SETTINGS_PATH}; a right click on the mark opens them in the viewer")
+            print("                        [--no-notifications] [--sessions] [--settings]")
+            print(f"settings persist in {SETTINGS_PATH}; use sbar-orbit config to edit them")
             return 0
     # Before anything is drawn: if a panel already owns the mark, this invocation's job is to ask it and
     # leave. That is how `sbar-orbit settings` reaches a running panel, and how two autostart paths
     # produce one mark.
-    listener, claim = claim_the_mark("settings" if open_settings else "ping")
+    listener, claim = claim_the_mark("native-settings-notice" if open_settings else "native-sessions" if open_sessions else "ping")
     if claim == "handed":
         print("panel: a panel is already running; handed it the request instead of starting a second mark", file=sys.stderr)
         return 0
     panel = Panel(settings, listener)
     if open_settings:
         panel.connect("activate", lambda *_: GLib.idle_add(panel.open_settings))
+    if open_sessions:
+        panel.connect("activate", lambda *_: GLib.idle_add(panel.open_viewer))
     panel.run([])
     return 0
 

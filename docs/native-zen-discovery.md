@@ -1,4 +1,53 @@
-# Zen stable Flatpak discovery
+# Zen installation discovery
+
+## Portable discovery, 13 October 2026
+
+The local-only repair below has been extended with the shared
+[application discovery contract](application-discovery.md). Zen resolves verified
+desktop entries, PATH symlinks and literal wrappers, current-user running
+executables, and available recent application metadata before using the standard
+local layout as a fallback. Running executable and explicit profile evidence
+take priority. Conflicting or truncated inventories are refused. Update channel
+metadata is reported separately from observed running state and authentication.
+
+## Local Linux archive, 12 October 2026
+
+The running broker failed a Zen `launch-app` request with `UNSUPPORTED`:
+`Zen Flatpak profile directory is unavailable`. This workstation now uses the
+local archive at `$HOME/.local/share/zen/zen` and its profile at `$HOME/.zen`.
+The old discovery code only supported the Flatpak layout.
+
+When the Flatpak profile directory is absent, discovery now accepts this exact
+local archive layout. It selects the profile using the existing `profiles.ini`
+rules, refuses a profile outside `.zen`, copies the profile, and mounts the
+application directory read only at `/app/zen` in the existing private namespace.
+An explicitly supplied fixture deployment keeps the Flatpak path. This initial
+repair did not discover other archive locations; the later shared discovery
+contract above replaces that restriction. Unresolved simultaneous installations
+still require an explicit decision rather than a guessed choice.
+
+The local archive regression failed against the unchanged implementation with
+the same profile error, then passed after the correction. The final focused
+native run recorded 39 passes, zero failures, and 185 assertions across seven
+files. `bun run typecheck` passed. Two bounded live runs launched the installed
+local Zen in a private display and closed it afterward. The settled capture
+showed its sidebar and default-browser prompt. These runs used the offline
+copy; authenticated public website behavior was not measured.
+
+A separate managed-broker session launched GNOME Text Editor, accepted text
+through the private clipboard, opened its save dialog through `Ctrl+S`, and
+saved the expected text to a disposable file. This establishes private desktop
+input and file saving on this host. It does not establish control of applications
+already open on the owner's display. The [native handoff release hold](native-handoff-incident.md)
+remains active.
+
+The managed broker imports runtime source at startup. It must be restarted to
+activate the Zen correction. During this investigation two unrelated sessions
+were still active or paused, so they were preserved pending the owner's restart
+decision. Existing service path drift was also reported by `doctor`; rewriting
+the units is a separate installation action.
+
+## Stable Flatpak discovery
 
 Orbit's Zen pilot copies one selected profile from
 `$HOME/.var/app/app.zen_browser.zen/config/zen`. The profile must remain inside
@@ -44,3 +93,9 @@ root aliases resolving to one deployment. These new fixtures are not measured
 locally. Their regression and type checks must run remotely. To establish the
 regression, run the new discovery tests against the parent revision before
 applying the discovery change, then run them against the changed revision.
+# Historical active-browser adapter
+
+Active browser profile copying is retired from the desktop-only public API.
+The public broker rejects `launch-app` with `app: "zen"`, including requests from
+older adapters. The implementation and evidence below are retained for historical
+reference and are not a supported fallback for desktop work.

@@ -1,6 +1,15 @@
+> Current contract: Orbit is desktop-only. `session create` defaults to `system`.
+> `session create browser`, `profiles` and browser account saving are retired.
+> Browser examples retained below are historical and refused by the public broker.
+> See [desktop-only migration](desktop-only.md).
+
 # Local broker and CLI
 
 Implemented: independent browser and Fedora native sessions, ordered actions, retry deduplication, observation, pause/resume and owned-browser shutdown. The repository includes `bin/sbar-orbit`; the installer can register the executable and user service.
+
+`sbar-orbit applications [QUERY]` lists verified installed executable paths and
+available current-user usage metadata without launching applications. Results
+include discovery sources and platform limits. See [application discovery](application-discovery.md).
 
 ## Conversation usage
 
@@ -208,7 +217,7 @@ This interface requires a managed version-directory installation. On Linux use `
 from an extracted release or registry package, then invoke `~/.local/bin/sbar-orbit` so the command
 follows the active version. Linux upgrade and rollback are measured in a disposable Fedora systemd
 container. macOS and Windows managed activation and scheduling currently refuse. See
-[installation and migration](release-0.1.0.md).
+[installation and migration](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.1.0).
 
 ```sh
 sbar-orbit update status     # which version is running, which are prepared, whether one is waiting

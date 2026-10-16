@@ -10,7 +10,7 @@ import qs.services
  *
  * No number on it: the colour is the whole message, the accent while an agent is working, the
  * tertiary accent while one is paused, quiet while sessions are open but idle. It blinks once when a
- * session or a window appears. Hovering lists the sessions, clicking opens the viewer.
+ * session or a window appears. Hovering lists the sessions, clicking expands the native session panel.
  *
  * Showing and hiding it is the bar layout's job, the way it is for every other indicator: wrap this
  * in a Revealer whose `reveal` is `SbarOrbit.count > 0`, so a bar with no agents running looks
@@ -18,7 +18,7 @@ import qs.services
  *
  * Put that Revealer beside the tray, not inside the status indicators. Orbit reports an application
  * that is running, which is what a tray is for. In the indicators it crowded the notification badge
- * and, because that group is itself a button, a click meant to open the viewer opened the sidebar.
+ * and, because that group is itself a button, a click meant to expand the session panel opened the sidebar.
  */
 MouseArea {
     id: root
@@ -151,7 +151,7 @@ MouseArea {
             }
 
             StyledText {
-                text: "Click to open the viewer"
+                text: "Click to show desktop sessions"
                 color: Appearance.colors.colSubtext
             }
         }
