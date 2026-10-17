@@ -1,20 +1,19 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startBroker, call } from "../src/ipc";
 
 test.each([true, false])("CI runner preserves a desktop test result: passing=%s", async passing => {
-  const outputDirectory = join(process.cwd(), "output");
-  await mkdir(outputDirectory, { recursive: true });
-  const root = await mkdtemp(join(outputDirectory, "ci-result-"));
+  const root = await mkdtemp(join(tmpdir(), "orbit-ci-result-"));
   try {
-    const fixture = join(root, "result.test.ts");
-    await writeFile(fixture, `import { test, expect } from "bun:test"; test("CI result fixture", () => expect(${passing}).toBe(true));\n`);
-    // Bun treats Windows absolute paths outside the checkout as name filters.
-    const testPath = "./" + relative(process.cwd(), fixture).replaceAll("\\", "/");
-    const child = Bun.spawn([process.execPath, "experiments/verify-with-resources.ts", testPath], {
-      stdout: "pipe", stderr: "pipe", timeout: 20000,
+    await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { verify: "bun test" } }));
+    await writeFile(join(root, "result.test.ts"), `import { test, expect } from "bun:test"; test("CI result fixture", () => expect(${passing}).toBe(true));\n`);
+    // Exercise the real wrapper against an isolated real test suite. No path filters
+    // or product-suite recursion are needed to verify exit propagation.
+    const wrapper = join(import.meta.dir, "../experiments/verify-with-resources.ts");
+    const child = Bun.spawn([process.execPath, wrapper], {
+      cwd: root, stdout: "pipe", stderr: "pipe", timeout: 20000,
       env: { ...process.env, ORBIT_VERIFICATION_OUTPUT_DIR: root },
     });
     const [out, err, code] = await Promise.all([
