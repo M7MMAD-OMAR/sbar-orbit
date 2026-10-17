@@ -10,10 +10,12 @@ import * as hostBrowsers from "../src/host-browsers";
 import * as childProcess from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { linuxOnlySuite } from "./platform-support";
 import { FedoraBackend, parseNativeAction } from "../src/fedora";
 
-test("generic desktop launches use a private HOME instead of locking the owner's profile", async () => {
-  const root = await mkdtemp("/tmp/orbit-home-regression-");
+linuxOnlySuite("Private HOME application launches use the Linux Fedora backend")("generic desktop launches use a private HOME instead of locking the owner's profile", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-home-regression-"));
   const session = join(root, "session"), owner = join(root, "owner");
   await mkdir(session, { mode: 0o700 });
   await mkdir(join(owner, ".zen"), { recursive: true });
@@ -127,8 +129,8 @@ test("MCP exposes desktop backends and no DOM or profile-copy contract", async (
 test("CLI session create defaults to system on the wire", async () => {
   let received: unknown;
   const { mkdtemp, rm } = await import("node:fs/promises");
-  const directory = await mkdtemp("/tmp/orbit-cli-desktop-");
-  const socket = directory + "/rpc.sock";
+  const directory = await mkdtemp(join(tmpdir(), "orbit-cli-desktop-"));
+  const socket = join(directory, "rpc.sock");
   const server = Bun.serve({ unix: socket, async fetch(request) {
     received = await request.json();
     return Response.json({ ok: true, result: { fixture: true } });

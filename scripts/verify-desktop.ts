@@ -8,6 +8,7 @@ const files = requested.length ? requested : [
   "tests/installed-launch-native.test.ts",
   "tests/desktop-workspaces.test.ts",
   "tests/mcp.test.ts",
+  "tests/ci-desktop.test.ts",
   "tests/application-discovery.test.ts",
   "tests/application-discovery-native.test.ts",
   "tests/policy.test.ts",

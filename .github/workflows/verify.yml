@@ -63,17 +63,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: verification-resources-${{ matrix.os }}
-          path: output/verification-resources.jsonl
+          path: |
+            output/verification-resources.jsonl
+            output/verification-result.json
           if-no-files-found: warn
-      - name: Preserve owned framed trace evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: chrome-trace-${{ matrix.os }}
-          path: output/chrome-trace/
-          if-no-files-found: error
-          retention-days: 7
-
       - name: Preserve owned pipe receipts
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,7 +92,7 @@ jobs:
       - name: Install and negotiate every generated host entry
         run: bun run scripts/limited.ts bun experiments/registered-hosts.ts
 
-  installed-browser:
+  installed-desktop-contracts:
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +106,7 @@ jobs:
           bun-version: ${{ runner.os == 'Windows' && '1.4.2' || runner.os == 'macOS' && inputs.macos-bun-version || '1.3.14' }}
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Install, register hosts and use the managed browser
+      - name: Install, register hosts and verify desktop contracts
         run: bun run scripts/limited.ts bun experiments/installed-ci-acceptance.ts
       - name: Preserve macOS service failure details
         if: failure() && runner.os == 'macOS'
@@ -122,7 +115,7 @@ jobs:
           cp "$HOME/Library/Logs/sbar-orbit/broker.log" output/installed-acceptance/broker.log 2>/dev/null || true
           launchctl print "gui/$(id -u)/com.sbar.orbit.broker" > output/installed-acceptance/launchd.txt 2>&1 || true
           ps -axo pid,ppid,stat,pcpu,rss,comm > output/installed-acceptance/processes.txt
-      - name: Preserve installer report and browser frame
+      - name: Preserve installer report and desktop contract evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { discoverApplications } from "../src/application-discovery";
@@ -15,7 +15,7 @@ import { discoverApplications } from "../src/application-discovery";
     expect(await convert.exited).toBe(0);
     const inventory = await discoverApplications({ bundleRoots: [root] });
     expect(inventory.applications).toHaveLength(1);
-    expect(inventory.applications[0]).toMatchObject({ id: "example.orbit.drawing", executable, packaging: "bundle", availability: "verified" });
+    expect(inventory.applications[0]).toMatchObject({ id: "example.orbit.drawing", executable: await realpath(executable), packaging: "bundle", availability: "verified" });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -35,7 +35,7 @@ import { discoverApplications } from "../src/application-discovery";
     const inventory = await discoverApplications({ query: id });
     expect(inventory.applications).toHaveLength(1);
     expect(inventory.applications[0]).toMatchObject({ id, packaging: "registry", availability: "verified" });
-    expect(inventory.applications[0]?.executable.toLowerCase()).toBe(executable.toLowerCase());
+    expect(inventory.applications[0]?.executable.toLowerCase()).toBe((await realpath(executable)).toLowerCase());
   } finally {
     if (registered) {
       const remove = Bun.spawn([reg, "delete", key, "/f"], { stdout: "ignore", stderr: "ignore" });

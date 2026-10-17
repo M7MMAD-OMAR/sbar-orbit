@@ -94,3 +94,23 @@ reports describe their original source revisions, not the current checkout.
 The [website deployment](../website/README.md) is a separate Cloudflare operation.
 A Git push does not deploy the website, activate the installed broker or remove a
 native capability hold. Retain Apache-2.0, NOTICE and dependency license obligations.
+
+
+## Continuous verification
+
+The `verify` workflow runs on `main` with three runner families: Ubuntu,
+Windows and macOS. Each runs the bounded desktop suite, host registration and
+fresh registry installation contracts. The installed check verifies broker
+health, application discovery and refusal of retired browser/viewer routes.
+It launches no browser and does not claim native application acceptance.
+
+The suite wrapper preserves the test process exit status and records runner
+resources plus `verification-result.json`. It no longer requires a Chrome
+transport trace from the retired browser suite. Missing optional application
+registration directories are allowed; other incomplete scans report truncation.
+Platform tests compare canonical executable paths, including macOS temporary
+path aliases and Windows short path names.
+
+Actual private desktop application control requires the native runtime and
+`ORBIT_TEST_NATIVE=1`. Without that run it remains `not measured`, even when
+all installation and metadata jobs pass.

@@ -233,3 +233,16 @@ schemaTest("unsupported platforms report no adapter instead of claiming universa
   const report = await discoverApplications({ platform: "freebsd" });
   expect(report.applications).toEqual([]); expect(report.notes.join(" ")).toContain("no adapter");
 });
+
+
+schemaTest("absent optional application roots do not abort discovery", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-missing-applications-"));
+  try {
+    const absent = join(root, "not-installed");
+    expect(await boundedApplicationEntries(absent)).toEqual({ entries: [], scanned: 0, truncated: false });
+    const inventory = await discoverApplications({ platform: "linux", home: root,
+      env: { HOME: root, PATH: "", XDG_DATA_DIRS: "" },
+      applicationDirectories: [absent], includeRunning: false });
+    expect(inventory).toMatchObject({ scope: "current-user", applications: [] });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

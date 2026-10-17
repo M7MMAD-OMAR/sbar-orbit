@@ -28,8 +28,8 @@ import { join } from "node:path";
 
 test("accessibility environment cannot inherit owner bus or starter addresses", () => {
   const env = accessibilityEnvironment("/tmp/private", { AT_SPI_BUS_ADDRESS: "unix:path=/owner", DBUS_SESSION_BUS_ADDRESS: "owner", DBUS_STARTER_ADDRESS: "owner", NO_AT_BRIDGE: "1", AT_SPI_REGISTRY: "owner" });
-  expect(env.AT_SPI_BUS_ADDRESS).toBe("unix:path=/tmp/private/at-spi/bus");
-  expect(env.DBUS_SESSION_BUS_ADDRESS).toBe("unix:path=/tmp/private/bus");
+  expect(env.AT_SPI_BUS_ADDRESS).toBe(`unix:path=${join("/tmp/private", "at-spi/bus")}`);
+  expect(env.DBUS_SESSION_BUS_ADDRESS).toBe(`unix:path=${join("/tmp/private", "bus")}`);
   expect(env.DBUS_STARTER_ADDRESS).toBeUndefined();
   expect(env.AT_SPI_REGISTRY).toBeUndefined();
   expect(env.NO_AT_BRIDGE).toBeUndefined();

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def function(path, name, namespace, class_name=None):
-    tree = ast.parse((ROOT / path).read_text())
+    tree = ast.parse((ROOT / path).read_text(encoding='utf-8'))
     body = tree.body
     if class_name:
         body = next(node for node in body if isinstance(node, ast.ClassDef) and node.name == class_name).body
@@ -118,7 +118,7 @@ class DesktopBrowserRetirementTests(unittest.TestCase):
 class NativePanelRuntimeTests(unittest.TestCase):
     def bootstrap(self, runtime, environment):
         path = ROOT / 'desktop/panel.py'
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding='utf-8'))
         selection = next(node for node in tree.body if isinstance(node, ast.Assign)
                          and any(isinstance(target, ast.Name) and target.id == 'LAYER_SHELL_LIBRARY' for target in node.targets))
         preload = next(node for node in tree.body if isinstance(node, ast.If)

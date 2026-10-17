@@ -105,3 +105,10 @@ re-read whole files.
 After big code changes, refresh the graph with `graft build` (deterministic,
 no API key, $0).
 <!-- graft:end -->
+
+## Main branch only
+
+For work on the Orbit repository, use `main` in the existing project checkout.
+Do not create branches or worktrees. Commit and push completed changes to `main`.
+Preserve unrelated work and do not delete existing branches or worktrees as a
+shortcut to consolidation.

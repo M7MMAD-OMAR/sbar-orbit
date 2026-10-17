@@ -70,12 +70,12 @@ if (!Array.isArray(hosts) || hosts.length !== 3 || hosts.some(row => row.state !
 const launcher = join(prefix, "bin", process.platform === "win32" ? "sbar-orbit.cmd" : "sbar-orbit");
 if (diagnosticsAdmitted) await collectInstalledStartup(root, output, "before", startupWindow);
 const smoke = Bun.spawn([process.execPath, "run", "scripts/limited.ts", process.execPath,
-  "experiments/installed-browser-smoke.ts", launcher, join(output, "browser.jpg")],
+  "experiments/installed-desktop-smoke.ts", launcher, join(output, "desktop-contracts.json")],
   { cwd: checkout, env, stdout: "inherit", stderr: "inherit", timeout: 120000 });
 const smokeExit = await smoke.exited;
-if (smokeExit !== 0) throw new Error(`Installed browser flow failed with exit ${smokeExit}`);
-console.log(JSON.stringify({ installed: true, registeredHosts: hosts.length, browserFlow: "passed",
-  limit: "registry archive with no prepared project dependencies; Bun and browser provisioned on disposable runner" }));
+if (smokeExit !== 0) throw new Error(`Installed desktop contracts failed with exit ${smokeExit}`);
+console.log(JSON.stringify({ installed: true, registeredHosts: hosts.length, desktopContracts: "passed", nativeApplicationControl: "not measured",
+  limit: "registry archive with no prepared project dependencies; Bun provisioned on disposable runner; no browser launched" }));
 // Keep the prefix available for the managed service until the disposable runner is destroyed.
 
 } finally {
