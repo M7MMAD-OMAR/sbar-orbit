@@ -13,6 +13,24 @@ and what you hand back to the person. The short version is `./install.sh --dry-r
 
 **You were asked to change this repository.** The rest of this file, and the sections below.
 
+For computer interaction while working here, load
+[the desktop skill](skills/sbar-orbit/SKILL.md). It uses installed applications on
+this same computer through Orbit's private desktop. Read `~/AGENTS.md` directly
+for machine-wide preferences. Conversation controls are also available through
+[orbit-usage](skills/orbit-usage/SKILL.md).
+
+## No browser use
+
+The owner prohibits browser use for all tasks on this workstation. Do not launch,
+attach to, control or automate a browser, including inside an Orbit private
+desktop. This includes headless browsers, embedded browser tools, Playwright,
+CDP, browser extensions, DOM actions and copied browser profiles. Do not route
+a desktop failure or a browser-only task through another browser tool or skill.
+Use native desktop applications through Orbit, direct file operations, APIs,
+search or HTTP text retrieval that does not start or control a browser. If the
+task requires a browser, report the blocker and continue any independent work.
+This preference does not uninstall browsers or technically revoke tool access.
+
 ## Build and test
 
 ```sh
