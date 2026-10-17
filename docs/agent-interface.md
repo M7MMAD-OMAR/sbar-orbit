@@ -86,18 +86,37 @@ its own configuration. Strong host enforcement requires removing tool access.
 
 ## Portable skill
 
-[orbit-usage](../skills/orbit-usage/SKILL.md) handles a natural-language request
+[sbar-orbit](../skills/sbar-orbit/SKILL.md) routes computer tasks to installed
+applications on this computer through an owned private desktop.
+[orbit-usage](../skills/orbit-usage/SKILL.md) also handles conversation controls
 such as "Do not use Orbit in this conversation" or "Enable Orbit here again".
-It gives explicit opt-out priority over automatic selection, explains scope, and
-routes observations by purpose. Install the directory using the host's skill
-mechanism. For a fresh local installation with no existing skill of that name:
+Both carry the desktop-only contract and give explicit opt-out priority over
+automatic selection. Neither grants access to the owner's existing screen,
+windows or authenticated application session.
+
+The workstation owner prohibits all browser use, including browsers inside the
+private desktop, headless automation and embedded browser tools. These skills
+therefore route to non-browser desktop applications, files, APIs, search or HTTP
+text retrieval without a browser runtime. A task requiring a browser is blocked.
+This is an agent instruction, not technical removal of browser tools or programs.
+
+Install the directories through the host's skill mechanism. On this workstation,
+the shared skills and Codex, Claude Code and Hermes copies are updated together.
+For a fresh local installation with no existing skills of these names:
 
 ```sh
+# Shared agent discovery:
+mkdir -p ~/.agents/skills
+cp -R skills/sbar-orbit skills/orbit-usage ~/.agents/skills/
+# Codex:
 mkdir -p ~/.codex/skills
-cp -R skills/orbit-usage ~/.codex/skills/
+cp -R skills/sbar-orbit skills/orbit-usage ~/.codex/skills/
+# Claude Code:
+mkdir -p ~/.claude/skills
+cp -R skills/sbar-orbit skills/orbit-usage ~/.claude/skills/
 # Hermes:
 mkdir -p ~/.hermes/skills
-cp -R skills/orbit-usage ~/.hermes/skills/
+cp -R skills/sbar-orbit skills/orbit-usage ~/.hermes/skills/
 ```
 
 Do not overwrite a customized skill without comparing it. In hosts that support
