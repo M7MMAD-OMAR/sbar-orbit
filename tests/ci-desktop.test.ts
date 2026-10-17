@@ -1,15 +1,19 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { startBroker, call } from "../src/ipc";
 
 test.each([true, false])("CI runner preserves a desktop test result: passing=%s", async passing => {
-  const root = await mkdtemp(join(tmpdir(), "orbit-ci-result-"));
+  const outputDirectory = join(process.cwd(), "output");
+  await mkdir(outputDirectory, { recursive: true });
+  const root = await mkdtemp(join(outputDirectory, "ci-result-"));
   try {
     const fixture = join(root, "result.test.ts");
     await writeFile(fixture, `import { test, expect } from "bun:test"; test("CI result fixture", () => expect(${passing}).toBe(true));\n`);
-    const child = Bun.spawn([process.execPath, "experiments/verify-with-resources.ts", fixture], {
+    // Bun treats Windows absolute paths outside the checkout as name filters.
+    const testPath = "./" + relative(process.cwd(), fixture).replaceAll("\\", "/");
+    const child = Bun.spawn([process.execPath, "experiments/verify-with-resources.ts", testPath], {
       stdout: "pipe", stderr: "pipe", timeout: 20000,
       env: { ...process.env, ORBIT_VERIFICATION_OUTPUT_DIR: root },
     });
@@ -17,6 +21,8 @@ test.each([true, false])("CI runner preserves a desktop test result: passing=%s"
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
     expect({ code, output: out + err }).toMatchObject({ code: passing ? 0 : 1 });
+    expect(out + err).toContain("CI result fixture");
+    expect(out + err).toMatch(passing ? /1 pass/ : /1 fail/);
     expect(JSON.parse(await readFile(join(root, "verification-result.json"), "utf8")))
       .toMatchObject({ suite: "desktop", exitCode: code, retiredBrowserFlow: "not run" });
     const samples = (await readFile(join(root, "verification-resources.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
