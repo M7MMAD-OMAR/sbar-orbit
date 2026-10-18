@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute } from "node:path";
 
 export type CaptureLabel = "unlabelled" | "first-popup" | "after-close" | "permitted-frame" | "denied-after-narrow";
 export type CaptureStage = "begin" | "attachment-before" | "attachment-settled" | "attachment-rejected" | "screenshot-before" | "screenshot-settled" | "screenshot-rejected" | "timer-fired" | "race-settled" | "race-rejected" | "cleanup" | "detach-dispatched" | "detach-rejected" | "presence-before" | "presence-settled" | "presence-rejected";
-type Pending = "attachment" | "screenshot" | "presence" | "none";
+type Pending = "attachment" | "screenshot" | "presence" | "screenshot+presence" | "none";
 export interface CaptureRow { sequence: number; operation: number; page: number; label: CaptureLabel; stage: CaptureStage; pending: Pending; expired: boolean; cached: boolean; budget: number; elapsedMs: number; late: boolean }
 type Sink = (value: CaptureRow) => void;
 interface Registration { context: object | undefined; closed: boolean; label: CaptureLabel; pages: WeakMap<object, number>; nextPage: number; nextOperation: number; active: number; dropped: number; firstDropped: number | undefined; lastDropped: number | undefined; failed: number; rows: CaptureRow[]; sequence: number; sink: Sink }
@@ -55,10 +55,17 @@ export function beginBrowserCapture(backend: object, context: object | (() => ob
   const pageOrdinal = ordinal, operation = ++state.nextOperation, label = state.label, started = performance.now();
   state.active++;
   let pending: Pending = "attachment", expired = false, finished = false;
+  let pixelsPending = false, presencePending = false;
   const mark = (stage: CaptureStage) => {
     try {
-      if (stage === "screenshot-before") pending = "screenshot";
-      if (stage === "presence-before") pending = "presence";
+      if (stage === "attachment-settled" || stage === "attachment-rejected") pending = "none";
+      if (stage === "screenshot-before") pixelsPending = true;
+      if (stage === "screenshot-settled" || stage === "screenshot-rejected") pixelsPending = false;
+      if (stage === "presence-before") presencePending = true;
+      if (stage === "presence-settled" || stage === "presence-rejected") presencePending = false;
+      if (pixelsPending || presencePending || pending !== "attachment")
+        pending = pixelsPending && presencePending ? "screenshot+presence"
+          : pixelsPending ? "screenshot" : presencePending ? "presence" : "none";
       if (stage === "timer-fired") expired = true;
       const row: CaptureRow = { sequence: ++state.sequence, operation, page: pageOrdinal, label, stage, pending, expired, cached, budget, elapsedMs: Math.round(performance.now() - started), late: state.closed };
       if (state.rows.length >= 128) {

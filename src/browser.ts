@@ -416,6 +416,7 @@ export class BrowserBackend {
         return channel.detach();
       }).catch(() => { phase?.mark("detach-rejected"); });
     };
+    let metadataPending = false, operationFinished = false;
     const operation = (async () => {
       try {
         if (attachment && attachment.documentVersion !== documentVersion) { releaseAttachment(attachment); attachment = undefined; }
@@ -435,24 +436,50 @@ export class BrowserBackend {
         if (expired) throw timeout();
         if (obsolete) throw obsoleteError();
         phase?.mark("screenshot-before");
-        let image: string;
-        try {
-          image = (await capture.send("Page.captureScreenshot", {
-            format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
-          })).data;
-          phase?.mark("screenshot-settled");
-        } catch (error) { phase?.mark("screenshot-rejected"); throw error; }
+        // Dispatch original pixels before metadata, retaining its receiver and await.
+        const pixels = (async () => {
+          try {
+            const image = (await capture.send("Page.captureScreenshot", {
+              format: "jpeg", quality: 80, fromSurface: true, captureBeyondViewport: false,
+            })).data;
+            phase?.mark("screenshot-settled");
+            return image;
+          } catch (error) { phase?.mark("screenshot-rejected"); throw error; }
+        })();
+        phase?.mark("presence-before");
+        // Handle both outcomes immediately. A pixel failure must not leave an
+        // independently failing metadata promise without a rejection handler.
+        metadataPending = true;
+        const metadata = (async () => {
+          try {
+            const value = await this.capturedPresence(page, documentVersion);
+            phase?.mark("presence-settled");
+            return { ok: true as const, value };
+          } catch (error) {
+            phase?.mark("presence-rejected");
+            return { ok: false as const, error };
+          } finally {
+            metadataPending = false;
+            if (operationFinished) phase?.finish();
+          }
+        })();
+        const image = await pixels;
         if (expired) throw timeout();
         requireCapturedDocument();
-        phase?.mark("presence-before");
-        let presence: Awaited<ReturnType<BrowserBackend["presenceOf"]>>;
-        try { presence = await this.capturedPresence(page, documentVersion); phase?.mark("presence-settled"); }
-        catch (error) { phase?.mark("presence-rejected"); throw error; }
+        const result = await metadata;
+        if (!result.ok) throw result.error;
         requireCapturedDocument();
+        // Concurrent actions may change tab membership after metadata collection.
+        // Assemble the strip only after original pixels and metadata have settled.
+        const pages = this.context.pages();
+        const presence = { ...result.value, pageCount: pages.length, pageIndex: pages.indexOf(page) + 1,
+          tabs: pages.map((open, index) => ({ tab: index + 1,
+            label: label(open, open === page ? result.value.title : ""), active: open === page })) };
         return { mimeType: "image/jpeg", image, capturedAt, ...capturedDimensions(image), presence };
       } finally {
         // A losing race does not settle its original CDP or metadata promise.
-        phase?.finish();
+        operationFinished = true;
+        if (!metadataPending) phase?.finish();
       }
     })();
     try {
