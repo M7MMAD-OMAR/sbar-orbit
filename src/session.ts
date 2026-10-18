@@ -1,4 +1,6 @@
+import { brokerIdentity } from "./managed-identity";
 import { OwnedCleanupError } from "./owned-cleanup";
+import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
 import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { homedir } from "node:os";
@@ -137,7 +139,8 @@ export class Sessions {
    * the place to pay for that repeatedly; nothing it reports changes while the broker runs.
    */
   private probed?: Promise<PlatformCapabilities>;
-  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv()) {}
+  private readonly releaseIdentity = brokerIdentity().catch(() => null);
+  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot()) {}
   protected capabilities() { return this.probed ??= detectPlatform(); }
   /** A test fixture can supply a clone without reading a person's browser profile. */
   protected cloneProfileForSession: typeof cloneProfile = cloneProfile;
@@ -156,7 +159,12 @@ export class Sessions {
     if (this.updateLease && this.updateLease.expires > Date.now())
       return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
-    const operation = this.createOwned(input);
+    const operation = (async () => {
+      await requireUpdateAdmission(this.updateDirectory);
+      if (this.updateLease && this.updateLease.expires > Date.now())
+        throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
+      return this.createOwned(input);
+    })();
     this.creating.add(operation);
     operation.then(() => this.creating.delete(operation), () => this.creating.delete(operation));
     return operation;
@@ -260,6 +268,7 @@ export class Sessions {
         throw new OrbitError("UNSUPPORTED", "A cloned profile or saved account requires a confined network namespace");
       const queued = Date.now();
       const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend | NativeBackend> => {
+        await requireUpdateAdmission(this.updateDirectory);
         // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
@@ -615,6 +624,7 @@ export class Sessions {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
     if (request.method === "update.begin") {
+      await requireUpdateAdmission(this.updateDirectory);
       if (this.updateLease && this.updateLease.expires > Date.now())
         throw new OrbitError("PROFILE_BUSY", "Another update is in progress");
       if (this.creating.size || [...this.sessions.values()].some(session => session.state !== "closed"))
@@ -628,7 +638,7 @@ export class Sessions {
     }
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
-    if (request.method === "doctor") return { version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora", ...(this.native ? ["native"] : [])], backendAliases: { system: "fedora" },
+    if (request.method === "doctor") return { managedIdentity: await this.releaseIdentity, version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora", ...(this.native ? ["native"] : [])], backendAliases: { system: "fedora" },
       capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeMachine(),
       // Whether the units on disk are the ones this version writes. A managed broker that was
       // installed before a directive existed does not carry it, and nothing else on the machine
@@ -638,6 +648,9 @@ export class Sessions {
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
     if (request.method === "native.open") {
+      await requireUpdateAdmission(this.updateDirectory);
+      if (this.updateLease && this.updateLease.expires > Date.now())
+        throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
       if (!this.native) throw new OrbitError("UNSUPPORTED", "Native opening is not configured");
       if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
       const requestId = text(params.requestId, "requestId");
@@ -653,7 +666,10 @@ export class Sessions {
       }
       if (this.nativeOpens.size >= 256) throw new OrbitError("LIMIT_REACHED", "Native opening request limit reached");
       const options = this.native;
-      const result = this.creationTail.then(() => {
+      const result = this.creationTail.then(async () => {
+        await requireUpdateAdmission(this.updateDirectory);
+        if (this.updateLease && this.updateLease.expires > Date.now())
+          throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         return NativeBackend.openApplication(options, opening);
       });

@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal DisableDelayedExpansion
 rem Sbar Orbit's Windows launcher.
 rem
 rem bin/sbar-orbit is a bash script, so until this file existed no Orbit command could be run on
@@ -17,6 +17,8 @@ for %%I in ("%orbit_bin%..") do set "orbit_root=%%~fI"
 rem Bun by location, not by the caller's PATH, for the same reason the bash launcher gives: a service
 rem or an agent host starts this with its own PATH, which need not carry Bun at all.
 set "orbit_bun="
+if defined ORBIT_BUN if not exist "%ORBIT_BUN%" goto :missing_pinned_bun
+if defined ORBIT_BUN set "orbit_bun=%ORBIT_BUN%"
 for /f "delims=" %%I in ('where bun.exe 2^>nul') do if not defined orbit_bun set "orbit_bun=%%I"
 if not defined orbit_bun if defined BUN_INSTALL if exist "%BUN_INSTALL%\bin\bun.exe" set "orbit_bun=%BUN_INSTALL%\bin\bun.exe"
 if not defined orbit_bun if exist "%USERPROFILE%\.bun\bin\bun.exe" set "orbit_bun=%USERPROFILE%\.bun\bin\bun.exe"
@@ -140,3 +142,7 @@ echo settings, config. See docs\support-tiers.md for what Windows can and cannot
 echo.
 echo ORBIT_SOCKET selects another broker; without it the managed socket under %%LOCALAPPDATA%% is used.
 exit /b 0
+
+:missing_pinned_bun
+echo Orbit: the pinned ORBIT_BUN runtime does not exist. Reinstall with the intended Bun runtime. 1>&2
+exit /b 1

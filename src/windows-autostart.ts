@@ -61,6 +61,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
+import { boundedCommand } from "./lifecycle-command";
 
 /** The task's name, and the marker that proves Orbit wrote a task before anything removes one. */
 export const TASK_NAME = "SbarOrbitBroker";
@@ -92,10 +93,18 @@ function xml(value: string) {
  * `--managed-socket` for the same reason the systemd unit passes it: this is THE broker, on the
  * fixed path the connector configuration and every later command already name.
  */
-export function brokerTaskXml(launcher: string, sid: string, environment: Record<string, string> = {}) {
+export function brokerTaskXml(launcher: string, sid: string, environment: Record<string, string> = {}, recorded = false) {
   // Set by the shell before the launcher runs, which is how an `Exec` action gets an environment at
   // all: a task inherits no shell profile. The same defect the macOS LaunchAgent port measured.
-  const prefix = Object.entries(environment).map(([key, value]) => `set &quot;${xml(key)}=${xml(value)}&quot; &amp;&amp; `).join("");
+  const selected: Record<string, string> = recorded ? {} : { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: process.execPath };
+  for (const key of ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "ORBIT_SOCKET", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"])
+    if (!recorded && process.env[key]) selected[key] = process.env[key];
+  Object.assign(selected, environment);
+  const prefix = Object.entries(selected).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\r\n\0"%]/.test(value))
+      throw new OrbitError("CONFIG_REQUIRED", "Task environment cannot contain shell expansion or control characters");
+    return `set &quot;${xml(key)}=${xml(value)}&quot; &amp;&amp; `;
+  }).join("");
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -145,9 +154,7 @@ export function brokerTaskXml(launcher: string, sid: string, environment: Record
 }
 
 async function schtasks(...args: string[]) {
-  const child = Bun.spawn(["schtasks.exe", ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  return { ok: await child.exited === 0, output: `${out}${err}`.trim() };
+  return boundedCommand(["schtasks.exe", ...args]);
 }
 
 /**
@@ -158,9 +165,9 @@ async function schtasks(...args: string[]) {
  * interpolated blindly: it lands inside XML that Task Scheduler will act on.
  */
 export async function currentUserSid(): Promise<string> {
-  const child = Bun.spawn(["whoami.exe", "/user", "/fo", "csv", "/nh"], { stdout: "pipe", stderr: "pipe" });
-  const output = (await new Response(child.stdout).text()).trim();
-  if (await child.exited !== 0) throw new OrbitError("UNSUPPORTED", "Could not read this account's SID");
+  const result = await boundedCommand(["whoami.exe", "/user", "/fo", "csv", "/nh"], 5_000);
+  const output = result.output;
+  if (!result.ok) throw new OrbitError("UNSUPPORTED", "Could not read this account's SID");
   const sid = /(S-1-[0-9-]+)/.exec(output)?.[1];
   if (!sid) throw new OrbitError("UNSUPPORTED", `Could not read this account's SID from: ${output.slice(0, 200)}`);
   return sid;

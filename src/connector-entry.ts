@@ -1,4 +1,8 @@
+import { preparedIdentitySync } from "./managed-identity";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
+import { dirname } from "node:path";
 
 /**
  * How an agent host is told to start Orbit's MCP adapter.
@@ -37,6 +41,22 @@ export function connectorEntry(options: { launcher?: string; source: string; pla
   const platform = options.platform ?? process.platform;
   const launcher = platform === "win32" ? windowsLauncher(options.launcher) : options.launcher;
   if (launcher && !options.preferInterpreter) return { command: launcher, args: ["mcp"] };
+  if (platform === "win32" && existsSync(`${options.source}.txt`)) {
+    const root = dirname(options.source), entry = join(root, "managed-entry.ts");
+    const identity = JSON.parse(readFileSync(join(root, "managed-entry-identity.json"), "utf8"));
+    if (options.source !== join(root, "current") || realpathSync(root) !== root || lstatSync(entry).isSymbolicLink() ||
+      identity.schema !== 1 || identity.root !== root || identity.digest !== createHash("sha256").update(readFileSync(entry)).digest("hex"))
+      throw new Error("Managed interpreter entry ownership differs; migrate deliberately");
+    if (!lstatSync(`${options.source}.txt`).isFile() || lstatSync(`${options.source}.txt`).isSymbolicLink())
+      throw new Error("Managed pointer must be a regular installation file");
+    const target = readFileSync(`${options.source}.txt`, "utf8").replace(/\r?\n$/, "");
+    if (dirname(target) !== join(root, "versions") || realpathSync(target) !== target)
+      throw new Error("Managed interpreter pointer is outside its admitted root");
+    const record = preparedIdentitySync(root, target.slice(join(root, "versions").length + 1));
+    if (options.interpreter !== undefined && options.interpreter !== record.runtime)
+      throw new Error("Interpreter differs from the installed runtime pin");
+    return { command: record.runtime, args: [entry, "mcp"] };
+  }
   return { command: options.interpreter ?? process.execPath, args: [join(options.source, "src/mcp.ts")] };
 }
 
