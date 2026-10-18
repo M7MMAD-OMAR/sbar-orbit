@@ -140,7 +140,8 @@ test("the action runs the launcher through cmd.exe, because Task Scheduler canno
   const xml = brokerTaskXml("C:\\orbit\\bin\\sbar-orbit.cmd", SID);
   // `Exec` is a CreateProcess call, which does not run a .cmd: the interpreter has to be named.
   expect(xml).toContain("<Command>cmd.exe</Command>");
-  expect(xml).toContain("/c &quot;C:\\orbit\\bin\\sbar-orbit.cmd&quot; serve --managed-socket");
+  expect(xml).toContain("&quot;C:\\orbit\\bin\\sbar-orbit.cmd&quot; serve --managed-socket</Arguments>");
+  expect(xml).toContain("<Arguments>/c set &quot;ORBIT_MANAGED_ENV_SCHEMA=1&quot; &amp;&amp; set &quot;ORBIT_BUN=");
   // THE managed broker, on the fixed path the connector configuration already names, for the same
   // reason the systemd unit passes it.
   expect(xml).toContain("serve --managed-socket");

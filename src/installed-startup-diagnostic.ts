@@ -1,3 +1,4 @@
+import { brokerTaskXml, taskActionMatches } from "./windows-autostart";
 // Opt-in records for a fresh disposable installed fixture, never a general log path.
 import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
@@ -340,13 +341,7 @@ async function metadata(argv: string[]) {
   return text.trim();
 }
 export function taskEnvironmentMatches(xml: string, env: Record<string, string>, launcher: string) {
-  const encoded = /<Arguments>([\s\S]*?)<\/Arguments>/.exec(xml)?.[1];
-  if (encoded === undefined) return false;
-  const entities: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
-  const actual = encoded.replace(/&(quot|apos|lt|gt|amp);/g, (_, key: string) => entities[key] ?? "");
-  const prefix = Object.entries(env).map(([key, value]) => `set "${key}=${value}" && `).join("");
-  return actual === `/c ${prefix}"${launcher}" serve --managed-socket`;
-
+  return taskActionMatches(xml, brokerTaskXml(launcher, "S-1-5-21-0", env));
 }
 /** Shared final gate keeps transport retention distinct from lossless typed membership. */
 export function installedTraceRetentionComplete(rows: Fields[], status: unknown, bytes: number, acknowledgement?: unknown, expectedWindowToken?: string, rawTrace?: Uint8Array, rawStatus?: Uint8Array) {

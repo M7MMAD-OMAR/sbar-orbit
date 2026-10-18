@@ -371,6 +371,90 @@ test("public web lease refuses local, private, reserved and host interface desti
   let answer = loopback, dialed = 0;
   let lease: Awaited<ReturnType<typeof openPublicWebLease>> | undefined;
   try {
+    const throughDeniedProxy = async (socketPath: string, request: string): Promise<{ reply: string }> => {
+      const maximumReplyBytes = 65536, maximumHeaderBytes = 8192;
+      const bytes = Buffer.alloc(maximumReplyBytes);
+      let size = 0, headerBytes = 0, expectedBytes: number | undefined;
+      let done = false, closed = false, closeDelimited = false, failure: Error | undefined;
+      let wake: () => void = () => {}, wakeClosed: () => void = () => {};
+      const answered = new Promise<void>(resolve => { wake = resolve; });
+      const closure = new Promise<void>(resolve => { wakeClosed = resolve; });
+      let client: Bun.Socket<undefined> | undefined;
+      const terminate = () => {
+        if (closed) return;
+        try { client?.terminate(); }
+        catch (error) { failure ??= error instanceof Error ? error : new Error(String(error)); }
+      };
+      const finish = (error?: Error) => {
+        if (done) return;
+        done = true; failure = error; terminate(); wake();
+      };
+      client = await connect<undefined>({
+        unix: socketPath,
+        socket: {
+          data: (_socket, chunk) => {
+            if (done) return;
+            try {
+              if (chunk.byteLength > maximumReplyBytes - size) throw new Error("Denial reply exceeds 65536 bytes");
+              if (!headerBytes) {
+                const prefix = Buffer.concat([bytes.subarray(0, size), Buffer.from(chunk.subarray(0, Math.max(0, maximumHeaderBytes - size)))]);
+                if (prefix.indexOf("\r\n\r\n") === -1 && size + chunk.byteLength >= maximumHeaderBytes) throw new Error("Denial headers exceed 8192 bytes");
+              }
+              bytes.set(chunk, size); size += chunk.byteLength;
+              if (!headerBytes) {
+                const end = bytes.subarray(0, size).indexOf("\r\n\r\n");
+                if (end === -1) {
+                  if (size > maximumHeaderBytes) throw new Error("Denial headers exceed 8192 bytes");
+                  return;
+                }
+                headerBytes = end + 4;
+                if (headerBytes > maximumHeaderBytes) throw new Error("Denial headers exceed 8192 bytes");
+                const [status, ...headers] = bytes.toString("latin1", 0, end).split("\r\n");
+                if (!status || !/^HTTP\/1\.[01] 403 [\x20-\x7e]*$/.test(status)) throw new Error("Denial reply is not an HTTP 403 status");
+                let length: number | undefined;
+                for (const header of headers) {
+                  const match = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+):[\t ]*([^\r\n]*)$/.exec(header);
+                  if (!match || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(header)) throw new Error("Denial reply contains a malformed header");
+                  const name = match[1]?.toLowerCase(), value = match[2]?.trim();
+                  if (name === "transfer-encoding") throw new Error("Denial reply has unsupported transfer encoding");
+                  if (name === "content-length") {
+                    if (length !== undefined || value === undefined || !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error("Denial reply has invalid Content-Length");
+                    length = Number(value);
+                    if (!Number.isSafeInteger(length) || length > maximumReplyBytes - headerBytes) throw new Error("Denial body exceeds reply byte bound");
+                  }
+                }
+                closeDelimited = length === undefined;
+                if (length !== undefined) expectedBytes = headerBytes + length;
+              }
+              if (expectedBytes !== undefined) {
+                if (size > expectedBytes) throw new Error("Denial reply exceeds declared body length");
+                if (size === expectedBytes) finish();
+              }
+            } catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
+          },
+          close: () => {
+            closed = true; wakeClosed();
+            if (!done) {
+              if (headerBytes && closeDelimited) finish();
+              else finish(new Error("Denial probe closed before complete HTTP response"));
+            }
+          },
+          error: () => finish(new Error("Denial probe socket failed")),
+        },
+      });
+      const timer = setTimeout(() => {
+        failure ??= new Error("Denial response or socket closure exceeded 2000 ms");
+        finish(failure); terminate(); wakeClosed();
+      }, 2000);
+      try {
+        if (done) terminate();
+        else client.write(request);
+        await answered; await closure;
+        if (!closed) throw new Error("Denial probe socket closure was not observed within 2000 ms");
+        if (failure) throw failure;
+        return { reply: bytes.toString("utf8", 0, size) };
+      } finally { clearTimeout(timer); terminate(); }
+    };
     lease = await openPublicWebLease({ parentDirectory: root, origins: ["https://public.example"],
       resolveHost: async () => [answer],
       routeForTest: (address, port) => { dialed++; return { address, port }; },
@@ -378,23 +462,23 @@ test("public web lease refuses local, private, reserved and host interface desti
     for (answer of [[127, 0, 0, 1], [10, 0, 0, 1], [100, 64, 0, 1], [169, 254, 1, 1],
       [172, 16, 0, 1], [192, 168, 1, 1]].map(octets => octets.join(".")).concat(["::1", "fc00::1", "fe80::1", `::ffff:${loopback}`,
       "2001:" + "db8::1"])) {
-      const result = await throughProxy(lease.socketPath,
+      const result = await throughDeniedProxy(lease.socketPath,
         "CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n");
       expect(result.reply).toContain("403");
     }
     for (const details of Object.values(networkInterfaces()))
       for (const entry of details ?? []) {
         answer = entry.address.split("%")[0] ?? "";
-        const result = await throughProxy(lease.socketPath,
+        const result = await throughDeniedProxy(lease.socketPath,
           "CONNECT public.example:443 HTTP/1.1\r\nHost: public.example:443\r\n\r\n");
         expect(result.reply).toContain("403");
       }
     for (const authority of [loopback + ":443", [10, 0, 0, 1].join(".") + ":443", "[::1]:443", "localhost:443"]) {
-      const result = await throughProxy(lease.socketPath,
+      const result = await throughDeniedProxy(lease.socketPath,
         `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);
       expect(result.reply).toContain("403");
     }
-    const plain = await throughProxy(lease.socketPath,
+    const plain = await throughDeniedProxy(lease.socketPath,
       `GET http://${loopback}/ HTTP/1.1\r\nHost: ${loopback}\r\n\r\n`);
     expect(plain.reply).toContain("403");
     answer = "8.8.8.8";
@@ -403,7 +487,7 @@ test("public web lease refuses local, private, reserved and host interface desti
       "CONNECT public.example:0 HTTP/1.1\r\nHost: public.example:0\r\n\r\n",
       "CONNECT public.example:65536 HTTP/1.1\r\nHost: public.example:65536\r\n\r\n",
       "GET http://public.example:0/ HTTP/1.1\r\nHost: public.example:0\r\n\r\n",
-    ]) expect((await throughProxy(lease.socketPath, request)).reply).toContain("403");
+    ]) expect((await throughDeniedProxy(lease.socketPath, request)).reply).toContain("403");
     expect(dialed).toBe(0);
     expect(lease.refused()).toContain("public.example:443");
   } finally { await lease?.close(); await rm(root, { recursive: true, force: true }); }

@@ -1,16 +1,16 @@
+import { releaseFixture } from "./managed-release-fixture";
+import { activateVersion } from "../src/update";
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { prepareManagedInstall, currentVersion } from "../src/update";
 
-test.skipIf(process.platform !== "linux")("managed adoption preserves source, ignores unrelated files and refuses changing an active version", async () => {
+test.skipIf(process.platform !== "linux")("managed adoption remains closed and admitted reuse preserves source and refuses changing an active version", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "orbit-managed-"));
   const source = join(temporary, "package"), root = join(temporary, "managed");
-  await mkdir(join(source, "bin"), { recursive: true });
   const manifest = { name: "sbar-orbit", version: "0.1.0-alpha.8" };
-  await writeFile(join(source, "package.json"), JSON.stringify(manifest));
-  await writeFile(join(source, "bin/sbar-orbit"), "#!/bin/sh\n", { mode: 0o755 });
+  await releaseFixture(source, manifest.version, false);
   await writeFile(join(source, "private-unrelated"), "retain");
   let installs = 0;
   const options = { root, openSessions: async () => null, install: async () => { installs++; return { ok: true, output: "" }; } };
@@ -18,13 +18,17 @@ test.skipIf(process.platform !== "linux")("managed adoption preserves source, ig
     await prepareManagedInstall(source, { ...options, dryRun: true });
     expect(installs).toBe(0);
     expect(await currentVersion(root)).toBeNull();
+    await expect(prepareManagedInstall(source, options)).rejects.toThrow("deliberate owned mechanism");
+    expect(installs).toBe(0);
+    await releaseFixture(join(root, "versions", manifest.version), manifest.version);
+    await activateVersion(manifest.version, { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true });
     expect(await prepareManagedInstall(source, options)).toBe(join(root, "current"));
     expect(await currentVersion(root)).toBe(manifest.version);
-    expect(installs).toBe(1);
+    expect(installs).toBe(0);
     expect(await Bun.file(join(root, "current/private-unrelated")).exists()).toBe(false);
     expect(await readFile(join(source, "private-unrelated"), "utf8")).toBe("retain");
     await prepareManagedInstall(source, options);
-    expect(installs).toBe(1);
+    expect(installs).toBe(0);
     await writeFile(join(source, "package.json"), JSON.stringify({ ...manifest, version: "0.1.0-alpha.9" }));
     await expect(prepareManagedInstall(source, options)).rejects.toThrow("already active");
     await mkdir(join(source, ".git"));

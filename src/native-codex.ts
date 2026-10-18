@@ -85,7 +85,7 @@ async function privateCodexStorage() {
       (info.mode & 0o077) !== 0 || await realpath(root) !== root)
     throw new OrbitError("UNSUPPORTED", "Codex private storage is not an owned private directory");
   const filesystem = await statfs(root);
-  if ([0x01021994, 0x858458f6].includes(filesystem.type))
+  if ([0x01021994, 0x858458f6].includes(Number(filesystem.type) >>> 0))
     throw new OrbitError("UNSUPPORTED", "Codex conversation snapshot needs disk storage");
   await cleanOrphanCodexSnapshots(root);
   return root;

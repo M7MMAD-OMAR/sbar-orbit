@@ -9,9 +9,11 @@ import type { CaptureRow } from "../src/browser-phase-observer";
 const controlledFrame = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAAYACADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDjKKKK/Sj5QKKKKACiiigAooooA//Z";
 const controlledOwners = new Map<string, object>();
 const controlledLaunchProfiles: string[] = [];
-mock.module(fileURLToPath(import.meta.resolve("../src/chrome")), () => ({ launchChrome: async (profile: string) => { const owned = controlledOwners.get(profile); if (!owned) throw new Error("unowned controlled launch"); controlledLaunchProfiles.push(profile); return owned; } }));
+mock.module(fileURLToPath(import.meta.resolve("../src/chrome")), () => ({ defaultChromeExecutable: () => { throw new Error("Controlled fixture forbids executable discovery"); }, launchChrome: async (profile: string) => { const owned = controlledOwners.get(profile); if (!owned) throw new Error("unowned controlled launch"); controlledLaunchProfiles.push(profile); return owned; } }));
 const { beginBrowserCapture, registerBrowserPhases, classifyPipePhases } = await import("../src/browser-phase-observer");
 const { BrowserBackend } = await import("../src/browser");
+const { Sessions } = await import("../src/session");
+const { Diagnostics } = await import("../src/diagnostics");
 async function makeOwnedFixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "orbit-phase-pure-"))); chmodSync(root, 0o700);
   const profile = join(root, "profile-owned"); mkdirSync(profile, { mode: 0o700 });
@@ -20,7 +22,7 @@ async function makeOwnedFixture() {
   const pointer = { on() {}, async send(method: string) { return method === "Page.getFrameTree" ? { frameTree: { frame: { id: "owned-stub-pointer" } } } : {}; } };
   const attachmentCalls: object[] = [], closeListeners: (() => void)[] = [];
   const context: { setDefaultTimeout(): void; setDefaultNavigationTimeout(): void; on(): void; pages(): object[]; newCDPSession(page: object): Promise<typeof capture | typeof pointer> } = { setDefaultTimeout() {}, setDefaultNavigationTimeout() {}, on() {}, pages: () => [page], async newCDPSession(page: object) { if (ready) { attachmentCalls.push(page); return capture; } return pointer; } };
-  const page = { isClosed: () => false, context() { reads++; return context; }, url: () => "about:blank", title: async () => "owned stub", on() {}, once() {} };
+  const page = { isClosed: () => false, context() { reads++; return context; }, url: () => "about:blank", title: async () => "owned stub", on() {}, once() {}, goto: async (_url: string, _options: { waitUntil: string }) => {} };
   const presence: Awaited<ReturnType<BrowserBackendType["observe"]>>["presence"] = { title: "owned stub", location: "New page", pageCount: 1, pageIndex: 1, tabs: [{ tab: 1, label: "owned stub", active: true }], pointer: null };
   const owned = { context, page, browser: {}, close: () => Promise.resolve(), onClose(listener: () => void) { closeListeners.push(listener); } };
   controlledOwners.set(profile, owned);
@@ -45,6 +47,74 @@ async function fixture(work: (value: Awaited<ReturnType<typeof makeOwnedFixture>
   const value = await makeOwnedFixture(); try { await work(value); } finally { await value.dispose(); }
 }
 test("unregistered backend is inert", () => { expect(beginBrowserCapture({}, {}, {}, 3000, false)).toBeUndefined(); });
+test("actual navigation preserves receiver, arguments and lazy unregistered context", async () => fixture(async v => {
+  let receiver: unknown, destination: unknown, options: unknown;
+  v.page.goto = async function(url, opts) { receiver = this; destination = url; options = opts; };
+  expect(await v.backend.act({ type: "navigate", url: "https://fixture.example.invalid/private?secret=hidden#private" })).toEqual({ url: "about:blank" });
+  expect(receiver).toBe(v.page); expect(destination).toBe("https://fixture.example.invalid/private?secret=hidden#private");
+  expect(options).toEqual({ waitUntil: "domcontentloaded" }); expect(v.contextReads()).toBe(0);
+}));
+test("actual navigation retains original timeout structural call log without private content", async () => fixture(async v => {
+  const original = new Error('page.goto: Timeout 15000ms exceeded.\nCall log:\n  - navigating to "https://user:password@example.invalid/private?secret=token#fragment", waiting until "domcontentloaded"\n  - "commit" event fired\n  - private action and arbitrary selector text');
+  original.name = "TimeoutError";
+  v.page.goto = async () => { throw original; };
+  const reg = registerBrowserPhases(v.backend, v.context, v.root, v.profile, () => {});
+  try {
+    let caught: unknown; try { await v.backend.act({ type: "navigate", url: "https://fixture.example.invalid" }); } catch (error) { caught = error; }
+    expect(caught).toBe(original);
+    const snapshot = reg?.snapshot() as unknown as { navigation?: { rows: { stage: string; error?: unknown }[]; pending: number; complete: boolean } };
+    expect(snapshot.navigation?.rows.map(row => row.stage)).toEqual(["before", "rejected"]);
+    expect(snapshot.navigation?.rows[1]?.error).toEqual({ name: "TimeoutError", api: "page.goto", timeoutMs: 15000, callLog: ["navigation dispatched, destination redacted", "commit observed", "redacted"], truncated: false });
+    expect(snapshot.navigation?.pending).toBe(0); expect(snapshot.navigation?.complete).toBe(true);
+    const serialized = JSON.stringify(snapshot);
+    for (const privateText of ["password", "example.invalid", "token", "fragment", "selector", "private action"]) expect(serialized).not.toContain(privateText);
+  } finally { reg?.close(); }
+}));
+test("actual navigation snapshots are detached and close preserves late original settlement", async () => fixture(async v => {
+  let resolve: (() => void) | undefined;
+  v.page.goto = () => new Promise<void>(done => { resolve = done; });
+  const reg = registerBrowserPhases(v.backend, v.context, v.root, v.profile, () => {});
+  const pending = v.backend.act({ type: "navigate", url: "https://fixture.example.invalid" });
+  try {
+    const first = reg?.snapshot() as unknown as { navigation?: { rows: { stage: string }[]; pending: number } };
+    expect(first.navigation?.pending).toBe(1);
+    if (first.navigation) first.navigation.rows.length = 0;
+    expect((reg?.snapshot() as unknown as { navigation?: { rows: unknown[] } }).navigation?.rows).toHaveLength(1);
+    reg?.close(); resolve?.(); await pending;
+    const final = reg?.snapshot() as unknown as { navigation?: { rows: { stage: string; late: boolean }[]; pending: number } };
+    expect(final.navigation?.rows.map(row => [row.stage, row.late])).toEqual([["before", false], ["settled", true]]);
+    expect(final.navigation?.pending).toBe(0);
+  } finally { resolve?.(); await pending; reg?.close(); }
+}));
+test("actual navigation bounds evidence and keeps oversized timeout details redacted", async () => fixture(async v => {
+  const original = new Error('page.goto: Timeout 15000ms exceeded.\nCall log:\n' + 'sensitive'.repeat(2048)); original.name = "TimeoutError";
+  const reg = registerBrowserPhases(v.backend, v.context, v.root, v.profile, () => {});
+  try {
+    v.page.goto = async () => { throw original; };
+    for (let index = 0; index < 70; index++) { try { await v.backend.act({ type: "navigate", url: "https://fixture.example.invalid" }); } catch (error) { expect(error).toBe(original); } }
+    const snapshot = reg?.snapshot() as unknown as { navigation?: { rows: { error?: { truncated: boolean } }[]; dropped: number; pending: number; complete: boolean } };
+    expect(snapshot.navigation?.rows).toHaveLength(128); expect(snapshot.navigation?.dropped).toBe(12);
+    expect(snapshot.navigation?.pending).toBe(0); expect(snapshot.navigation?.complete).toBe(false);
+    expect(snapshot.navigation?.rows.at(-1)?.error?.truncated).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("sensitive");
+  } finally { reg?.close(); }
+}));
+test("actual navigation diagnostic preserves sanitized enqueue and public diagnostic errors", async () => fixture(async v => {
+  const original = new Error('page.goto: Timeout 15000ms exceeded.\nCall log:\n  - navigating to "https://user:password@example.invalid/private?secret=token", waiting until "domcontentloaded"'); original.name = "TimeoutError";
+  v.page.goto = async () => { throw original; };
+  const reg = registerBrowserPhases(v.backend, v.context, v.root, v.profile, () => {});
+  try {
+    const owner = Object.create(Sessions.prototype);
+    const diagnostics = new Diagnostics(join(v.root, "diagnostics"));
+    let caught: unknown;
+    try { await diagnostics.run({ method: "session.act", params: { action: { type: "navigate", url: "https://fixture.example.invalid/private?secret=token" } } },
+      () => Reflect.apply(Sessions.prototype["enqueue"], owner, [{ state: "active", tail: Promise.resolve() }, () => v.backend.act({ type: "navigate", url: "https://fixture.example.invalid" })])); }
+    catch (error) { caught = error; }
+    expect(caught).toMatchObject({ code: "DEADLINE_EXCEEDED", message: "Browser operation timed out" });
+    expect((caught as { diagnosticId?: string }).diagnosticId).toMatch(/^[a-f0-9-]{36}$/);
+    for (const privateText of ["password", "example.invalid", "token", "Call log", "15000"]) expect(JSON.stringify(caught)).not.toContain(privateText);
+  } finally { reg?.close(); }
+}));
 test("unregistered backend performs no context query", () => { let called = false; expect(beginBrowserCapture({}, () => { called = true; return {}; }, {}, 3000, false)).toBeUndefined(); expect(called).toBe(false); });
 test("foreign same-prefix profile refuses admission", () => fixture(v => {
   const foreign = `${v.root}-foreign`; mkdirSync(foreign, { mode: 0o700 }); const profile = join(foreign, "profile-other"); mkdirSync(profile, { mode: 0o700 });

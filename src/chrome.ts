@@ -120,6 +120,7 @@ type OwnedBrowser = {
   diagnostics: () => string;
   /** Throws `RESOURCE_BOUNDARY_LOST` if the tree left its budget. Called once, after the handshake. */
   assertContained: () => Promise<void>;
+  sampleResidentProcesses?: () => Promise<import("./owned-process-resident").OwnedResidentSample>;
   startupEvidence?: () => Record<string, unknown>;
   recordStartup?: (record: Record<string, unknown>) => void;
   finishStartupTrace?: () => void;
@@ -171,6 +172,7 @@ function launchOnLinux(executable: string, profile: string, argv: string[], env:
  * to `KILL_ON_JOB_CLOSE`. `docs/support-tiers.md` states the row at that tier.
  */
 function launchOnDarwin(executable: string, profile: string, argv: string[], env: Record<string, string>): OwnedBrowser {
+  let residentIdentity: import("./owned-process-resident").RecordedGroupIdentity | undefined;
   // Utility remains below interactive work without background disk throttling,
   // which repeatedly stalled cold browser starts on the three-core macOS host.
   // Preserve a stricter inherited class and keep explicit experiment overrides.
@@ -196,6 +198,19 @@ function launchOnDarwin(executable: string, profile: string, argv: string[], env
           ? "macOS supervisor recorded browser startup"
           : "macOS supervisor has not recorded a browser process";
       } catch { return "macOS supervisor has not written its startup report"; }
+    },
+    async sampleResidentProcesses() {
+      if (!residentIdentity) {
+        const report = JSON.parse(await readFile(join(profile, "owner.json"), "utf8"));
+        if (!Number.isSafeInteger(report.pgid) || report.pgid <= 1 ||
+            !Number.isFinite(report.leaderStartedAtMs) || report.leaderStartedAtMs <= 0 ||
+            typeof report.leaderExecutable !== "string" || !report.leaderExecutable)
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser has no recorded process group identity");
+        residentIdentity = Object.freeze({ pgid: report.pgid, startedAtMs: report.leaderStartedAtMs,
+          executable: report.leaderExecutable });
+      }
+      const { sampleRecordedGroup } = await import("./owned-process-resident");
+      return sampleRecordedGroup(residentIdentity, owner.exitCode !== null);
     },
     async stop() {
       // Closing the pipe is the stop signal the supervisor waits on, and it is what a broker that
@@ -312,6 +327,13 @@ async function launchOnWindows(executable: string, profile: string, argv: string
       return [charged, ...lines].filter(Boolean).join("; ");
     },
     stop,
+    async sampleResidentProcesses() {
+      if (job.isClosed) {
+        const { sampleConfirmedClosedJob } = await import("./owned-process-resident");
+        return sampleConfirmedClosedJob(evidence);
+      }
+      return job.residentSample();
+    },
     startupEvidence: () => {
       const result: Record<string, unknown> = { rootPid: child.pid, rootExitCode: child.exitCode,
         budget, cpuCapEnforced: job.cpuCapEnforced, stderrBytes, stderrTailBytes: Buffer.byteLength(diagnostics),
@@ -650,7 +672,8 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     }).catch(reportCleanup);
     try { owner.finishStartupTrace?.(); } catch {}
     return {
-      context, browser, page,
+      context, browser, page, executable,
+      sampleResidentProcesses: owner.sampleResidentProcesses,
       close: () => { requested = true; return close(); },
       onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); },
     };

@@ -2,6 +2,12 @@
 
 Targets below are proposed release gates, not measured results. Current evidence lives in [experiment.md](experiment.md).
 
+The [acceptance evidence procedure](acceptance-procedure.md) and
+[prepared ledger](acceptance-evidence.json) map every story, failure case,
+account/file scenario and host measurement to its required receipts. Preparing
+or validating a receipt does not close a gate. Participant and device evidence
+remain external requirements; the unconditional native hold stays binding.
+
 | ID | User story and test | Expected result |
 |---|---|---|
 | U1 / T1 | I keep working while the agent fills a page and clicks a control | Correct page result; no Orbit window becomes active; no host input API used |

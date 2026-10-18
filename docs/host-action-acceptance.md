@@ -63,6 +63,27 @@ host binary identities and differing normalized action requests or contract
 results. Dynamic session IDs and loopback ports are normalized. Repository source
 and experiment digests are retained; checks also have checkpoint source hashes.
 
+The current comparator validates source-manifest digests, ordered broker calls,
+actual form submission, process witnesses, launcher identities, host delivery
+steps and retained image bytes. CLI comparison requires retained invocation,
+source and executable identities, request IDs and seven distinct stdout receipts.
+Host arguments, tool IDs and model output identities are correlated with their
+relay requests. Codex native client image delivery remains separate from model
+visual input. The producer and comparator controls are retained unchanged from
+current main.
+
+The companion controls use synthetic receipts. They exercise the comparison
+contract and do not authenticate a host launch, measure model visual use, close
+U6/T6, relax the native hold or close any prepared ledger row. No new control or
+host run was executed for this documentation reconciliation. Earlier actual host
+results remain historical until fresh matching source/runtime reports exist.
+
+The [acceptance procedure](acceptance-procedure.md) and
+[prepared ledger](acceptance-evidence.json) retain the source, runtime, participant,
+device and installed-release boundaries. Integrity validation always leaves
+acceptance open. Independent review of retained authentic artifacts remains a
+separate requirement.
+
 ## Recorded attempts
 
 On 6 October 2026, the actual installed launchers reported Codex
@@ -169,6 +190,7 @@ bun run scripts/limited.ts python3 experiments/host-action-acceptance.py api --o
 bun run scripts/limited.ts python3 experiments/host-action-acceptance.py cli --output /var/tmp/orbit-cli-actions.json
 python3 experiments/host-action-acceptance-compare.py /var/tmp/orbit-codex-actions.json /var/tmp/orbit-claude-actions.json /var/tmp/orbit-api-actions.json /var/tmp/orbit-cli-actions.json --output /var/tmp/orbit-action-parity.json
 python3 experiments/host-action-acceptance.test.py -v
+python3 experiments/host-action-acceptance-compare.test.py -v
 ```
 
 A failed or absent launcher result is retained as failed or not measured. The

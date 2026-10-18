@@ -1,9 +1,13 @@
 import { OwnedFixtureScope } from './owned-fixture';
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { openViewerPage } from './viewer-page';
 import { startBroker, call } from '../src/ipc';
+import { captureDiagnosticError, flushTargetCaptureDiagnostics, targetCaptureDiagnostic } from './browser-capture-diagnostic';
+import { installCaptureDiagnostic } from './capture-diagnostic';
+
+afterAll(flushTargetCaptureDiagnostics, 30000);
 
 function productBoundaryTrace(name: string) {
   const started = performance.now();

@@ -23,6 +23,8 @@ for machine-wide preferences. Conversation controls are also available through
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
+(cd website && bun install --frozen-lockfile --ignore-scripts)
+(cd website && bun run ../scripts/limited.ts bun run build)
 bun run typecheck
 bun run verify                      # desktop product suite, inside the shared resource budget
 ORBIT_TEST_NATIVE=1 bun run verify  # adds the private display tests, needs the Fedora runtime

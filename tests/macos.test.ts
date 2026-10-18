@@ -98,7 +98,7 @@ test("the macOS broker socket does not go in the per user temporary directory", 
 });
 
 test("the launch agent plist is valid XML, names the broker, and never abandons its process group", () => {
-  const plist = brokerAgentPlist("/Users/example/.local/bin/sbar-orbit", "/Users/example/Library/Application Support/sbar-orbit/broker.sock", macHome);
+  const plist = brokerAgentPlist("/Users/example/.local/bin/sbar-orbit", "/Users/example/Library/Application Support/sbar-orbit/broker.sock", macHome, "/fixture/runtime/bin", { ORBIT_BUN: "/fixture/runtime/bin/bun" });
   expect(plist).toContain(`<string>${BROKER_LABEL}</string>`);
   expect(plist).toContain("<string>serve</string>");
   expect(plist).toContain("<string>--managed-socket</string>");
@@ -121,7 +121,7 @@ test("the launch agent plist is valid XML, names the broker, and never abandons 
 test("a home directory with XML metacharacters does not produce a broken plist", () => {
   // `launchctl bootstrap` refuses an unescaped ampersand with a parse error naming a byte offset,
   // which is unreadable, and a person whose account is named with one would never get an agent.
-  const plist = brokerAgentPlist("/Users/a&b/bin/sbar-orbit", "/Users/a&b/sock", "/Users/a&b");
+  const plist = brokerAgentPlist("/Users/a&b/bin/sbar-orbit", "/Users/a&b/sock", "/Users/a&b", "/fixture/runtime/bin", { ORBIT_BUN: "/fixture/runtime/bin/bun" });
   expect(plist).toContain("/Users/a&amp;b/bin/sbar-orbit");
   expect(plist).not.toMatch(/<string>[^<]*&(?!amp;|lt;|gt;|quot;|apos;)/);
 });
@@ -385,7 +385,7 @@ test("no launcher or home path can inject plist structure", async () => {
     // and an unescaped one makes launchd refuse the whole file with a byte offset.
     "/Users/a&b/c",
   ]) {
-    const plist = brokerAgentPlist(attack, "/tmp/s.sock", attack);
+    const plist = brokerAgentPlist(attack, "/tmp/s.sock", attack, "/fixture/runtime/bin", { ORBIT_BUN: "/fixture/runtime/bin/bun" });
     const keys = [...plist.matchAll(/^ {2}<key>([^<]+)<\/key>$/gm)].map(match => match[1]);
     expect(keys).toEqual(expected);
     // The ProgramArguments array alone, so the EnvironmentVariables strings are not counted.

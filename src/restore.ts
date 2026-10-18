@@ -1,6 +1,8 @@
-import { chmod, mkdir, rename, rm, readdir, stat } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { chmod, lstat, mkdir, rename, rm, rmdir, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { stripSingletonMarkers } from "./platform";
+import { createReadOnlySnapshot } from "./snapshot";
 
 /**
  * Restore points, and the honest limit on what they can take back.
@@ -97,18 +99,63 @@ export async function btrfs(args: string[],
  * false, which every browser session then failed to start into.
  */
 export async function createSubvolume(path: string): Promise<boolean> {
-  const created = await btrfs(["subvolume", "create", `${path}.subvol`]);
-  if (!created.ok) return false;
+  const spare = `${path}.subvol`;
+  let original: Stats | undefined;
   try {
-    await rm(path, { recursive: true, force: true });
-    await rename(`${path}.subvol`, path);
-    // btrfs creates a subvolume at the umask, and the directory this replaces was 0700 because it
-    // holds a copy of the person's live sessions.
-    await chmod(path, 0o700);
+    original = await lstat(path);
+    if (!original.isDirectory() || original.uid !== process.getuid?.() || (await readdir(path)).length !== 0) return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false;
+  }
+  try { await lstat(spare); return false; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return false; }
+  const created = await btrfs(["subvolume", "create", spare]);
+  if (!created.ok) return false;
+  let spareIdentity: Stats | undefined;
+  let removed = false;
+  try {
+    spareIdentity = await lstat(spare);
+    if (!spareIdentity.isDirectory() || spareIdentity.uid !== process.getuid?.())
+      throw new Error("Subvolume spare changed before publication");
+    // Set the private mode before publication, so chmod failure cannot remove the original.
+    await chmod(spare, 0o700);
+    if (original) {
+      const current = await lstat(path);
+      if (!current.isDirectory() || current.dev !== original.dev || current.ino !== original.ino)
+        throw new Error("Subvolume destination changed before conversion");
+      // Unlike recursive rm, rmdir refuses a late file instead of deleting its contents.
+      await rmdir(path);
+      removed = true;
+    } else {
+      // An absent destination must still be absent immediately before publication.
+      try { await lstat(path); throw new Error("Subvolume destination appeared before conversion"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    await rename(spare, path);
     return true;
-  } catch {
-    // Put nothing in a worse state than it was found in: drop the spare and leave the directory.
-    await removeRestorePoint(`${path}.subvol`).catch(() => {});
+  } catch (error) {
+    let rollbackError: unknown;
+    if (removed && original) {
+      try {
+        // Recreate only the empty directory we removed. Never replace a newly arrived path.
+        await mkdir(path, { mode: original.mode & 0o777 });
+        await chmod(path, original.mode & 0o777);
+      } catch (restoreError) {
+        if ((restoreError as NodeJS.ErrnoException).code === "EEXIST") {
+          try {
+            const current = await lstat(path);
+            if (!current.isDirectory() || current.uid !== original.uid) throw restoreError;
+          } catch { rollbackError = restoreError; }
+        } else rollbackError = restoreError;
+      }
+    }
+    try {
+      const current = await lstat(spare);
+      if (spareIdentity && current.dev === spareIdentity.dev && current.ino === spareIdentity.ino)
+        await removeRestorePoint(spare);
+    } catch {}
+    // Returning false cannot hide a failed rollback. An empty recreated directory has a new inode.
+    if (rollbackError) throw new AggregateError([error, rollbackError], "Subvolume conversion rollback failed");
     return false;
   }
 }
@@ -143,8 +190,9 @@ export async function takeRestorePoint(profile: string, store: string, sequence:
   await mkdir(store, { recursive: true, mode: 0o700 });
   const path = join(store, `${String(sequence).padStart(6, "0")}-${actionType}`);
   const started = performance.now();
-  const snapshot = await btrfs(["subvolume", "snapshot", "-r", profile, path]);
-  if (!snapshot.ok) return null;
+  const made = await createReadOnlySnapshot(profile, store, `${String(sequence).padStart(6, "0")}-${actionType}`,
+    async () => (await btrfs(["subvolume", "snapshot", "-r", profile, path])).ok);
+  if (!made) return null;
   return { sequence, path, actionType, reversibility, consistent: quiesced, milliseconds: Math.round(performance.now() - started) };
 }
 

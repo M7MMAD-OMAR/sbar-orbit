@@ -2,8 +2,12 @@ import { test, expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { installService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
+import { installService as writeService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
 import { tmpdir } from "node:os";
+
+const fixtureBunDirectory = "/fixture/runtime/bin";
+const fixtureEnvironment = (): NodeJS.ProcessEnv => ({ ...process.env, ORBIT_BUN: `${fixtureBunDirectory}/bun` });
+const installService = (launcher: string, units: string) => writeService(launcher, units, fixtureEnvironment(), fixtureBunDirectory);
 
 /** Never the real unit directory: every case works inside a disposable prefix. */
 async function prefix() {
@@ -19,6 +23,7 @@ async function prefix() {
 linuxOnlySuite("the Windows install writes no service at all, by design, so there are no units to assert")(
   "installing writes a slice carrying the budget and a service bound to it", async () => {
   const { units, launcher } = await prefix();
+  const expectedUnitMode = 0o644 & ~process.umask();
   const result = await installService(launcher, units);
   expect(result.written.map(path => path.split("/").at(-1)).sort())
     .toEqual(["sbar-orbit-update.service", "sbar-orbit-update.timer", "sbar-orbit.service", "sbarorbit.slice"]);
@@ -45,7 +50,7 @@ linuxOnlySuite("the Windows install writes no service at all, by design, so ther
   expect(service).toContain("Restart=on-failure");
   // Owned browsers and private displays need time to close.
   expect(service).toContain("TimeoutStopSec=30");
-  expect((await stat(join(units, "sbar-orbit.service"))).mode & 0o777).toBe(0o644);
+  expect((await stat(join(units, "sbar-orbit.service"))).mode & 0o777).toBe(expectedUnitMode);
 });
 
 test("installing twice replaces the units without leaving temporary files", async () => {

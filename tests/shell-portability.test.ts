@@ -29,7 +29,7 @@ async function fixture(options: { bsdReadlink: boolean; bunOnPath: boolean }) {
   await symlink("checkout with spaces/bin/sbar-orbit", join(root, "orbit link"));
   const run = async (entry: string, args: string[]) => {
     const child = Bun.spawn([Bun.which("bash") ?? "/bin/bash", join(root, entry), ...args], {
-      cwd: root, env: { ...process.env, HOME: root, BUN_INSTALL: bunHome, PATH: path }, stdout: "pipe", stderr: "pipe",
+      cwd: root, env: { ...process.env, HOME: root, BUN_INSTALL: bunHome, PATH: path, ORBIT_BUN: bun }, stdout: "pipe", stderr: "pipe",
     });
     const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { stdout, stderr, code };

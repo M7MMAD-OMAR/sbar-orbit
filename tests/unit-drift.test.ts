@@ -18,7 +18,12 @@ import { test, expect } from "bun:test";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installService, serviceUnitDrift, serviceUnit } from "../src/service";
+import { installService as writeService, serviceUnitDrift, serviceUnit as renderUnit } from "../src/service";
+
+const fixtureBunDirectory = "/fixture/runtime/bin";
+const fixtureEnvironment = (): NodeJS.ProcessEnv => ({ ...process.env, ORBIT_BUN: `${fixtureBunDirectory}/bun` });
+const installService = (launcher: string, units: string) => writeService(launcher, units, fixtureEnvironment(), fixtureBunDirectory);
+const serviceUnit = (launcher: string, units: string) => renderUnit(launcher, units, fixtureEnvironment(), fixtureBunDirectory);
 
 /** A real install into a directory of this test's own, plus the launcher it needs to name. */
 async function installed() {

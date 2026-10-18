@@ -1,6 +1,6 @@
 import { totalmem, homedir } from "node:os";
 import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, posix, resolve, win32 } from "node:path";
+import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 /**
  * A macOS path is a POSIX path, whatever host computed it.
  *
@@ -230,7 +230,7 @@ function unitExecutable(launcher: string) {
   return JSON.stringify(launcher).replace(/%/g, "%%");
 }
 
-function installedExecutable(unit: string): string | undefined {
+export function installedExecutable(unit: string): string | undefined {
   const token = /^ExecStart=("(?:\\.|[^"\\])*"|\S+)/m.exec(unit)?.[1];
   if (!token) return undefined;
   try {
@@ -248,12 +248,15 @@ function unitEnvironment(unitDirectory: string, env: NodeJS.ProcessEnv, bunDirec
   // EnvironmentFile uses a literal path, with percent specifiers but without shell unquoting.
   if (/[\r\n\0]/.test(environmentFile))
     throw new OrbitError("CONFIG_REQUIRED", "Broker configuration path must not contain line breaks or NUL");
-  const selected: Record<string, string> = { HOME: home, XDG_CONFIG_HOME: config, ORBIT_UNIT_DIR: resolve(unitDirectory) };
+  const selected: Record<string, string> = { ORBIT_MANAGED_ENV_SCHEMA: "1", HOME: home, XDG_CONFIG_HOME: config, ORBIT_UNIT_DIR: resolve(unitDirectory),
+    ORBIT_BUN: env.ORBIT_BUN ?? join(bunDirectory, basename(process.execPath)) };
   // Persist only selected installation paths, never credentials or arbitrary operator switches.
   for (const key of optionalUnitPaths) {
     const value = env[key];
     if (value && posix.isAbsolute(value)) selected[key] = value;
   }
+  if (!posix.isAbsolute(selected.ORBIT_BUN ?? "") || dirname(selected.ORBIT_BUN ?? "") !== bunDirectory)
+    throw new OrbitError("CONFIG_REQUIRED", "Recorded Bun must be an exact absolute executable in the installed search directory");
   // PATH is needed for custom Bun and application discovery. Pin the current Bun first,
   // exclude relative entries, and deduplicate the launcher's repeated Bun prefix for drift checks.
   selected.PATH = [...new Set([bunDirectory, ...(env.PATH || "").split(":").filter(value => posix.isAbsolute(value)),
@@ -303,7 +306,7 @@ const units = { "sbarorbit.slice": sliceUnit, "sbar-orbit.service": serviceUnit,
   "sbar-orbit-update.service": updateServiceUnit, "sbar-orbit-update.timer": updateTimerUnit } as const;
 
 /** Write the units atomically. Enabling is a separate function, and `service install` calls it by default. */
-export async function installService(launcher: string, unitDirectory: string) {
+export async function installService(launcher: string, unitDirectory: string, env = process.env, bunDirectory = dirname(process.execPath)) {
   const source = resolve(launcher);
   try { if (!(await stat(source)).isFile()) throw new Error("Launcher is not a regular file"); }
   catch { throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file"); }
@@ -312,7 +315,7 @@ export async function installService(launcher: string, unitDirectory: string) {
   for (const [name, build] of Object.entries(units)) {
     const target = join(unitDirectory, name);
     const temporary = `${target}.${crypto.randomUUID()}.tmp`;
-    await writeFile(temporary, build(source, unitDirectory), { mode: 0o644 });
+    await writeFile(temporary, build(source, unitDirectory, env, bunDirectory), { mode: 0o644 });
     await rename(temporary, target);
     written.push(target);
   }
@@ -335,8 +338,8 @@ export async function uninstallService(unitDirectory: string) {
   return { removed, sourceAndDataRetained: true };
 }
 
-function installedPathDefaults(unit: string) {
-  const allowed = new Set<string>(["HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "PATH", ...optionalUnitPaths]);
+export function installedPathDefaults(unit: string) {
+  const allowed = new Set<string>(["ORBIT_MANAGED_ENV_SCHEMA", "HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "ORBIT_BUN", "PATH", ...optionalUnitPaths]);
   const defaults: NodeJS.ProcessEnv = {};
   for (const line of unit.split("\n").filter(line => line.startsWith("Environment="))) {
     const assignment: unknown = JSON.parse(line.slice("Environment=".length).replace(/%%/g, "%"));
@@ -344,14 +347,15 @@ function installedPathDefaults(unit: string) {
     const separator = assignment.indexOf("="), key = assignment.slice(0, separator), value = assignment.slice(separator + 1);
     if (separator < 1 || !allowed.has(key) || defaults[key] !== undefined || /[\r\n\0]/.test(value))
       throw new Error("Invalid service path assignment");
-    if (key !== "PATH" && (!value || !(posix.isAbsolute(value) || win32.isAbsolute(value))))
+    if (key === "ORBIT_MANAGED_ENV_SCHEMA" && value !== "1") throw new Error("Unsupported installation environment schema");
+    if (key !== "PATH" && key !== "ORBIT_MANAGED_ENV_SCHEMA" && (!value || !(posix.isAbsolute(value) || win32.isAbsolute(value))))
       throw new Error("Invalid service path directory");
     defaults[key] = value;
   }
-  for (const key of ["HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "PATH"]) {
+  for (const key of ["ORBIT_MANAGED_ENV_SCHEMA", "HOME", "XDG_CONFIG_HOME", "ORBIT_UNIT_DIR", "ORBIT_BUN", "PATH"]) {
     if (!defaults[key]) throw new Error(`Missing service path assignment: ${key}`);
   }
-  const bunDirectory = process.platform === "win32" ? dirname(process.execPath) : defaults.PATH?.split(":")[0];
+  const bunDirectory = defaults.PATH?.split(":")[0];
   if (!bunDirectory || !(posix.isAbsolute(bunDirectory) || win32.isAbsolute(bunDirectory)))
     throw new Error("Invalid service Bun search directory");
   return { defaults, bunDirectory };

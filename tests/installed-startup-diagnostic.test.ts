@@ -55,6 +55,11 @@ test("registered task matching requires exact actual action and environment", as
   expect(taskEnvironmentMatches(brokerTaskXml(launcher, "S-1-5-21-123"), env, launcher)).toBe(false);
   expect(taskEnvironmentMatches(xml, env, launcher + ".foreign")).toBe(false);
   expect(taskEnvironmentMatches(xml.replace("serve --managed-socket", "serve --managed-socket extra"), env, launcher)).toBe(false);
+  expect(taskEnvironmentMatches(xml.replace("ORBIT_MANAGED_ENV_SCHEMA=1", "ORBIT_MANAGED_ENV_SCHEMA=2"), env, launcher)).toBe(false);
+  expect(taskEnvironmentMatches(xml.replace('set &quot;ORBIT_MANAGED_ENV_SCHEMA=1&quot; &amp;&amp; ', ""), env, launcher)).toBe(false);
+  expect(taskEnvironmentMatches(brokerTaskXml(launcher, "S-1-5-21-123", { ...env, ORBIT_BUN: process.execPath + ".foreign" }), env, launcher)).toBe(false);
+  expect(taskEnvironmentMatches(xml.replace(/set &quot;ORBIT_BUN=[\s\S]*?&quot; &amp;&amp; /, ""), env, launcher)).toBe(false);
+  expect(taskEnvironmentMatches(brokerTaskXml(launcher, "S-1-5-21-123", { ...env, ORBIT_DIAGNOSTIC_EXTRA: "foreign" }), env, launcher)).toBe(false);
 });
 test("typed trace projection excludes private stderr endpoints paths and titles", () => {
   const projected = installedStartupProjection({ phase: "stderr", rootPid: 42, stderrBytes: 12,
@@ -504,4 +509,57 @@ test("existing actual stop observer preserves rejection and a genuine distinct r
   expect(stop()).toBe(next); expect(sealed).toHaveLength(0);
   if (!resolve) throw new Error("Owned retry resolver missing"); resolve(); await next;
   state.closeComplete(); expect(sealed).toHaveLength(1); expect(sealed[0].stopAttempt).toBe(2);
+});
+
+function registeredActionFixture() {
+  const launcher = "C:\\Orbit & tools\\prefix\\bin\\sbar-orbit.cmd";
+  const env = { GITHUB_ACTIONS: "true", ORBIT_TEST_NATIVE: "0", ORBIT_BUN: process.execPath };
+  return { launcher, env, xml: brokerTaskXml(launcher, "S-1-5-21-123", env) };
+}
+test("registered task action refuses a foreign executable", () => {
+  const { launcher, env, xml } = registeredActionFixture();
+  expect(taskEnvironmentMatches(xml, env, launcher)).toBe(true);
+  const foreign = xml.replace("<Command>cmd.exe</Command>", "<Command>C:\\Foreign\\foreign.exe</Command>");
+  expect(foreign).not.toBe(xml);
+  expect(taskEnvironmentMatches(foreign, env, launcher)).toBe(false);
+});
+test("registered task action refuses an extra Exec", () => {
+  const { launcher, env, xml } = registeredActionFixture();
+  expect(taskEnvironmentMatches(xml, env, launcher)).toBe(true);
+  const extra = xml.replace("</Actions>", "<Exec><Command>C:\\Foreign\\foreign.exe</Command><Arguments>/c exit 0</Arguments></Exec></Actions>");
+  expect(extra).not.toBe(xml);
+  expect(taskEnvironmentMatches(extra, env, launcher)).toBe(false);
+});
+test("registered task action validates document and action structure", () => {
+  const { launcher, env, xml } = registeredActionFixture();
+  expect(taskEnvironmentMatches(xml.replace(/>\s+</g, ">\n    <"), env, launcher)).toBe(true);
+  expect(taskEnvironmentMatches(xml.replace(/^<\?xml[^?]*\?>\s*/, ""), env, launcher)).toBe(true);
+  const actions = /<Actions Context="Author">[\s\S]*?<\/Actions>/.exec(xml)?.[0];
+  if (!actions) throw new Error("Canonical action fixture is absent");
+  const exec = /<Exec>[\s\S]*?<\/Exec>/.exec(actions)?.[0];
+  const args = /<Arguments>[\s\S]*?<\/Arguments>/.exec(actions)?.[0];
+  if (!exec || !args) throw new Error("Canonical Exec fixture is absent");
+  const mutations = [
+    xml.replace("<Command>cmd.exe</Command>", "<Command>cmd.exe</Command><Command>foreign.exe</Command>"),
+    xml.replace("<Command>cmd.exe</Command>", ""),
+    xml.replace(args, args + args),
+    xml.replace(args, "").replace("</Task>", args + "</Task>"),
+    xml.replace("</Actions>", exec + "</Actions>"),
+    xml.replace("</Actions>", "<ComHandler><ClassId>foreign</ClassId></ComHandler></Actions>"),
+    xml.replace(actions, actions + actions),
+    xml.replace('<Actions Context="Author">', '<Actions Context="Foreign">'),
+    xml.replace(actions, "<Settings>" + actions + "</Settings>"),
+    xml.replace("</Task>", "</Task>" + actions),
+    xml.replace("</Exec>", "</Actions>"),
+    xml.replace('<?xml version="1.0" encoding="UTF-16"?>', '<?xml foreign="true"?>'),
+    xml.replace('<Task version="1.4"', '<Task version="1.3"'),
+    xml.replace('xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"', 'xmlns="urn:foreign"'),
+    xml.replace("<Command>cmd.exe</Command>", "<Command><![CDATA[cmd.exe]]></Command>"),
+    xml.replace("<Task version", '<!DOCTYPE Task [<!ENTITY runtime "cmd.exe">]><Task version').replace("<Command>cmd.exe</Command>", "<Command>&runtime;</Command>"),
+    xml.replace("</Actions>", "<x:Exec xmlns:x=\"http://schemas.microsoft.com/windows/2004/02/mit/task\"><x:Command>foreign.exe</x:Command></x:Exec></Actions>"),
+  ];
+  for (const mutation of mutations) {
+    expect(mutation).not.toBe(xml);
+    expect(taskEnvironmentMatches(mutation, env, launcher)).toBe(false);
+  }
 });

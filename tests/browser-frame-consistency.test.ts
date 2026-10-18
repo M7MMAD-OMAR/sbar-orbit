@@ -133,6 +133,10 @@ for (const change of ['navigate', 'close'] as const) {
       backend = await BrowserBackend.create(profile, { width: 640, height: 480 });
       const url = `http://127.0.0.1:${server.port}/same`;
       await backend.act({ type: 'navigate', url });
+      if (change === 'close') {
+        await backend.act({ type: 'open-tab', url: `${url}/survivor` });
+        await backend.act({ type: 'select-tab', tab: 1 });
+      }
       const page = backend.context.pages()[0];
       if (!page) throw new Error('Owned captured page is missing');
       capturedPage = page;
@@ -177,8 +181,9 @@ for (const change of ['navigate', 'close'] as const) {
           throw error;
         }
       } else {
-        await backend.act({ type: 'open-tab', url: `${url}/survivor` });
+        mark('close-start');
         await backend.act({ type: 'close-tab', tab: 1 });
+        mark('close-settled');
       }
       mark('capture-gate-release');
       release();

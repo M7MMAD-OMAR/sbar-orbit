@@ -77,7 +77,82 @@ test.skipIf(process.platform !== "linux")("collector splits an owned executable 
       { stdout: "ignore", stderr: "pipe" });
     expect(await child.exited).toBe(0);
     const report = JSON.parse(await readFile(join(root, "tree.json"), "utf8"));
-    const command = Object.entries(report.browserCommands).find(([identity]) => identity.startsWith(`${report.worker}:`))?.[1];
-    expect(Array.isArray(command) && command.includes("--headless")).toBe(true);
+    const observation = Object.entries(report.browserObservations as Record<string, { argv: string[] }>).find(([identity]) => identity.startsWith(`${report.worker}:`))?.[1];
+    expect(observation?.argv.includes("--headless")).toBe(true);
+    expect(report.browserIdentity.status).toBe("invalid");
+    expect(Object.keys(report.browserCommands)).toHaveLength(0);
   } finally { await rm(root, { recursive: true, force: true }); }
 }, 10000);
+
+async function collectRootWitnessFixture(mode = "valid") {
+  const root = await mkdtemp("/var/tmp/orbit-perf-root-witness-");
+  try {
+    const executable = await realpath("/usr/bin/python3");
+    const program = `import json,os,subprocess,sys,time
+from pathlib import Path
+executable=sys.argv[-1]
+mode=sys.argv[2]
+browser=subprocess.Popen([executable,"-c","import time;time.sleep(0.5)","--window-size=800,600" if mode=="unknown-headless" else "--headless=false" if mode=="false-headless" else "--headless"])
+# Replay the erased prefix and retained renderer suffix from the rejected Chrome census.
+renderer_program="""import ctypes,time
+from pathlib import Path
+raw=Path('/proc/self/cmdline').read_bytes()
+address=ctypes.c_void_p.in_dll(ctypes.CDLL(None),'program_invocation_name').value
+assert address and ctypes.string_at(address,len(raw))==raw
+tail=b'-dev-shm-usage --remote-debugging-port=0 --renderer-client-id=8'
+ctypes.memset(address,0,len(raw))
+ctypes.memmove(address+len(raw)-len(tail)-1,tail,len(tail))
+held=bytearray(24*1024*1024)
+end=time.process_time()+0.1
+while time.process_time()<end: pass
+time.sleep(0.4)
+"""
+renderer=subprocess.Popen([executable,"-c",renderer_program,"x"*2048])
+def identity(pid):
+    fields=Path(f"/proc/{pid}/stat").read_text().rsplit(")",1)[1].split()
+    return {"pid":pid,"start":fields[19],"parent":int(fields[1])}
+held=identity(browser.pid)
+ancestry=[held,identity(os.getpid())]
+witness={**held,"workerPid":os.getpid(),"executable":executable,"cdpPid":browser.pid,"source":"owned-browser-cdp","ancestry":ancestry}
+if mode=="wrong-start": witness["start"]="0"
+if mode=="wrong-pid": witness["pid"]=renderer.pid
+if mode=="wrong-executable": witness["executable"]="/missing/browser"
+if mode=="wrong-worker": witness["workerPid"]=os.getppid()
+if mode=="wrong-ancestry": witness["ancestry"][0]={**held,"parent":os.getppid()}
+if mode=="unknown-source": witness["source"]="guessed-command"
+if mode=="wrong-cdp": witness["cdpPid"]=renderer.pid
+if mode!="missing-witness": Path(sys.argv[1]).write_text(json.dumps(witness))
+browser.wait();renderer.wait()`;
+    const child = Bun.spawn(["/usr/bin/python3", "-c", collector, join(root, "tree.json"),
+      executable, "-c", program, join(root, "browser.json"), mode, executable], { stdout: "ignore", stderr: "pipe" });
+    expect(await child.exited).toBe(0);
+    return JSON.parse(await readFile(join(root, "tree.json"), "utf8"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+}
+
+test.skipIf(process.platform !== "linux")("erased renderer command lines cannot replace the exact owned browser root", async () => {
+  const report = await collectRootWitnessFixture();
+  expect(Object.keys(report.browserCommands)).toHaveLength(1);
+  expect(report.browserIdentity.status).toBe("verified");
+  expect(report.browserIdentity.witness.cdpPid).toBe(report.browserIdentity.witness.pid);
+  expect(report.browserIdentity.witness.start).toMatch(/^[0-9]+$/);
+  expect(report.cleanup).toBe("wait returned ECHILD");
+  expect(report.sampleFailures).toBe(0);
+  expect(report.cpuSeconds).toBeGreaterThanOrEqual(0.1);
+  const erased = Object.entries(report.browserObservations as Record<string, { argv: string[] }>).find(([, observation]) =>
+    observation.argv[0] === "" && observation.argv.at(-1)?.includes("--renderer-client-id=8"));
+  expect(erased).toBeDefined();
+  const rendererPid = Number(erased?.[0].split(":")[0]);
+  expect(report.samples.some((sample: { processes: import("../experiments/browser-performance").ProcessSample[] }) =>
+    sample.processes.some(process => process.pid === rendererPid && process.rssBytes >= 24 * 1048576))).toBe(true);
+}, 10000);
+
+for (const mode of ["missing-witness", "wrong-start", "wrong-pid", "wrong-executable", "wrong-worker", "wrong-ancestry", "unknown-source", "wrong-cdp", "unknown-headless", "false-headless"]) {
+  test.skipIf(process.platform !== "linux")(`browser root witness refuses ${mode}`, async () => {
+    const report = await collectRootWitnessFixture(mode);
+    expect(report.browserIdentity.status).toBe("invalid");
+    expect(Object.keys(report.browserCommands)).toHaveLength(0);
+    expect(report.cleanup).toBe("wait returned ECHILD");
+    expect(report.sampleFailures).toBe(0);
+  }, 10000);
+}

@@ -23,8 +23,8 @@ async function runControlledChild(env: NodeJS.ProcessEnv, route: "ordinary" | "o
   const assertions = [...raw.matchAll(/^\s*(\d+) expect\(\) calls\s*$/gm)];
   console.error(JSON.stringify({ phaseFactoryChild: { route, exit, rawBytes: Buffer.byteLength(raw), rawSha256: createHash("sha256").update(raw).digest("hex"), total: summary.length === 1 ? Number(summary[0]?.[1]) : 0, passed: passed.length === 1 ? Number(passed[0]?.[1]) : null, failed: failed.length === 1 ? Number(failed[0]?.[1]) : null, skipped: skipped.length === 0 ? 0 : skipped.length === 1 ? Number(skipped[0]?.[1]) : null, assertions: assertions.length === 1 ? Number(assertions[0]?.[1]) : null, scope: "isolated in-memory launcher controls; no actual browser" } }));
   if (exit !== 0) throw new Error(raw.slice(0, 32768));
-  expect(exit).toBe(0); expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(2097152); expect(summary.length).toBe(1); expect(Number(summary[0]?.[1])).toBe(32); expect(Number(summary[0]?.[2])).toBe(1);
-  expect(passed.length).toBe(1); expect(Number(passed[0]?.[1])).toBe(32); expect(failed.length).toBe(1); expect(Number(failed[0]?.[1])).toBe(0); expect(skipped.length).toBe(0); expect(assertions.length).toBe(1);
+  expect(exit).toBe(0); expect(Buffer.byteLength(raw)).toBeLessThanOrEqual(2097152); expect(summary.length).toBe(1); expect(Number(summary[0]?.[1])).toBe(37); expect(Number(summary[0]?.[2])).toBe(1);
+  expect(passed.length).toBe(1); expect(Number(passed[0]?.[1])).toBe(37); expect(failed.length).toBe(1); expect(Number(failed[0]?.[1])).toBe(0); expect(skipped.length).toBe(0); expect(assertions.length).toBe(1);
 }
 test("phase factory controls stay in an isolated child", async () => { await runControlledChild(process.env, "ordinary"); }, 45000);
 test("phase factory controls canonicalize an owned temporary ancestor alias", async () => {

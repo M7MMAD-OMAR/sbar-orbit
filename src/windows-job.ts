@@ -44,6 +44,7 @@ function kernel32Symbols() {
     AssignProcessToJobObject: { args: [pointer, pointer], returns: bool },
     IsProcessInJob: { args: [pointer, pointer, pointer], returns: bool },
     OpenProcess: { args: [u32, bool, u32], returns: pointer },
+    K32GetProcessMemoryInfo: { args: [pointer, pointer, u32], returns: bool },
     TerminateProcess: { args: [pointer, u32], returns: bool },
     TerminateJobObject: { args: [pointer, u32], returns: bool },
     CloseHandle: { args: [pointer], returns: bool },
@@ -61,11 +62,16 @@ function kernel32Symbols() {
  * cleanly, which is why nothing in this file ever uses a pseudo handle.
  */
 function asHandle(value: unknown): Pointer {
+  // Failed-open representations remain falsy. NaN must never reach a pointer argument.
+  if (value === null || value === 0 || value === 0n || (typeof value === "number" && Number.isNaN(value)))
+    return 0 as Pointer;
   if (typeof value === "bigint") {
-    if (value > BigInt(Number.MAX_SAFE_INTEGER))
+    if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER))
       throw new OrbitError("BACKEND_FAILED", "A kernel handle did not fit a safe integer; refusing to pass it back");
     return Number(value) as Pointer;
   }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
+    throw new OrbitError("BACKEND_FAILED", "A kernel handle is not a positive safe integer; refusing to pass it back");
   return value as Pointer;
 }
 /** winnt.h. Only the flags this design sets, so an unused constant cannot drift out of date. */
@@ -212,12 +218,64 @@ export class WindowsJob {
       const assigned = view.getUint32(0, true);
       const listed = view.getUint32(4, true);
       // The list was truncated: ask again with room for everything the kernel says is assigned.
-      if (listed < assigned && capacity < 4096) continue;
+      if (listed > capacity || assigned > capacity || listed < assigned) {
+        if (capacity < 4096) continue;
+        throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned job process membership is truncated");
+      }
       const pids: number[] = [];
-      for (let index = 0; index < listed; index++) pids.push(Number(view.getBigUint64(8 + 8 * index, true)));
+      for (let index = 0; index < listed; index++) {
+        const pid = Number(view.getBigUint64(8 + 8 * index, true));
+        if (!Number.isSafeInteger(pid) || pid <= 0 || pid > 0xffff_ffff)
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned job process id is invalid");
+        pids.push(pid);
+      }
       return pids;
     }
     throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Could not read the job's process list");
+  }
+
+  /** Pin each process handle and prove membership in this exact job before reading its working set. */
+  residentSample(): import("./owned-process-resident").OwnedResidentSample {
+    this.requireOpen();
+    const listed = this.processIds();
+    if (listed.length > 512)
+      throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser job exceeds the sampling bound");
+    const pids: number[] = [];
+    let bytes = 0;
+    for (const pid of listed) {
+      // PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, only for a pid from this job's kernel list.
+      const handle = asHandle(this.api.OpenProcess(0x0400 | 0x0010, false, pid));
+      if (!handle) {
+        if (!this.processIds().includes(pid)) continue;
+        throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser job member could not be opened");
+      }
+      try {
+        const inside = new Uint8Array(4);
+        if (!this.api.IsProcessInJob(handle, this.handle, ptr(inside)) || new DataView(inside.buffer).getUint32(0, true) === 0) {
+          if (!this.processIds().includes(pid)) continue;
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Browser process handle is not verifiably inside its owned job");
+        }
+        // PROCESS_MEMORY_COUNTERS_EX on 64 bit Windows: 80 bytes, WorkingSetSize at byte 16.
+        const counters = new Uint8Array(80);
+        const view = new DataView(counters.buffer);
+        view.setUint32(0, counters.byteLength, true);
+        if (!this.api.K32GetProcessMemoryInfo(handle, ptr(counters), counters.byteLength)) {
+          if (!this.processIds().includes(pid)) continue;
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser job member working set is unreadable");
+        }
+        const workingSet = Number(view.getBigUint64(16, true));
+        if (!Number.isSafeInteger(workingSet) || workingSet < 0)
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser job member working set is invalid");
+        bytes += workingSet;
+        if (!Number.isSafeInteger(bytes))
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser job aggregate working set is invalid");
+        pids.push(pid);
+      } finally {
+        if (!this.api.CloseHandle(handle))
+          throw new OrbitError("RESOURCE_STATUS_UNAVAILABLE", "Owned browser observation handle could not be closed");
+      }
+    }
+    return { pids, rssKiB: bytes / 1024, source: "owned Windows job working set" };
   }
 
   /**

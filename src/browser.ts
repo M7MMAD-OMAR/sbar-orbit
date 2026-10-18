@@ -9,7 +9,7 @@ import { launchChrome, type ChromeLaunchOptions } from "./chrome";
 import { type EgressLease } from "./egress";
 import { defaultViewport, parseViewport, requireInside, type Viewport } from "./viewport";
 import { OrbitError, record, text } from "./errors";
-import { beginBrowserCapture, revokeBrowserPhases } from "./browser-phase-observer";
+import { beginBrowserCapture, beginBrowserNavigation, revokeBrowserPhases } from "./browser-phase-observer";
 
 /**
  * How long a single frame capture may take, in milliseconds.
@@ -311,7 +311,11 @@ export class BrowserBackend {
     const page = this.page;
     switch (action.type) {
       case "scroll": return this.control(action);
-      case "navigate": await page.goto(action.url, { waitUntil: "domcontentloaded" }); return { url: page.url() };
+      case "navigate": {
+        const navigation = beginBrowserNavigation(this, () => page.context(), page);
+        try { await page.goto(action.url, { waitUntil: "domcontentloaded" }); navigation?.finish(); return { url: page.url() }; }
+        catch (error) { navigation?.finish(error, true); throw error; }
+      }
       case "fill": await page.locator(action.selector).fill(action.text); return { applied: true };
       case "click": return this.clickThrough(page, action.selector);
       case "read": return { text: await page.locator(action.selector).innerText() };
