@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "state": "passed",
+  "recorded": "2026-10-18 4:58 AM Asia/Dubai",
+  "scope": "Host nested lab: Hyprland nested in a headless KWin with its own buses, runtime and HOME on the owner's workstation. Not a separate machine.",
+  "hyprland": {
+    "version": "0.56.2-2.fc44",
+    "commit": "efb50993780079460b0cbed1363e2166a2de1d9f",
+    "abi_hash": "efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6"
+  },
+  "plugin": {
+    "source": "experiments/ghost-cursor/plugin/ghostinput.cpp",
+    "source_sha256": "b548f7b24f408e9f6955cbeca749d320a8d24d1d4024572f679eab4bf0817744"
+  },
+  "probes": {
+    "claim": "experiments/ghost-cursor/chrome_claim_probe.py",
+    "lease": "experiments/ghost-cursor/chrome_lease_probe.py"
+  },
+  "red": {
+    "source_commit": "2116c4b",
+    "source_sha256": "5ab10677ff929072a94b8e202e5a5c68ccc3ec378366b0dffbaf31ef34c541ec",
+    "setup": "three wl-paste data-control watchers, one ended, real Google Chrome on unfocused workspace 2",
+    "result": "lab compositor ended with SIGSEGV during ghost-application-claim",
+    "frame": "CExtDataDeviceProtocol::dataDeviceForClient called from the plugin claim through CHyprCtl::getReply, matching the 6 October 2026 owner crash"
+  },
+  "green": {
+    "setup": "same as red, plus the person's private virtual pointer and a person window holding focus on workspace 1",
+    "claim": "claimed, entire-wayland-client, 1 window, compositor alive",
+    "agentCursor": "ok",
+    "agentClick": "ok",
+    "agentKeyboard": "ctrl+l, 61 typed keys and Return reached Chrome; its title changed to the typed page title",
+    "personFocusKept": true,
+    "personPointerUnmoved": true,
+    "handback": "ok; lease unavailable afterwards; Chrome still open; compositor alive"
+  },
+  "notMeasured": [
+    "Selection isolation between the claimed client and the owner clipboard",
+    "A claim on the owner's live compositor",
+    "Why the device entry the upstream lookup dereferenced was invalid; the corrected plugin no longer calls that lookup"
+  ]
+}

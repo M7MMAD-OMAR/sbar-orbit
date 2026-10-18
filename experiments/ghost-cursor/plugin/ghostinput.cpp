@@ -686,8 +686,13 @@ static void guardClipboard(wl_client* client) {
                 catch (const std::exception& error) { recordApplicationFailure(current->client(), error.what()); }
                 catch (...) { recordApplicationFailure(current->client(), "private clipboard offer failed"); }
             } else {
+                // A compositor callback, so an empty inventory entry is skipped rather than thrown:
+                // an exception here would end the owner compositor, the failure this guard exists for.
+                const auto client = current ? current->client() : nullptr;
+                if (!client)
+                    return;
                 for (const auto& target : PROTO::data->m_devices)
-                    if (target->client() == current->client())
+                    if (target && target->client() == client)
                         PROTO::data->sendSelectionToDevice(target, source);
             }
           });
