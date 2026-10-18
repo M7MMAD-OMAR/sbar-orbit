@@ -29,6 +29,16 @@ test('English remains available with an Arabic language link', () => {
   expect(html).toContain('href="/ar/" lang="ar"');
 });
 
+test('onboarding uses the managed socket default and states the native hold', () => {
+  for (const locale of ['en', 'ar'] as const) {
+    const html = renderToString(<App locale={locale} />);
+    expect(html).not.toContain('export ORBIT_SOCKET');
+    expect(html).not.toContain('Version 0.1.1');
+    expect(html).toContain('native-handoff-incident.md');
+    expect(html).toContain('support-tiers.md');
+  }
+});
+
 test('essential guidance is visible without disclosures or JavaScript', () => {
   const html=renderToString(<App locale="ar" />);
   expect(html).not.toContain('<details');
