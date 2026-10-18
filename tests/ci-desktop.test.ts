@@ -20,8 +20,10 @@ test.each([true, false])("CI runner preserves a desktop test result: passing=%s"
       new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
     ]);
     expect({ code, output: out + err }).toMatchObject({ code: passing ? 0 : 1 });
-    expect(out + err).toContain("CI result fixture");
-    expect(out + err).toMatch(passing ? /1 pass/ : /1 fail/);
+    // Outside CI, bun names only failing tests, so the fixture name is required
+    // on failure and the counts carry the passing case.
+    if (!passing) expect(out + err).toContain("CI result fixture");
+    expect(out + err).toMatch(passing ? /1 pass\n\s*0 fail/ : /0 pass\n\s*1 fail/);
     expect(JSON.parse(await readFile(join(root, "verification-result.json"), "utf8")))
       .toMatchObject({ suite: "desktop", exitCode: code, retiredBrowserFlow: "not run" });
     const samples = (await readFile(join(root, "verification-resources.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
