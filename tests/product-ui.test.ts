@@ -1,8 +1,11 @@
-import { expect, test } from 'bun:test';
+import { afterAll, expect, test } from 'bun:test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { openViewerPage } from './viewer-page';
 import { startBroker, call } from '../src/ipc';
+import { flushTargetCaptureDiagnostics, targetCaptureDiagnostic } from './browser-capture-diagnostic';
+
+afterAll(flushTargetCaptureDiagnostics, 30000);
 
 function productBoundaryTrace(name: string) {
   const started = performance.now();
@@ -372,6 +375,7 @@ test('selected page restores keyboard focus after its command completes', async 
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><title>Private selection fixture</title><body>Private selection fixture</body></html>', { headers: { 'content-type': 'text/html' } }) });
   const shots = process.env.ORBIT_QA_OUTPUT ?? '/tmp/orbit-product-ui';
   let failure: unknown;
+  let capture: ReturnType<typeof targetCaptureDiagnostic> | undefined;
   try {
     await mkdir(shots, { recursive: true });
     const preview = await diagnostics.rpc(broker.socket, 'preview.open') as { url: string };
@@ -379,6 +383,8 @@ test('selected page restores keyboard focus after its command completes', async 
     await diagnostics.attach(page);
     await page.goto(preview.url, { waitUntil: 'domcontentloaded' });
     const session = await diagnostics.rpc(broker.socket, 'session.create', { backend: 'browser' }) as { sessionId: string };
+    capture = targetCaptureDiagnostic(broker, session.sessionId);
+    diagnostics.record('target-capture-admission', capture.admission);
     await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'first', action: { type: 'navigate', url: `http://127.0.0.1:${server.port}/first` } });
     await diagnostics.rpc(broker.socket, 'session.act', { ...session, requestId: 'second', action: { type: 'open-tab', url: `http://127.0.0.1:${server.port}/second` } });
     await diagnostics.rpc(broker.socket, 'session.pause', session);
@@ -391,8 +397,16 @@ test('selected page restores keyboard focus after its command completes', async 
     expect(viewer.errors).toEqual([]);
   } catch (error) { failure = String(error); throw error; }
   finally {
+    capture?.close();
     await diagnostics.save(viewer.page, shots, failure).catch(error => console.error('Product boundary trace unavailable', String(error)));
-    await viewer.close(); await broker.close(); server.stop(true);
+    try { await viewer.close(); }
+    finally {
+      try { await broker.close(); }
+      finally {
+        server.stop(true);
+        capture?.enqueueSave(shots, failure);
+      }
+    }
   }
 }, 30000);
 

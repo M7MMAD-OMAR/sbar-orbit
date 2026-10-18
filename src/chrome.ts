@@ -632,7 +632,7 @@ export async function launchChrome(profile: string, size = defaultViewport, opti
     }).catch(reportCleanup);
     try { owner.finishStartupTrace?.(); } catch {}
     return {
-      context, browser, page,
+      context, browser, page, executable,
       close: () => { requested = true; return close(); },
       onClose(listener: () => void) { if (closed) listener(); else listeners.push(listener); },
     };
