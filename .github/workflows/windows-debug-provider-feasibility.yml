@@ -1,0 +1,150 @@
+name: windows-debug-provider-feasibility
+on:
+  push:
+    branches: [agents/windows-debug-provider-feasibility-2026-10-07]
+    paths:
+      - .github/workflows/windows-debug-provider-feasibility.yml
+      - experiments/windows-debug-provider.ts
+      - tests/windows-debug-*.ts
+      - docs/windows-debug-provider-feasibility.md
+      - .gitattributes
+      - bun.lock
+      - bunfig.toml
+      - package.json
+      - scripts/limited.ts
+      - src/resource-budget.ts
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact published prepared candidate commit
+        required: true
+      expected_manifest:
+        description: Expected raw Windows source manifest SHA256
+        required: true
+permissions:
+  contents: read
+jobs:
+  controlled-bun-prerequisite:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Initialize unknown evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = Join-Path $env:RUNNER_TEMP 'orbit-debug-provider-evidence'
+          New-Item -ItemType Directory -Path $directory -ErrorAction Stop | Out-Null
+          "EVIDENCE=$directory" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          @{ state='not measured'; capability='unknown'; chromeCoverage='not measured'; cleanup='unknown' } |
+            ConvertTo-Json | Set-Content "$directory/runner-result.json"
+          git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - name: Require exact candidate and retain full source
+        shell: pwsh
+        env:
+          EXPECTED_COMMIT: ${{ github.event_name == 'push' && github.sha || inputs.expected_commit }}
+          EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+          IS_MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:EXPECTED_COMMIT) { throw 'Prepared source commit differs' }
+          [string[]] $paths = @(git ls-files)
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source list failed' }
+          [Array]::Sort($paths, [StringComparer]::Ordinal)
+          $rows = foreach ($path in $paths) {
+            $index = (git ls-files -s -- $path) -split '\s+'
+            $canonical = (git hash-object -- $path).Trim()
+            if ($LASTEXITCODE -ne 0 -or $index.Count -lt 2 -or $canonical -cne $index[1]) {
+              @{path=$path; canonical=$canonical; raw=(git hash-object --no-filters -- $path)} |
+                ConvertTo-Json | Set-Content "$env:EVIDENCE/source-mismatch.json"
+              throw 'Canonical source differs from published blob'
+            }
+            "$path`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant())"
+          }
+          [IO.File]::WriteAllText("$env:EVIDENCE/source-before.txt", ($rows -join "`n")+"`n", [Text.UTF8Encoding]::new($false))
+          $manifest = (Get-FileHash "$env:EVIDENCE/source-before.txt").Hash.ToLowerInvariant()
+          if ($env:IS_MANUAL -eq 'true' -and $manifest -cne $env:EXPECTED_MANIFEST) { throw 'Manual manifest differs' }
+          @{commit=$actual; manifest=$manifest; independentSourceVerification='pending root artifact comparison'; chromeCoverage='not measured'} |
+            ConvertTo-Json | Set-Content "$env:EVIDENCE/source-identity.json"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install frozen dependencies
+        shell: pwsh
+        run: |
+          bun install --frozen-lockfile --ignore-scripts *> "$env:EVIDENCE/install.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen installation failed' }
+      - name: Run controlled Bun prerequisite only
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $argv = @('run','scripts/limited.ts','bun','run','experiments/windows-debug-provider.ts',"`"$env:EVIDENCE/probe-report.json`"")
+          @{executable=(Get-Command bun).Source; argv=$argv; timeoutMilliseconds=60000; cleanupObservationMilliseconds=5000} |
+            ConvertTo-Json | Set-Content "$env:EVIDENCE/invocation.json"
+          $child = Start-Process -FilePath (Get-Command bun).Source -ArgumentList $argv -NoNewWindow -PassThru `
+            -RedirectStandardOutput "$env:EVIDENCE/probe-stdout.log" -RedirectStandardError "$env:EVIDENCE/probe-stderr.log"
+          $result = @{state='not measured'; capability='unknown'; chromeCoverage='not measured'; cleanup='unknown'; timedOut=$false}
+          if (-not $child.WaitForExit(60000)) {
+            $result.timedOut=$true
+            $child.Kill()
+            $result.controllerExitObserved=$child.WaitForExit(5000)
+          } else {
+            $result.exitCode=$child.ExitCode
+            if ($child.ExitCode -eq 0 -and (Test-Path "$env:EVIDENCE/probe-report.json")) {
+              $report = Get-Content "$env:EVIDENCE/probe-report.json" -Raw | ConvertFrom-Json
+              $counts = Get-Content "$env:EVIDENCE/probe-stdout.log" -Raw | ConvertFrom-Json
+              if ($report.state -cne 'controlled Bun debug feasibility measured' -or $report.capability -cne 'unknown' -or
+                  $report.chromeCoverage -cne 'not measured' -or $report.lanes.Count -ne 2 -or
+                  $counts.total -ne 2 -or $counts.failed -ne 0 -or $counts.skipped -ne 0 -or
+                  @($report.lanes | Where-Object { $_.state -cne 'controlled lane measured' -or $_.cleanup.confirmed -ne $true }).Count -ne 0) {
+                throw 'Invalid controlled producer report'
+              }
+              foreach ($lane in $report.lanes) {
+                if ($lane.helperOuterContainment -ne $true -or $lane.rootOuterContainment -ne $true -or
+                    $lane.rootHandoff.rights -ne 0x00101101 -or $lane.helperOutsidePrivateJob -ne $true -or $lane.creatorReceipt.killPolicyFalse -ne $true -or $lane.records.Count -ne 2 -or $lane.after.Count -ne 2 -or
+                    $lane.cleanup.outstanding.Count -ne 0 -or $lane.cleanup.errors.Count -ne 0 -or $lane.cleanup.jobHandleStillOwned -ne $false -or $lane.cleanup.outerJobHandleStillOwned -ne $false -or
+                    $lane.transferSeal.session -cne $lane.session -or $lane.transferSeal.nextSequence -ne 2 -or
+                    $lane.transferSeal.noFurtherTransfers -ne $true -or $lane.transferSeal.inventory.Count -ne 2 -or
+                    $lane.transferSeal.creatorThread -ne $lane.creatorReceipt.thread -or $lane.transferSeal.events -ne $lane.transferSeal.continued -or
+                    $lane.cleanup.processCleanup -ne $true -or $lane.cleanup.transferCoverage -cne 'confirmed controlled transfer inventory') {
+                  throw 'Invalid lifetime ownership evidence'
+                }
+                for ($i = 0; $i -lt 2; $i++) {
+                  $sealed = $lane.transferSeal.inventory[$i]; $actual = $lane.records[$i]
+                  if ($sealed.sequence -ne $i -or $sealed.sequence -ne $actual.sequence -or
+                      $sealed.handle -ne $actual.handle -or $sealed.pid -ne $actual.pid) { throw 'Exact sealed transfer inventory differs' }
+                }
+                foreach ($row in $lane.records) {
+                  $measured = @($lane.after | Where-Object { $_.pid -eq $row.pid })
+                  if ($row.rights -ne 0x00101000 -or $row.jobMember -ne $true -or $row.immediateParent -cne 'not measured' -or $measured.Count -ne 1 -or
+                      $measured[0].state -cne 'exited' -or $measured[0].creationTicks -cne $row.identity.creationTicks -or
+                      $measured[0].image -cne $row.identity.image -or [UInt64]$measured[0].exitTicks -le [UInt64]$row.identity.creationTicks) {
+                    throw 'Same generation exit is unknown'
+                  }
+                }
+              }
+              $jobLane = @($report.lanes | Where-Object { $_.mode -ceq 'job-close' })
+              $deathLane = @($report.lanes | Where-Object { $_.mode -ceq 'debugger-death' })
+              if ($jobLane.Count -ne 1 -or $deathLane.Count -ne 1 -or $jobLane[0].jobClosedBeforeExit -ne $true -or
+                  $jobLane[0].producer.events -ne $jobLane[0].producer.continued -or $jobLane[0].producer.killPolicyFalse -ne $true -or
+                  $deathLane[0].afterDebuggerDeath.Count -ne 2 -or
+                  @($deathLane[0].afterDebuggerDeath | Where-Object { $_.state -cne 'alive' -or $_.jobMember -ne $true }).Count -ne 0 -or
+                  @($deathLane[0].after | Where-Object { $_.exitCode -ne 0 }).Count -ne 0) { throw 'Paired lifetime mechanisms not distinguished' }
+              $result.state='controlled Bun debug feasibility measured'; $result.cleanup='producer confirmed both controlled lanes'
+            }
+          }
+          [string[]] $paths = @(git ls-files)
+          [Array]::Sort($paths, [StringComparer]::Ordinal)
+          $rows = foreach ($path in $paths) { "$path`t$((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant())" }
+          [IO.File]::WriteAllText("$env:EVIDENCE/source-after.txt", ($rows -join "`n")+"`n", [Text.UTF8Encoding]::new($false))
+          $result.sourceUnchanged=(Get-FileHash "$env:EVIDENCE/source-before.txt").Hash -ceq (Get-FileHash "$env:EVIDENCE/source-after.txt").Hash
+          $result | ConvertTo-Json | Set-Content "$env:EVIDENCE/runner-result.json"
+          if ($result.state -cne 'controlled Bun debug feasibility measured' -or -not $result.sourceUnchanged) { exit 1 }
+      - name: Preserve actual, failed and unknown evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-debug-provider-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: error
