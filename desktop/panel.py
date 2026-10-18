@@ -30,6 +30,8 @@ Run with /usr/bin/python3: the system interpreter has the GTK bindings, a virtua
 """
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import threading
 
@@ -81,7 +83,7 @@ import cairo  # noqa: E402
 import math  # noqa: E402
 
 from panel_broker import (BrokerClient, broker_socket, claim_the_mark, command_socket_path, launcher_json,
-                           notify, read_status, rpc, session_shape, viewer_link_is_local)  # noqa: E402
+                           notify, read_status, rpc, session_shape)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 
@@ -974,7 +976,7 @@ class Panel(Gtk.Application):
         column.append(label("  ·  ".join(f"⁨{p}⁩" for p in parts if p), "orbit-dim"))
         button.set_child(column)
         button.update_property([Gtk.AccessibleProperty.LABEL], [f"{session.get('agentName', 'Agent')}: {session.get('taskName', '')}"])
-        button.connect("clicked", lambda *_: self.watch_sessions())
+        button.connect("clicked", lambda *_: self.watch_sessions(session.get("sessionId")))
         return button
 
     def sync_frame(self, force=False):
@@ -1052,25 +1054,17 @@ class Panel(Gtk.Application):
             return
         self.set_expanded(True)
 
-    def watch_sessions(self):
-        """Open the live viewer, where the person watches the private desktop and can step in.
-        The link carries an access token, so it is requested now and never written anywhere."""
+    def watch_sessions(self, session_id):
+        """Open Orbit's native window for one session: the private desktop live, Take over and Hand
+        back. No browser and no link: the window talks to the broker over the owner-only socket."""
+        if not isinstance(session_id, str) or not session_id:
+            return
         try:
-            answer = rpc(self.path, "preview.open", {"launch": True, "view": "sessions",
-                                                     "browser": self.settings["viewerBrowser"],
-                                                     "appWindow": self.settings["viewerAppWindow"]})
-        except Exception as error:
-            print(f"panel: could not open the viewer: {error}", file=sys.stderr)
-            return
-        url = answer.get("url", "") if isinstance(answer, dict) else ""
-        if not viewer_link_is_local(url):
-            print("panel: the broker returned something other than a local viewer link; not opening it", file=sys.stderr)
-            return
-        # The broker opens it in Orbit's own browser window, never the person's profile. When it
-        # declines, the token stays out of the default browser: nothing is opened from here.
-        if not answer.get("opened"):
-            print("panel: the viewer could not be opened in Orbit's own browser window; "
-                  "run sbar-orbit preview to print its link", file=sys.stderr)
+            subprocess.Popen([sys.executable, str(Path(__file__).with_name("session_window.py")), session_id],
+                             env={**os.environ, "ORBIT_SOCKET": self.path}, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as error:
+            print(f"panel: the session window could not start: {error}", file=sys.stderr)
 
     def listen_for_commands(self):
         """Do what another invocation asked for, rather than letting it start a second mark."""

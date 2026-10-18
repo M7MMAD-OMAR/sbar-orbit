@@ -1,5 +1,6 @@
 """Exercise desktop launch routing without importing GTK or starting applications."""
 import ast
+import os
 from pathlib import Path
 import sys
 import types
@@ -29,26 +30,28 @@ class DesktopBrowserRetirementTests(unittest.TestCase):
         action(panel)
         self.assertEqual(calls, [('expanded', True)])
 
-    def test_session_card_opens_the_live_viewer(self):
-        # A declined launch never falls back to the person's default browser and profile.
-        for opened, expected in [(True, []), (False, [])]:
-            with self.subTest(opened=opened):
-                calls = []
-                class Launcher:
-                    def launch(self, *_args):
-                        calls.append('uri-launch')
-                def rpc(path, method, params):
-                    calls.append((path, method, params))
-                    return {'url': 'http://127.0.0.1:12345/#' + 'a' * 64, 'opened': opened}
-                panel = types.SimpleNamespace(path='/fixture.sock', settings={'viewerBrowser': 'fixture', 'viewerAppWindow': True})
-                action = function('desktop/panel.py', 'watch_sessions', {
-                    'rpc': rpc, 'sys': sys, 'viewer_link_is_local': lambda url: url.startswith('http://127.0.0.1:'),
-                    'Gtk': types.SimpleNamespace(UriLauncher=types.SimpleNamespace(new=lambda _url: Launcher())),
-                }, class_name='Panel')
-                action(panel)
-                self.assertEqual(calls[0], ('/fixture.sock', 'preview.open',
-                                            {'launch': True, 'view': 'sessions', 'browser': 'fixture', 'appWindow': True}))
-                self.assertEqual(calls[1:], expected)
+    def test_session_card_opens_the_native_session_window_without_a_browser(self):
+        calls = []
+        def popen(argv, **kwargs):
+            calls.append((argv, kwargs['env']['ORBIT_SOCKET']))
+        def rpc(*_args):
+            calls.append('browser-rpc')
+        action = function('desktop/panel.py', 'watch_sessions', {
+            'subprocess': types.SimpleNamespace(Popen=popen, DEVNULL=-3), 'sys': sys, 'os': os, 'Path': Path, 'rpc': rpc,
+            '__file__': str(ROOT / 'desktop/panel.py'),
+        }, class_name='Panel')
+        action(types.SimpleNamespace(path='/fixture.sock'), 'session-1')
+        self.assertEqual(calls, [([sys.executable, str(ROOT / 'desktop/session_window.py'), 'session-1'], '/fixture.sock')])
+        action(types.SimpleNamespace(path='/fixture.sock'), None)
+        self.assertEqual(len(calls), 1)
+
+    def test_session_window_maps_clicks_onto_the_scaled_picture(self):
+        point = function('desktop/session_window.py', 'image_point', {})
+        self.assertEqual(point(640, 400, 1280, 800, 1280, 800), (640, 400))
+        self.assertEqual(point(640, 400, 1280, 1000, 1280, 800), (640, 300))
+        self.assertIsNone(point(640, 50, 1280, 1000, 1280, 800))
+        self.assertEqual(point(150, 200, 300, 400, 600, 800), (300, 400))
+        self.assertIsNone(point(10, 10, 0, 0, 1280, 800))
 
     def test_viewer_link_check_parses_the_host(self):
         local = function('desktop/panel_broker.py', 'viewer_link_is_local', {})
@@ -63,18 +66,6 @@ class DesktopBrowserRetirementTests(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertFalse(local(url))
 
-    def test_session_card_refuses_a_non_local_viewer_link(self):
-        printed = []
-        stderr = types.SimpleNamespace(write=lambda text: printed.append(text), flush=lambda: None)
-        action = function('desktop/panel.py', 'watch_sessions', {
-            'rpc': lambda *_args: {'url': 'https://example.com/#token', 'opened': True},
-            'sys': types.SimpleNamespace(stderr=stderr),
-            'viewer_link_is_local': lambda url: url.startswith('http://127.0.0.1:'),
-            'Gtk': None,
-        }, class_name='Panel')
-        action(types.SimpleNamespace(path='/fixture.sock', settings={'viewerBrowser': '', 'viewerAppWindow': True}))
-        self.assertIn('other than a local viewer link', ''.join(printed))
-
     def test_clicking_a_session_card_watches_the_session(self):
         calls, handlers = [], []
         class Widget:
@@ -85,12 +76,12 @@ class DesktopBrowserRetirementTests(unittest.TestCase):
                                     Orientation=types.SimpleNamespace(VERTICAL=1, HORIZONTAL=0),
                                     AccessibleProperty=types.SimpleNamespace(LABEL=0))
         action = function('desktop/panel.py', 'card', {'Gtk': gtk, 'label': lambda *_args: Widget()}, class_name='Panel')
-        panel = types.SimpleNamespace(watch_sessions=lambda: calls.append('watch'), open_viewer=lambda: calls.append('list'))
-        action(panel, {'agentName': 'Agent', 'taskName': 'Task', 'state': 'running', 'backend': 'fedora'})
+        panel = types.SimpleNamespace(watch_sessions=lambda session_id: calls.append(('watch', session_id)), open_viewer=lambda: calls.append('list'))
+        action(panel, {'sessionId': 'session-1', 'agentName': 'Agent', 'taskName': 'Task', 'state': 'running', 'backend': 'fedora'})
         clicked = [handler for signal, handler in handlers if signal == 'clicked']
         self.assertEqual(len(clicked), 1)
         clicked[0](None)
-        self.assertEqual(calls, ['watch'])
+        self.assertEqual(calls, [('watch', 'session-1')])
 
     def test_settings_action_exposes_native_configuration_notice(self):
         calls = []

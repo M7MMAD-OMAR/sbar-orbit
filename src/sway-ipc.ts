@@ -3,7 +3,7 @@ import { endianness } from "node:os";
 import { OrbitError } from "./errors";
 
 /** One bounded request to an explicitly owned compositor. No socket discovery. */
-export function swayRequest(path: string, type: 0 | 1 | 4, payload = ""): Promise<any> {
+export function swayRequest(path: string, type: 0 | 1 | 3 | 4, payload = ""): Promise<any> {
   if (!/^\/tmp\/orbit-native-[^/]+\/sway-ipc\.[^/]+\.sock$/.test(path))
     return Promise.reject(new OrbitError("INVALID_REQUEST", "Private Orbit compositor socket required"));
   const body = Buffer.from(payload);

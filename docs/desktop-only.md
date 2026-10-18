@@ -9,13 +9,16 @@ connected adapters therefore cannot recreate a browser session against this brok
 browser code and tests remain during migration; they are not
 a supported public route and their measurements do not prove native behavior.
 
-The session viewer is a loopback page on `127.0.0.1` with a fresh access token,
-served by the broker. Clicking a session card in the panel, or `sbar-orbit preview open`,
-opens it in Orbit's own browser window; `sbar-orbit preview` prints the link and opens
-nothing. It shows the private desktop live, and Take over pauses the agent so the owner
-can click and type, then Hand back. It is a viewing window for the owner, not an agent
-session: browser sessions for agents stay retired. Clicking the Orbit mark still opens the
-native session list. Settings remain editable through `sbar-orbit config`.
+Clicking a session card in the panel opens Orbit's native session window
+(`desktop/session_window.py`), a GTK window with no browser. It shows the private desktop
+live, and Take over pauses the agent so the owner can click, scroll and type into it, then
+Hand back. A private session created with `visible: true` goes further: its compositor is
+drawn as one real window on the owner's desktop instead of off screen, its applications run
+inside that window and can be used directly, and the agent's input still goes only to that
+private desktop. Its surface follows the size the owner's compositor gives the window.
+`sbar-orbit preview` remains a tokened loopback page for those who want it. Clicking the
+Orbit mark still opens the native session list. Settings remain editable through
+`sbar-orbit config`.
 
 ## Acceptance contract
 

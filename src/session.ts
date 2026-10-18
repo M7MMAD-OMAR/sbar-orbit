@@ -188,6 +188,9 @@ export class Sessions {
     if (input.handoff !== undefined && requested !== "native")
       throw new OrbitError("INVALID_REQUEST", "Existing application handoff requires the native backend");
     const handoff = input.handoff === undefined ? undefined : parseHandoff(input.handoff);
+    if (input.visible !== undefined && (typeof input.visible !== "boolean" || requested !== "fedora"))
+      throw new OrbitError("INVALID_REQUEST", "visible is a true or false option of the private system desktop");
+    const visible = input.visible === true;
     if (this.sessions.size + this.creating.size + this.pendingBrowserCleanup.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
@@ -278,7 +281,7 @@ export class Sessions {
           if (!this.native) throw new OrbitError("UNSUPPORTED", "Native backend is not configured");
           return await NativeBackend.create(join(profile, "native-worker"), this.native, handoff);
         }
-        return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins)
+        return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins, visible)
           : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
       });
       this.creationTail = start.catch(() => {});

@@ -116,14 +116,25 @@ int main(int argc, char **argv) {
     if (wl_display_roundtrip(display) < 0) return 4;
     puts("ready"); fflush(stdout);
     unsigned x, y;
+    /* Absolute coordinates are in the output's logical size: 1280 by 800 off screen, and whatever
+       the person's compositor made the window when the private desktop is drawn as one. */
+    unsigned width = 1280, height = 800;
     char line[4096];
     while (fgets(line, sizeof(line), stdin)) {
+        if (strncmp(line, "size ", 5) == 0) {
+            unsigned w, h;
+            char trailing;
+            if (sscanf(line, "size %u %u %c", &w, &h, &trailing) != 2 || w < 64 || h < 64 || w > 7680 || h > 7680) return 16;
+            width = w; height = h;
+            puts("ok"); fflush(stdout);
+            continue;
+        }
         if (strncmp(line, "scroll ", 7) == 0) {
             int steps;
             char trailing;
             if (sscanf(line, "scroll %u %u %d %c", &x, &y, &steps, &trailing) != 3
-                || x >= 1280 || y >= 800 || steps == 0 || steps < -20 || steps > 20) return 15;
-            zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, 1280, 800);
+                || x >= width || y >= height || steps == 0 || steps < -20 || steps > 20) return 15;
+            zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, width, height);
             zwlr_virtual_pointer_v1_frame(pointer);
             if (wl_display_roundtrip(display) < 0) return 6;
             /* Establish an unchanged axis baseline before the requested wheel delta. */
@@ -189,8 +200,8 @@ int main(int argc, char **argv) {
             continue;
         }
         if (sscanf(line, "%u %u", &x, &y) != 2) return 13;
-        if (x >= 1280 || y >= 800) return 5;
-        zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, 1280, 800);
+        if (x >= width || y >= height) return 5;
+        zwlr_virtual_pointer_v1_motion_absolute(pointer, timestamp(), x, y, width, height);
         zwlr_virtual_pointer_v1_frame(pointer);
         if (wl_display_roundtrip(display) < 0) return 6;
         zwlr_virtual_pointer_v1_button(pointer, timestamp(), 272, WL_POINTER_BUTTON_STATE_PRESSED);

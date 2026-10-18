@@ -235,3 +235,26 @@ test("the viewer never falls back to the person's own browser when no private wi
     expect(spawn.mock.calls.filter(call => JSON.stringify(call).includes(url))).toEqual([]);
   } finally { spawn.mockRestore(); await rm(empty, { recursive: true, force: true }); }
 });
+
+test("a visible private desktop needs exactly one Wayland socket of the person's desktop", async () => {
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { hostWaylandDisplay } = await import("../src/fedora");
+  const runtime = await mkdtemp(join(tmpdir(), "orbit-visible-"));
+  const server = Bun.serve({ unix: join(runtime, "wayland-1"), fetch: () => new Response("") });
+  try {
+    expect(await hostWaylandDisplay(runtime, undefined)).toBe(join(runtime, "wayland-1"));
+    expect(await hostWaylandDisplay(runtime, "wayland-1")).toBe(join(runtime, "wayland-1"));
+    await writeFile(join(runtime, "wayland-2"), "");
+    await expect(hostWaylandDisplay(runtime, undefined)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(hostWaylandDisplay(runtime, "wayland-2")).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(hostWaylandDisplay(undefined, undefined)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { server.stop(true); await rm(runtime, { recursive: true, force: true }); }
+});
+
+test("visible is an option of the private system desktop only", async () => {
+  const broker = await startBroker();
+  try {
+    await expect(call(broker.socket, "session.create", { backend: "system", visible: "yes" })).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    await expect(call(broker.socket, "session.create", { backend: "native", visible: true })).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { await broker.close(); }
+});

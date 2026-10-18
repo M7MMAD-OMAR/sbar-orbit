@@ -107,6 +107,7 @@ export function createMcpServer(socket: string) {
       conversationName: z.string().min(1).max(80).optional().describe("The actual conversation title, when your host makes it available. Shown in the viewer tab. Do not invent a host title."),
       projectName: z.string().min(1).max(80).optional().describe("The project this work belongs to, when known. Shown beside the conversation in the viewer."),
       backend: z.enum(["system", "fedora", "native"]).default("system").describe("system for a private desktop; fedora is its compatibility alias; native for configured application control. Existing owner handoff is released only for the evidenced plugin build."),
+      visible: z.boolean().optional().describe("system only: draw the private desktop as one real window on the person's desktop, where its applications run and can be used directly, instead of off screen. The agent's input still goes only to that private desktop."),
       viewport: viewport.optional().describe("Surface size in pixels, default 1280 by 800, capped at 1920 by 1200 in total. Larger surfaces cost more to capture, so ask for one only when an application needs the room."),
       policy: z.object({
         mode: z.enum(["supervised", "autonomous"]).optional(),

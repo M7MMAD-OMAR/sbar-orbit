@@ -1,15 +1,16 @@
 # Session viewer
 
-The viewer is how the owner watches a private desktop session and steps in. Clicking a session
-card in the panel, or `sbar-orbit preview open`, opens it in Orbit's own browser window with a
-profile of its own; `sbar-orbit preview` prints the tokened loopback link and opens nothing.
+This page is the optional loopback viewer. The panel no longer opens it: a session card opens
+Orbit's native session window, described in the [desktop contract](desktop-only.md).
+`sbar-orbit preview open` still opens this page in Orbit's own browser window with a profile of
+its own; `sbar-orbit preview` prints the tokened loopback link and opens nothing.
 Clicking the Orbit mark opens the native session list, and settings remain available through
 `sbar-orbit config`. Browser sessions for agents stay retired: the viewer is a window for the
 owner, not an agent backend. See the current [desktop contract](desktop-only.md). Sections below
 that mention browser sessions describe that retired backend.
 
 **Measurements:** Current resource and sustained-run results are summarized in [validation](validation.md). Older timing numbers below describe their individual trials.
-Implemented for private desktop sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open`, and a session card in the panel, open it in Orbit's own browser window.
+Implemented for private desktop sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open` opens it in Orbit's own browser window.
 
 ## Opening it as its own window
 

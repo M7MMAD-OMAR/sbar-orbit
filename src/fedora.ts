@@ -153,9 +153,28 @@ async function sessionOf(pid: number): Promise<number | undefined> {
   } catch { return undefined; }
 }
 
+/**
+ * The person's Wayland socket, for a visible private desktop. The broker usually runs as a user
+ * service without WAYLAND_DISPLAY, so a single wayland-N socket in the runtime directory is used;
+ * several are ambiguous and refused rather than guessed.
+ */
+export async function hostWaylandDisplay(runtime: string | undefined, named: string | undefined) {
+  if (!runtime) throw new OrbitError("UNSUPPORTED", "A visible desktop needs the person's XDG_RUNTIME_DIR");
+  const candidates = named ? [named] : (await readdir(runtime)).filter(name => /^wayland-\d+$/.test(name));
+  const [only] = candidates;
+  if (candidates.length !== 1 || !only) throw new OrbitError("UNSUPPORTED", "A visible desktop needs exactly one Wayland display on this desktop");
+  const path = only.startsWith("/") ? only : join(runtime, only);
+  if (!(await lstat(path)).isSocket()) throw new OrbitError("UNSUPPORTED", "The person's Wayland display is not a socket");
+  return path;
+}
+
 export class FedoraBackend {
   parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
+  /** The compositor output: HEADLESS-1 when private and off screen, WL-1 when drawn as a window. */
+  output = "HEADLESS-1";
+  /** The coordinate space the input helper was last told, which a visible window can change. */
+  private extent: Viewport = { width: 1280, height: 800 };
   readonly capabilities = ["launch", "launch-installed", "launch-app", "pointer", "scroll", "text", "paste", "key", "resize", "window", "desktops", "desktop", "list-windows", "move-window", "observe", "pause", "resume", "stop"];
   private readonly workspaces = new SwayWorkspaceAdapter({
     tree: () => this.ipc("-t", "get_tree"),
@@ -198,7 +217,7 @@ export class FedoraBackend {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
-  static async create(size: Viewport = defaultViewport, origins: () => string[] | "any" = () => "any") {
+  static async create(size: Viewport = defaultViewport, origins: () => string[] | "any" = () => "any", visible = false) {
   await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Fedora backend requires Linux");
     // Resolved per session rather than at import, because the runtime is shared between versions now
@@ -215,6 +234,12 @@ export class FedoraBackend {
     let preferenceSnapshot: NativePreferenceSnapshot = "absent";
     const audioSockets: string[] = [];
     const hostRuntime = process.env.XDG_RUNTIME_DIR;
+    // A visible desktop is the same private compositor drawn as one ordinary window on the person's
+    // desktop instead of a headless output. It is a client of their compositor like any other window:
+    // it receives their input only when they choose to work in it, and capture still reads only its
+    // own output, never the person's screen.
+    const hostDisplay = visible ? await hostWaylandDisplay(hostRuntime, process.env.WAYLAND_DISPLAY) : undefined;
+    const output = visible ? "WL-1" : "HEADLESS-1";
     const env = { ...process.env };
     try {
     for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "SWAYSOCK", "I3SOCK", "HYPRLAND_INSTANCE_SIGNATURE", "NOTIFY_SOCKET", "XAUTHORITY", "AT_SPI_BUS_ADDRESS", "AT_SPI_REGISTRY", "AT_SPI_DISPLAY", "DBUS_STARTER_ADDRESS", "DBUS_STARTER_BUS_TYPE", ...inheritedAppearance])
@@ -245,12 +270,12 @@ export class FedoraBackend {
     const appearance = await applyAppearance(base.XDG_CONFIG_HOME);
     preferenceSnapshot = await seedNativePreferences(base.XDG_CONFIG_HOME);
     delete env.PULSE_SERVER;
-    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, ...(pulseServer ? { PULSE_SERVER: pulseServer } : {}), WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1", ...renderer.env,
+    Object.assign(env, base, appearance.env, { XDG_RUNTIME_DIR: directory, ...(pulseServer ? { PULSE_SERVER: pulseServer } : {}), ...(hostDisplay ? { WLR_BACKENDS: "wayland", WAYLAND_DISPLAY: hostDisplay } : { WLR_BACKENDS: "headless", WLR_HEADLESS_OUTPUTS: "1" }), ...renderer.env,
       WLR_LIBINPUT_NO_DEVICES: "1", LD_LIBRARY_PATH: join(runtime, "root/usr/lib64"), NO_AT_BRIDGE: "1",
       DBUS_SESSION_BUS_ADDRESS: `unix:path=${directory}/no-session-bus` });
     const config = join(directory, "sway.conf");
     const cursor = appearance.cursor ? `seat seat0 xcursor_theme ${appearance.cursor.theme} ${appearance.cursor.size}\n` : "";
-    await writeFile(config, `output HEADLESS-1 mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
+    await writeFile(config, `output ${output} mode ${size.width}x${size.height}\nseat seat0 fallback true\n${cursor}xwayland force\ndefault_border none\nfocus_follows_mouse no\n`);
     compositor = spawn("/usr/bin/python3", [join(project, "src/native/supervise.py"), join(directory, "compositor.json"), join(executables, "sway"), ...(renderer.renderer === "pixman" ? [] : ["-V"]), "-c", config], { env, detached: true });
     // The compositor's own output is the only evidence when a display fails to start, so keep it
     // beside the session rather than discarding it. Bounded, because sway can log per frame.
@@ -268,6 +293,8 @@ export class FedoraBackend {
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
     const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets, hostRuntime, origins);
+    backend.output = output;
+    backend.extent = { width: size.width, height: size.height };
     try {
       await backend.wait(async () => {
         const files = await readdir(directory);
@@ -464,7 +491,7 @@ export class FedoraBackend {
   private async ipc(...args: string[]) {
     this.ensureOpen();
     const query = args[0] === "-t" ? args[1] : undefined;
-    const type = query === "get_tree" ? 4 : query === "get_workspaces" ? 1 : 0;
+    const type = query === "get_tree" ? 4 : query === "get_workspaces" ? 1 : query === "get_outputs" ? 3 : 0;
     const result = await swayRequest(this.swaySocket, type, query ? "" : args.join(" "));
     if (Array.isArray(result) && result.some(v => v.success === false)) throw new OrbitError("BACKEND_FAILED", "Private display rejected command");
     return result;
@@ -546,7 +573,7 @@ export class FedoraBackend {
     if (action.type === "resize") {
       // The private display has one output, so resizing it is what gives an application more room.
       // The pointer position is kept only if it still lands on the new surface.
-      await this.ipc("output", "HEADLESS-1", "mode", "--custom", `${action.width}x${action.height}`);
+      await this.ipc("output", this.output, "mode", "--custom", `${action.width}x${action.height}`);
       this.size = { width: action.width, height: action.height };
       if (this.pointer && (this.pointer.x >= action.width || this.pointer.y >= action.height)) this.pointer = null;
       return { width: action.width, height: action.height };
@@ -724,6 +751,10 @@ export class FedoraBackend {
       await acknowledgement;
       return { applied: true, clipboard: "session", shortcut: "Ctrl+V" };
     }
+    if ((action.type === "pointer" || action.type === "scroll") && this.output !== "HEADLESS-1") {
+      await this.followWindowSize();
+      requireInside(this.size, action.x, action.y);
+    }
     const acknowledgement = this.reply("ok");
     this.input().stdin.write(action.type === "pointer" ? `${action.x} ${action.y}\n` : action.type === "scroll" ? `scroll ${action.x} ${action.y} ${action.deltaY}\n` : action.type === "key" ? `key ${action.key}\n` : `text ${action.text}\n`);
     await acknowledgement;
@@ -762,10 +793,31 @@ export class FedoraBackend {
       pageCount: windows.length, pageIndex: app ? windows.indexOf(app) + 1 : 0,
       tabs: windows.map((window, index) => ({ tab: index + 1, label: window.title, active: window.focused })) };
   }
+  /**
+   * A visible desktop is as large as the window the person's compositor gave it, which changes when
+   * they tile, float or resize it. Its logical size becomes the session surface, so observed images,
+   * coordinates and the input helper agree.
+   */
+  private async outputSize(): Promise<Viewport> {
+    const outputs = await this.ipc("-t", "get_outputs") as { name?: string; rect?: { width?: number; height?: number } }[];
+    const rect = outputs.find(entry => entry.name === this.output)?.rect;
+    if (!rect || !Number.isInteger(rect.width) || !Number.isInteger(rect.height) || !rect.width || !rect.height)
+      throw new OrbitError("BACKEND_FAILED", "The visible desktop has no output size");
+    return { width: rect.width, height: rect.height };
+  }
+  private async followWindowSize() {
+    this.size = await this.outputSize();
+    if (this.size.width === this.extent.width && this.size.height === this.extent.height) return;
+    const acknowledgement = this.reply("ok");
+    this.input().stdin.write(`size ${this.size.width} ${this.size.height}\n`);
+    await acknowledgement;
+    this.extent = { ...this.size };
+  }
   async observe() {
     const capturedAt = Date.now();
     this.ensureOpen();
-    const image = await command(["/usr/bin/grim", "-o", "HEADLESS-1", "-t", capture.type, "-q", capture.quality, "-"], this.env);
+    if (this.output !== "HEADLESS-1") this.size = await this.outputSize();
+    const image = await command(["/usr/bin/grim", "-o", this.output, "-t", capture.type, "-q", capture.quality, "-"], this.env);
     return { mimeType: capture.mimeType, image: image.toString("base64"), capturedAt, width: this.size.width, height: this.size.height, presence: await this.presence() };
   }
   /** Drop a supervisor that has exited and terminate whatever it left behind. */
