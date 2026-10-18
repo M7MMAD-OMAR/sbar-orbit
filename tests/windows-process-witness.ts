@@ -1,5 +1,6 @@
 import { win32 } from "node:path";
 import type { Pointer } from "bun:ffi";
+import type { CensusRow } from "./windows-owned-census";
 
 export class WitnessCaptureError extends AggregateError {
   constructor(primary: unknown, cleanup: unknown, readonly close: () => void) {
@@ -45,7 +46,7 @@ export function captureProcessWitnesses(pids: number[], api: WitnessApi) {
   }) };
 }
 
-export async function windowsWitnessApi(): Promise<WitnessApi> {
+export async function windowsWitnessApi(): Promise<WitnessApi & { scan(observe: (row: CensusRow) => void): void }> {
   const { dlopen, ptr } = await import("bun:ffi");
   const api = dlopen("kernel32.dll", {
     OpenProcess: { args: ["u32", "bool", "u32"], returns: "ptr" },
@@ -55,9 +56,46 @@ export async function windowsWitnessApi(): Promise<WitnessApi> {
     GetExitCodeProcess: { args: ["ptr", "ptr"], returns: "bool" },
     CloseHandle: { args: ["ptr"], returns: "bool" },
     GetLastError: { args: [], returns: "u32" },
+    CreateToolhelp32Snapshot: { args: ["u32", "u32"], returns: "ptr" },
+    Process32FirstW: { args: ["ptr", "ptr"], returns: "bool" },
+    Process32NextW: { args: ["ptr", "ptr"], returns: "bool" },
   }).symbols;
   const fail = (operation: string): never => { throw new Error(`${operation} failed, error ${api.GetLastError()}`); };
   return {
+    scan(observe) {
+      if (process.arch !== "x64") throw new Error("Owned native census layout is unmeasured on this architecture");
+      const snapshot = api.CreateToolhelp32Snapshot(2, 0);
+      if (!snapshot || Number(snapshot) === -1 || Number(snapshot) === Number(0xffffffffffffffffn))
+        fail("CreateToolhelp32Snapshot owned census");
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        if (!api.CloseHandle(snapshot)) fail("CloseHandle owned census snapshot");
+        closed = true;
+      };
+      try {
+        // PROCESSENTRY32W on Windows x64, including ULONG_PTR alignment.
+        const entry = new Uint8Array(568), view = new DataView(entry.buffer);
+        view.setUint32(0, entry.byteLength, true);
+        let present = api.Process32FirstW(snapshot, ptr(entry));
+        while (present) {
+          const imageBytes = entry.subarray(44, 564);
+          let end = 0;
+          while (end < imageBytes.length && (imageBytes[end] !== 0 || imageBytes[end + 1] !== 0)) end += 2;
+          const pid = view.getUint32(8, true);
+          // PID zero is the Windows idle pseudo-process, never an owned child.
+          if (pid !== 0) observe({ pid, parentPid: view.getUint32(32, true),
+            image: Buffer.from(imageBytes.subarray(0, end)).toString("utf16le") });
+          present = api.Process32NextW(snapshot, ptr(entry));
+        }
+        const error = api.GetLastError();
+        if (error !== 18) throw new Error(`Owned process census enumeration failed, error ${error}`);
+      } catch (error) {
+        try { close(); } catch (cleanup) { throw new WitnessCaptureError(error, cleanup, close); }
+        throw error;
+      }
+      try { close(); } catch (error) { throw new WitnessCaptureError(error, error, close); }
+    },
     open(pid) {
       const handle = api.OpenProcess(0x00101000, false, pid);
       const value = Number(handle);
