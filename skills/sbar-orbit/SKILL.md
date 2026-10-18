@@ -11,18 +11,6 @@ remain off limits. Use Orbit for desktop interaction while enabled, including
 work on this repository. Ordinary file, API and public web research tasks can
 use their direct tools without creating a desktop session.
 
-## No browser use
-
-The owner prohibits browser use for all tasks on this workstation. Do not launch,
-attach to, control or automate a browser, including inside an Orbit private
-desktop. This includes headless browsers, embedded browser tools, Playwright,
-CDP, browser extensions, DOM actions and copied browser profiles. Do not route
-a desktop failure or a browser-only task through another browser tool or skill.
-Use native desktop applications through Orbit, direct file operations, APIs,
-search or HTTP text retrieval that does not start or control a browser. If the
-task requires a browser, report the blocker and continue any independent work.
-This preference does not uninstall browsers or technically revoke tool access.
-
 ## Short commands
 
 After selecting this skill, use `off`, `on`, or `status`; `usage` is optional.

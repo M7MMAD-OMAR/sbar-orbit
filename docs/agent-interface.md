@@ -94,12 +94,6 @@ Both carry the desktop-only contract and give explicit opt-out priority over
 automatic selection. Neither grants access to the owner's existing screen,
 windows or authenticated application session.
 
-The workstation owner prohibits all browser use, including browsers inside the
-private desktop, headless automation and embedded browser tools. These skills
-therefore route to non-browser desktop applications, files, APIs, search or HTTP
-text retrieval without a browser runtime. A task requiring a browser is blocked.
-This is an agent instruction, not technical removal of browser tools or programs.
-
 Install the directories through the host's skill mechanism. On this workstation,
 the shared skills and Codex, Claude Code and Hermes copies are updated together.
 For a fresh local installation with no existing skills of these names:
