@@ -61,6 +61,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
+import { boundedCommand } from "./lifecycle-command";
 
 /** The task's name, and the marker that proves Orbit wrote a task before anything removes one. */
 export const TASK_NAME = "SbarOrbitBroker";
@@ -92,10 +93,22 @@ function xml(value: string) {
  * `--managed-socket` for the same reason the systemd unit passes it: this is THE broker, on the
  * fixed path the connector configuration and every later command already name.
  */
-export function brokerTaskXml(launcher: string, sid: string, environment: Record<string, string> = {}) {
+export function brokerTaskEnvironment(environment: Record<string, string> = {}, recorded = false) {
   // Set by the shell before the launcher runs, which is how an `Exec` action gets an environment at
   // all: a task inherits no shell profile. The same defect the macOS LaunchAgent port measured.
-  const prefix = Object.entries(environment).map(([key, value]) => `set &quot;${xml(key)}=${xml(value)}&quot; &amp;&amp; `).join("");
+  const selected: Record<string, string> = recorded ? {} : { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: process.execPath };
+  for (const key of ["HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "ORBIT_SOCKET", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"])
+    if (!recorded && process.env[key]) selected[key] = process.env[key];
+  Object.assign(selected, environment);
+  return selected;
+}
+
+export function brokerTaskXml(launcher: string, sid: string, environment: Record<string, string> = {}, recorded = false) {
+  const prefix = Object.entries(brokerTaskEnvironment(environment, recorded)).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key) || /[\r\n\0"%]/.test(value))
+      throw new OrbitError("CONFIG_REQUIRED", "Task environment cannot contain shell expansion or control characters");
+    return `set &quot;${xml(key)}=${xml(value)}&quot; &amp;&amp; `;
+  }).join("");
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -145,9 +158,7 @@ export function brokerTaskXml(launcher: string, sid: string, environment: Record
 }
 
 async function schtasks(...args: string[]) {
-  const child = Bun.spawn(["schtasks.exe", ...args], { stdout: "pipe", stderr: "pipe" });
-  const [out, err] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
-  return { ok: await child.exited === 0, output: `${out}${err}`.trim() };
+  return boundedCommand(["schtasks.exe", ...args]);
 }
 
 /**
@@ -158,9 +169,9 @@ async function schtasks(...args: string[]) {
  * interpolated blindly: it lands inside XML that Task Scheduler will act on.
  */
 export async function currentUserSid(): Promise<string> {
-  const child = Bun.spawn(["whoami.exe", "/user", "/fo", "csv", "/nh"], { stdout: "pipe", stderr: "pipe" });
-  const output = (await new Response(child.stdout).text()).trim();
-  if (await child.exited !== 0) throw new OrbitError("UNSUPPORTED", "Could not read this account's SID");
+  const result = await boundedCommand(["whoami.exe", "/user", "/fo", "csv", "/nh"], 5_000);
+  const output = result.output;
+  if (!result.ok) throw new OrbitError("UNSUPPORTED", "Could not read this account's SID");
   const sid = /(S-1-[0-9-]+)/.exec(output)?.[1];
   if (!sid) throw new OrbitError("UNSUPPORTED", `Could not read this account's SID from: ${output.slice(0, 200)}`);
   return sid;
@@ -314,4 +325,91 @@ export async function registeredTaskXml(): Promise<string | null> {
 export async function readTaskXmlFile(path: string) {
   const bytes = await readFile(path);
   return bytes.toString("utf16le").replace(/^\ufeff/, "");
+}
+
+/** Exact complete task action proof. Unsupported or ambiguous XML refuses without expansion. */
+export function taskActionMatches(actual: string, expected: string) {
+  const validScalar = (point: number) => point === 9 || point === 10 || point === 13
+    || point >= 0x20 && point <= 0xd7ff || point >= 0xe000 && point <= 0xfffd
+    || point >= 0x10000 && point <= 0x10ffff;
+  const validCharacters = (value: string) => {
+    for (const character of value) {
+      const point = character.codePointAt(0);
+      if (point === undefined || !validScalar(point)) return false;
+    }
+    return true;
+  };
+  const action = (input: string): string | null => {
+    if (input.length > 4 * 1024 * 1024 || !validCharacters(input)) return null;
+    let text = input.startsWith("\uFEFF") ? input.slice(1) : input;
+    if (text.startsWith("<?")) {
+      const declaration = /^<\?xml[ \t\r\n]+version[ \t\r\n]*=[ \t\r\n]*(["'])1\.0\1(?:[ \t\r\n]+encoding[ \t\r\n]*=[ \t\r\n]*(["'])(?:[Uu][Tt][Ff]-8|[Uu][Tt][Ff]-16)\2)?(?:[ \t\r\n]+standalone[ \t\r\n]*=[ \t\r\n]*(["'])(?:yes|no)\3)?[ \t\r\n]*\?>[ \t\r\n]*/.exec(text);
+      if (!declaration) return null;
+      text = text.slice(declaration[0].length);
+    } else {
+      text = text.replace(/^[ \t\r\n]+/, "");
+    }
+    text = text.replace(/[ \t\r\n]+$/, "");
+    const stack: string[] = [];
+    const counts = new Map<string, number>();
+    let consumed = 0, start = -1, end = -1;
+    const validText = (value: string) => {
+      let valid = true;
+      const rest = value.replace(/&(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);/g, entity => {
+        if (entity.startsWith("&#")) {
+          const point = entity.startsWith("&#x") ? parseInt(entity.slice(3, -1), 16) : parseInt(entity.slice(2, -1), 10);
+          if (!validScalar(point)) valid = false;
+        }
+        return "";
+      });
+      return valid && !rest.includes("&");
+    };
+    for (const token of text.matchAll(/<(?:"[^"]*"|'[^']*'|[^'">])*?>|[^<]+/g)) {
+      const raw = token[0], offset = token.index;
+      if (offset === undefined || offset !== consumed) return null;
+      consumed += raw.length;
+      if (!raw.startsWith("<")) {
+        if (!validText(raw) || raw.includes("]]>") || (stack.length <= 1 || stack.at(-1) === "Actions" || stack.at(-1) === "Exec") && !/^[ \t\r\n]*$/.test(raw)) return null;
+        continue;
+      }
+      const closing = /^<\/([A-Za-z][A-Za-z0-9:._-]*)[ \t\r\n]*>$/.exec(raw);
+      if (closing) {
+        const name = closing[1];
+        if (!name || stack.pop() !== name) return null;
+        if (name === "Actions") end = consumed;
+        continue;
+      }
+      const opening = /^<([A-Za-z][A-Za-z0-9:._-]*)((?:[ \t\r\n]+[A-Za-z_][A-Za-z0-9:._-]*[ \t\r\n]*=[ \t\r\n]*(?:"[^"<]*"|'[^'<]*'))*)[ \t\r\n]*(\/?)>$/.exec(raw);
+      if (!opening || !opening[1]) return null;
+      const name = opening[1], attributes = opening[2] ?? "", empty = opening[3] === "/";
+      const attrs = new Map<string, string>();
+      for (const attr of attributes.matchAll(/([A-Za-z_][A-Za-z0-9:._-]*)[ \t\r\n]*=[ \t\r\n]*(?:"([^"<]*)"|'([^'<]*)')/g)) {
+        const key = attr[1], value = attr[2] ?? attr[3];
+        if (!key || value === undefined || attrs.has(key) || !validText(value)) return null;
+        attrs.set(key, value);
+      }
+      const local = name.split(":").at(-1);
+      if (local && ["Task", "Actions", "Exec", "Command", "Arguments", "ComHandler", "SendEmail", "ShowMessage"].includes(local) && name !== local) return null;
+      if (stack.length === 0 && name !== "Task") return null;
+      if (name === "Task") {
+        if (stack.length !== 0 || counts.has(name) || empty || attrs.size !== 2 || attrs.get("version") !== "1.4" || attrs.get("xmlns") !== "http://schemas.microsoft.com/windows/2004/02/mit/task") return null;
+      }
+      if (["Actions", "Exec", "Command", "Arguments"].includes(name)) {
+        if (counts.has(name) || empty) return null;
+        const parent = name === "Actions" ? "Task" : name === "Exec" ? "Task/Actions" : "Task/Actions/Exec";
+        if (stack.join("/") !== parent) return null;
+        if (name === "Actions") {
+          if (attrs.size !== 1 || attrs.get("Context") !== "Author") return null;
+          start = offset;
+        } else if (attrs.size !== 0) return null;
+      }
+      if (["ComHandler", "SendEmail", "ShowMessage"].includes(name) && stack.join("/") !== "Task/Actions") return null;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+      if (!empty) stack.push(name);
+    }
+    if (consumed !== text.length || stack.length !== 0 || ["Task", "Actions", "Exec", "Command", "Arguments"].some(name => counts.get(name) !== 1) || start < 0 || end <= start) return null;
+    return text.slice(start, end).replace(/>[ \t\r\n]+</g, "><");
+  };
+  const wanted = action(expected);
+  return wanted !== null && action(actual) === wanted;
 }

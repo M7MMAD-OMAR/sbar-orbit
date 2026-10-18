@@ -29,7 +29,7 @@
 
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { basename, dirname, join, posix } from "node:path";
 import { OrbitError } from "./errors";
 
 export const BROKER_LABEL = "com.sbar.orbit.broker";
@@ -73,14 +73,23 @@ function xml(value: string) {
  * long lived broker for the crime of staying alive while permitting a saturated core for minutes.
  * No value does both jobs, and docs/porting.md records the decision to delete it.
  */
-export function brokerAgentPlist(launcher: string, socket: string, home = homedir(), bunDirectory = dirname(process.execPath)) {
+export function brokerAgentPlist(launcher: string, socket: string, home = homedir(), bunDirectory = dirname(process.execPath), env = process.env) {
+  const runtime = env.ORBIT_BUN ?? posix.join(bunDirectory, basename(process.execPath));
+  if (!posix.isAbsolute(runtime) || posix.dirname(runtime) !== bunDirectory || /[\r\n\0]/.test(runtime))
+    throw new Error("Recorded Bun must be an exact absolute executable in the installed search directory");
   const entries: [string, string][] = [
+    ["ORBIT_MANAGED_ENV_SCHEMA", "1"],
     ["HOME", home],
     ["ORBIT_SOCKET", socket],
+    ["ORBIT_BUN", env.ORBIT_BUN ?? posix.join(bunDirectory, basename(process.execPath))],
     // launchd does not inherit the installer's shell PATH or BUN_INSTALL. Keep
     // the runtime that installed Orbit reachable, including custom Bun installs.
     ["PATH", [bunDirectory, "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":")],
   ];
+  for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "BUN_INSTALL"]) {
+    const value = env[key];
+    if (value && posix.isAbsolute(value)) entries.push([key, value]);
+  }
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -194,7 +203,7 @@ export async function enableLaunchAgent(launcher: string, socket: string, home =
   catch { throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file"); }
   const path = launchAgentPath(home, env);
   await mkdir(join(home, "Library", "Logs", "sbar-orbit"), { recursive: true, mode: 0o700 }).catch(() => {});
-  await writeAtomic(path, brokerAgentPlist(launcher, socket, home));
+  await writeAtomic(path, brokerAgentPlist(launcher, socket, home, dirname(process.execPath), env));
   if (!register) return { wrote: [path], bootstrapped: false, status: await launchAgentStatus(home, env) };
   // Boot out first, and ignore the failure: a label that was never loaded returns non zero, which is
   // the ordinary case on a first install rather than a problem.
