@@ -35,7 +35,17 @@
   },
   "notMeasured": [
     "Selection isolation between the claimed client and the owner clipboard",
-    "A claim on the owner's live compositor",
-    "Why the device entry the upstream lookup dereferenced was invalid; the corrected plugin no longer calls that lookup"
-  ]
+    "Why the device entry the upstream lookup dereferenced was invalid; the corrected plugin no longer calls that lookup",
+    "A retained measurement of a claim on the owner's live compositor",
+    "Why agent input did not reach the fixture on the live session"
+  ],
+  "live": {
+    "status": "partly traced",
+    "recorded": "2026-10-18, owner authorized, owner saved work first",
+    "setup": "throwaway GTK fixture opened silently on workspace 9 of the owner's Hyprland 0.56.2 with a Lua configuration",
+    "reported": "seven runs; plugin load and unload without a crash; claim, cursor, move, click, typing and handback commands returned success; active window before each run matched the reading after typing; a nested lab run of the same fixture received and saved typed text; none of these reports retained",
+    "traced": "five private run directories: four fixture states with empty text and nothing saved, one without fixture state; of two Wayland event logs one is empty and the other shows no keyboard or pointer event during the claim",
+    "notDelivered": "agent input did not reach the fixture on the live session although the plugin reported success",
+    "cleanupFailure": "the probe closed its fixture with classic dispatch syntax, refused by the Lua configuration; the last fixture stayed open until about 7:19 AM; none remained when checked at about 6 PM"
+  }
 }

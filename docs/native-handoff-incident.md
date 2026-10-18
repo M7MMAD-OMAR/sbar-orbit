@@ -1,6 +1,6 @@
 # Native handoff release hold
 
-**Status, 18 October 2026:** released only for the plugin source and Hyprland build recorded in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json). Any other plugin source or compositor build is refused. A claim on the live owner compositor is not yet measured.
+**Status, 18 October 2026:** released only for the plugin source and Hyprland build recorded in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json). Any other plugin source or compositor build is refused. A live owner claim with a throwaway fixture is partly traced below; agent input did not reach the fixture on the live session.
 
 The owner compositor crashed during an existing Chrome window claim on 6 October 2026 at 3:40 AM, Asia/Dubai. Opening the requested account on workspace 4 had succeeded. The pointer demonstration did not run.
 
@@ -20,7 +20,9 @@ The private compositor path remains available for verification on a separate mac
 | Old crash reproduced | Nested lab, 18 October 2026: the 2116c4b source ended the lab Hyprland with SIGSEGV in `CExtDataDeviceProtocol::dataDeviceForClient` during a real Chrome claim with clipboard watchers present |
 | Corrected Chrome claim and visible cursor | Nested lab, 18 October 2026: claimed; agent cursor, click and typing reached Chrome while a person window kept focus and the pointer stayed put; handback left Chrome and the compositor running ([probes](../experiments/ghost-cursor/chrome_lease_probe.py)). Host nested lab, not a separate machine |
 | Selection isolation | Not measured |
-| Live owner compositor claim | Not measured |
+| Live owner compositor claim | Partly traced, 18 October 2026, owner authorized: a throwaway GTK fixture was opened silently on workspace 9 of the owner's Hyprland 0.56.2 (Lua configuration) and claimed with the evidenced plugin. Reported by the session, not retained: seven runs loaded and unloaded the plugin without a compositor crash; the claim, cursor, move, click, typing and handback commands each returned success; the active window read before each run matched the reading after typing. Traced in private run directories in the owner's cache: five runs; four fixture states show empty text and nothing saved and one run has none; of two Wayland event logs, one is empty and the other shows no keyboard or pointer event during the claim, its only keyboard and pointer enter arriving about two hours later during cleanup. Agent input was therefore not delivered to the fixture on the live session, although the plugin reported success; the cause is not measured and live input diagnosis was stopped. A nested lab run of the same fixture receiving and saving typed text was reported by the session and not retained |
+| Live probe cleanup | Failed once: the probe closed its fixture with the classic dispatch syntax, which a Lua configuration refuses, so the last fixture stayed open on workspace 9 until about 7:19 AM. Checked at about 6 PM the same day: no fixture process or workspace 9 window remained |
+| Owner opening on a Lua configuration | Not measured. `owner_open.py` sends `hl.exec_cmd` through `eval` first and falls back to the classic dispatch syntax only when Lua is unavailable; the live runs used a probe, not that path |
 | Remote regression and cleanup | Not measured |
 
 Raw crash dumps and owner logs are private diagnostic data and must not be uploaded as public CI artifacts.
