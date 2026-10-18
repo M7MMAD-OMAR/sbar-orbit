@@ -2,10 +2,9 @@ import { test, expect } from "bun:test";
 import { expectDeclaredImage } from "./frame-format";
 import { readFile, readdir } from "node:fs/promises";
 import { call, startBroker } from "../src/ipc";
-import { descendantsFromTable } from "../src/process-tree";
-import { captureProcessWitnesses, windowsWitnessApi, WitnessCaptureError } from "./windows-process-witness";
+import { windowsWitnessApi, WitnessCaptureError } from "./windows-process-witness";
 
-const ownedParents = new Map<number, number>();
+import { captureOwnedCensus } from "./windows-owned-census";
 
 /**
  * Every descendant of a process, per platform.
@@ -24,7 +23,7 @@ const ownedParents = new Map<number, number>();
  * the dead broker whether or not it is still in anybody's group.
  */
 async function descendants(pid: number, seen = new Set<number>()): Promise<number[]> {
-  if (process.platform === "win32") return windowsDescendants(pid);
+  if (process.platform === "win32") throw new Error("Windows descendants require retained census witnesses");
   // A guard on the recursion rather than on any one platform's answer. A walk that revisits a pid
   // loops forever, and the cost of finding that out is a suite that hangs rather than fails.
   if (seen.has(pid)) return [];
@@ -43,26 +42,6 @@ async function descendants(pid: number, seen = new Set<number>()): Promise<numbe
     }
     return [...children, ...(await Promise.all([...children].map(child => descendants(child, seen)))).flat()];
   } catch { return []; }
-}
-
-function windowsDescendants(root: number): number[] {
-  // One snapshot of the whole table, then walked in memory: asking per process would race a tree
-  // that is still starting, and a browser launch creates processes while the walk runs.
-  //
-  // The walk itself lives in `src/process-tree.ts`. This path returns before `descendants` applies its
-  // `seen` guard, because it needs a snapshot rather than one answer per process, so it was the one
-  // walk in the file without a guard and it recursed until the stack ended on the Windows runner.
-  const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command",
-    "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"]);
-  if (listed.exitCode !== 0) throw new Error("Owned process parent snapshot failed");
-  const rows = listed.stdout.toString().split(/\r?\n/);
-  const owned = descendantsFromTable(rows, root);
-  ownedParents.clear();
-  for (const row of rows) {
-    const [pid, parent] = row.trim().split(/\s+/).map(Number);
-    if (pid !== undefined && parent !== undefined && owned.includes(pid)) ownedParents.set(pid, parent);
-  }
-  return owned;
 }
 
 /** Whether a process is still on the machine, asked the way each kernel answers it. */
@@ -92,8 +71,10 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
       })]);
     } finally { if (timer !== undefined) clearTimeout(timer); }
   };
-  let witnesses: ReturnType<typeof captureProcessWitnesses> | undefined;
+  let witnesses: Awaited<ReturnType<typeof captureOwnedCensus>> | undefined;
   let closeWitnesses: (() => void) | undefined;
+  let primaryFailure: unknown;
+  let hasPrimaryFailure = false;
   try {
     let line = "";
     while (!line.includes("\n")) {
@@ -103,21 +84,21 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
     }
     const { socket } = JSON.parse(line.split("\n")[0]!);
     const session = await call(socket, "session.create", { backend: "browser" }) as { sessionId: string };
-    const owned = await descendants(brokerProcess.pid);
-    expect(owned.length).toBeGreaterThan(4);
+    let owned: number[] = [];
     if (process.platform === "win32") {
-      try { witnesses = captureProcessWitnesses(owned, await windowsWitnessApi()); }
+      const api = await windowsWitnessApi();
+      try { witnesses = await captureOwnedCensus(brokerProcess.pid, api, observe => api.scan(observe)); }
       catch (error) { if (error instanceof WitnessCaptureError) closeWitnesses = error.close; throw error; }
       closeWitnesses = witnesses.close;
+      owned = witnesses.pids;
       console.error(JSON.stringify({ browserCrashEvidence: "before broker death", brokerPid: brokerProcess.pid,
-        processes: witnesses.observe().map(item => {
-          const parentPid = ownedParents.get(item.pid);
-          if (parentPid === undefined) throw new Error(`Owned PID ${item.pid} parent identity is unmeasured`);
-          return { ...item, parentPid };
-        }) }));
+        censusLimit: "Native x64 parent snapshot and retained identities; processes born after snapshot are not observed",
+        processes: witnesses.observe() }));
       // Refresh the private job membership while its only owning handle is still in the broker.
       await call(socket, "session.observe", session);
     }
+    if (process.platform !== "win32") owned = await descendants(brokerProcess.pid);
+    expect(owned.length).toBeGreaterThan(4);
     brokerProcess.kill("SIGKILL");
     await brokerProcess.exited;
     let survivors: number[] = owned;
@@ -150,12 +131,27 @@ test("abrupt broker death reaps its browser tree and a fresh broker rejects stal
       expectDeclaredImage(frame, "image/jpeg");
       expect(await call(fresh.socket, "session.stop", replacement)).toMatchObject({ state: "closed" });
     } finally { await fresh.close(); }
+  } catch (error) {
+    primaryFailure = error;
+    hasPrimaryFailure = true;
+    throw error;
   } finally {
+    const cleanupFailures: unknown[] = [];
     try {
       if (brokerProcess.exitCode === null) brokerProcess.kill("SIGKILL");
       await brokerProcess.exited;
       reader.releaseLock();
       await drainErrors();
-    } finally { closeWitnesses?.(); }
+    } catch (error) { cleanupFailures.push(error); }
+    try { closeWitnesses?.(); } catch (error) { cleanupFailures.push(error); }
+    if (cleanupFailures.length) {
+      const cleanup = new AggregateError(cleanupFailures, "Owned broker final cleanup failed");
+      if (hasPrimaryFailure) {
+        if (closeWitnesses) throw new WitnessCaptureError(primaryFailure, cleanup, closeWitnesses);
+        throw new AggregateError([primaryFailure, cleanup], "Owned broker failure and cleanup failed");
+      }
+      if (closeWitnesses) throw new WitnessCaptureError(cleanup, undefined, closeWitnesses);
+      throw cleanup;
+    }
   }
 }, 20000);
