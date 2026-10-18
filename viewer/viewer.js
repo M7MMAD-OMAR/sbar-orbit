@@ -601,8 +601,6 @@ async function poll() {
   try {
     if (document.hidden) { setTimeout(poll, 1000); return; }
     await refreshSessions();
-    element('connection').textContent = t('Connected');
-    element('connection').dataset.connected = 'true';
     const id = selected;
     // No picture while the settings are on screen: nothing is showing it, and a frame a second is the
     // most expensive thing this page does.
@@ -655,6 +653,9 @@ async function poll() {
     }
   pollFailures = 0;
   error('', 'poll');
+  // A healthy list alone cannot recover an iteration still waiting for its frame.
+  element('connection').textContent = t('Connected');
+  element('connection').dataset.connected = 'true';
   } catch (e) { pollFailures++; element('connection').textContent = t('Lost the connection, trying again'); element('connection').dataset.connected = 'false'; error(e.message, 'poll'); }
   const cadence = pollFailures ? Math.min(10000, 1000 * 2 ** Math.min(pollFailures - 1, 4)) : previewMode === 'smooth' ? 200 : 1000;
   // Idle at least as long as the iteration cost, so a viewer that cannot keep up
