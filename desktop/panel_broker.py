@@ -100,8 +100,19 @@ def read_status(client, with_presence=True):
 
 
 def viewer_link_is_local(url):
-    """The only link the panel will open: the broker's own loopback viewer with its token fragment."""
-    return isinstance(url, str) and url.startswith("http://127.0.0.1:") and "#" in url and len(url.split("#", 1)[1]) >= 32
+    """The only link the panel will open: the broker's own loopback viewer with its token fragment.
+    Parsed rather than prefix-matched, so a userinfo trick such as http://127.0.0.1:80@other/ is refused."""
+    if not isinstance(url, str):
+        return False
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    return (parts.scheme == "http" and parts.hostname == "127.0.0.1" and parts.username is None
+            and parts.password is None and port is not None and 0 < port < 65536
+            and parts.netloc == f"127.0.0.1:{port}" and len(parts.fragment) >= 32)
 
 
 def launcher_json(args):

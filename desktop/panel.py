@@ -81,7 +81,7 @@ import cairo  # noqa: E402
 import math  # noqa: E402
 
 from panel_broker import (BrokerClient, broker_socket, claim_the_mark, command_socket_path, launcher_json,
-                           notify, read_status, rpc, session_shape)  # noqa: E402
+                           notify, read_status, rpc, session_shape, viewer_link_is_local)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 
@@ -974,7 +974,7 @@ class Panel(Gtk.Application):
         column.append(label("  ·  ".join(f"⁨{p}⁩" for p in parts if p), "orbit-dim"))
         button.set_child(column)
         button.update_property([Gtk.AccessibleProperty.LABEL], [f"{session.get('agentName', 'Agent')}: {session.get('taskName', '')}"])
-        button.connect("clicked", lambda *_: self.open_viewer())
+        button.connect("clicked", lambda *_: self.watch_sessions())
         return button
 
     def sync_frame(self, force=False):
@@ -1051,6 +1051,26 @@ class Panel(Gtk.Application):
             self.open_settings()
             return
         self.set_expanded(True)
+
+    def watch_sessions(self):
+        """Open the live viewer, where the person watches the private desktop and can step in.
+        The link carries an access token, so it is requested now and never written anywhere."""
+        try:
+            answer = rpc(self.path, "preview.open", {"launch": True, "view": "sessions",
+                                                     "browser": self.settings["viewerBrowser"],
+                                                     "appWindow": self.settings["viewerAppWindow"]})
+        except Exception as error:
+            print(f"panel: could not open the viewer: {error}", file=sys.stderr)
+            return
+        url = answer.get("url", "") if isinstance(answer, dict) else ""
+        if not viewer_link_is_local(url):
+            print("panel: the broker returned something other than a local viewer link; not opening it", file=sys.stderr)
+            return
+        # The broker opens it in Orbit's own browser window, never the person's profile. When it
+        # declines, the token stays out of the default browser: nothing is opened from here.
+        if not answer.get("opened"):
+            print("panel: the viewer could not be opened in Orbit's own browser window; "
+                  "run sbar-orbit preview to print its link", file=sys.stderr)
 
     def listen_for_commands(self):
         """Do what another invocation asked for, rather than letting it start a second mark."""

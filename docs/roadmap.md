@@ -11,8 +11,9 @@ uses the definitions in [support tiers](support-tiers.md).
 
 ## Implemented foundations
 
-- Desktop-only broker, CLI and MCP admission, with browser automation and browser
-  viewers retired. Installed runtime activation is a separate verification step.
+- Desktop-only broker, CLI and MCP admission, with browser automation retired. The owner's
+  session viewer for private desktops opens from a panel session card in Orbit's own browser
+  window. Installed runtime activation is a separate verification step.
 - OS application metadata discovery, with a registration-based Linux route for
   supported new private launches. Installation paths are resolved from current
   registrations. See [application discovery](application-discovery.md).

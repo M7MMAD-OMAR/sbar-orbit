@@ -28,9 +28,12 @@ const applications = await invoke(["applications", "orbit-missing-app-fixture"])
 if (applications.result?.scope !== "current-user" || !Array.isArray(applications.result.applications))
   throw new Error("Installed application discovery contract failed");
 await invoke(["session", "create", "browser"], "UNSUPPORTED");
-await invoke(["preview", "open"], "UNSUPPORTED");
+// `preview` prints the tokened loopback viewer link and opens nothing.
+const viewer = await invoke(["preview"]);
+if (typeof viewer.result?.url !== "string" || !/^http:\/\/127\.0\.0\.1:\d+\/#[0-9a-f-]{64,}$/.test(viewer.result.url))
+  throw new Error("Installed viewer link contract failed");
 const report = { ok: true, platform: process.platform,
-  checks: ["managed broker", "installed launcher", "desktop health", "application discovery", "retired browser refusal", "retired viewer refusal"],
+  checks: ["managed broker", "installed launcher", "desktop health", "application discovery", "retired browser refusal", "session viewer link"],
   nativeApplicationControl: "not measured", browserLaunches: 0,
   limit: "installation and metadata contracts only; no native application acceptance" };
 await writeFile(resolve(output), JSON.stringify(report, null, 2) + "\n", { flag: "wx", mode: 0o600 });

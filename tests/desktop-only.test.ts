@@ -145,22 +145,30 @@ test("CLI session create defaults to system on the wire", async () => {
   } finally { server.stop(true); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("browser viewer entrypoints refuse before host browser discovery or launch", async () => {
-  const launch = spyOn(hostBrowsers, "openViewer").mockResolvedValue({ opened: false, browser: "", appWindow: false });
+test("the session viewer is a tokened loopback page the person can open to watch and step in", async () => {
+  const launch = spyOn(hostBrowsers, "openViewer").mockResolvedValue({ opened: true, browser: "fixture-browser", appWindow: true });
   const discover = spyOn(hostBrowsers, "listHostBrowsers").mockResolvedValue([]);
-  const preference = spyOn(hostBrowsers, "viewerPreference").mockResolvedValue({ browser: "", appWindow: false });
+  const preference = spyOn(hostBrowsers, "viewerPreference").mockResolvedValue({ browser: "", appWindow: true });
   const broker = await startBroker();
   try {
-    for (const [method, params] of [
-      ["preview.open", {}], ["preview.open", { launch: true }],
-      ["preview.open", { launch: true, view: "settings", browser: "fixture-browser" }],
-      ["viewer.browsers", {}],
-    ] as const) {
-      await expect(call(broker.socket, method, params)).rejects.toMatchObject({ code: "UNSUPPORTED" });
-    }
+    const { url } = await call(broker.socket, "preview.open") as { url: string };
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/#[0-9a-f-]{64,}$/);
     expect(launch).not.toHaveBeenCalled();
-    expect(discover).not.toHaveBeenCalled();
-    expect(preference).not.toHaveBeenCalled();
+    const page = await fetch(url);
+    expect(page.status).toBe(200);
+    const origin = new URL(url).origin;
+    const rpc = (body: unknown, token = url.split("#")[1]) => fetch(`${origin}/rpc`, { method: "POST",
+      headers: { origin, authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect(await (await rpc({ method: "session.list" })).json()).toMatchObject({ ok: true, result: [] });
+    expect((await rpc({ method: "session.list" }, "wrong-token")).status).toBe(403);
+    const opened = await call(broker.socket, "preview.open", { launch: true, browser: "fixture-browser" }) as { url: string; opened: boolean };
+    expect(opened).toMatchObject({ url, opened: true });
+    expect(launch).toHaveBeenCalledWith(url, "fixture-browser", true);
+    expect(await call(broker.socket, "viewer.browsers")).toMatchObject({ browsers: [] });
+    expect(discover).toHaveBeenCalled();
+    await broker.close();
+    // The viewer is part of the broker: closing the broker stops the page and its token.
+    await expect(fetch(url)).rejects.toThrow();
   } finally {
     launch.mockRestore(); discover.mockRestore(); preference.mockRestore(); await broker.close();
   }
@@ -172,17 +180,58 @@ test("desktop panel and shell launch routes stay native", async () => {
   });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect({ out, err, code }).toMatchObject({ code: 0 });
-  expect(err).toContain("Ran 8 tests");
+  expect(err).toContain("Ran 12 tests");
 });
 
-test("CLI refuses retired viewer commands without contacting a broker", async () => {
-  for (const args of [["preview"], ["preview", "open"], ["preview", "browsers"]]) {
-    const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], {
-      env: { ...process.env, ORBIT_SOCKET: "/unused-retired-viewer-broker.sock" }, stdout: "pipe", stderr: "pipe",
+test("CLI viewer commands ask the broker for the viewer", async () => {
+  const broker = await startBroker();
+  try {
+    const child = Bun.spawn([process.execPath, "src/cli.ts", "preview"], {
+      env: { ...process.env, ORBIT_SOCKET: broker.socket }, stdout: "pipe", stderr: "pipe",
     });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    expect(code).not.toBe(0);
-    expect(out + err).toContain("UNSUPPORTED");
-    expect(out + err).toContain("Browser viewers are retired");
-  }
+    expect({ code, err }).toMatchObject({ code: 0 });
+    expect(out).toMatch(/http:\/\/127\.0\.0\.1:\d+\/#/);
+  } finally { await broker.close(); }
+});
+
+test("CLI preview prints the viewer link and preview open asks the broker to open it", async () => {
+  const received: unknown[] = [];
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const directory = await mkdtemp(join(tmpdir(), "orbit-cli-preview-"));
+  const socket = join(directory, "rpc.sock");
+  const server = Bun.serve({ unix: socket, async fetch(request) {
+    received.push(await request.json());
+    return Response.json({ ok: true, result: { url: "http://127.0.0.1:1/#fixture" } });
+  } });
+  try {
+    for (const args of [["preview"], ["preview", "open"]]) {
+      const child = Bun.spawn([process.execPath, "src/cli.ts", ...args], {
+        env: { ...process.env, ORBIT_SOCKET: socket }, stdout: "pipe", stderr: "pipe",
+      });
+      const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      expect({ out, err, code }).toMatchObject({ code: 0 });
+    }
+    expect(received).toMatchObject([{ method: "preview.open", params: { launch: false } },
+      { method: "preview.open", params: { launch: true } }]);
+  } finally { server.stop(true); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("the viewer never falls back to the person's own browser when no private window is possible", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const empty = await mkdtemp(join(tmpdir(), "orbit-no-browsers-"));
+  const url = "http://127.0.0.1:1/#" + "a".repeat(64);
+  const original = Bun.spawn;
+  // A regression must fail here without reaching a real browser, so a process given the link is refused.
+  const spawn = spyOn(Bun, "spawn").mockImplementation(((...args: Parameters<typeof Bun.spawn>) => {
+    if (JSON.stringify(args).includes(url)) throw new Error("The viewer link reached a process");
+    return original(...args);
+  }) as typeof Bun.spawn);
+  try {
+    const result = await hostBrowsers.openViewer(url, "", true,
+      { HOME: empty, XDG_DATA_HOME: empty, XDG_DATA_DIRS: empty, XDG_CONFIG_HOME: empty, PATH: empty });
+    expect(result.opened).toBe(false);
+    // Discovery may ask the desktop which browser is its default; no process ever receives the link.
+    expect(spawn.mock.calls.filter(call => JSON.stringify(call).includes(url))).toEqual([]);
+  } finally { spawn.mockRestore(); await rm(empty, { recursive: true, force: true }); }
 });

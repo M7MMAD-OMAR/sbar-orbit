@@ -9,14 +9,13 @@ connected adapters therefore cannot recreate a browser session against this brok
 browser code and tests remain during migration; they are not
 a supported public route and their measurements do not prove native behavior.
 
-Browser-based viewers are also retired: `preview.open`, `viewer.browsers` and
-all CLI `preview` variants refuse. The panel expands its native session list;
-the shell click starts that panel without asking for a URL. There is no desktop
-URI-launcher fallback. New panel requests use native-only message names, so an
-older panel cannot interpret them as browser-launch commands. An older panel may
-ignore these requests until it is refreshed. The former browser settings editor is unavailable; settings
-remain editable through `sbar-orbit config`. A native settings editor and full
-native session viewer still require implementation and private-display acceptance.
+The session viewer is a loopback page on `127.0.0.1` with a fresh access token,
+served by the broker. Clicking a session card in the panel, or `sbar-orbit preview open`,
+opens it in Orbit's own browser window; `sbar-orbit preview` prints the link and opens
+nothing. It shows the private desktop live, and Take over pauses the agent so the owner
+can click and type, then Hand back. It is a viewing window for the owner, not an agent
+session: browser sessions for agents stay retired. Clicking the Orbit mark still opens the
+native session list. Settings remain editable through `sbar-orbit config`.
 
 ## Acceptance contract
 

@@ -264,8 +264,9 @@ try {
       params = { backend: "native", handoff, ...(policy === undefined ? {} : { policy }),
         agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME };
     }
-    else if (command === "preview")
-      throw new OrbitError("UNSUPPORTED", "Browser viewers are retired. Use sbar-orbit panel or session observe.");
+    else if (command === "preview" && verb === "browsers") method = "viewer.browsers";
+    // `preview` prints the viewer link and opens nothing; `preview open` opens Orbit's own viewer window.
+    else if (command === "preview") { method = "preview.open"; params = { launch: verb === "open", browser: arg }; }
     else if (command === "account" && verb === "save") throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired. Orbit is desktop-only.");
     else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
       if (verb === "create" && arg !== undefined && !["system", "fedora", "native"].includes(arg))

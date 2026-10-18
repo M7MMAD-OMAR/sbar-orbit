@@ -1,14 +1,15 @@
-# Browser workspace preview, historical
+# Session viewer
 
-> Retired in the current desktop-only product. All `preview` commands and browser
-> viewer launch requests refuse. The desktop mark opens the native session list,
-> and settings remain available through `sbar-orbit config`. See the current
-> [desktop contract and measured limits](desktop-only.md). The instructions and
-> measurements below describe the former browser viewer; do not use them as
-> current setup instructions. A full native session viewer remains unimplemented.
+The viewer is how the owner watches a private desktop session and steps in. Clicking a session
+card in the panel, or `sbar-orbit preview open`, opens it in Orbit's own browser window with a
+profile of its own; `sbar-orbit preview` prints the tokened loopback link and opens nothing.
+Clicking the Orbit mark opens the native session list, and settings remain available through
+`sbar-orbit config`. Browser sessions for agents stay retired: the viewer is a window for the
+owner, not an agent backend. See the current [desktop contract](desktop-only.md). Sections below
+that mention browser sessions describe that retired backend.
 
 **Measurements:** Current resource and sustained-run results are summarized in [validation](validation.md). Older timing numbers below describe their individual trials.
-Implemented for browser and Fedora native sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open`, and the desktop mark, open it in the person's chosen browser.
+Implemented for private desktop sessions: live images, session selection, pause/resume/stop, and manual input while paused. `preview` prints the link and opens nothing; `preview open`, and a session card in the panel, open it in Orbit's own browser window.
 
 ## Opening it as its own window
 
@@ -17,7 +18,7 @@ bun run src/cli.ts preview open
 bun run src/cli.ts preview browsers
 ```
 
-`preview open` hands the link to a browser rather than printing it, in a window with no tab strip and no address bar. `preview browsers` lists what is installed, which is also what the settings row reads. Clicking the desktop mark takes the same path.
+`preview open` also hands the link to Orbit's own browser, in a window with no tab strip and no address bar, and prints the broker's reply, link included, to the terminal that asked. `preview browsers` lists what is installed, which is also what the settings row reads. Clicking a session card in the panel takes the same path.
 
 A browser is any desktop entry that handles `x-scheme-handler/http` and declares the `WebBrowser` category. Both conditions are needed: an application that registers the scheme to catch its own sign-in links is not somewhere to read the viewer. Flatpaks are found the same way as system packages, since on a desktop where the default browser is a flatpak a list of binary paths finds nothing.
 
@@ -31,9 +32,9 @@ Whichever browser opens it, the viewer runs in a profile that is Orbit's own and
 
 Both choices live in the panel's settings, under **The viewer**, and in `sbar-orbit config`: `viewerBrowser` is a desktop entry id or empty for the automatic choice, and `viewerAppWindow` turns the window off in favour of a tab. A browser that has since been uninstalled falls back rather than failing. Where the fallback has several browsers to choose between it takes them in the order `platform.ts` already uses for session browsers, Chrome before Chromium, rather than alphabetically.
 
-Spawning is not opening. A binary that is missing or not executable fails at once, and a browser that starts, rejects its arguments and exits is given a moment for its exit code to arrive, because reporting that as opened is what would leave the desktop mark with no window and no fallback. Exiting immediately with success is not that case: it is the ordinary second invocation, whose command line is forwarded to the browser already running, and that instance is what opens the window.
+Spawning is not opening. A binary that is missing or not executable fails at once, and a browser that starts, rejects its arguments and exits is given a moment for its exit code to arrive, because reporting that as opened is what would leave the panel with no window. Exiting immediately with success is not that case: it is the ordinary second invocation, whose command line is forwarded to the browser already running, and that instance is what opens the window.
 
-Desktop entries are a Linux mechanism, so this is a Linux path. On macOS and Windows the viewer is handed to `open` or `start` and arrives as a tab in the default browser. Chrome's in-bundle binary on macOS does take `--app=`; nothing here uses it yet. See [porting](porting.md).
+There is no fallback to the platform's link handler: `xdg-open`, `open` and `start` would put the viewer's token in the person's own browser profile. A machine with no browser that takes a profile of its own gets no viewer window, and `sbar-orbit preview` still prints the link. See [porting](porting.md).
 
 To take control: select a session in the rail, choose **Take over**, wait for **You are in control**, then click inside its image. Use **Send text** or **Send key** to operate the focused element. **Hand back** enables agent actions again, and **End session** stops it. For Fedora native sessions, **Paste text** uses the workspace clipboard and Ctrl+V, supporting Arabic and emoji in applications that accept that shortcut. Wait for the text to appear before taking the next action. For browser and native sessions, use the mouse wheel over the image to scroll vertically while paused. Image coordinates scale to the application viewport. Gestures received while a manual command is busy are discarded instead of replayed after resume. Horizontal wheel gestures and touch scrolling are not implemented. Native general key controls remain disabled. All input targets the owned session; the human desktop receives no injected input.
 

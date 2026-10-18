@@ -101,8 +101,9 @@ native capability hold. Retain Apache-2.0, NOTICE and dependency license obligat
 The `verify` workflow runs on `main` with three runner families: Ubuntu,
 Windows and macOS. Each runs the bounded desktop suite, host registration and
 fresh registry installation contracts. The installed check verifies broker
-health, application discovery and refusal of retired browser/viewer routes.
-It launches no browser and does not claim native application acceptance.
+health, application discovery, refusal of retired browser sessions and a tokened
+`127.0.0.1` viewer link from `preview`. It launches no browser and does not claim
+native application acceptance.
 
 The suite wrapper preserves the test process exit status and records runner
 resources plus `verification-result.json`. It no longer requires a Chrome

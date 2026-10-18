@@ -1,9 +1,10 @@
 # Desktop support tiers
 
 Current scope, 16 October 2026: Orbit controls applications through native desktop
-adapters. Standalone browser sessions, browser viewers, DOM automation and browser
-profile copying are retired. Historical browser results do not establish desktop
-support. See [the desktop contract](desktop-only.md).
+adapters. Standalone browser sessions, DOM automation and browser profile copying are
+retired. The owner's session viewer, restored on 18 October 2026, is a loopback page for
+watching and taking over a private desktop, not an agent backend. Historical browser results
+do not establish desktop support. See [the desktop contract](desktop-only.md).
 
 ## Evidence vocabulary
 

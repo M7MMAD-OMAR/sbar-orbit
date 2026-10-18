@@ -21,22 +21,76 @@ def function(path, name, namespace, class_name=None):
 
 
 class DesktopBrowserRetirementTests(unittest.TestCase):
-    def test_panel_session_action_only_expands_native_panel(self):
+    def test_panel_mark_action_expands_native_session_list(self):
         calls = []
-        class Launcher:
-            def launch(self, *_args):
-                calls.append('browser-launch')
-        def rpc(*_args):
-            calls.append('browser-rpc')
-            return {'url': 'http://127.0.0.1:12345/#fixture', 'opened': False}
-        panel = types.SimpleNamespace(path='/unused.sock', settings={'viewerBrowser': '', 'viewerAppWindow': True},
-                                      set_expanded=lambda expanded: calls.append(('expanded', expanded)))
-        action = function('desktop/panel.py', 'open_viewer', {
-            'rpc': rpc, 'sys': sys, 'viewer_link_is_local': lambda _url: True,
-            'Gtk': types.SimpleNamespace(UriLauncher=types.SimpleNamespace(new=lambda _url: Launcher())),
-        }, class_name='Panel')
+        panel = types.SimpleNamespace(set_expanded=lambda expanded: calls.append(('expanded', expanded)),
+                                      open_settings=lambda: calls.append('settings'))
+        action = function('desktop/panel.py', 'open_viewer', {'sys': sys}, class_name='Panel')
         action(panel)
         self.assertEqual(calls, [('expanded', True)])
+
+    def test_session_card_opens_the_live_viewer(self):
+        # A declined launch never falls back to the person's default browser and profile.
+        for opened, expected in [(True, []), (False, [])]:
+            with self.subTest(opened=opened):
+                calls = []
+                class Launcher:
+                    def launch(self, *_args):
+                        calls.append('uri-launch')
+                def rpc(path, method, params):
+                    calls.append((path, method, params))
+                    return {'url': 'http://127.0.0.1:12345/#' + 'a' * 64, 'opened': opened}
+                panel = types.SimpleNamespace(path='/fixture.sock', settings={'viewerBrowser': 'fixture', 'viewerAppWindow': True})
+                action = function('desktop/panel.py', 'watch_sessions', {
+                    'rpc': rpc, 'sys': sys, 'viewer_link_is_local': lambda url: url.startswith('http://127.0.0.1:'),
+                    'Gtk': types.SimpleNamespace(UriLauncher=types.SimpleNamespace(new=lambda _url: Launcher())),
+                }, class_name='Panel')
+                action(panel)
+                self.assertEqual(calls[0], ('/fixture.sock', 'preview.open',
+                                            {'launch': True, 'view': 'sessions', 'browser': 'fixture', 'appWindow': True}))
+                self.assertEqual(calls[1:], expected)
+
+    def test_viewer_link_check_parses_the_host(self):
+        local = function('desktop/panel_broker.py', 'viewer_link_is_local', {})
+        token = 'a' * 64
+        self.assertTrue(local(f'http://127.0.0.1:41234/#{token}'))
+        self.assertTrue(local(f'http://127.0.0.1:41234/?view=settings#{token}'))
+        # Userinfo URLs are assembled from parts so the repository's email scanner does not read them as addresses.
+        at = '@'
+        for url in [f'http://127.0.0.1:80{at}evil.example/#{token}', f'http://user:pw{at}127.0.0.1:80/#{token}',
+                    f'https://127.0.0.1:41234/#{token}', f'http://127.0.0.1.evil.example:80/#{token}',
+                    f'http://127.0.0.1/#{token}', 'http://127.0.0.1:41234/#short', None, 42]:
+            with self.subTest(url=url):
+                self.assertFalse(local(url))
+
+    def test_session_card_refuses_a_non_local_viewer_link(self):
+        printed = []
+        stderr = types.SimpleNamespace(write=lambda text: printed.append(text), flush=lambda: None)
+        action = function('desktop/panel.py', 'watch_sessions', {
+            'rpc': lambda *_args: {'url': 'https://example.com/#token', 'opened': True},
+            'sys': types.SimpleNamespace(stderr=stderr),
+            'viewer_link_is_local': lambda url: url.startswith('http://127.0.0.1:'),
+            'Gtk': None,
+        }, class_name='Panel')
+        action(types.SimpleNamespace(path='/fixture.sock', settings={'viewerBrowser': '', 'viewerAppWindow': True}))
+        self.assertIn('other than a local viewer link', ''.join(printed))
+
+    def test_clicking_a_session_card_watches_the_session(self):
+        calls, handlers = [], []
+        class Widget:
+            def __init__(self, *_args, **_kwargs): pass
+            def __getattr__(self, _name): return lambda *_args, **_kwargs: None
+            def connect(self, signal, handler): handlers.append((signal, handler))
+        gtk = types.SimpleNamespace(Button=Widget, Box=Widget, Label=Widget,
+                                    Orientation=types.SimpleNamespace(VERTICAL=1, HORIZONTAL=0),
+                                    AccessibleProperty=types.SimpleNamespace(LABEL=0))
+        action = function('desktop/panel.py', 'card', {'Gtk': gtk, 'label': lambda *_args: Widget()}, class_name='Panel')
+        panel = types.SimpleNamespace(watch_sessions=lambda: calls.append('watch'), open_viewer=lambda: calls.append('list'))
+        action(panel, {'agentName': 'Agent', 'taskName': 'Task', 'state': 'running', 'backend': 'fedora'})
+        clicked = [handler for signal, handler in handlers if signal == 'clicked']
+        self.assertEqual(len(clicked), 1)
+        clicked[0](None)
+        self.assertEqual(calls, ['watch'])
 
     def test_settings_action_exposes_native_configuration_notice(self):
         calls = []

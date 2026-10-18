@@ -317,13 +317,6 @@ function ownProfileArguments(browser: HostBrowser, profile: string): string[] {
   return [];
 }
 
-/** The last resort: whatever the platform opens a link with, when no entry was found or the choice is gone. */
-function fallbackCommand(url: string): string[] {
-  if (process.platform === "darwin") return ["open", url];
-  if (process.platform === "win32") return ["cmd", "/c", "start", "", url];
-  return ["xdg-open", url];
-}
-
 /**
  * Which browser an unset choice resolves to. The desktop's own default comes first and keeps that place
  * whenever it can give the viewer a window; a default that cannot, which on a Firefox fork is every one
@@ -384,20 +377,13 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   const browsers = await listHostBrowsers(env);
   const browser = pickBrowser(browsers, choice, appWindow);
   const failure = { opened: false, browser: browser?.id ?? "", appWindow: false };
-  // The fallback opens the URL with whatever the platform hands links to, which means the person's
-  // own browser in their own profile. On Linux the viewer's token going there is a deliberate last
-  // resort for a machine with no recognised browser, because `xdg-open` may well reach a browser that
-  // takes no private profile and the person chose that association themselves.
-  //
-  // macOS and Windows are refused instead. `open` does not merely use their profile: LaunchServices
-  // activates the browser they are already using and hands it the command line. `cmd /c start` hands
-  // the URL to the shell association, in the profile they are logged into. Both put a token that can
-  // observe, drive and stop sessions into the browser this project promises never to touch, and both
-  // now enumerate their own installs above, so reaching the fallback means the machine genuinely has
-  // no Chromium family browser. Such a machine gets no viewer rather than a viewer in their window.
-  if (!browser && process.platform !== "linux") return failure;
+  // There is no fallback to the platform's link handler on any platform: `xdg-open`, `open` and
+  // `cmd /c start` all reach the person's own browser in their own profile, the one place a token
+  // that can observe, drive and stop sessions must not go. A machine with no browser that takes a
+  // private profile gets no viewer window; `sbar-orbit preview` still prints the link.
+  if (!browser) return failure;
   let profile: string | undefined;
-  if (browser) {
+  {
     // A browser reached here that cannot take its own profile is the last-resort case, not a normal
     // one: `pickBrowser` prefers every isolatable browser over the default, so this only happens when
     // nothing installed takes `--user-data-dir` or `--profile`. Opening the viewer in it would put the
@@ -409,7 +395,7 @@ export async function openViewer(url: string, choice = "", appWindow = true,
     // made here, private, and a failure to make it is reported as the viewer not opening.
     try { await mkdir(profile, { recursive: true, mode: 0o700 }); } catch { return failure; }
   }
-  const command = browser ? viewerCommand(browser, url, appWindow, profile) : fallbackCommand(url);
+  const command = viewerCommand(browser, url, appWindow, profile);
   let child;
   try {
     // Streams discarded: a pipe nobody reads is a browser that blocks once it has printed enough to
@@ -433,7 +419,7 @@ export async function openViewer(url: string, choice = "", appWindow = true,
   // Unreferenced either way: the browser outlives the broker's reply to this call.
   child.unref();
   if (rejected) return failure;
-  return { opened: true, browser: browser?.id ?? "", appWindow: !!browser?.appWindow && appWindow };
+  return { opened: true, browser: browser.id, appWindow: !!browser.appWindow && appWindow };
 }
 
 /**
