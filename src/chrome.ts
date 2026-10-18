@@ -308,10 +308,15 @@ async function launchOnWindows(executable: string, profile: string, argv: string
     startupEvidence: () => {
       const result: Record<string, unknown> = { rootPid: child.pid, rootExitCode: child.exitCode,
         budget, cpuCapEnforced: job.cpuCapEnforced, stderrBytes, stderrTailBytes: Buffer.byteLength(diagnostics),
-        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512) } };
+        stderrEnded, stderrFailed, cleanup: { ...evidence, members: evidence.members?.slice(0, 512),
+          ...(trace && evidence.members ? { membershipSourceRows: evidence.members.length } : {}) } };
       if (!job.isClosed) {
         try { result.accounting = job.accounting(); } catch { result.accountingError = "query failed"; }
-        try { result.members = job.processIds().slice(0, 512); } catch { result.membershipError = "query failed"; }
+        try {
+          const members = job.processIds();
+          result.members = members.slice(0, 512);
+          if (trace) result.membershipSourceRows = members.length;
+        } catch { result.membershipError = "query failed"; }
       } else result.membership = "not measured after handle closure";
       return result;
     },

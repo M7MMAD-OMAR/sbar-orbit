@@ -84,8 +84,8 @@ export function installedStartupProjection(value: unknown): Fields {
   const clean = plain(source.cleanup), cleanup: Fields = {};
   for (const key of ["confirmed", "handleClosed"]) if (typeof clean[key] === "boolean") cleanup[key] = clean[key];
   if (clean.rootExitCode === null || typeof clean.rootExitCode === "number" && Number.isSafeInteger(clean.rootExitCode)) cleanup.rootExitCode = clean.rootExitCode;
-  const members = (value: unknown, target: Fields) => {
-    if (value === undefined) return;
+  const members = (value: unknown, target: Fields, sourceRows: unknown) => {
+    if (value === undefined && sourceRows === undefined) return;
     const containerValid = Array.isArray(value), rows: unknown[] = Array.isArray(value) ? value : [];
     const retained: number[] = []; let rejectedRows = 0;
     const examinedRows = Math.min(rows.length, 512);
@@ -94,12 +94,14 @@ export function installedStartupProjection(value: unknown): Fields {
       if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0) retained.push(pid);
       else rejectedRows++;
     }
-    const truncatedRows = rows.length - examinedRows;
+    const sourceRowsValid = sourceRows === undefined || typeof sourceRows === "number" && Number.isSafeInteger(sourceRows) && sourceRows >= rows.length;
+    const inputRows = sourceRowsValid && typeof sourceRows === "number" ? sourceRows : rows.length;
+    const truncatedRows = inputRows - examinedRows;
     target.members = retained;
-    target.membershipProjection = { containerValid, inputRows: rows.length, examinedRows, retainedRows: retained.length,
-      rejectedRows, truncatedRows, invalid: !containerValid || rejectedRows > 0 || truncatedRows > 0 };
+    target.membershipProjection = { containerValid, inputRows, examinedRows, retainedRows: retained.length,
+      rejectedRows, truncatedRows, invalid: !containerValid || !sourceRowsValid || rejectedRows > 0 || truncatedRows > 0 };
   };
-  members(source.members, result); members(clean.members, cleanup);
+  members(source.members, result, source.membershipSourceRows); members(clean.members, cleanup, clean.membershipSourceRows);
   result.cleanup = cleanup;
   for (const key of ["accountingError", "membershipError", "membership"])
     if (["query failed", "not measured after handle closure"].includes(String(source[key]))) result[key] = source[key];
@@ -415,7 +417,8 @@ export async function collectInstalledStartup(root: string, output: string, stag
     if (report.taskEnvironmentPresent !== true) report.invalid = true;
   } catch { report.readFailed = true; report.invalid = true; }
   report.collectionElapsedMs = performance.now() - at;
-  try { await writeFile(join(output, `startup-${stage}.json`), JSON.stringify(report, null, 2) + "\n"); } catch { report.outputWriteFailed = true; }
+  try { await writeFile(join(output, `startup-${stage}.json`), JSON.stringify(report, null, 2) + "\n"); }
+  catch { report.outputWriteFailed = true; report.invalid = true; report.measured = false; }
   try { console.log(JSON.stringify({ installedStartupCollection: { stage, measured: report.measured, invalid: report.invalid,
     readFailed: report.readFailed, outputWriteFailed: report.outputWriteFailed, collectionElapsedMs: report.collectionElapsedMs, metadataBound: report.metadataBound,
     retentionComplete: report.retentionComplete, actualRuntimeBound: report.actualRuntimeBound, collectorBunChanged: report.collectorBunChanged, taskChanged: report.taskChanged,
