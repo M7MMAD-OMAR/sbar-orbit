@@ -144,7 +144,7 @@ def open_application(session, value):
                     return {"opened": True, "workspace": value["workspace"], "address": window["address"],
                             "stableId": window["stableId"], "pid": window["pid"],
                             "title": str(window.get("title", ""))[:160], "applicationLifetime": "owner",
-                            "handoff": "unavailable: compositor crash release hold; isolated validation required"}
+                            "handoff": "available for the evidenced plugin build"}
             time.sleep(0.05)
         raise SessionError("Opening delivery is uncertain: no launch-bound window acknowledged. Check candidates before retrying; single-instance forwarding is not verified")
 

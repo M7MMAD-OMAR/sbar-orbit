@@ -36,6 +36,6 @@ export class DesktopSessions extends Sessions {
       capabilities: backends.length ? ["launch", "launch-installed", "pointer", "scroll", "text", "paste", "key", "resize", "window", "desktops", "desktop", "list-windows", "move-window", "observe", "pause", "resume", "stop"] : [],
       machine: { ...machine, browsers: [], browserBackendSupported: false },
       retiredBackends: ["browser"],
-      desktopEvidence: { existingApplications: "release hold", otherPlatforms: "not measured" } };
+      desktopEvidence: { existingApplications: "nested lab measured; live owner claim not measured", otherPlatforms: "not measured" } };
   }
 }

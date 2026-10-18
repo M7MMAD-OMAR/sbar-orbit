@@ -90,6 +90,12 @@ class ExistingApplicationSession(NativeSession):
     def claim(self, value):
         require_owner_handoff()
         require_budget()
+        build = json.loads(self.transport._exchange("ghost-build-info"))
+        if (not isinstance(build, dict) or not isinstance(build.get("source_sha256"), str)
+                or not isinstance(build.get("abi_hash"), str)):
+            raise SessionError("Invalid compositor plugin build")
+        # The loaded plugin must be the build the release evidence measured, on the same compositor.
+        require_owner_handoff(build.get("source_sha256"), build.get("abi_hash"))
         with self.lock:
             if self.closed or self.lease_id is not None:
                 raise SessionError("Existing application session already claimed or closed")

@@ -12,9 +12,9 @@ export async function describeDesktopMachine(): Promise<Record<string, unknown>>
     browserBackendSupported: false, browsers: [],
     nativeDisplaySupported: linux,
     nativeDisplayEvidence: "Implementation availability only; runtime acceptance is not measured by this report",
-    existingApplicationControl: "release hold",
+    existingApplicationControl: "released for the evidenced plugin build; live owner claim not measured",
     notes: linux
-      ? ["Private desktop runtime and application acceptance must be tested separately", "Existing owner application handoff remains release-blocked"]
+      ? ["Private desktop runtime and application acceptance must be tested separately", "Existing owner application handoff is released only for the plugin build measured in the isolated lab"]
       : ["A native desktop adapter is not implemented for this platform; no browser fallback is available"],
     redacted: ["no browser profile discovery", "no cookie database access", "no account names", "no viewer tokens"],
   };

@@ -295,6 +295,9 @@ def operate(operation, directory):
         require_owner_handoff()
     require_budget()
     bundle = PreparedPlugin(directory)
+    if operation in ("load", "resume"):
+        # Only the exact plugin source and Hyprland build the release evidence measured may enter the owner compositor.
+        require_owner_handoff(bundle.artifact["source_sha256"], bundle.plan["abi_hash"])
     journal = None
     sent = False
     pause_sent = False
