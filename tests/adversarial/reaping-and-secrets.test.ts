@@ -1,3 +1,4 @@
+import { chromeTraceArtifactConfiguration, createOwnedChromeTraceArtifactWriter } from "../chrome-trace-artifact";
 import { expectPrivatePath } from "../private-path";
 /**
  * THE REAPING GUARANTEE and PRIVATE DATA, at the depths the existing tests do not reach.
@@ -165,7 +166,10 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
       coreBundle, dependencyVersion,
     };
   })();
-  const trace = new ChromeTransportObserver(producer, createChromeTraceOutputSink(line => console.error(line)));
+  const artifactConfig = chromeTraceArtifactConfiguration();
+  const artifact = artifactConfig ? createOwnedChromeTraceArtifactWriter(artifactConfig) : undefined;
+  const trace = new ChromeTransportObserver(producer, createChromeTraceOutputSink(artifact ? line => artifact.writeLine(line) : line => console.error(line)));
+  let fixtureFailed = false;
   try {
     const broker = await trace.observe("open-broker", () => openBroker("adversarial-reaping"));
     trace.settled("open-broker");
@@ -204,7 +208,14 @@ test.skipIf(!supported)("stopping a session removes its profile and its restore 
       trace.settled("broker-close");
       trace.observe("fixture-stop", () => fixture.stop(true));
     }
-  } finally { trace.finish(); }
+  } catch (error) {
+    fixtureFailed = true;
+    throw error;
+  } finally {
+    try { trace.finish(); } finally {
+      try { artifact?.close(); } catch (error) { if (!fixtureFailed) throw error; }
+    }
+  }
 }, 120000);
 
 test.skipIf(!supported || !linux || process.getuid?.() === 0).each([false, true])("a persistent profile removal refusal cannot return a successful stop (release failure: %s)", async releaseFails => {

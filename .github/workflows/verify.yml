@@ -60,6 +60,14 @@ jobs:
           name: verification-resources-${{ matrix.os }}
           path: output/verification-resources.jsonl
           if-no-files-found: warn
+      - name: Preserve owned framed trace evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-trace-${{ matrix.os }}
+          path: output/chrome-trace/
+          if-no-files-found: error
+          retention-days: 7
 
   registered-hosts:
     strategy:
