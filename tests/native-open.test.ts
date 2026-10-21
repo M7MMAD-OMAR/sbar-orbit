@@ -1,16 +1,20 @@
 import { expect, test, spyOn } from "bun:test";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
+import * as applicationLaunch from "../src/application-launch";
 import { NativeWorker } from "../src/native-worker";
 import { tmpdir } from "node:os";
 import { NativeBackend, parseNativeOpen } from "../src/hyprland";
 import { Sessions } from "../src/session";
 import { OrbitError } from "../src/errors";
 
-test("native opening validates literal argv and workspace", () => {
-  expect(parseNativeOpen({ workspace: 4, argv: ["google-chrome-stable", "--profile-directory=Profile 1"] })).toEqual({ workspace: 4, argv: ["google-chrome-stable", "--profile-directory=Profile 1"] });
-  for (const input of [{ workspace: 0, argv: ["true"] }, { workspace: 4, argv: [] },
-    { workspace: 4, argv: ["true\nfalse"] }, { workspace: 4, argv: ["true"], mode: "full" }])
+test("native opening accepts only registered application identity and numbered workspace", () => {
+  expect(parseNativeOpen({ workspace: 4, applicationId: "org.gnome.Calculator.desktop" }))
+    .toEqual({ workspace: 4, applicationId: "org.gnome.Calculator.desktop" });
+  for (const input of [{ workspace: 0, applicationId: "app.desktop" }, { workspace: 4, argv: ["firefox"] },
+    { workspace: 4, applicationId: "../app.desktop" }, { workspace: 4, applicationId: "app.desktop", mode: "full" },
+    { workspace: 4, applicationId: "app.desktop", window: { width: true, height: 600 } },
+    { workspace: 4, applicationId: "app.desktop", window: { width: 800, height: 600, float: false } }])
     expect(() => parseNativeOpen(input)).toThrow();
 });
 
@@ -23,7 +27,7 @@ test("native opening deduplicates delivery and allows retry after approval denia
     if (++attempts === 1) throw new OrbitError("APPROVAL_REQUIRED", "Protected approval required");
     return { opened: true };
   };
-  const request = { method: "native.open", params: { requestId: "opening-1", workspace: 4, argv: ["true"] } };
+  const request = { method: "native.open", params: { requestId: "opening-1", workspace: 4, applicationId: "org.gnome.Calculator.desktop" } };
   try {
     await expect(sessions.dispatch(request)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
     expect(await sessions.dispatch(request)).toEqual({ opened: true });
@@ -45,17 +49,18 @@ test("native opening preserves approval denial when worker cleanup fails", async
   const denied = new OrbitError("APPROVAL_REQUIRED", "Protected approval required");
   const failedCleanup = new Error("cleanup failed");
   let directory = "";
+  const resolve = spyOn(applicationLaunch, "resolveInstalledApplication").mockResolvedValue({ applicationId: "org.example.App.desktop", argv: ["/usr/bin/true"] });
   const create = spyOn(NativeWorker, "create").mockImplementation(async (path) => {
     directory = path;
     return { request: async () => { throw denied; }, close: async () => { throw failedCleanup; } } as unknown as NativeWorker;
   });
   try {
     await expect(NativeBackend.openApplication({ planPath: "/fixture/host.json", controlDirectory: "/fixture/control" },
-      { workspace: 4, argv: ["true"] })).rejects.toBe(denied);
+      { workspace: 4, applicationId: "org.gnome.Calculator.desktop" })).rejects.toBe(denied);
     expect(denied.cause).toBeInstanceOf(AggregateError);
     expect((denied.cause as AggregateError).errors).toEqual([failedCleanup]);
   } finally {
-    create.mockRestore();
+    create.mockRestore(); resolve.mockRestore();
     if (directory) await rm(join(directory, ".."), { recursive: true, force: true });
   }
 });

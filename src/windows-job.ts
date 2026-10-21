@@ -474,23 +474,3 @@ export function sharedBudgetUsage(): { processes: number; memoryBytes: number; p
  * containment flags of a function nothing in production called. A test standing over an unused
  * builder proves nothing about the browser Orbit actually launches.
  */
-export function windowsChromeArguments(profile: string, extra: string[] = [], options: { extensions?: boolean } = {}): string[] {
-  return [
-    `--user-data-dir=${profile}`,
-    "--headless",
-    "--remote-debugging-port=0",
-    "--remote-debugging-address=127.0.0.1",
-    "--no-first-run",
-    "--no-default-browser-check",
-    "--disable-background-networking",
-    ...(options.extensions ? [] : ["--disable-extensions"]),
-    // The handler that escapes the job in the assign window. Orbit reads Chrome's exit through the
-    // job rather than through a crash report, so nothing is lost by refusing it.
-    "--disable-crashpad",
-    // App Bound Encryption is already inert for a private user data directory, since Chrome returns
-    // kNotUsingDefaultUserDataDir before it reaches the policy branch. Stated here so nobody reads
-    // an Orbit profile's DPAPI-only protection as an oversight.
-    ...extra,
-    "about:blank",
-  ];
-}

@@ -1,9 +1,8 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { blockingPrerequisites, buildNativeRuntime, nativeBuildTools, onPath, runInstall, stepTitles } from "../src/install";
+import { blockingPrerequisites, buildNativeRuntime, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
-import { nativeRuntimeLocations } from "../src/runtime-paths";
 import { commandName } from "../src/local-install";
 import { resolvedTmpdir } from "./platform-support";
 import { tmpdir } from "node:os";
@@ -117,8 +116,7 @@ test("the checks a dependency install can fix are separated from the ones it can
   const checks = [
     { id: "linux", group: "common", available: false },
     { id: "zod", group: "common", available: false },
-    { id: "playwright", group: "common", available: false },
-    { id: "chrome-or-chromium", group: "browser", available: false },
+    { id: "@modelcontextprotocol/sdk/client/index.js", group: "common", available: false },
   ] satisfies { id: string; group: "common" | "browser" | "native"; available: boolean }[];
   expect(blockingPrerequisites(checks).map(check => check.id)).toEqual(["linux"]);
 });
@@ -190,62 +188,14 @@ test("nothing the installer shows a person claims more than the project has meas
   expect(offerings.length).toBeGreaterThan(4);
 });
 
-test("the native runtime step builds only when asked, and names the tools it lacks", async () => {
-  // A source with no runtime, so the step has something to build; nothing here compiles anything.
-  const source = await mkdtemp(join(tmpdir(), "orbit-native-source-"));
-  // A data home of its own: the runtime is shared between versions now, and a test must never write
-  // into the person's real one. tests/native-runtime.test.ts covers where it lands and why.
-  const dataHome = await mkdtemp(join(tmpdir(), "orbit-native-data-"));
-  const previousDataHome = process.env.XDG_DATA_HOME;
-  process.env.XDG_DATA_HOME = dataHome;
-  const { shared } = nativeRuntimeLocations(source);
-  const runtime = shared.runtime;
-  const calls: string[] = [];
-  const fake = async (from: string, runtimeDirectory: string) => {
-    calls.push(from);
-    await mkdir(join(runtimeDirectory, "root/usr/bin"), { recursive: true });
-    await writeFile(join(runtimeDirectory, "root/usr/bin/sway"), "#!/bin/sh\n");
-    await writeFile(join(runtimeDirectory, "pointer"), "");
-    return { ok: true, output: "sway version 1.11" };
-  };
-  try {
-    const present = () => "/usr/bin/tool";
-    // A source tree that carries the bootstrap, which is what a clone is and a registry install is not.
-    await mkdir(join(source, "experiments/fedora-display"), { recursive: true });
-    await writeFile(join(source, "experiments/fedora-display/bootstrap.sh"), "#!/bin/sh\n");
-    expect(await buildNativeRuntime(source, { dryRun: true, which: present })).toMatchObject({ state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" });
-    const lacking = await buildNativeRuntime(source, { which: tool => tool === "cc" ? null : "/usr/bin/tool" });
-    expect(lacking).toMatchObject({ state: "failed", detail: "cc missing" });
-    expect(lacking.remedies?.[0]).toMatchObject({ id: "no-native-build-tools", needsElevation: true });
-    expect(calls).toEqual([]);
-    const failing = await buildNativeRuntime(source, { which: present, bootstrap: async () => ({ ok: false, output: "dnf: no such package" }) });
-    expect(failing).toMatchObject({ state: "failed", detail: "dnf: no such package" });
-    expect(await buildNativeRuntime(source, { which: present, bootstrap: fake })).toMatchObject({ state: "done", data: { runtime } });
-    expect(calls).toEqual([source]);
-    // Built once, the step is a no-op, and says where the runtime is.
-    expect(await buildNativeRuntime(source, { which: () => null, bootstrap: fake })).toMatchObject({ state: "skipped", detail: `already built in ${runtime}` });
-    expect(calls).toEqual([source]);
-    expect(nativeBuildTools).toContain("wayland-scanner");
-  } finally {
-    if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previousDataHome;
-    await rm(source, { recursive: true, force: true });
-    await rm(dataHome, { recursive: true, force: true });
-  }
+test("private runtime installation is refused without invoking a bootstrap", async () => {
+  let called = false;
+  const result = await buildNativeRuntime("/fixture", { bootstrap: async () => { called = true; return { ok: true, output: "" }; } });
+  expect(result.state).toBe("failed");
+  expect(result.detail).toContain("removed");
+  expect(called).toBe(false);
 });
 
-/**
- * An install that installs no service does not then fail for the absence of one.
- *
- * On Windows the service step skips by design, because a Chromium family browser cannot run in
- * session 0. `verify` was still gated only on `wantsService`, so it waited 15 seconds for a managed
- * broker nobody had started, reported `verify: failed`, and exited 1 on a machine where every step had
- * actually succeeded. The remedy it printed told the person to read a systemd journal that does not
- * exist there.
- *
- * Found by installing the published release archive on a Windows guest. Nothing in the suite installs
- * the real artifact, which is exactly why it survived: `--no-service` takes a different branch, and
- * the Windows branch had no test at all. See docs/windows-measured.md section 22.
- */
 test("an install that installs no service reports verify as skipped, not failed", async () => {
   const box = await sandbox();
   try {

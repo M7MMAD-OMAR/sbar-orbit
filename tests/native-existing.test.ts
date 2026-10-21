@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, spyOn } from "bun:test";
 import { join } from "node:path";
 import { NativeBackend, parseHandoff } from "../src/hyprland";
 import { Sessions } from "../src/session";
@@ -13,9 +13,14 @@ test("existing handoff requires a workspace and paired exact window identity", (
 });
 
 test("stop wins while a native resume response is pending", async () => {
-  const sessions = new Sessions(await createWorkspaceDirectory("handoff-resume-stop"));
+  const sessions = new Sessions(await createWorkspaceDirectory("handoff-resume-stop"), undefined, undefined, { planPath: "/fixture/host.json", controlDirectory: "/fixture/control" });
   const run = (method: string, params: unknown) => sessions.dispatch({ method, params });
-  const created = await run("session.create", { backend: "browser" }) as { sessionId: string };
+  const create = spyOn(NativeBackend, "create").mockResolvedValue(Object.assign(Object.create(NativeBackend.prototype), {
+    capabilities: [], onClose: () => {}, close: async () => {},
+  }) as NativeBackend);
+  let created: { sessionId: string };
+  try { created = await run("session.create", { backend: "native", handoff: { workspace: 2 } }) as { sessionId: string }; }
+  finally { create.mockRestore(); }
   const session = sessions["get"](created.sessionId);
   const original = session.backend;
   const started = Promise.withResolvers<void>(), response = Promise.withResolvers<void>();
@@ -36,9 +41,14 @@ test("stop wins while a native resume response is pending", async () => {
 });
 
 test("failed native pause blocks admission and can be retried", async () => {
-  const sessions = new Sessions(await createWorkspaceDirectory("handoff-pause-retry"));
+  const sessions = new Sessions(await createWorkspaceDirectory("handoff-pause-retry"), undefined, undefined, { planPath: "/fixture/host.json", controlDirectory: "/fixture/control" });
   const run = (method: string, params: unknown) => sessions.dispatch({ method, params });
-  const created = await run("session.create", { backend: "browser" }) as { sessionId: string };
+  const create = spyOn(NativeBackend, "create").mockResolvedValue(Object.assign(Object.create(NativeBackend.prototype), {
+    capabilities: [], onClose: () => {}, close: async () => {},
+  }) as NativeBackend);
+  let created: { sessionId: string };
+  try { created = await run("session.create", { backend: "native", handoff: { workspace: 2 } }) as { sessionId: string }; }
+  finally { create.mockRestore(); }
   const session = sessions["get"](created.sessionId);
   const original = session.backend;
   let attempts = 0;

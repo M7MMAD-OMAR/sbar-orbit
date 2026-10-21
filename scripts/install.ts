@@ -17,7 +17,7 @@ if (flag("--help") || flag("-h")) {
   --no-service      Write nothing into systemd and start nothing
   --dry-run         Report every step without changing anything
   --reinstall-deps  Run bun install even when dependencies already resolve
-  --native          Build the private display runtime (downloads Fedora packages, compiles)
+  --native          Unavailable: private desktop runtimes were removed
   --connect HOSTS   Register Orbit: auto or claude,codex,hermes (preserves other settings)
   --json            Print the report only, for a script rather than a person
   --plain           One line per step, no repainting`);

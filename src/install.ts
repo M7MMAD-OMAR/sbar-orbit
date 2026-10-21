@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, delimiter } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
-import { nativeRuntimeLocations, nativeRuntimePackages, type NativeRuntime } from "./runtime-paths";
 import { activateLocal, commandName } from "./local-install";
 import { installService, serviceSocketPath, connectorConfigDirectory } from "./service";
 import { autostartPaths, enableAutostart, autostartStatus } from "./autostart";
@@ -78,71 +77,13 @@ async function runBunInstall(source: string) {
   return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
 }
 
-async function runBootstrap(source: string, runtimeDirectory: string) {
-  const child = Bun.spawn(["bash", join(source, "experiments/fedora-display/bootstrap.sh")],
-    { cwd: source, stdout: "pipe", stderr: "pipe", env: { ...process.env, ORBIT_RUNTIME_DIR: runtimeDirectory } });
-  const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-  return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-3).join(" ").slice(0, 400) };
+/** Compatibility refusal for removed nested display installation requests. */
+export async function buildNativeRuntime(_source: string, _options: { dryRun?: boolean; bootstrap?: InstallOptions["bootstrap"]; which?: (tool: string) => string | null } = {}): Promise<StepOutcome> {
+  return { state: "failed", detail: "Private desktop runtimes were removed. Only original native applications on the owner desktop are supported." };
 }
 
-/** What the bootstrap needs on the machine: the package tools it downloads and unpacks with, and a C toolchain for the pointer helper. */
-export const nativeBuildTools = ["dnf", "rpm2cpio", "cpio", "curl", "wayland-scanner", "cc", "pkg-config"];
-const nativeBuildRemedy: Remedy = { id: "no-native-build-tools", needsElevation: true, agentMayRun: false,
-  command: `sudo dnf install gcc pkgconf-pkg-config wayland-devel libxkbcommon-devel cpio curl ${nativeRuntimePackages}`,
-  message: "Building the private display runtime needs a C toolchain, the Wayland and xkbcommon development files, the tools that download and unpack Fedora packages, and the libraries the compositor links against." };
-
-/**
- * The private compositor and pointer helper, built from the tracked bootstrap into the shared runtime
- * directory, outside every version of Orbit, so a version swap does not take native sessions away.
- * Measured 13 September 2026 on this Fedora 44 host: the script downloads three pinned packages,
- * unpacks them without installing, checks two protocol files against their digests, compiles the
- * helper, and reports sway 1.11, 3.3 MB on disk, in under a minute. It has run on no other system,
- * which is why the step is opt-in and says so.
- */
-export async function buildNativeRuntime(source: string, options: { dryRun?: boolean; bootstrap?: InstallOptions["bootstrap"]; which?: (tool: string) => string | null } = {}): Promise<StepOutcome> {
-  const { shared, inSource } = nativeRuntimeLocations(source);
-  const present = async (path: string) => Bun.file(path).exists();
-  const built = async (paths: NativeRuntime) => await present(join(paths.executables, "sway")) && await present(paths.pointer);
-  if (await built(shared)) return { state: "skipped", detail: `already built in ${shared.runtime}`, data: { runtime: shared.runtime, source: "shared" } };
-  // A runtime built before the move is inside whichever source tree built it, and copying it is seconds
-  // against a download and a compile. Adopting is also what keeps native sessions working across the
-  // first version swap on a machine that already had one, which is the whole reason for the move.
-  if (await built(inSource)) {
-    if (options.dryRun) return { state: "skipped", detail: `would adopt the runtime in ${inSource.runtime}` };
-    await mkdir(dirname(shared.runtime), { recursive: true });
-    // `cp -a`, not the library copy. Measured 14 September 2026: `node:fs/promises` `cp` rewrote the
-    // unpacked tree's relative symlinks into absolute paths back into the source tree, so the adopted
-    // runtime kept working only while the tree it came from was still there, and sway failed to load
-    // libliftoff.so.0 the moment it was not. That is the exact dependency this move exists to remove.
-    const copied = Bun.spawn(["cp", "-a", `${inSource.runtime}/.`, shared.runtime], { stdout: "pipe", stderr: "pipe" });
-    const problem = (await new Response(copied.stderr).text()).trim();
-    if (await copied.exited !== 0) return { state: "failed", detail: problem.split("\n").at(-1)?.slice(0, 200) || "the copy failed" };
-    if (!await built(shared)) return { state: "failed", detail: "the copy finished and left no runtime behind" };
-    return { state: "done", detail: `adopted the runtime built in ${inSource.runtime}`, data: { runtime: shared.runtime, source: "adopted" } };
-  }
-  const which = options.which ?? (tool => Bun.which(tool));
-  const missing = nativeBuildTools.filter(tool => !which(tool));
-  if (missing.length) return { state: "failed", detail: `${missing.join(", ")} missing`, remedies: [nativeBuildRemedy] };
-  // The registry package carries no `experiments/`, so this is the ordinary shape of a `--native` run
-  // after `bun add -g sbar-orbit`. Saying which file bash could not open explains nothing; saying that
-  // this copy of Orbit does not carry the bootstrap names the actual cause and the way around it.
-  if (!options.bootstrap && !(await present(join(source, "experiments/fedora-display/bootstrap.sh"))))
-    return { state: "failed", detail: "this copy of Orbit carries no native bootstrap; the registry package ships source, not experiments",
-      remedies: [{ id: "native-bootstrap-absent", needsElevation: false, agentMayRun: false,
-        command: "git clone https://github.com/M7MMAD-OMAR/sbar-orbit",
-        message: "Native sessions need the private display runtime, which is built from experiments/fedora-display/bootstrap.sh in the repository. Clone it and run ./install.sh --native there. Browser sessions need none of this." }] };
-  if (options.dryRun) return { state: "skipped", detail: "would run experiments/fedora-display/bootstrap.sh" };
-  const result = await (options.bootstrap ?? runBootstrap)(source, shared.runtime);
-  if (!result.ok) return { state: "failed", detail: result.output || "the bootstrap failed",
-    remedies: [{ id: "native-bootstrap-failed", needsElevation: false, agentMayRun: true, command: "bash experiments/fedora-display/bootstrap.sh",
-      message: `The bootstrap failed in ${source}. Run it there and read its own output; it pins Fedora package versions.` }] };
-  if (!await built(shared)) return { state: "failed", detail: "the bootstrap finished and left no runtime behind" };
-  return { state: "done", detail: `sway and the pointer helper in ${shared.runtime}`, data: { runtime: shared.runtime, source: "built" } };
-}
-
-/** The checks a dependency install cannot fix, separated from the ones it can. */
 export function blockingPrerequisites<T extends Pick<PrerequisiteCheck, "id" | "group" | "available">>(checks: T[]) {
-  const modules = ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"];
+  const modules = ["@modelcontextprotocol/sdk/client/index.js", "zod"];
   return checks.filter(check => check.group === "common" && !check.available && !modules.includes(check.id));
 }
 
@@ -243,7 +184,7 @@ export async function runInstall(options: InstallOptions = {}) {
     // The fallback is not decoration: the step records a failure rather than throwing if the sweep
     // itself threw, and this step must not then read a null.
     const report = swept ?? await inspectPrerequisites(source);
-    const present = report.checks.filter(check => check.id.includes("playwright") || check.id === "zod" || check.id.includes("modelcontextprotocol")).every(check => check.available);
+    const present = report.checks.filter(check => check.id === "zod" || check.id.includes("modelcontextprotocol")).every(check => check.available);
     if (present && !options.reinstallDependencies) return { state: "skipped", detail: "already resolved" };
     if (dryRun) return { state: "skipped", detail: "would run bun install --frozen-lockfile --ignore-scripts" };
     const result = await install(source);
@@ -257,7 +198,7 @@ export async function runInstall(options: InstallOptions = {}) {
     // Opt-in, because it downloads packages and compiles, and because it has only ever been run on
     // Fedora. A machine without it still runs browser sessions, and the prerequisites step already
     // says how to get it.
-    if (!options.native) return { state: "skipped", detail: "not requested; --native builds the private desktop runtime" };
+    if (!options.native) return { state: "skipped", detail: "Private desktop runtime removed; original native applications use the owner compositor" };
     return buildNativeRuntime(source, { dryRun, bootstrap: options.bootstrap });
   });
 

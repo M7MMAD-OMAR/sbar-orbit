@@ -31,45 +31,15 @@ test("preflight checks native and common prerequisites without a browser require
   expect(noBrowser.nativePrerequisitesFound).toBe(true);
   expect(noBrowser.checks.some(check => check.group === "browser")).toBe(false);
   expect(all.checks.every(check => check.available === (check.remedy === null))).toBe(true);
-  // A machine with neither runtime. Named by the two files rather than by a directory, because the
-  // runtime is shared between versions now and is no longer under a `.runtime` path. Both separators,
-  // because `join` produces backslashes on Windows and a POSIX-only pattern matched nothing there,
-  // so the fixture claimed a runtime the mock meant to remove.
-  const noNative = await inspectPrerequisites("/fixture", { ...complete, file: async path => !/[/\\](sway|pointer)$/.test(path) });
-  expect(noNative.browserPrerequisitesFound).toBe(false);
+  const noNative = await inspectPrerequisites("/fixture", { ...complete, which: () => null });
   expect(noNative.nativePrerequisitesFound).toBe(false);
-  // The fresh-machine failure: a compositor that is built and cannot load, which is a package
-  // manager's job and is named as one, library by library.
-  const unloadable = await inspectPrerequisites("/fixture", { ...complete, missingLibraries: () => ["libevdev.so.2", "libinput.so.10"] });
-  expect(unloadable.nativePrerequisitesFound).toBe(false);
-  expect(unloadable.browserPrerequisitesFound).toBe(false);
-  const libraries = unloadable.checks.find(check => check.id === "private-runtime-libraries");
-  expect(libraries?.remedy).toMatchObject({ id: "no-native-libraries", needsElevation: true });
-  expect(libraries?.remedy?.message).toContain("libevdev.so.2, libinput.so.10");
-  expect(libraries?.remedy?.command).toMatch(/^sudo dnf install .*\blibevdev\b/);
+  expect(noNative.nativeRuntime.source).toBe("removed");
+  expect(noNative.checks.some(check => check.id.startsWith("private-"))).toBe(false);
   const noModules = await inspectPrerequisites("/fixture", { ...complete, module: () => false });
   expect(noModules.browserPrerequisitesFound).toBe(false);
   expect(noModules.nativePrerequisitesFound).toBe(false);
 });
 
-test("a package remedy follows the package manager that is actually on the machine", async () => {
-  const missing = { platform: "linux", module: () => false, which: () => null, userManager: async () => false, missingLibraries: () => [] as string[] };
-  const only = (manager: string) => inspectPrerequisites("/fixture", { ...missing, file: async (path: string) => path === manager });
-  const captureOn = async (manager: string) =>
-    (await only(manager)).checks.find(check => check.id === "grim")?.remedy;
-
-  expect((await captureOn("/usr/bin/dnf"))?.command).toBe("sudo dnf install -y grim wl-clipboard");
-  expect((await captureOn("/usr/bin/apt-get"))?.command).toBe("sudo apt-get install -y grim wl-clipboard");
-  expect((await captureOn("/usr/bin/pacman"))?.command).toBe("sudo pacman -S --needed grim wl-clipboard");
-  // Package names are not the same everywhere, so the portable field is the software, not the command.
-  const arch = (await only("/usr/bin/pacman")).checks.find(check => check.id === "xwayland")?.remedy;
-  expect(arch?.command).toBe("sudo pacman -S --needed xorg-xwayland");
-  expect(arch?.packages).toEqual(["xwayland"]);
-  // An unrecognised system gets the names and no command. A wrong command is worse than none.
-  const unknown = await captureOn("none");
-  expect(unknown?.command).toBeUndefined();
-  expect(unknown?.packages).toEqual(["grim", "wl-clipboard"]);
-});
 
 test("a systemd tool with no user manager behind it is not availability", async () => {
   // The case a container found: systemctl present, nothing running it, and the install that needs it
@@ -104,7 +74,8 @@ test("unsupported OS and absent executable checks cannot claim availability", as
   expect(missing.browserPrerequisitesFound).toBe(false);
   expect(missing.nativePrerequisitesFound).toBe(false);
   expect(permissions).toContain(true);
-  expect(permissions).toContain(false);
+  expect(permissions.every(executable => executable)).toBe(true);
+  expect(missing.checks.some(entry => entry.id.includes("supervisor"))).toBe(false);
   expect(JSON.stringify(missing)).not.toContain("/fixture");
 });
 
@@ -130,7 +101,7 @@ test("a fresh source cannot borrow dependencies from its parent or Bun cache", a
   const source = join(root, "source");
   try {
     await mkdir(source);
-    for (const name of ["playwright", "zod", "@modelcontextprotocol/sdk"]) {
+    for (const name of ["zod", "@modelcontextprotocol/sdk"]) {
       const location = join(root, "node_modules", name);
       await mkdir(join(location, "client"), { recursive: true });
       await writeFile(join(location, "package.json"), JSON.stringify({ name, main: "index.js" }));
@@ -138,7 +109,7 @@ test("a fresh source cannot borrow dependencies from its parent or Bun cache", a
       await writeFile(join(location, "client/index.js"), "export {};\n");
     }
     const report = await inspectPrerequisites(source);
-    for (const id of ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"]) {
+    for (const id of ["@modelcontextprotocol/sdk/client/index.js", "zod"]) {
       const check = report.checks.find(row => row.id === id);
       expect(check?.available).toBe(false);
       expect(check?.remedy?.id).toBe("dependencies-missing");

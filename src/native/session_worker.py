@@ -48,7 +48,8 @@ class ReplyCache:
 
 
 def main(directory, control_directory, plan_path, session_type=None):
-    session_type = NativeSession if session_type is None else session_type
+    if session_type is None:
+        raise SessionError("Private native sessions were removed; use the existing application worker")
     require_budget()
     directory = private_directory(directory)
     private_directory(control_directory)
@@ -82,8 +83,6 @@ def main(directory, control_directory, plan_path, session_type=None):
                         if method == "status" and not params:
                             verify_host(session.plan)
                             result = {"ready": True}
-                        elif method == "launch" and not set(params) - {"argv", "configuration"}:
-                            result = session.launch(params.get("argv"), params.get("configuration"))
                         elif method == "act":
                             result = session.execute(params)
                         elif method in ("claim", "candidates", "open") and session_type is not NativeSession:

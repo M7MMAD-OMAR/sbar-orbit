@@ -481,15 +481,7 @@ export async function collectInstalledStartup(root: string, output: string, stag
     report.package = await runtimeInventory(join(canonical, "package"), canonical);
     report.installed = await runtimeInventory(join(canonical, "prefix"), canonical);
     report.collectorBunSha256 = sha(readFileSync(process.execPath));
-    const { defaultChromeExecutable } = await import("./chrome"); const browser = defaultChromeExecutable();
-    if (!browser) throw new Error("Browser selection unavailable");
-    report.browserSha256 = sha(readFileSync(browser));
     if (process.platform === "win32") {
-      const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
-      const version = await metadata([powershell, "-NoProfile", "-NonInteractive", "-Command",
-        `$v=(Get-Item -LiteralPath '${browser.replaceAll("'", "''")}').VersionInfo.FileVersion; Write-Output $v`]);
-      if (!/^\d+(?:\.\d+){1,4}$/.test(version)) throw new Error("Browser metadata unavailable");
-      report.browserFileVersion = version;
       const sidOutput = await metadata(["whoami.exe", "/user", "/fo", "csv", "/nh"]);
       const sid = /(S-1-[0-9-]+)/.exec(sidOutput)?.[1]; if (!sid) throw new Error("Task identity unavailable");
       const { taskNameForUser } = await import("./windows-autostart");

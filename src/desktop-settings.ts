@@ -14,7 +14,6 @@
 import { resolve, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { OrbitError, record, text } from "./errors";
-import { listHostBrowsers } from "./host-browsers";
 
 const script = resolve(import.meta.dir, "../desktop/orbit_settings.py");
 
@@ -41,15 +40,6 @@ async function config(args: string[]) {
 /** Every setting, with the value it currently has. */
 export async function listSettings(): Promise<DesktopSetting[]> {
   return await config(["list"]) as DesktopSetting[];
-}
-
-/** Visible by default. Only the persistent settings choice can permit a hidden desktop. */
-export async function desktopVisibility(requested?: boolean): Promise<boolean> {
-  if (requested === true) return true;
-  const hidden = await config(["get", "hiddenSessions"]) === true;
-  if (requested === false && !hidden)
-    throw new OrbitError("POLICY_DENIED", "Hidden sessions are disabled. Enable hiddenSessions explicitly in Orbit settings before requesting visible:false");
-  return !hidden;
 }
 
 /**
@@ -98,6 +88,6 @@ export async function settingsRequest(body: unknown) {
   // One answer, because the page draws the whole window at once: the settings, the browsers a
   // browser choice can name, and the monitors a placement choice can name.
   if (request.method === "settings.list")
-    return { settings: await listSettings(), browsers: await listHostBrowsers(), monitors: await listMonitors() };
+    return { settings: await listSettings(), monitors: await listMonitors() };
   return await writeSetting(request.params === undefined ? {} : record(request.params));
 }

@@ -91,5 +91,5 @@ test("native MCP action schema retains explicit targets and fractional coordinat
   const cursor = { appId: action.appId, windowId: action.windowId, type: "cursor" as const, x: 5000.5, y: 12.25 };
   expect(orbitActionSchema.parse(cursor)).toEqual(cursor);
   expect(orbitActionSchema.safeParse({ type: "configure", mode: "full" }).success).toBe(false);
-  expect(orbitActionSchema.parse({ type: "launch", argv: ["/usr/bin/true"] })).toEqual({ type: "launch", argv: ["/usr/bin/true"] });
+  expect(orbitActionSchema.safeParse({ type: "launch", argv: ["/usr/bin/true"] }).success).toBe(false);
 });

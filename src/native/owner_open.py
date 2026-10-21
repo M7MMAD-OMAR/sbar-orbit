@@ -12,24 +12,11 @@ from .application import private_directory
 from .budget import require_budget
 from .lease import process_identity
 from .session import SessionError
-
-
-def browser_profile_name(executable):
-    name = Path(executable).name
-    if name in ("google-chrome", "google-chrome-stable") or executable == "/opt/google/chrome/chrome":
-        return "google-chrome"
-    if name in ("chromium", "chromium-browser"):
-        return "chromium"
-    return None
-
-
-def browser_switches(argv):
-    # Chromium treats everything after the terminator as positional input.
-    return argv[1:argv.index("--")] if "--" in argv else argv[1:]
+from .window_geometry import window_size, placement, measured_window
 
 
 def validate_open(value):
-    if not isinstance(value, dict) or set(value) != {"workspace", "argv"}:
+    if not isinstance(value, dict) or set(value) - {"workspace", "argv", "cwd", "window"} or not {"workspace", "argv"} <= set(value):
         raise SessionError("Opening requires workspace and argv")
     workspace, argv = value["workspace"], value["argv"]
     if type(workspace) is not int or not 1 <= workspace <= 2147483647:
@@ -45,41 +32,10 @@ def validate_open(value):
     # which may preserve a relative path. The compositor helper has another cwd.
     executable = str(Path(executable).absolute())
     arguments = [executable, *argv[1:]]
-    browser = browser_profile_name(executable)
-    if browser:
-        directories = []
-        switches = browser_switches(arguments)
-        for index, arg in enumerate(switches):
-            if arg.startswith("--user-data-dir="):
-                directories.append(arg.split("=", 1)[1])
-            elif arg == "--user-data-dir":
-                if index + 1 >= len(switches):
-                    raise SessionError("Browser data directory requires a value")
-                directories.append(switches[index + 1])
-        if len(directories) > 1 or any(not Path(item).is_absolute() for item in directories):
-            raise SessionError("Browser requires one absolute data directory")
-        if not directories:
-            insertion = arguments.index("--") if "--" in arguments else len(arguments)
-            arguments.insert(insertion, "--user-data-dir=" + str(Path.home() / ".config" / browser))
-    return {"workspace": workspace, "argv": arguments}
-
-
-def check_browser_lock(argv):
-    browser = browser_profile_name(argv[0])
-    if not browser:
-        return
-    directory = Path.home() / ".config" / browser
-    switches = browser_switches(argv)
-    for index, arg in enumerate(switches):
-        if arg.startswith("--user-data-dir="):
-            directory = Path(arg.split("=", 1)[1])
-        elif arg == "--user-data-dir" and index + 1 < len(switches):
-            directory = Path(switches[index + 1])
-    lock = directory / "SingletonLock"
-    if lock.is_symlink():
-        pid = os.readlink(lock).rsplit("-", 1)[-1]
-        if pid.isdecimal() and process_identity(int(pid)) is not None:
-            raise SessionError("Browser profile is already running; single-instance forwarding is unverified and owner handoff is unavailable")
+    cwd = value.get("cwd")
+    if cwd is not None and (not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir()):
+        raise SessionError("Application working directory is unavailable")
+    return {"workspace": workspace, "argv": arguments, "window": window_size(value.get("window")), **({"cwd": cwd} if cwd else {})}
 
 
 def belongs_to(pid, root):
@@ -102,7 +58,6 @@ def belongs_to(pid, root):
 def open_application(session, value):
     require_budget()
     value = validate_open(value)
-    check_browser_lock(value["argv"])
     request = "native-open " + json.dumps(value, sort_keys=True, separators=(",", ":"))
 
     def launch():
@@ -110,14 +65,16 @@ def open_application(session, value):
         token = uuid.uuid4().hex
         spec = directory / ("open-" + token + ".json")
         receipt = directory / ("opened-" + token + ".json")
+        fitted = placement(value["workspace"], value["window"], json.loads(session.transport._exchange("j/workspaces")), json.loads(session.transport._exchange("j/monitors")))
         baseline = {window["address"] for window in json.loads(session.transport._exchange("j/clients"))}
         with spec.open("x") as stream:
             os.chmod(spec, 0o600)
-            json.dump({"argv": value["argv"], "receipt": str(receipt), "expires": time.time() + 15}, stream)
+            json.dump({"argv": value["argv"], "receipt": str(receipt), "expires": time.time() + 15, **({"cwd": value["cwd"]} if "cwd" in value else {})}, stream)
         helper = Path(__file__).with_name("owner_open_helper.py")
         command = shlex.join(["/usr/bin/python3", str(helper), str(spec)])
-        rules = f"[workspace {value['workspace']} silent; no_initial_focus on; focus_on_activate off]"
+        rules = f"[workspace {value['workspace']} silent; float; size {fitted['width']} {fitted['height']}; center; no_initial_focus on; focus_on_activate off]"
         lua = "eval hl.exec_cmd(" + json.dumps(command, ensure_ascii=False) + ", {workspace=" + json.dumps(str(value["workspace"]) + " silent") + ", no_initial_focus=true, focus_on_activate=false})"
+        lua = lua[:-2] + ", float=true, size=" + json.dumps(str(fitted["width"]) + " " + str(fitted["height"])) + ", center=true})"
         response = session.transport._exchange(lua)
         if response.strip() == "eval is only supported with the lua config manager":
             response = session.transport._exchange("dispatch exec " + rules + " " + command)
@@ -141,10 +98,14 @@ def open_application(session, value):
                     if (window.get("xwayland") or not re.fullmatch(r"0x[0-9a-f]{1,16}", str(window.get("address")))
                             or not re.fullmatch(r"[0-9a-f]{1,16}", str(window.get("stableId")))):
                         raise SessionError("Opened application has no supported Wayland handoff identity")
-                    return {"opened": True, "workspace": value["workspace"], "address": window["address"],
+                    measured = measured_window(window, fitted)
+                    if measured is None:
+                        time.sleep(0.05)
+                        continue
+                    return {"opened": True, "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
                             "stableId": window["stableId"], "pid": window["pid"],
                             "title": str(window.get("title", ""))[:160], "applicationLifetime": "owner",
-                            "handoff": "available for the evidenced plugin build"}
+                            "handoff": "held pending compositor crash release evidence"}
             time.sleep(0.05)
         raise SessionError("Opening delivery is uncertain: no launch-bound window acknowledged. Check candidates before retrying; single-instance forwarding is not verified")
 

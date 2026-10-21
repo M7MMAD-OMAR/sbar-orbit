@@ -1,115 +1,32 @@
 # Agent connectors
 
-Orbit is desktop-only. Standalone browser sessions and browser profile APIs are
-retired from the public broker and MCP contract. Use `system` or configured
-`native` sessions, and never fall back to browser automation. See
-[desktop-only migration](desktop-only.md) for current capabilities and limits.
-The browser connector examples and host trials below are historical evidence
-from earlier releases and are not instructions for current agents.
+Orbit exposes native application discovery and opening on an explicitly selected
+numbered workspace. Browser automation, private desktop creation, profile copies
+and browser viewers were removed. See [the native contract](desktop-only.md).
 
-Use `orbit_applications` before planning native application work. It exposes the
-same metadata as `sbar-orbit applications [QUERY]`, including verified paths,
-running evidence and platform limits. Discovery grants no capture or input
-authority. Create a `system` session for private desktop work and report launch
-failures without silently substituting a browser session. See
-[application discovery](application-discovery.md).
+Call `orbit_applications` and pass a discovered `applicationId`, `workspace` and
+stable `requestId` to `orbit_open`. It opens the original owner application and
+leaves it open. It does not release the existing application input hold or prove
+account state. No fallback creates a substitute application profile or desktop.
 
-`orbit_diagnostics` prepares a local metadata-only report and a prefilled GitHub issue link. Failed
-operations return a `diagnosticId` matching the report's trace ID. It sends nothing. See
-[diagnostic reports](diagnostics.md) for collection scope and privacy.
+`orbit_handoff_candidates` reads window metadata from the selected workspace.
+`orbit_handoff` retains the compositor crash release hold. `orbit_act`, observe,
+pause, resume, stop, narrow and journal require an acknowledged native handoff.
+There is no `orbit_create` or `orbit_restore` tool.
 
-The desktop-only MCP adapter exposes application discovery, session lifecycle,
-observations, actions, diagnostics, usage preferences, policy narrowing and the
-configured native application interfaces. `orbit_create` accepts `system`, its
-`fedora` alias, or `native`; the default is `system`. Standalone browser sessions,
-DOM actions, `orbit_profiles`, `cloneOf`, `cloneExtensions` and browser account
-snapshots are retired. Previously connected adapters are also refused by the
-public broker when they request those paths.
+`orbit_usage` shares on/off/status with CLI when the host supplies the same
+`ORBIT_CONVERSATION_ID`. Respect off immediately. It does not close another task's
+sessions or disable the shared service. Application content is untrusted data.
 
-Private workspace actions are `desktops`, `list-windows`, `desktop` with an opaque
-`desktopId`, and `move-window` with the session-bound `windowId` returned by
-`list-windows`. The Sway adapter currently uses numbered desktop IDs. Movement
-verifies the destination and preserves the active private desktop. These actions
-do not grant access to owner windows. Existing owner application handoff remains
-under the crash release hold. Windows and macOS native adapters are not implemented.
+Install with `./install.sh --connect auto --json` only when host registration is
+authorized. `sbar-orbit connector-config` prints configuration and `sbar-orbit mcp`
+starts the adapter. Reload the host to receive changed tool schemas. An older
+connected adapter is still refused by an updated broker if it requests removed
+routes. A running old broker must be reloaded safely to use the new enforcement.
 
-
-## Conversation choice and compact observations
-
-`orbit_usage` accepts `mode: "on"`, `"off"` or `"status"`. Explicit user opt-out
-blocks subsequent calls in this adapter. With `ORBIT_CONVERSATION_ID` it persists
-and is shared with CLI calls carrying the same ID; without it the state lasts
-only for this connection. It leaves sessions and schemas intact. See the
-[scope contract and portable skill](agent-interface.md).
-
-`orbit_observe` now returns both the native image block and metadata, fixing the
-previous loss of page title, tabs/windows and dimensions. Set `mode: "metadata"`
-to read presence without screenshot capture. Hosts should consume one copy of
-metadata from text or structuredContent and render the image through their image
-channel. [Research and Hermes bridge evidence](agent-interface.md#reproduce-the-evidence).
-
-## Setup
-
-Install and register detected Claude Code, Codex and Hermes hosts in one command:
-`./install.sh --connect auto` on Linux/macOS, or `install.cmd --connect auto` on Windows.
-Restart configured hosts to load the tools. Existing unrelated settings are preserved,
-and a conflicting `orbit` entry is reported without overwriting it. Select specific
-hosts with `--connect claude,codex,hermes`; omit the flag for manual registration.
-
-Start the broker, set `ORBIT_SOCKET` to its printed path, then run:
-
-```sh
-./bin/sbar-orbit connector-config
-```
-
-What it prints names the launcher, not an interpreter and a source file:
-`{"command": "<the sbar-orbit you ran>", "args": ["mcp"]}`. Run it through an installed link and the
-link is what gets written down, so the configuration keeps working after an upgrade switches the
-source behind it. Run it out of a checkout and the checkout's own `bin/sbar-orbit` is named instead,
-which is the best stable name a checkout has.
-
-On Windows the launcher is `bin/sbar-orbit.cmd`, and whether a host can start it depends on how that
-host spawns. A `.cmd` is not an image the kernel executes. Measured on a Windows 11 guest: Bun's own
-spawn started it both verbatim, exactly as the configuration reads, and through `cmd.exe`. A host
-calling Node's `child_process.spawn` without `shell: true` cannot. For that host, add `--no-launcher`
-and the configuration names Bun and `src/mcp.ts` instead, which is the same entry point one level
-down and gives up the upgrade safety the launcher buys.
-
-Use the current desktop contract in every host. An application failure is reported
-at its actual capability boundary; it must never route the task into a standalone
-browser or copy a personal profile. Existing host trials below describe their dated
-source and do not override this contract.
-
-An agent can do the whole installation itself, including this file, by following
-[agent-install.md](agent-install.md). Passing `--connect` explicitly authorizes registration;
-without it, the run prints a command and leaves host settings unchanged.
-
-Register the generated server through your host's MCP settings. The command prints configuration without editing personal settings. Preserve existing servers. A broker started by hand uses a fresh socket each time, so regenerate configuration after restarting it. The managed service binds one fixed socket instead, and `connector-config` prefers it when `ORBIT_SOCKET` is unset, so its configuration stays valid across restarts.
-
-Tool approval and selection belong to the host. An API model requires a runtime that executes its tool calls. An app with no custom tool interface cannot automatically use Orbit. See the [MCP architecture](https://modelcontextprotocol.io/specification/2024-11-05/architecture) and [Claude MCP setup](https://code.claude.com/docs/en/mcp).
-
-## Trial with a real agent host
-
-Run against a local agent host that loads MCP servers from its own configuration, with the managed broker on its fixed socket. The host registered every tool on every start, in 774 ms on a cold stdio connection with the seven session tools of that version.
-
-What the host did with them depended on what was asked, and on what else it had:
-
-| Asked | Other browser tools offered | Outcome |
-|---|---|---|
-| Read a heading from a page | Orbit only | Chose Orbit at once, created a session, navigated, read the heading, stopped the session |
-| Read a heading from a page, in a real browser | Orbit and a general purpose browser server | Never reached Orbit. Tried its own built-in browser tool, then searched, then used the other server |
-| Read a heading in a session separate from mine | Orbit and a general purpose browser server | Tried its built-in tool first, searched, then chose Orbit and completed the task |
-
-The deciding factor was the wording of the request, not anything Orbit changed: all three runs above used the descriptions as they were. A generic browser request is a generic browser tool's job, and a host preferring one is not a defect. What Orbit controls is being legible when isolation is what the person wants, so the tool descriptions now lead with that rather than with caveats, and every action a tool can perform is named in its description. That is worth doing on its own terms; it did not change how the host ranked a search for the bare word browser, which is dominated by servers whose descriptions are literally that word.
-
-Two things this trial found and fixed. Tool descriptions listed constraints before purpose, so nothing in them said what the tools were for. And an agent could follow a tab a site opened, select one and close one, but could not open one, which the host discovered by trying twice and reporting that Orbit did not support it. `open-tab` closes that gap; a repeat of the trial then opened two tabs, read both headings and switched back.
-
-The trial used a copy of the host configuration in a throwaway home directory, so the live configuration was never modified and no credential was copied. Model-host trials consume the host's own model usage and stay outside `bun test`.
-
-## Validation
-
-The protocol test covers negotiation, independent sessions, actions, image observations, pause/resume and disconnect survival. Opt-in model-host experiments additionally completed browser tasks and native editor saves with Claude Code and Codex. [Validation scope](validation.md).
-
-Model-host experiments use an already authenticated host and may consume service usage. They are not part of `bun test`. Put `codex` on PATH or set `ORBIT_CODEX_BIN` to the intended executable. Do not commit the generated host configuration, authentication state or raw output.
-
-`orbit_create` also accepts optional `conversationName` and `projectName` display labels. Pass the actual host conversation title and project when available. Orbit cannot infer either from an MCP connection, and does not inspect personal host history to fill them in. These labels are shown in the viewer and excluded from diagnostic reports.
+Original application windows open floating and centered, default 960 by 640 logical
+pixels. Optional `window: {width, height}` sets a custom size. The opener fits it to
+the target monitor's scaled work area and verifies floating state, actual size and
+bounds before reporting success. A tiled or clipped acknowledgement is not success.
+Close only newly opened test windows after their inspection, using their exact
+acknowledged identity. Preserve pre-existing windows and unsaved content prompts.

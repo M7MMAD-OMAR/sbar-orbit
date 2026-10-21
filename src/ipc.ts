@@ -1,4 +1,3 @@
-import { nativeRendererFromEnv } from "./native-renderer";
 import { requireResourceBudget } from "./resource-budget";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,24 +6,13 @@ import { DesktopSessions } from "./desktop-session";
 import { OrbitError } from "./errors";
 import { restrictSocketToOwner } from "./socket-acl";
 import { settingsRequest } from "./desktop-settings";
-import { startPreview } from "./preview";
-import { listHostBrowsers, openViewer, viewerPreference } from "./host-browsers";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
 import { claimSocket } from "./service";
 import { Diagnostics, diagnosticRoot } from "./diagnostics";
-import { normaliseClientResponseUrls } from "./http-response-url";
 import type { NativeOptions } from "./native-worker";
 
 export async function startBroker(options: { accountRoot?: string; socketPath?: string; native?: NativeOptions } = {}) {
   await requireResourceBudget();
-  // Before anything can make an HTTP request. A Bun client response carries the request path in
-  // `url`, where Node leaves it empty, and Playwright's fetch path feeds that field to `new URL`
-  // whenever a response sets a cookie. The throw is uncaught and takes the broker down, so every
-  // other agent's sessions die with it. See src/http-response-url.ts.
-  normaliseClientResponseUrls();
-  // A broker whose renderer switch is misconfigured refuses to start, here, rather than refusing
-  // every native session later with an error the agent cannot act on.
-  nativeRendererFromEnv();
   // A managed broker binds one fixed path so host configuration survives restarts. Every other
   // broker keeps a private directory, so tests and experiments cannot collide with each other.
   let socket = options.socketPath;
@@ -39,7 +27,6 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   }
   const workspace = await createWorkspaceDirectory("broker");
   const sessions = new DesktopSessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native);
-  let preview: ReturnType<typeof startPreview> | undefined;
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
     async fetch(request) {
@@ -47,18 +34,6 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       if (request.method !== "POST" || new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
       try {
         const body = await request.json();
-        // The viewer is how the person watches a private desktop and steps in. It is a loopback page
-        // with its own access token, opened in Orbit's own browser window, never an agent session.
-        if (body?.method === "viewer.browsers") return Response.json({ ok: true, result: { browsers: await listHostBrowsers(), ...await viewerPreference() } });
-        if (body?.method === "preview.open") {
-          preview ??= startPreview(sessions);
-          const params = (body.params ?? {}) as { launch?: boolean; browser?: string; appWindow?: boolean; view?: string };
-          const url = params.view === "settings" ? preview.link("settings") : preview.url;
-          if (!params.launch) return Response.json({ ok: true, result: { url } });
-          const preference = await viewerPreference();
-          const opened = await openViewer(url, params.browser ?? preference.browser, params.appWindow ?? preference.appWindow);
-          return Response.json({ ok: true, result: { url, ...opened } });
-        }
         if (body?.method === "settings.list" || body?.method === "settings.write")
           return Response.json({ ok: true, result: await settingsRequest(body) });
         return Response.json({ ok: true, result: await sessions.dispatch(body) });
@@ -83,7 +58,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   // Recorded once the socket answers, since answering is what marks the workspace as owned.
   await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {
-    preview?.close(); server.stop(true); await sessions.close();
+    server.stop(true); await sessions.close();
     await sessions.diagnostics.flush();
     await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});

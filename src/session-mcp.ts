@@ -18,7 +18,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
     throw new OrbitError("INVALID_REQUEST", "A session adapter needs an Orbit session ID");
   const usage = new ConversationUsage();
   const server = new McpServer({ name: "sbar-orbit-session", version }, {
-    instructions: "These tools control one already created Orbit session. The session ID is fixed by the adapter and cannot be chosen in a tool call. Its private display and files are subject to the session policy. Do not use host screen or browser tools for this session. The user may disable Orbit usage for this conversation.",
+    instructions: "These tools control one already created Orbit session. The session ID is fixed by the adapter and cannot be chosen in a tool call. Only its acknowledged original native application is subject to the session policy. Browser launch and private desktops were removed. Do not use host screen or browser tools for this session. The user may disable Orbit usage for this conversation.",
   });
   const invoke = async (method: string, params: Record<string, unknown> = {}): Promise<CallToolResult> => {
     try {
@@ -47,7 +47,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
   }, ({ mode, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
     { ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
   server.registerTool("orbit_act", {
-    description: "Perform one action in this session only. Reuse requestId when retrying an uncertain result. Codex launch-app with profile active uses a read-only gate to the running Desktop owner for limited account status, project names and conversation titles. It denies opening conversation bodies, model turns, commands and profile writes, and never copies the owner's profile as a fallback.",
+    description: "Act on this acknowledged native application only after its handoff release hold clears. No launch or private profile actions exist. Reuse requestId after uncertain delivery.",
     inputSchema: { requestId: id, action: orbitActionSchema },
   }, params => invoke("session.act", params));
   for (const operation of ["pause", "resume", "stop", "journal"] as const) {

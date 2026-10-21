@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.native.owner_open import open_application, validate_open, check_browser_lock
+from src.native.owner_open import open_application, validate_open
 from src.native.control import ActionControl, ControlError
 from src.native.lease import process_identity
 from src.native.session import SessionError
@@ -30,6 +30,8 @@ class OpenTests(unittest.TestCase):
         self.launched = False
         self.pid = os.getpid()
         self.workspace = 4
+        self.layout = [960, 640]
+        self.floating = True
         self.session = SimpleNamespace(directory=self.directory, control=self.control,
                                        transport=SimpleNamespace(_exchange=self.exchange))
 
@@ -37,7 +39,13 @@ class OpenTests(unittest.TestCase):
         self.commands.append(command)
         if command == "j/clients":
             return json.dumps([{"address": "0xabc", "stableId": "123", "pid": self.pid,
-                                "workspace": {"id": self.workspace}, "xwayland": False}] if self.launched else [])
+                                "workspace": {"id": self.workspace}, "xwayland": False,
+                                "floating": self.floating, "size": self.layout, "at": [(1920 - self.layout[0]) / 2, (1080 - self.layout[1]) / 2]}] if self.launched else [])
+        if command == "j/workspaces":
+            return json.dumps([{"id": 4, "monitor": "test-monitor"}])
+        if command == "j/monitors":
+            return json.dumps([{"name": "test-monitor", "x": 0, "y": 0, "width": 1920, "height": 1080,
+                                "scale": 1, "focused": True, "reserved": [0, 0, 0, 0]}])
         match = re.match(r'eval hl.exec_cmd\(("(?:[^"\\]|\\.)*"), ', command)
         if not match:
             raise AssertionError("Expected the native Lua launch command")
@@ -58,11 +66,36 @@ class OpenTests(unittest.TestCase):
         arg = 'literal $(touch /tmp/unwanted) ; "quoted"'
         result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true", arg]})
         self.assertEqual(self.arguments, ["/usr/bin/true", arg])
-        self.assertNotIn(arg, self.commands[1])
-        self.assertIn('workspace="4 silent", no_initial_focus=true, focus_on_activate=false', self.commands[1])
+        launch = next(command for command in self.commands if command.startswith("eval hl.exec_cmd"))
+        self.assertNotIn(arg, launch)
+        self.assertIn('workspace="4 silent", no_initial_focus=true, focus_on_activate=false', launch)
         self.assertEqual(result["address"], "0xabc")
         self.assertEqual(result["applicationLifetime"], "owner")
-        self.assertIn("unavailable", result["handoff"])
+        self.assertIn("held", result["handoff"])
+
+    def test_default_open_is_floating_and_verified(self):
+        self.control.configure(mode="full")
+        result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+        self.assertTrue(result["window"]["floating"])
+        self.assertEqual(result["window"]["width"], 960)
+        launch = next(command for command in self.commands if command.startswith("eval hl.exec_cmd"))
+        self.assertIn("float=true", launch)
+        self.assertIn('size="960 640"', launch)
+        self.assertIn("center=true", launch)
+
+    def test_custom_size_is_passed_and_measured(self):
+        self.control.configure(mode="full")
+        self.layout = [800, 600]
+        result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"],
+                                                "window": {"width": 800, "height": 600}})
+        self.assertEqual((result["window"]["width"], result["window"]["height"]), (800, 600))
+
+    def test_tiled_acknowledgement_is_not_placement_success(self):
+        self.control.configure(mode="full")
+        self.floating = False
+        with patch("src.native.owner_open.time.monotonic", side_effect=[0, 1, 20]), patch("src.native.owner_open.time.sleep"):
+            with self.assertRaisesRegex(SessionError, "uncertain"):
+                open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
 
     def test_wrong_workspace_refuses_identity(self):
         self.control.configure(mode="full")
@@ -77,47 +110,14 @@ class OpenTests(unittest.TestCase):
             with self.assertRaisesRegex(SessionError, "uncertain"):
                 open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
 
-    def test_live_browser_profile_refuses_before_opening(self):
-        (self.directory / "SingletonLock").symlink_to("localhost-" + str(os.getpid()))
-        with self.assertRaisesRegex(SessionError, "already running"):
-            check_browser_lock(["/usr/bin/google-chrome-stable", "--user-data-dir=" + str(self.directory)])
-        self.assertEqual(self.commands, [])
 
-    def test_browser_directory_overrides_compositor_environment(self):
-        with patch("src.native.owner_open.shutil.which", return_value="/usr/bin/google-chrome-stable"), patch.dict(os.environ, {"CHROME_USER_DATA_DIR": "/unexpected"}):
-            value = validate_open({"workspace": 4, "argv": ["google-chrome-stable", "--profile-directory=Profile 1"]})
-        self.assertIn("--user-data-dir=" + str(Path.home() / ".config/google-chrome"), value["argv"])
-        with patch("src.native.owner_open.shutil.which", return_value="/usr/bin/google-chrome-stable"):
-            with self.assertRaisesRegex(SessionError, "absolute"):
-                validate_open({"workspace": 4, "argv": ["google-chrome-stable", "--user-data-dir=relative"]})
 
     def test_relative_executable_is_resolved_before_approval(self):
         with patch("src.native.owner_open.shutil.which", return_value="./owner-app"):
             value = validate_open({"workspace": 4, "argv": ["./owner-app"]})
         self.assertEqual(value["argv"][0], str(Path("./owner-app").absolute()))
 
-    def test_official_chrome_elf_pins_directory_and_checks_lock(self):
-        with patch("src.native.owner_open.shutil.which", return_value="/opt/google/chrome/chrome"):
-            value = validate_open({"workspace": 4, "argv": ["/opt/google/chrome/chrome"]})
-        self.assertIn("--user-data-dir=" + str(Path.home() / ".config/google-chrome"), value["argv"])
-        (self.directory / "SingletonLock").symlink_to("localhost-12345")
-        with patch("src.native.owner_open.process_identity", return_value=(12345, 1)):
-            with self.assertRaisesRegex(SessionError, "already running"):
-                check_browser_lock(["/opt/google/chrome/chrome", "--user-data-dir=" + str(self.directory)])
 
-    def test_browser_profile_switch_precedes_argument_terminator(self):
-        with patch("src.native.owner_open.shutil.which", return_value="/usr/bin/google-chrome-stable"):
-            value = validate_open({"workspace": 4, "argv": ["google-chrome-stable", "--", "about:blank",
-                                  "--user-data-dir=/positional-not-a-switch"]})
-        expected = "--user-data-dir=" + str(Path.home() / ".config/google-chrome")
-        self.assertIn(expected, value["argv"][:value["argv"].index("--")])
-        self.assertEqual(value["argv"][value["argv"].index("--") + 1:],
-                         ["about:blank", "--user-data-dir=/positional-not-a-switch"])
-        (self.directory / "SingletonLock").symlink_to("localhost-12345")
-        with patch("src.native.owner_open.process_identity", return_value=(12345, 1)):
-            with self.assertRaisesRegex(SessionError, "already running"):
-                check_browser_lock(["/usr/bin/google-chrome-stable", "--user-data-dir=" + str(self.directory),
-                                    "--", "--user-data-dir=/positional-not-a-switch"])
 
     def test_launch_receipt_is_complete_when_published(self):
         import time

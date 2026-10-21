@@ -15,21 +15,18 @@ export type StepView = { id: string; title: string; state: StepState; detail: st
 const mark = [
   "                                                              ",
   "   ◯ ·    S B A R   O R B I T                                 ",
-  "          Every agent gets a screen of its own. You keep yours.",
+  "          Original native applications, on the workspace you choose.",
   "                                                              ",
 ];
 
 /** Honest claims only: each one is a capability this repository demonstrates. */
 export const offerings = [
-  "Each agent gets its own headless browser, with its own profile and storage.",
-  "Native Fedora applications run on a private Wayland display, never on yours.",
-  "The viewer is optional. Nothing opens a window on your desktop by itself.",
-  "You can pause a session, take the keyboard yourself, then hand it back.",
-  "Every action is journalled, and a session can be put back to an earlier point.",
-  "Files are reserved cooperatively, so two agents do not edit the same one.",
-  "A session's secret service holds exactly one item, not your whole keyring.",
-  "An origin lease is enforced below the browser, not by asking it politely.",
-  "The broker runs inside a shared CPU and memory budget, so your desktop stays yours.",
+  "Open original native applications on an explicitly selected numbered workspace.",
+  "Applications keep their normal owner profiles and remain open.",
+  "No browser launch, profile copying or private desktop fallback exists.",
+  "Opening is separate from input control, which remains under the compositor crash hold.",
+  "Requests have stable identities and decisions are journalled.",
+  "The broker runs inside the shared CPU and memory budget.",
 ];
 
 const glyph: Record<StepState, string> = { pending: "○", running: "◐", done: "✔", skipped: "·", failed: "✘" };

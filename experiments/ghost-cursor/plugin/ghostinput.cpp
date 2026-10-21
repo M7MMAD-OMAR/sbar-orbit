@@ -3,7 +3,7 @@
 // framed by its own enter and leave, so the seat's focus, the person's pointer and the person's
 // application never see anything. The Linux analog of posting events to one process.
 //
-// hyprctl commands (all refuse any window outside the agent workspace special:ghost):
+// Hyprctl input commands require an explicit owner application lease.
 //   ghost-type  <address> <text>                 type UTF-8 text through the seat keymap
 //   ghost-key   <address> <combo>                one key, e.g. Return, ctrl+a, shift+Tab
 //   ghost-click <address> <x> <y> [button]       press and release at surface-local x,y
@@ -241,7 +241,6 @@ class RetainedScope {
 // Native unload scope identity end.
 
 inline HANDLE PHANDLE = nullptr;
-static const std::string AGENT_SPACE = "special:ghost";
 struct SCursor {
     PHLWINDOWREF window;
     Vector2D local;
@@ -523,22 +522,7 @@ static void pruneLaunchRules() {
 }
 
 static std::pair<SP<Desktop::Rule::CWindowRule>, std::string> prepareLaunchRule() {
-    using namespace Desktop::Rule;
-    const auto token = g_pTokenManager->getRandomUUID();
-    if (!std::regex_match(token, std::regex{"[0-9a-fA-F-]{36}"}))
-        throw std::runtime_error("cannot create native launch identity");
-    auto rule = makeShared<CWindowRule>("orbit_native_" + token);
-    // Token-only matching has no numeric PID fallback and survives PID reuse.
-    rule->registerMatch(RULE_PROP_EXEC_TOKEN, "^" + token + "$");
-    for (const auto& [effect, value] : std::vector<std::pair<eWindowRuleEffect, std::string>>{
-             {WINDOW_RULE_EFFECT_WORKSPACE, "special:ghost silent"},
-             {WINDOW_RULE_EFFECT_NOINITIALFOCUS, "1"},
-             {WINDOW_RULE_EFFECT_FOCUS_ON_ACTIVATE, "0"},
-             {WINDOW_RULE_EFFECT_RENDER_UNFOCUSED, "1"}}) {
-        if (auto result = rule->addEffect(effect, value); !result)
-            throw std::runtime_error("cannot prepare native launch rule: " + result.error());
-    }
-    return {rule, token};
+    throw std::runtime_error("Private session launch rules were removed");
 }
 
 static void pruneScopedProcesses() {
@@ -561,27 +545,7 @@ static void pruneRegisteredProcesses() {
 }
 
 static bool agentClient(wl_client* client) {
-    if (applicationLeaseForClient(client))
-        return true;
-    pruneRegisteredProcesses();
-    pid_t pid;
-    wl_client_get_credentials(client, &pid, nullptr, nullptr);
-    const auto runtime = std::getenv("XDG_RUNTIME_DIR");
-    const bool privateLab = runtime && std::string_view{runtime}.starts_with("/tmp/gl-");
-    const auto scoped = scopedProcesses.find(pid);
-    bool found = scoped != scopedProcesses.end() && scoped->second->valid();
-    if (scoped != scopedProcesses.end() && !found)
-        return false; // An expired scoped registration cannot fall back to workspace ownership.
-    found = found || (privateLab && registeredProcesses.contains(pid));
-    for (const auto& window : Desktop::windowState()->windows()) {
-        auto surface = window->resource();
-        if (!window->m_isMapped || !surface || surface->client() != client)
-            continue;
-        if (!window->m_workspace || window->m_workspace->m_name != AGENT_SPACE)
-            return false;
-        found = found || privateLab;
-    }
-    return found;
+    return applicationLeaseForClient(client) != nullptr;
 }
 
 static bool privateSelectionClient(wl_client* client) {
@@ -1160,7 +1124,7 @@ static void drawCursors(eRenderStage stage) {
         return;
     for (auto it = cursors.begin(); it != cursors.end();) {
         auto w = it->second.window.lock();
-        if (!w || !w->m_isMapped || !w->m_workspace || (w->m_workspace->m_name != AGENT_SPACE && !leasedWindow(w))) {
+        if (!w || !w->m_isMapped || !w->m_workspace || !leasedWindow(w)) {
             it = cursors.erase(it);
             continue;
         }
@@ -1268,8 +1232,8 @@ static STarget resolve(const std::string& address, bool wake = true) {
     }
     const bool applicationTarget = unit.starts_with("lease-");
     if (!t.window->m_isMapped || !t.window->m_workspace ||
-        (!applicationTarget && t.window->m_workspace->m_name != AGENT_SPACE)) {
-        t.error = "refused: window is not in " + AGENT_SPACE;
+        !applicationTarget) {
+        t.error = "refused: an explicit owner application lease is required";
         t.window.reset();
         return t;
     }

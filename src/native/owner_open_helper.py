@@ -26,6 +26,8 @@ def main(path):
         os.fsync(stream.fileno())
     os.link(temporary, receipt)
     temporary.unlink()
+    if "cwd" in spec:
+        os.chdir(spec["cwd"])
     os.execv(spec["argv"][0], spec["argv"])
 
 

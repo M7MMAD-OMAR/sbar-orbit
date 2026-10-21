@@ -20,7 +20,6 @@
     "src",
     "scripts",
     "desktop",
-    "viewer",
     "!**/__pycache__",
     "bun.lock",
     "bunfig.toml",
@@ -47,24 +46,20 @@
   ],
   "keywords": [
     "agent",
-    "browser",
-    "sandbox",
-    "wayland",
-    "systemd",
-    "mcp",
-    "playwright",
-    "fedora"
+    "native",
+    "linux",
+    "workspace",
+    "mcp"
   ],
   "scripts": {
     "verify": "bun --smol run scripts/verify-desktop.ts",
-    "verify:platform-contracts": "bun run verify tests/macos.test.ts tests/macos-keychain.test.ts tests/macos-service-simulation.test.ts tests/platform.test.ts tests/service-paths.test.ts",
+    "verify:platform-contracts": "bun run verify tests/application-discovery.test.ts tests/application-discovery-native.test.ts tests/macos-service-simulation.test.ts tests/service-paths.test.ts tests/preflight.test.ts",
     "typecheck": "bun node_modules/typescript/bin/tsc",
     "orbit": "bun run src/cli.ts",
     "serve": "bun run scripts/limited.ts bun run src/cli.ts serve"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "playwright": "^1.63.0",
     "zod": "^4.6.1"
   },
   "devDependencies": {

@@ -1,7 +1,6 @@
 import { access, stat } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { nativeRuntimeLocations, nativeRuntimePackages } from "./runtime-paths";
 
 type Probe = {
   platform: string;
@@ -153,57 +152,16 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     add("systemd-user-session", "common", await probe.userManager(),
       { id: "no-systemd-user-session", needsElevation: false, agentMayRun: false,
         message: "Orbit runs every process it owns inside a systemd user slice, and no user manager is running for this account. A desktop login provides one. A container and a bare ssh session without lingering do not." });
-    // The Python subreaper that holds a browser tree on Linux. Windows uses a job object instead, so
-    // its absence there is correct rather than an incomplete source tree.
-    add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise.py"), false),
-      { id: "incomplete-source", needsElevation: false, agentMayRun: false,
-        message: "This source tree is missing files a release carries. Extract a complete Orbit source release, or check out the repository again." });
+
   }
-  for (const name of ["playwright", "@modelcontextprotocol/sdk/client/index.js", "zod"])
+  for (const name of ["@modelcontextprotocol/sdk/client/index.js", "zod"])
     add(name, "common", probe.module(name, project),
       { id: "dependencies-missing", needsElevation: false, agentMayRun: true, command: "bun install --frozen-lockfile --ignore-scripts",
         message: "Project dependencies are not installed. Run this in the source directory; the one command install does it for you." });
-  // Which runtime this machine would use, resolved through the probe rather than the filesystem, so an
-  // injected probe still decides everything. `in-source` means one built before 14 September 2026,
-  // inside a source tree, still usable and adopted by `./install.sh --native`.
-  // The native backend is a nested Wayland compositor: Linux only, by construction. Running these
-  // checks elsewhere emitted three remedies telling an agent to run `./install.sh --native` and to
-  // `sudo dnf install` Fedora packages, on a machine with no dnf, no sudo and no possible private
-  // display. A remedy nobody can act on is worse than no remedy: the contract says an agent must
-  // report what it did not run, so it would faithfully report Fedora instructions to that user.
-  let runtimeSource: "shared" | "in-source" | "none" = "none";
   if (nativePossible) {
-    const locations = nativeRuntimeLocations(project);
-    const built = async (paths: { executables: string; pointer: string }) =>
-      await probe.file(join(paths.executables, "sway"), true) && await probe.file(paths.pointer, true);
-      runtimeSource = await built(locations.shared) ? "shared" : await built(locations.inSource) ? "in-source" : "none";
-    const native = runtimeSource === "in-source" ? locations.inSource : locations.shared;
-    for (const [id, path] of [["private-sway", join(native.executables, "sway")], ["private-pointer", native.pointer]] as const)
-      add(id, "native", await probe.file(path, true),
-        // The one prerequisite that is genuinely tied to a system: the bootstrap that builds the private
-        // compositor pins Fedora packages, and no equivalent has been written or tried anywhere else.
-        { id: "no-native-runtime", needsElevation: false, agentMayRun: false, command: "./install.sh --native",
-          message: "The private compositor and pointer helper are not in a source release, so they are built from the bootstrap script. It pins Fedora packages and has been run on no other system. Read it before running it. Private desktop sessions are unavailable until the native runtime is ready." });
-    // A runtime that is present and cannot load is the fresh-machine failure the container found: the
-    // bootstrap unpacks packages and the libraries they need are the machine's own. ldd is the same
-    // question the dynamic loader will ask, asked before a session does.
-    const sway = join(native.executables, "sway");
-    if (await probe.file(sway, true)) {
-      const missing = probe.missingLibraries([sway, native.pointer], join(native.runtime, "root/usr/lib64"));
-      add("private-runtime-libraries", "native", !missing.length,
-        { id: "no-native-libraries", needsElevation: true, agentMayRun: false,
-          command: `sudo dnf install ${nativeRuntimePackages}`,
-          message: `The private compositor is built and cannot load${missing.length ? ` ${missing.join(", ")}` : ""}. Those are Fedora packages the bootstrap does not install.` });
-    }
-    for (const name of ["grim", "wl-copy", "wl-paste"])
-      add(name, "native", await probe.file(`/usr/bin/${name}`, true),
-        await systemPackages(probe, "no-capture-tools",
-          "Private desktop sessions capture with grim and paste through wl-clipboard.",
-          { any: ["grim", "wl-clipboard"] }));
-    const xwayland = probe.which("Xwayland");
-    add("xwayland", "native", !!xwayland && await probe.file(xwayland, true),
-      await systemPackages(probe, "no-xwayland", "X11 applications on the private display need Xwayland on PATH.",
-        { any: ["xwayland"], dnf: ["xorg-x11-server-Xwayland"], zypper: ["xorg-x11-server-Xwayland"], pacman: ["xorg-xwayland"] }));
+    add("hyprctl", "native", !!probe.which("hyprctl"),
+      { id: "native-compositor-unavailable", needsElevation: false, agentMayRun: false,
+        message: "Original application opening requires the configured Hyprland owner session. No private display fallback exists." });
   }
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
   // `every` on an empty list is true, so skipping the native checks would report
@@ -214,7 +172,7 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // than for Windows alone.
   const nativePrerequisitesFound = nativePossible && available("native");
   return { check: "prerequisite-availability", browserPrerequisitesFound: false, nativePrerequisitesFound, checks,
-    nativeRuntime: { source: runtimeSource },
+    nativeRuntime: { source: "removed" },
     notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],
     startsApplications: false };
 }

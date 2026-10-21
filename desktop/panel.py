@@ -1055,16 +1055,8 @@ class Panel(Gtk.Application):
         self.set_expanded(True)
 
     def watch_sessions(self, session_id):
-        """Open Orbit's native window for one session: the private desktop live, Take over and Hand
-        back. No browser and no link: the window talks to the broker over the owner-only socket."""
-        if not isinstance(session_id, str) or not session_id:
-            return
-        try:
-            subprocess.Popen([sys.executable, str(Path(__file__).with_name("session_window.py")), session_id],
-                             env={**os.environ, "ORBIT_SOCKET": self.path}, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError as error:
-            print(f"panel: the session window could not start: {error}", file=sys.stderr)
+        """Keep native application status in the panel, with no substitute desktop viewer."""
+        self.set_expanded(True)
 
     def listen_for_commands(self):
         """Do what another invocation asked for, rather than letting it start a second mark."""

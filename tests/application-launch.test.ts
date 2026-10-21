@@ -10,13 +10,13 @@ const test = linuxOnlySuite("Registered launch fixtures use Linux executables");
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "orbit-launch-"));
   const home = join(root, "installation home"); const registrations = join(root, "applications");
-  const privateHome = join(root, "private home"); const bin = join(home, "random package location");
-  for (const directory of [home, registrations, privateHome, bin]) await mkdir(directory, { recursive: true });
+  const bin = join(home, "random package location");
+  for (const directory of [home, registrations, bin]) await mkdir(directory, { recursive: true });
   const executable = join(bin, "arbitrary-tool");
   await copyFile("/usr/bin/printenv", executable); await chmod(executable, 0o755);
   const options = { platform: "linux" as const, home, env: { HOME: home, PATH: bin }, applicationDirectories: [registrations], includeRunning: false, recentFile: join(root, "missing") };
   const desktop = (id: string, exec: string, extra = "") => writeFile(join(registrations, id), `[Desktop Entry]\nType=Application\nName=Arbitrary App\nExec=${exec}\n${extra}`);
-  return { root, home, privateHome, bin, executable, options, registrations, desktop, close: () => rm(root, { recursive: true, force: true }) };
+  return { root, home, bin, executable, options, registrations, desktop, close: () => rm(root, { recursive: true, force: true }) };
 }
 
 test("registered app at a moved installation preserves argv and working directory", async () => {
@@ -27,15 +27,15 @@ test("registered app at a moved installation preserves argv and working director
   } finally { await f.close(); }
 });
 
-test("HOME wrapper binds installation location while executed child keeps private HOME", async () => {
+test("HOME wrapper resolves the original installation and preserves owner HOME", async () => {
   const f = await fixture(); try {
     const wrapper = join(f.bin, "launcher");
     await writeFile(wrapper, '#!/bin/sh\nexec "$HOME/random package location/arbitrary-tool" "$@"\n', { mode: 0o755 });
     await f.desktop("org.example.Tool.desktop", 'launcher HOME');
     const result = await resolveInstalledApplication("org.example.Tool.desktop", f.options);
     expect(result.argv).toEqual([f.executable, "HOME"]);
-    const child = Bun.spawn(result.argv, { env: { HOME: f.privateHome }, stdout: "pipe", stderr: "pipe" });
-    expect((await new Response(child.stdout).text()).trim()).toBe(f.privateHome);
+    const child = Bun.spawn(result.argv, { env: { HOME: f.home }, stdout: "pipe", stderr: "pipe" });
+    expect((await new Response(child.stdout).text()).trim()).toBe(f.home);
     expect(await child.exited).toBe(0);
   } finally { await f.close(); }
 });
@@ -125,7 +125,7 @@ test("registration preserves invocation alias instead of changing argv zero", as
   } finally { await f.close(); }
 });
 
-test("registered profile overrides do not reuse owner state through launch-installed", async () => {
+test("caller profile overrides are unavailable through registered opening", async () => {
   const f = await fixture(); try {
     for (const args of ['--profile /owner/profile', '--user-data-dir=/owner/profile', '-P personal', '--profile-directory=Default']) {
       await f.desktop("profile.desktop", `"${f.executable}" ${args}`);
@@ -217,5 +217,34 @@ test("expanded Name and Icon cannot synthesize profile selection arguments", asy
     }
     await f.desktop("expanded.desktop", `"${f.executable}" %i`, "Icon=--user-data-dir=/owner/profile\n");
     await expect(resolveInstalledApplication("expanded.desktop", f.options)).rejects.toThrow("profile");
+  } finally { await f.close(); }
+});
+
+test("browser and terminal registrations are refused before executable launch", async () => {
+  const f = await fixture();
+  try {
+    for (const category of ["WebBrowser", "TerminalEmulator"]) {
+      await f.desktop("org.example.Refused.desktop", `"${f.executable}"`, `Categories=${category};\n`);
+      await expect(resolveInstalledApplication("org.example.Refused.desktop", f.options))
+        .rejects.toMatchObject({ code: "UNSUPPORTED" });
+    }
+    await f.desktop("firefox.desktop", `"${f.executable}"`);
+    await expect(resolveInstalledApplication("firefox.desktop", f.options)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  } finally { await f.close(); }
+});
+
+test.each(["firefox", "zen", "zen-bin", "helium"])("native opening refuses %s behind aliases and wrappers", async browserName => {
+  const f = await fixture();
+  try {
+    const browser = join(f.bin, browserName);
+    await copyFile("/usr/bin/printenv", browser); await chmod(browser, 0o755);
+    for (const mode of ["alias", "wrapper"]) {
+      const entry = join(f.bin, "normal-tool-" + mode);
+      if (mode === "alias") await symlink(browser, entry);
+      else await writeFile(entry, `#!/bin/sh\nexec "${browser}" "$@"\n`, { mode: 0o755 });
+      await f.desktop("org.example.Tool.desktop", `"${entry}"`, "Categories=Utility;\n");
+      await expect(resolveInstalledApplication("org.example.Tool.desktop", f.options))
+        .rejects.toMatchObject({ code: "UNSUPPORTED" });
+    }
   } finally { await f.close(); }
 });

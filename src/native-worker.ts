@@ -51,7 +51,7 @@ export class NativeWorker {
     // The descriptor is retained by the parent until child close. Stderr never enters RPC replies.
   }
 
-  static async create(directory: string, options: NativeOptions, entry = ["/usr/bin/python3", join(import.meta.dir, "native/session_worker.py")]) {
+  static async create(directory: string, options: NativeOptions, entry = ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]) {
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
     if (!isAbsolute(options.planPath) || !isAbsolute(options.controlDirectory))

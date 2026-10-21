@@ -131,8 +131,10 @@ export async function resolveInstalledApplication(applicationId: string, options
     fields[key] = ["Exec", "Name", "Icon", "Path", "TryExec"].includes(key) ? desktopString(raw) : raw;
   }
   if (fields.Type !== "Application" || fields.Hidden === "true" || !fields.Exec) refuse("Application registration is disabled or has no Exec recipe");
-  // Use the validated Exec compatibility recipe, including for D-Bus activatable applications.
-  // The private desktop launches it directly on its own bus; never activate it on the owner's bus.
+  const identity = `${applicationId} ${fields.Name ?? ""} ${fields.Exec}`.toLowerCase();
+  if ((fields.Categories ?? "").split(";").some(value => ["WebBrowser", "TerminalEmulator"].includes(value))
+      || /(?:firefox|chromium|chrome|msedge|microsoft-edge|brave|vivaldi|librewolf|waterfox|floorp|mullvad|icecat|seamonkey|opera|thorium|yandex|epiphany|falkon|qutebrowser|zen-browser|org\.zen_browser)/.test(identity))
+    refuse("Browser and terminal launch routes were removed; choose a supported native application");
   if (fields.Terminal === "true" || fields["X-Flatpak"])
     refuse("Application registration needs an unsupported activation adapter");
   const exec = fields.Exec;
@@ -140,13 +142,20 @@ export async function resolveInstalledApplication(applicationId: string, options
   const args = words(exec); const command = args.shift();
   if (!command || command.includes("%")) return refuse("Application registration has no literal executable");
   const path = await executable(command, env);
-  const unsupportedCommands = ["env", "flatpak", "sh", "bash", "dash"];
+  const unsupportedCommands = ["env", "flatpak", "sh", "bash", "dash", "zsh", "fish", "python", "python3", "node", "bun", "xdg-open", "gio", "sensible-browser"];
   if ([basename(path), basename(await realpath(path))].some(name => unsupportedCommands.includes(name)))
     refuse("Application registration needs an unsupported command adapter");
   if (fields.TryExec) await executable(fields.TryExec, env);
   const resolved = await preparedExecutable(path, home, env);
   if ([basename(resolved), basename(await realpath(resolved))].some(name => unsupportedCommands.includes(name)))
     refuse("Application wrapper needs an unsupported command adapter");
+  // Resolve aliases and supported wrappers before applying the same native-only admission.
+  const resolvedNames = [path, await realpath(path), resolved, await realpath(resolved)];
+  const browserName = /(?:firefox|chromium|chrome|msedge|microsoft-edge|brave|vivaldi|librewolf|waterfox|floorp|mullvad|icecat|seamonkey|opera|thorium|yandex|epiphany|falkon|qutebrowser|zen-browser)/i;
+  const terminalName = /^(?:gnome-terminal|gnome-console|kgx|konsole|xterm|kitty|alacritty|foot|wezterm|tilix|ptyxis)(?:[.-].*)?$/i;
+  const standaloneBrowserName = /^(?:zen|zen-bin|helium|surf|midori|luakit|nyxt|netsurf|otter-browser|konqueror|firedragon|cachy-browser|slimjet|sidekick|wavebox)$/i;
+  if (resolvedNames.some(name => browserName.test(name) || standaloneBrowserName.test(basename(name)) || terminalName.test(basename(name))))
+    refuse("Resolved browser or terminal executables are unavailable through native opening");
   const argv = [resolved];
   for (const arg of args) {
     if (/^%[fFuU]$/.test(arg)) continue;

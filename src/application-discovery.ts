@@ -1,7 +1,7 @@
 import { lstat, opendir, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, win32, relative, resolve } from "node:path";
-import { parseExec } from "./host-browsers";
+import { parseExec } from "./desktop-exec";
 import { OrbitError } from "./errors";
 
 export type Application = {

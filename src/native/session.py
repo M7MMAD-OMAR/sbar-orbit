@@ -13,10 +13,8 @@ import subprocess
 import time
 import uuid
 
-from .application import NativeLauncher, private_directory
 from .budget import require_budget
 from .host import verify_host
-from .lease import process_identity
 from .transport import NativeTransport, action_response
 
 
@@ -95,63 +93,17 @@ def bounded_capture(argv, environment, diagnostics):
 
 class NativeSession:
     """A fixed host and controller, with no agent-facing settings mutation."""
-    def __init__(self, plan, directory, control):
-        self.plan = copy.deepcopy(plan)
-        self.directory = private_directory(directory)
-        self.control = control
-        self.transport = NativeTransport(self.plan)
-        self.launcher = NativeLauncher(self.plan, self.directory, control)
-        self.apps, self.windows = {}, {}
-        self.closed = False
+
+
+
+    def _check_target(self, address):
+        action_response("ghost-target-check", self.transport._exchange("ghost-target-check " + address))
 
     def _app(self, app_id):
         app = self.apps.get(identifier(app_id))
         if app is None or app.closed:
             raise SessionError("Native application is unavailable in this session")
         return app
-
-    def _owned_windows(self, app_id):
-        app = self._app(app_id)
-        with app.lease.membership() as members:
-            clients = json.loads(self.transport._exchange("j/clients"))
-            if not isinstance(clients, list):
-                raise SessionError("Compositor returned invalid window data")
-            result = []
-            for client in clients:
-                if not isinstance(client, dict) or type(client.get("pid")) is not int:
-                    raise SessionError("Compositor returned invalid window identity")
-                process = process_identity(client["pid"])
-                if process not in members or not app.lease._contains(process):
-                    continue
-                if (not isinstance(client.get("workspace"), dict)
-                        or client["workspace"].get("name") != "special:ghost"):
-                    raise SessionError("Owned native window left the agent workspace")
-                if (not re.fullmatch(r"0x[0-9a-fA-F]+", str(client.get("address", "")))
-                        or not isinstance(client.get("stableId"), str)
-                        or not re.fullmatch(r"[0-9a-f]{1,16}", client["stableId"])):
-                    raise SessionError("Compositor returned invalid target identifiers")
-                size = client.get("size")
-                if (not isinstance(size, list) or len(size) != 2
-                        or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in size)):
-                    raise SessionError("Native target has invalid surface size")
-                self._check_target(client["address"] + "@" + client["stableId"] + "@" + app.unit)
-                key = (app_id, client["stableId"], process)
-                window_id = next((value for value, target in self.windows.items() if target["key"] == key), None)
-                if window_id is None:
-                    window_id = uuid.uuid4().hex
-                    self.windows[window_id] = {"key": key, "address": client["address"], "size": size, "pointer": None}
-                elif self.windows[window_id]["address"] != client["address"]:
-                    raise SessionError("Native target address changed for a retained identity")
-                self.windows[window_id]["size"] = size
-                pointer = self.windows[window_id]["pointer"]
-                if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
-                    self.windows[window_id]["pointer"] = None
-                result.append({"windowId": window_id, "appId": app_id, "title": str(client.get("title", ""))[:160],
-                               "width": size[0], "height": size[1]})
-            return result
-
-    def _check_target(self, address):
-        action_response("ghost-target-check", self.transport._exchange("ghost-target-check " + address))
 
     def _target(self, app_id, window_id):
         window_id = identifier(window_id)
@@ -261,27 +213,3 @@ class NativeSession:
 
         result = self.control.execute(request, operation)
         return frame if frame is not None else result
-
-    def launch(self, argv, configuration=None):
-        if self.closed:
-            raise SessionError("Native session is closed")
-        if len(self.apps) >= 32:
-            raise SessionError("Native session application limit reached")
-        app = self.launcher.launch(argv, configuration)
-        app_id = uuid.uuid4().hex
-        self.apps[app_id] = app
-        return {"appId": app_id, "unit": app.unit}
-
-    def close_application(self, app_id):
-        self._app(app_id).close()
-
-    def close(self):
-        errors = []
-        for app in reversed(list(self.apps.values())):
-            try:
-                app.close()
-            except BaseException as error:
-                errors.append(error)
-        if errors:
-            raise BaseExceptionGroup("Native session cleanup failed", errors)
-        self.closed = True

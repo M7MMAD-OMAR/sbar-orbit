@@ -1,38 +1,18 @@
 import { brokerIdentity } from "./managed-identity";
-import { OwnedCleanupError } from "./owned-cleanup";
 import { discoverApplications } from "./application-discovery";
 import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
-import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { homedir } from "node:os";
-import { AccountLease } from "./profiles";
+import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { BrowserBackend } from "./browser";
-import { FedoraBackend } from "./fedora";
 import { NativeBackend, parseHandoff, parseNativeOpen } from "./hyprland";
-import { nativeOptionsFromEnv, type NativeOptions } from "./native-worker";
+import { nativeOptionsFromEnv } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
-import { canCloneProfile, detectPlatform, type PlatformCapabilities } from "./platform";
 import { describeDesktopMachine } from "./desktop-machine";
-import { openEgressLease, type EgressLease } from "./egress";
-import { defaultChromeExecutable } from "./chrome";
-import { cloneProfile } from "./clone";
 import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { consultAdvisor } from "./advisor";
-import { canRestoreTo, clearRestorePoints, createSubvolume, removeRestorePoint, restoreProfile, takeRestorePoint, type RestorePoint } from "./restore";
-import { defaultViewport, parseViewport } from "./viewport";
 import { Diagnostics } from "./diagnostics";
 import { autostartPaths } from "./autostart";
 
-/**
- * The installed units against the ones this version writes, for `doctor`.
- *
- * Wrapped here rather than called directly so the unit directory is resolved the same way
- * `src/install.ts` resolves it, `ORBIT_UNIT_DIR` included, and so a machine with no unit directory
- * at all reports nothing rather than failing the whole doctor call: a broker started with
- * `ORBIT_SOCKET` and no install is a supported way to run, and it has no units by design.
- */
 async function installedUnitDrift() {
   try {
     const { serviceUnitDrift } = await import("./service");
@@ -46,108 +26,26 @@ async function installedUnitDrift() {
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
 interface Session {
-  agentName: string; taskName: string; conversationName?: string; projectName?: string; activity?: { type: string; actor: string; state: string; sequence: number };
-  /**
-   * When the session opened and when something last happened in it, as epoch milliseconds. The
-   * viewer sorts and dates its cards from these: without them a person running several agents reads
-   * a list in creation order with nothing saying which one moved a minute ago and which one has been
-   * finished since the morning.
-   */
+  agentName: string; taskName: string; conversationName?: string; projectName?: string;
+  activity?: { type: string; actor: string; state: string; sequence: number };
   createdAt: number; lastActivityAt: number;
-  id: string; state: State; backend: BrowserBackend | FedoraBackend | NativeBackend; kind: string; lease: string; profile: string;
-  tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>;
-  observing?: Promise<unknown>; account?: AccountLease; releasing?: Promise<void>;
+  id: string; state: State; backend: NativeBackend; kind: "native"; lease: string;
+  tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
-  /** Fixed when the session is created. Never widened, so a page cannot enlarge it. */
-  policy: SessionPolicy;
-  journal: JournalEntry[];
-  /** Releases anything the clone needed, such as its filtered secret bus. */
-  releaseClone?: () => Promise<void>;
-  /**
-   * Which layer held this session's origin lease, and the lease itself where it is held below the
-   * browser. A reader of the journal must be able to tell the two apart: one holds a page that
-   * misbehaves, the other holds a browser that does.
-   */
-  egress: EgressLease;
-  /** Off-lease requests the page itself made, which no agent action would show. */
-  blockedOrigins: string[];
-  /**
-   * Where the durable copy of the journal is appended. The in-memory list answers the API, and this
-   * is what is left afterwards: an autonomous run is reviewed after it finishes, and a record that
-   * dies with the broker cannot be reviewed at all. It lives outside the session profile, which is
-   * deleted when the session stops.
-   */
-  journalPath: string;
-  /** Where this session's restore points live. Cleared when it ends: each one is a copy of live cookies. */
-  restoreStore: string;
-  restorePoints: RestorePoint[];
-  /**
-   * Set the first time an observation returns page content, and never cleared.
-   *
-   * Before it, the session has only seen what the person asked for. After it, everything the agent
-   * decides has been influenced by something a page said, so a widening request from that point on
-   * is a request the page may have written. There is no widening path to guard, by design, and this
-   * is what makes that a property rather than an accident: it is recorded, so the journal shows
-   * which side of the line every decision fell on.
-   */
-  tainted: boolean;
-  /**
-   * Start another browser on the same profile, for a restore. The policy and the surface are read at
-   * call time rather than captured here: a restored session that came back with the boundary it was
-   * created with, rather than the one it currently holds, would undo a narrowing silently.
-   */
-  relaunch?: () => Promise<BrowserBackend>;
-  /** Registered on every backend a session owns, including one started by a restore. */
-  reap?: () => void;
-  /**
-   * Set while a restore is deliberately closing the browser, so the close is not mistaken for the end
-   * of the session and does not take the profile with it. Cleared whether the relaunch worked or not.
-   */
-  restoring?: boolean;
+  policy: SessionPolicy; journal: JournalEntry[]; journalPath: string; tainted: boolean;
 }
-// Reported by doctor before any session exists. A live session reports its own backend's list.
-const capabilities = ["navigate", "fill", "click", "upload", "scroll", "read", "open-tab", "select-tab", "close-tab", "resize", "observe", "pause", "resume", "stop"];
-/**
- * The HTTP method a browser action implies, for rules that name one.
- *
- * A navigation is a GET and a form submission is a POST. Neither action carries the method in its
- * payload, so without this a rule spelled `{ verb: "navigate", method: "GET" }` is accepted, held,
- * and matches nothing: it fails open while reading as enforced.
- *
- * Only the verbs whose method is unambiguous are listed. A click can trigger anything or nothing, so
- * it is left undefined rather than guessed: claiming a method for it would make rules fire on
- * actions they do not describe, which is the opposite defect and the more dangerous one.
- */
-function impliedMethod(actionType: string): string | undefined {
-  if (actionType === "navigate") return "GET";
-  if (actionType === "submit") return "POST";
-  return undefined;
-}
+const capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "observe", "pause", "resume", "stop"];
 
 export class Sessions {
   private updateLease?: { token: string; expires: number };
   private sessions = new Map<string, Session>();
   private leases = new Set<string>();
   private creating = new Set<Promise<unknown>>();
-  // Backends start one at a time. Several agents creating sessions in the same second is common,
-  // and several Chromes or compositors booting together on one core made each other time out
-  // where one after another all start; the queue costs the later ones only the earlier ones' start.
   private creationTail: Promise<unknown> = Promise.resolve();
-  private pendingBrowserCleanup = new Map<string, () => Promise<void>>();
   private nativeOpens = new Map<string, { fingerprint: string; result: Promise<unknown> }>();
   private shuttingDown = false;
-  /**
-   * Probed once. The probe starts a sandbox to find out whether it can, and a session creation is not
-   * the place to pay for that repeatedly; nothing it reports changes while the broker runs.
-   */
-  private probed?: Promise<PlatformCapabilities>;
   private readonly releaseIdentity = brokerIdentity().catch(() => null);
-  constructor(private root: string, private accountRoot = process.env.ORBIT_ACCOUNT_DIR ?? join(homedir(), ".local/state/sbar-orbit/accounts"), readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot()) {}
-  protected capabilities() { return this.probed ??= detectPlatform(); }
-  /** A test fixture can supply a clone without reading a person's browser profile. */
-  protected cloneProfileForSession: typeof cloneProfile = cloneProfile;
-  /** Where a session's route out lives. Short, because what goes in it are unix sockets. */
-  private get egressRoot() { return join(process.env.XDG_RUNTIME_DIR ?? tmpdir(), "sbar-orbit", "egress"); }
+  constructor(private root: string, _accountRoot?: string, readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot()) {}
   private get(id: unknown): Session {
     const session = this.sessions.get(text(id, "sessionId"));
     if (!session) throw new OrbitError("SESSION_NOT_FOUND", "Unknown session");
@@ -156,7 +54,13 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...(session.backend instanceof NativeBackend && session.backend.handoff ? { handoff: session.backend.handoff } : {}), ...("visible" in session.backend ? { visible: session.backend.visible } : {}), ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid, preferenceSnapshot: session.backend.preferenceSnapshot, busServices: session.backend.busServices } : {}) }; }
+  private info(session: Session) {
+    return { sessionId: session.id, state: session.state, backend: "native", visible: true,
+      agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName,
+      projectName: session.projectName, activity: session.activity, createdAt: session.createdAt,
+      lastActivityAt: session.lastActivityAt, capabilities: session.backend.capabilities,
+      surface: session.backend.surface, policy: session.policy, handoff: session.backend.handoff };
+  }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.updateLease && this.updateLease.expires > Date.now())
       return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
@@ -172,223 +76,53 @@ export class Sessions {
     return operation;
   }
   private async createOwned(input: Record<string, unknown>) {
-    // `system` is accepted for the private display, because a caller should not have to name a
-    // distribution to ask for one. It is an alias and nothing more: the backend still needs the
-    // wlroots runtime this project builds, and everything reported back says `fedora`, so status,
-    // observation and the journal keep one name for one thing.
-    const requested = String(input.backend) === "system" ? "fedora" : String(input.backend);
-    if (!["browser", "fedora", "native"].includes(requested)) throw new OrbitError("UNSUPPORTED", "Unknown backend");
-    if (requested === "native") {
-      if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured the native broker backend");
-      const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff"]);
-      if (Object.keys(input).some(key => !allowed.has(key)))
-        throw new OrbitError("INVALID_REQUEST", "Native session options cannot select host paths, profiles or a viewport");
-    }
-    input = { ...input, backend: requested };
-    if (input.handoff !== undefined && requested !== "native")
-      throw new OrbitError("INVALID_REQUEST", "Existing application handoff requires the native backend");
-    const handoff = input.handoff === undefined ? undefined : parseHandoff(input.handoff);
-    if (input.visible !== undefined && (typeof input.visible !== "boolean" || requested !== "fedora"))
-      throw new OrbitError("INVALID_REQUEST", "visible is a true or false option of the private system desktop");
-    const visible = input.visible as boolean | undefined;
-    if (this.sessions.size + this.creating.size + this.pendingBrowserCleanup.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
+    if ((input.backend ?? "native") !== "native" || input.handoff === undefined)
+      throw new OrbitError("UNSUPPORTED", "Private desktop sessions were removed. Use native.open for an original application or an explicit native handoff after its release hold clears.");
+    const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff"]);
+    if (Object.keys(input).some(key => !allowed.has(key)))
+      throw new OrbitError("UNSUPPORTED", "Private profiles, viewports and browser session options were removed");
+    const handoff = parseHandoff(input.handoff);
+    if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured native application control");
+    if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Native session limit reached");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
       if (typeof value !== "string" || !value.trim() || value.length > 80 || /[\x00-\x1f\x7f]/.test(value))
         throw new OrbitError("INVALID_REQUEST", "Session labels require 1 to 80 printable characters");
       return value.trim();
     };
-    const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Agent workspace");
+    const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
+    if (policy.origins !== "any") throw new OrbitError("UNSUPPORTED", "Native origin enforcement is unavailable");
+    const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
+    if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Application lease is already held");
+    const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Native application");
     const conversationName = input.conversationName === undefined ? undefined : label(input.conversationName, "");
     const projectName = input.projectName === undefined ? undefined : label(input.projectName, "");
-    // Parsed before anything is started, so an unusable policy fails the request rather than a later action.
-    const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
-    if (requested === "native" && policy.origins !== "any")
-      throw new OrbitError("UNSUPPORTED", "Native network origin enforcement is not implemented; bounded origins are unavailable");
-    const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
-    if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Profile key is leased to another session");
     this.leases.add(lease);
-    let account: AccountLease | undefined;
-    let profileOwned: string | undefined;
-    let cloneOwned: Awaited<ReturnType<typeof cloneProfile>> | undefined;
-    let egressOwned: EgressLease | undefined;
-    let backendOwned: BrowserBackend | FedoraBackend | NativeBackend | undefined;
+    const options = this.native;
+    const start = this.creationTail.then(async () => {
+      await requireUpdateAdmission(this.updateDirectory);
+      if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+      return NativeBackend.create("", options, handoff);
+    });
+    this.creationTail = start.catch(() => {});
+    let backend: NativeBackend | undefined;
     try {
-      if (input.accountName !== undefined) {
-        if (input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Saved accounts require the browser backend");
-        account = await AccountLease.acquire(this.accountRoot, input.accountName);
-      }
-      const restoredState = await account?.restore();
-      const profile = await mkdtemp(join(this.root, "profile-"));
-      profileOwned = profile;
-      // A plain directory cannot be snapshotted, so the profile is made a subvolume where the
-      // filesystem allows it. Where it does not, restore points are simply absent rather than
-      // promised and missing.
-      const snapshotCapable = await createSubvolume(profile);
-      const surface = input.viewport === undefined ? defaultViewport : parseViewport(input.viewport);
-      // A session may start from the person's own browser profile instead of an empty one. The policy
-      // is checked before anything is copied, because an unbounded session holding real logins is the
-      // case the policy exists to prevent.
-      if (input.cloneOf !== undefined && input.backend !== "browser") throw new OrbitError("UNSUPPORTED", "Cloning a profile requires the browser backend");
-      if (input.cloneOf !== undefined && account) throw new OrbitError("INVALID_REQUEST", "A session takes either a saved account or a cloned profile, not both");
-      const clone = input.cloneOf === undefined ? undefined : await this.cloneProfileForSession(text(input.cloneOf, "cloneOf"), profile, policy);
-      cloneOwned = clone;
-      // The person's extensions travel with the clone by default. `cloneExtensions: false` leaves them
-      // dormant, for a caller that wants the logins and not the add-ons: measured 14 September 2026, a
-      // proxy extension in the person's profile set its own proxy inside the confined clone, where the
-      // only route out is the lease's proxy, and every origin then failed as disconnected. Failing closed
-      // is the lease working; a session that wanted the account still needs a way past the add-on.
-      if (clone && input.cloneExtensions === false) clone.launch.extensions = false;
-      // Requests the PAGE made and the lease refused. The agent never asked for these, so they are
-      // recorded separately from its own denied actions.
-      const blockedOrigins: string[] = [];
-      // The lease below the browser, opened before the browser so the browser has somewhere to go.
-      //
-      // Only for a session whose origins are bounded: with "any" there is nothing to enforce, and a
-      // namespace whose proxy forwards everything would add a hop and no boundary. That is also what
-      // keeps every existing session on the path it was measured on, since a fresh profile is "any".
-      //
-      // The origin set is read on every request rather than copied here, so `session.narrow` and an
-      // immune deny tighten this layer too. A live session's policy is the one that decides.
-      let live: Session | undefined;
-      // Named after the session's own id, which Orbit generated. The profile key is a label a caller
-      // chose, and a directory path built from one is a path a caller chose.
-      const id = crypto.randomUUID();
-      const egress = input.backend !== "browser" || policy.origins === "any" ? undefined : await openEgressLease({
-        // Not under the workspace root: these are sockets, a unix socket path is capped at 108 bytes,
-        // and a workspace path plus a session id already spends most of that. The runtime directory is
-        // short, private to this user, and cleared when the session ends.
-        directory: join(this.egressRoot, id.slice(0, 8)),
-        executable: clone?.launch.executable ?? defaultChromeExecutable() ?? "",
-        profile,
-        sessionBus: clone?.launch.sessionBus,
-        confinable: (await this.capabilities()).confinedEgress,
-        origins: () => {
-          const current = live?.policy.origins ?? policy.origins;
-          return current === "any" ? [] : current;
-        },
-      });
-      egressOwned = egress;
-      if ((clone || account) && policy.origins !== "any" && egress?.tier !== "namespace")
-        throw new OrbitError("UNSUPPORTED", "A cloned profile or saved account requires a confined network namespace");
-      const queued = Date.now();
-      const start = this.creationTail.then(async (): Promise<BrowserBackend | FedoraBackend | NativeBackend> => {
-        await requireUpdateAdmission(this.updateDirectory);
-        // A caller's request has a deadline of its own; do not start a backend nobody is waiting for.
-        if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
-        if (Date.now() - queued > 30000) throw new OrbitError("DEADLINE_EXCEEDED", "Other sessions were still starting; retry");
-        if (requested === "native") {
-          if (!this.native) throw new OrbitError("UNSUPPORTED", "Native backend is not configured");
-          return await NativeBackend.create(join(profile, "native-worker"), this.native, handoff);
-        }
-        return requested === "fedora" ? await FedoraBackend.create(surface, () => live?.policy.origins ?? policy.origins, visible)
-          : await BrowserBackend.create(profile, surface, clone?.launch, policy.origins, origin => blockedOrigins.push(origin), egress);
-      });
-      this.creationTail = start.catch(() => {});
-      const backend = await start;
-      backendOwned = backend;
-      if (account && backend instanceof BrowserBackend) {
-        if (restoredState) await backend.context.setStorageState(restoredState);
-      }
-      const journals = join(this.root, "journals");
-      await mkdir(journals, { recursive: true, mode: 0o700 });
-      const journalPath = join(journals, `${id}.jsonl`);
-      const session: Session = { id, agentName, taskName, conversationName, projectName, state: "running", backend, account, kind: String(input.backend), lease, profile, tail: Promise.resolve(), requests: new Map(), policy, journal: [], releaseClone: clone?.close, blockedOrigins, journalPath,
-        createdAt: Date.now(), lastActivityAt: Date.now(),
-        egress: egress ?? { tier: "in-browser", launch: { executable: "", args: [] }, endpointPort: 0, refused: () => [], close: async () => {} },
-        restoreStore: snapshotCapable ? join(this.root, `restore-${id}`) : "", restorePoints: [], tainted: false };
-      // The first line says what was agreed to, so a reader knows what the rest of the file was
-      // judged against without having to ask the broker that is no longer running.
-      void this.record(session, { at: new Date().toISOString(), sequence: 0, sessionId: id, actor: "person",
-        actionType: "session.create", actionClass: "read", outcome: "allow",
-        reason: `${String(input.backend)} session, ${policy.mode}, origins ${policy.origins === "any" ? "any" : policy.origins.join(" ") || "none"}, allow ${policy.allow.join(" ")}, deny ${policy.deny.join(" ") || "none"}${input.cloneOf === undefined ? "" : ", from a cloned profile"}${egress === undefined ? "" : `, egress held ${egress.tier === "namespace" ? "below the browser in a network namespace of its own" : "inside the browser only, because this host cannot confine one"}`}` });
-      session.relaunch = () => BrowserBackend.create(session.profile, session.backend.surface, clone?.launch,
-        session.policy.origins, origin => blockedOrigins.push(origin),
-        // The same lease, not a new one. Its proxy and relay are the broker's and outlive any one
-        // browser, the wrapper is still on disk, and the relay's port is in the journal already.
-        egress);
-      live = session;
+      backend = await start;
+      await mkdir(this.root, { recursive: true, mode: 0o700 });
+      const id = crypto.randomUUID(), now = Date.now();
+      const session: Session = { id, state: "running", backend, kind: "native", lease,
+        agentName, taskName, conversationName, projectName, createdAt: now, lastActivityAt: now,
+        tail: Promise.resolve(), requests: new Map(), policy, journal: [], tainted: false,
+        journalPath: join(this.root, id + ".jsonl") };
       this.sessions.set(id, session);
-      // Whichever way the session ends, its profile goes with it: account state was copied out
-      // while it ran, so nothing in it outlives the session, and a retained one is disk that
-      // nothing reclaims. The backend's own exit is one of those ways, so the removal hangs off
-      // the release that every ending awaits.
-      const reap = () => {
-        // A restore closes the browser on purpose and starts another on the same profile, so that close
-        // is not the end of the session and must not take the profile with it.
-        if (session.restoring) return;
-        if (session.state !== "closing" && session.state !== "closed") {
-          void this.diagnostics.run({ method: "backend.exit", params: { sessionId: id, backend: session.kind } }, async () => {
-            throw new OrbitError("BACKEND_ERROR", "Backend exited outside a stop request");
-          }).catch(() => {});
-        }
-        // Stamped here as well as in `stop`, because this is the other way a session ends: a backend
-        // that exited on its own would otherwise be dated to its last action rather than to its end.
-        session.state = "closed"; session.lastActivityAt = Date.now(); this.leases.delete(lease);
-        // Restore points go before the profile does. Each is a copy of the person's live cookies, and
-        // a read only snapshot inside the profile would stop the profile itself being removed.
-        session.releasing ??= (async () => {
-          const failures: unknown[] = [];
-          await session.tail;
-          // Each resource must get its release attempt even when an earlier release fails.
-          try { await account?.release(); } catch (error) { failures.push(error); }
-          try { await session.releaseClone?.(); } catch (error) { failures.push(error); }
-          try { await session.egress.close(); } catch (error) { failures.push(error); }
-          try { if (session.restoreStore) await clearRestorePoints(session.restoreStore); }
-          catch (error) { failures.push(error); }
-          try { await this.removeProfile(profile); } catch (error) { failures.push(error); }
-          if (failures.length === 1) throw failures[0];
-          if (failures.length > 1) throw new AggregateError(failures, "Owned session resource release and profile removal failed");
-        })();
-        // Keep the rejected release for stop to report. Unexpected exits also reach the private operator log.
-        void session.releasing.catch(error => console.error("Owned session cleanup failed", error));
-      };
-      session.reap = reap;
-      backend.onClose(reap);
-      account?.onLost(() => { void this.stop(session); });
+      backend.onClose(() => { void this.stop(session).catch(() => {}); });
       return this.info(session);
     } catch (error) {
-      const nativeCleanup: unknown[] = [];
-      if (backendOwned instanceof NativeBackend) {
-        try { await backendOwned.close(); } catch (cleanup) { nativeCleanup.push(cleanup); }
-      } else if (backendOwned) {
-        const retainedBackend = backendOwned;
-        try { await retainedBackend.close(); }
-        catch (cleanup) { error = new OwnedCleanupError(error, cleanup, () => retainedBackend.close()); }
-      }
-      if (error instanceof OwnedCleanupError) {
-        const retry = error.retry;
-        this.pendingBrowserCleanup.set(lease, async () => {
-          await retry();
-          await egressOwned?.close();
-          await cloneOwned?.close();
-          if (profileOwned) await this.removeProfile(profileOwned);
-          await account?.release();
-          this.leases.delete(lease);
-          this.pendingBrowserCleanup.delete(lease);
-        });
-        throw error;
-      }
-      await egressOwned?.close().catch(() => {});
-      await cloneOwned?.close().catch(() => {});
-      if (profileOwned) {
-        try { await rm(profileOwned, { recursive: true, force: true }); }
-        catch (cleanup) { if (requested === "native") nativeCleanup.push(cleanup); }
-      }
-      await account?.release().catch(() => {});
       this.leases.delete(lease);
-      if (nativeCleanup.length) throw new AggregateError([error, ...nativeCleanup], "Native creation and cleanup failed");
-      const failure = error as { code?: string; syscall?: string } | null;
-      if (failure?.code === "EAGAIN" && ["posix_spawn", "spawn"].includes(failure.syscall ?? ""))
-        throw new OrbitError("RESOURCE_UNAVAILABLE", "The system could not start an Orbit process; release resources before retrying");
+      if (backend) await backend.close();
       throw error;
     }
   }
-  /**
-   * Remember one decision and append it to the durable copy. The append is not awaited by the caller:
-   * a slow disk must not delay a decision that has already been made, and a lost line is a lost line
-   * rather than a stalled session. Failures are swallowed for the same reason.
-   */
   private record(session: Session, entry: JournalEntry) {
     session.journal.push(entry);
     if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
@@ -400,7 +134,7 @@ export class Sessions {
       try { return await work(); }
       catch (error) {
         this.ensureOpen(session);
-        if (error instanceof Error && error.name === "TimeoutError") throw new OrbitError("DEADLINE_EXCEEDED", "Browser operation timed out");
+        if (error instanceof Error && error.name === "TimeoutError") throw new OrbitError("DEADLINE_EXCEEDED", "Native operation timed out");
         throw error;
       }
     });
@@ -420,35 +154,11 @@ export class Sessions {
     }
     if (session.state !== "running") throw new OrbitError("PAUSED", "Session is paused or pausing");
     if (session.requests.size >= 10000) throw new OrbitError("LIMIT_REACHED", "Session action limit reached");
-    // The policy is evaluated here, on the action the broker resolved, not on the action the agent
-    // described. Those are the same thing only when nothing has tried to make them differ.
-    const destination = "url" in action ? (action as { url?: string }).url : undefined;
-    // The method is read the same way the url is, and for the same reason. `Rule.method` exists,
-    // `parsePolicy` accepts it, and `ruleMatches` requires the method to match, but this call site
-    // passed only three arguments, so `decide` received `method === undefined` and every rule
-    // carrying a method failed to match. A rule that fails to match is a rule that fails OPEN: the
-    // caller wrote a narrowing rule, the broker accepted it and reported it as held, and it stopped
-    // nothing. `tests/policy.test.ts` calls `decide` directly with a method, so both sides were
-    // green about a field that did not work in the product, which is exactly the kind of gap a unit
-    // test on either side of a seam cannot see.
-    //
-    // Reading the field alone is not enough, and that is the second half of the same defect. No
-    // browser action carries a `method`, so a rule written as `{ verb: "navigate", method: "GET" }`
-    // would still match nothing. A navigation IS a GET, and a person writing that rule means the
-    // navigation. The implied method is supplied per verb, so the rule denies what it says it
-    // denies; an explicit method on the action still wins where one exists.
-    const stated = "method" in action ? (action as { method?: unknown }).method : undefined;
-    const method = typeof stated === "string" ? stated : impliedMethod(action.type);
-    const methodIsImplied = typeof stated !== "string" && method !== undefined;
-    const inputLength = "text" in action ? String((action as { text?: string }).text ?? "").length : undefined;
-    const result = this.decided(session, action, destination, method, methodIsImplied, inputLength, requestId);
+    const inputLength = "text" in action ? String(action.text ?? "").length : undefined;
+    const result = this.decided(session, action, undefined, undefined, false, inputLength, requestId);
     session.requests.set(requestId, { fingerprint, result });
     return result;
   }
-  /**
-   * Decide one action, then run it if it survives. A consult is resolved by the advisor rather than
-   * by a person, because an autonomous session has nobody to wait for.
-   */
   private decided(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): Promise<unknown> {
     const record = (decision: ReturnType<typeof decide>, decidedBy?: string, after?: SessionPolicy) => {
       void this.record(session, journalEntry({
@@ -505,78 +215,14 @@ export class Sessions {
       return this.track(session, "agent", action.type, () => this.guarded(session, action));
     });
   }
-  /**
-   * Take a restore point before the action, where one would mean anything. Nothing is taken before a
-   * click or a navigation: a snapshot cannot unsend a message, and recording one there would be a
-   * promise the filesystem cannot keep.
-   */
-  /** Page content entering the session is what taints it, whichever action carried it in. */
   private taintedBy(session: Session, actionType: string) {
-    if (!session.tainted && ["read", "observe", "list-windows", "desktops", "inspect"].includes(actionType)) session.tainted = true;
+    if (["observe", "windows", "state"].includes(actionType)) session.tainted = true;
   }
   private async guarded(session: Session, action: { type: string }) {
-    if (session.restoreStore) {
-      const point = await takeRestorePoint(session.profile, session.restoreStore, session.journal.length, action.type)
-        .catch(() => null);
-      if (point) session.restorePoints.push(point);
-    }
-    // A stop or backend exit may have completed while the snapshot was being taken.
     this.ensureOpen(session);
-    const result = await session.backend.act(action as Parameters<typeof session.backend.act>[0]);
+    const result = await session.backend.act(action);
     this.taintedBy(session, action.type);
     return result;
-  }
-  /**
-   * Put a session back to one of its restore points.
-   *
-   * The refusals are most of what this does, and that is not an accident of the implementation. A point
-   * is only taken before an action a snapshot could undo, and `canRestoreTo` then refuses if anything
-   * since has left the machine. On a browser session that means a restore is permitted only for a
-   * session that has not browsed: the interesting undos are exactly the ones refused, because restoring
-   * a profile after a message was sent would put the browser back, leave the message sent, and report
-   * success. Nothing here widens that.
-   */
-  private async restore(session: Session, sequence: number | undefined): Promise<unknown> {
-    if (!(session.backend instanceof BrowserBackend) || !session.relaunch)
-      throw new OrbitError("UNSUPPORTED", "Restore points are taken for browser sessions; a private display is reaped whole instead");
-    if (!session.restoreStore) throw new OrbitError("UNSUPPORTED", "This filesystem cannot snapshot a profile, so this session has no restore points");
-    // Paused, because a restore replaces the profile under the session and a queued action would run
-    // against a browser that is no longer the one it was queued for.
-    if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before restoring");
-    // A pause acknowledges only after accepted actions have drained, so this is normally settled already.
-    // It is awaited anyway: a caller racing a resume against a restore would otherwise have the backend
-    // replaced under a session that believes it is running.
-    await session.tail.catch(() => {});
-    const point = sequence === undefined ? session.restorePoints.at(-1) : session.restorePoints.find(held => held.sequence === sequence);
-    const since = session.journal.filter(entry => entry.actor === "agent" && entry.outcome === "allow" && entry.sequence > (point?.sequence ?? 0));
-    const verdict = canRestoreTo(point, since);
-    if (!verdict.allowed) throw new OrbitError("RESTORE_REFUSED", verdict.reason);
-    session.restoring = true;
-    try {
-      // The browser holds the profile open, so it goes first. A swap under a live browser puts the files
-      // back and lets the browser write its own copy out again at exit.
-      await session.backend.close();
-      if (!await restoreProfile(session.profile, verdict.point))
-        throw new OrbitError("BACKEND_FAILED", "The profile could not be swapped for its restore point; nothing was changed");
-      session.backend = await session.relaunch();
-      session.backend.onClose(session.reap ?? (() => {}));
-    } catch (error) {
-      // A session whose browser is gone and cannot be replaced is over. Reaping is what the guard above
-      // suppressed, so it is done here rather than left to a close that will not come again.
-      session.restoring = false;
-      session.reap?.();
-      throw error;
-    } finally { session.restoring = false; }
-    // Points at or after the one used are gone: the session's history past this line did not happen.
-    for (const held of session.restorePoints.filter(entry => entry.sequence >= verdict.point.sequence))
-      await removeRestorePoint(held.path).catch(() => {});
-    session.restorePoints = session.restorePoints.filter(entry => entry.sequence < verdict.point.sequence);
-    void this.record(session, journalEntry({
-      at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
-      actor: "person", actionType: "session.restore", decision: { outcome: "allow" }, after: session.policy,
-    }));
-    return { sessionId: session.id, restoredTo: verdict.point.sequence, consistent: verdict.point.consistent,
-      state: session.state, restorePoints: session.restorePoints };
   }
   private async track(session: Session, actor: string, type: string, work: () => Promise<unknown>) {
     const activity = { actor, type, state: "working", sequence: (session.activity?.sequence ?? 0) + 1 };
@@ -589,28 +235,14 @@ export class Sessions {
     catch (error) { activity.state = "failed"; throw error; }
     finally { session.lastActivityAt = Date.now(); }
   }
-  private async removeProfile(profile: string) {
-    // Bun 1.4.2 parses fs.rm retry options but does not apply them to recursive deletion.
-    // Retry only transient Windows locks, with eight waits totaling 3.6 seconds.
-    for (let attempt = 0; ; attempt++) {
-      try { await rm(profile, { recursive: true, force: true }); return; }
-      catch (error) {
-        if (process.platform !== "win32" || attempt === 8
-            || !["EBUSY", "ENOTEMPTY", "EPERM", "EMFILE", "ENFILE"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
-        await Bun.sleep(100 * (attempt + 1));
-      }
-    }
-  }
   async stop(session: Session) {
     if (session.closing) return session.closing;
-    if (session.state === "closed") { await session.releasing; return this.info(session); }
+    if (session.state === "closed") return this.info(session);
     session.state = "closing";
     session.closing = (async () => {
       await session.backend.close();
       await session.tail;
-      await session.releasing;
-      // Belt and braces for a backend whose close never reported itself.
-      await this.removeProfile(session.profile);
+      this.leases.delete(session.lease);
       session.state = "closed";
       session.lastActivityAt = Date.now();
       return this.info(session);
@@ -651,13 +283,10 @@ export class Sessions {
     }
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
-    if (request.method === "doctor") return { managedIdentity: await this.releaseIdentity, version: (await import("../package.json")).version, platform: process.platform, backend: "browser", backends: ["browser", "fedora", ...(this.native ? ["native"] : [])], backendAliases: { system: "fedora" },
-      capabilities, sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeDesktopMachine(),
-      // Whether the units on disk are the ones this version writes. A managed broker that was
-      // installed before a directive existed does not carry it, and nothing else on the machine
-      // says so: the development host was running a unit with no EnvironmentFile, so every
-      // documented operator switch was reaching a fresh install and silently not that one. Linux
-      // only, since it is systemd units that drift this way.
+    if (request.method === "doctor") return { managedIdentity: await this.releaseIdentity,
+      version: (await import("../package.json")).version, platform: process.platform, backend: "native",
+      backends: this.native ? ["native"] : [], sessionMode: "native-only", capabilities,
+      sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeDesktopMachine(),
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
     if (request.method === "session.create") return this.create(params);
     if (request.method === "native.open") {
@@ -668,9 +297,9 @@ export class Sessions {
       if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
       const requestId = text(params.requestId, "requestId");
       if (requestId.length > 128) throw new OrbitError("INVALID_REQUEST", "Opening request identity is too long");
-      if (Object.keys(params).some(key => !["requestId", "workspace", "argv"].includes(key)))
+      if (Object.keys(params).some(key => !["requestId", "workspace", "applicationId", "window"].includes(key)))
         throw new OrbitError("INVALID_REQUEST", "Unknown native opening field");
-      const opening = parseNativeOpen({ workspace: params.workspace, argv: params.argv });
+      const opening = parseNativeOpen({ workspace: params.workspace, applicationId: params.applicationId, ...(params.window === undefined ? {} : { window: params.window }) });
       const fingerprint = JSON.stringify(opening);
       const previous = this.nativeOpens.get(requestId);
       if (previous) {
@@ -699,33 +328,6 @@ export class Sessions {
       if (!this.native) throw new OrbitError("UNSUPPORTED", "Native handoff is not configured");
       return NativeBackend.candidates(this.native, parseHandoff(params));
     }
-    /*
-     * Which of the person's own browser profiles this session could start from, and for each one it
-     * cannot, the measured reason why.
-     *
-     * The capability existed and no agent could find it. `session.create` has taken `cloneOf` since
-     * the clone path closed, but an agent driving Orbit through the MCP adapter saw no parameter for
-     * it and no way to learn a profile path, so it answered that Orbit cannot use the person's real
-     * browser: the opposite of what this product is for. A capability an agent cannot discover is
-     * not a capability.
-     *
-     * Every refusal comes from `canCloneProfile`, so what an agent reads here is the same verdict
-     * the create path will apply rather than a second opinion that could drift from it.
-     */
-    if (request.method === "profiles.list") {
-      const capabilities = await this.capabilities();
-      const workspace = this.root;
-      const profiles = await Promise.all(capabilities.browsers.map(async install => {
-        const verdict = await canCloneProfile(install.profileDirectory, capabilities, workspace);
-        return {
-          browser: install.id, packaging: install.packaging, profileDirectory: install.profileDirectory,
-          // The field an agent passes straight back as `cloneOf`, absent when it may not.
-          ...(verdict.allowed ? { cloneOf: install.profileDirectory, reflink: verdict.reflink } : { reason: verdict.reason }),
-          clonable: verdict.allowed,
-        };
-      }));
-      return { profiles, note: "Pass cloneOf to session.create with a policy naming the origins the session may reach. The clone is a copy, deleted when the session stops, so nothing it does reaches the person's own browser." };
-    }
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);
     /*
@@ -747,12 +349,11 @@ export class Sessions {
       }
       return { sessionId: id, forgotten: known !== undefined };
     }
-    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.account.save", "session.journal", "session.narrow", "session.restore"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
     const session = this.get(params.sessionId);
     // What the session did, for a person reading afterwards rather than approving in advance.
-    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy, entries: session.journal, blockedOrigins: [...new Set(session.blockedOrigins)], path: session.journalPath, tainted: session.tainted, restorePoints: session.restorePoints,
-      egressTier: session.egress.tier, refusedAuthorities: [...new Set([...session.egress.refused(),
-        ...(session.backend instanceof FedoraBackend ? session.backend.refusedAuthorities() : [])])] };
+    if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy,
+      entries: session.journal, path: session.journalPath, tainted: session.tainted };
     // Narrowing only. There is deliberately no method that widens a running session, because the
     // value of the allowlist is that a page the agent reads cannot cause it to grow.
     if (request.method === "session.narrow") {
@@ -778,24 +379,9 @@ export class Sessions {
       return { sessionId: session.id, policy: session.policy, tainted: session.tainted };
     }
     if (request.method === "session.stop") return this.stop(session);
-    if (request.method === "session.restore") {
-      if (params.sequence !== undefined && (!Number.isInteger(params.sequence) || Number(params.sequence) < 0))
-        throw new OrbitError("INVALID_REQUEST", "A restore point is named by the sequence reported in the journal");
-      this.ensureOpen(session);
-      return this.restore(session, params.sequence === undefined ? undefined : Number(params.sequence));
-    }
     this.ensureOpen(session);
     // Presence is what a desktop indicator polls, so it must not cost a frame or wait behind an action.
     if (request.method === "session.presence") return session.backend.presence().catch(error => { this.ensureOpen(session); throw error; });
-    if (request.method === "session.account.save") {
-      if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause before saving account state");
-      const { backend, account } = session;
-      if (!(backend instanceof BrowserBackend) || !account) throw new OrbitError("UNSUPPORTED", "Create a browser session with accountName first");
-      return this.enqueue(session, async () => {
-        await account.save(await backend.context.storageState({ indexedDB: true }));
-        return { saved: true, accountName: account.name };
-      });
-    }
     if (request.method === "session.control") {
       if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before manual input");
       return this.enqueue(session, () => this.track(session, "human", String(record(params.input).type), () => session.backend.control(params.input)));
@@ -821,17 +407,6 @@ export class Sessions {
       session.state = "running"; session.paused = undefined;
       return this.info(session);
     }
-    // Capture is read-only and must not wait behind a locator action. It is still page content
-    // arriving in the session, so it taints on its own path as a read does on the action path.
-    //
-    // And it is policed. `classify("observe")` has always answered `read`, and `decide` was reached
-    // only from `act()`, so a session created with `allow: []`, or narrowed to nothing after an
-    // immune action fired, still answered `session.observe` with a full frame of the page. For a
-    // session started from a clone of the person's own profile that frame is the contents of their
-    // logged-in accounts, returned to an agent whose policy said it could do nothing. Reading is
-    // not free just because it changes nothing: it is the half of the boundary that protects the
-    // person rather than the machine. The refusal is journalled the way a denied action is, so a
-    // reader sees the attempt rather than a gap.
     const decision = decide(session.policy, "observe");
     if (decision.outcome === "deny") {
       void this.record(session, journalEntry({
@@ -840,34 +415,19 @@ export class Sessions {
       }));
       throw new OrbitError("POLICY_DENIED", decision.reason);
     }
-    if (session.backend instanceof NativeBackend) {
-      if (Object.keys(params).some(key => !["sessionId", "appId", "windowId"].includes(key)))
-        throw new OrbitError("INVALID_REQUEST", "Unknown native observation fields");
-      const selected = params.appId === undefined && params.windowId === undefined ? undefined
-        : { appId: params.appId, windowId: params.windowId };
-      const frame = await session.backend.observe(selected);
-      this.taintedBy(session, "observe");
-      return frame;
-    }
-    session.observing ??= session.backend.observe().then(frame => {
-      this.taintedBy(session, "observe");
-      return frame;
-    }).catch(error => {
-      this.ensureOpen(session);
-      throw error;
-    }).finally(() => { session.observing = undefined; });
-    return session.observing;
+    if (Object.keys(params).some(key => !["sessionId", "appId", "windowId"].includes(key)))
+      throw new OrbitError("INVALID_REQUEST", "Unknown native observation fields");
+    const selected = params.appId === undefined && params.windowId === undefined ? undefined
+      : { appId: params.appId, windowId: params.windowId };
+    const frame = await session.backend.observe(selected);
+    this.taintedBy(session, "observe");
+    return frame;
   }
   async close() {
     this.shuttingDown = true;
     await Promise.allSettled([...this.creating]);
-    const results = await Promise.allSettled([
-      ...[...this.sessions.values()].map(session => this.stop(session)),
-      ...[...this.pendingBrowserCleanup.values()].map(retry => retry()),
-    ]);
+    const results = await Promise.allSettled([...this.sessions.values()].map(session => this.stop(session)));
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
-    const [only] = failures;
-    if (failures.length === 1) throw only;
-    if (failures.length) throw new AggregateError(failures, "Owned session cleanup remains incomplete");
+    if (failures.length) throw new AggregateError(failures, "Native application handback remains incomplete");
   }
 }

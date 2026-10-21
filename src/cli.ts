@@ -116,17 +116,6 @@ try {
     const { openNativeSettings } = await import("./native-settings");
     await openNativeSettings();
     console.log(JSON.stringify({ ok: true, result: { closed: true } }));
-  } else if (command === "session" && verb === "native-view") {
-    const words = process.argv.slice(4);
-    const [sessionId, appId, windowId, flag, count] = words;
-    if (!sessionId || !appId || !windowId || (words.length !== 3 && (words.length !== 5 || flag !== "--frames")))
-      throw new OrbitError("INVALID_REQUEST", "Use session native-view SESSION APP WINDOW [--frames COUNT]");
-    const { nativePreview } = await import("./native-preview");
-    const result = await nativePreview(process.env.ORBIT_SOCKET ?? serviceSocketPath(), {
-      sessionId, appId, windowId, ...(count === undefined ? {} : { frames: Number(count) }),
-      onRendered: frame => console.log(JSON.stringify({ ok: true, rendered: frame })),
-    });
-    console.log(JSON.stringify({ ok: true, result }));
   } else if (command === "update") {
     // Check and stage reach the registry; activation requires an idle managed broker.
     const { activateVersion, updateStatus, pruneVersions, checkForUpdate, prepareVersion, runUpdate, setAutomaticUpdates, automaticUpdates } = await import("./update");
@@ -239,6 +228,7 @@ try {
     const observation = command === "session" && verb === "observe" ? observationOptions(process.argv.slice(5)) : undefined;
     let method: string;
     let params: unknown = {};
+    if (command === "session" && verb === "create") throw new OrbitError("UNSUPPORTED", "Private session creation was removed. Use native-open with a registered applicationId and explicit workspace");
     if (command === "doctor") method = "doctor";
     else if (command === "profiles") throw new OrbitError("UNSUPPORTED", "Browser profile APIs are retired. Orbit is desktop-only.");
     else if (command === "applications") {
@@ -264,25 +254,15 @@ try {
       params = { backend: "native", handoff, ...(policy === undefined ? {} : { policy }),
         agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME };
     }
-    else if (command === "preview" && verb === "browsers") method = "viewer.browsers";
-    // `preview` prints the viewer link and opens nothing; `preview open` opens Orbit's own viewer window.
-    else if (command === "preview") { method = "preview.open"; params = { launch: verb === "open", browser: arg }; }
+    else if (command === "preview") throw new OrbitError("UNSUPPORTED", "Browser and private desktop viewers were removed");
     else if (command === "account" && verb === "save") throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired. Orbit is desktop-only.");
-    else if (command === "session" && ["create", "stop", "pause", "resume", "observe", "list", "journal", "restore"].includes(verb ?? "")) {
-      if (verb === "create" && arg !== undefined && !["system", "fedora", "native"].includes(arg))
-        throw new OrbitError("UNSUPPORTED", "Orbit is desktop-only. Choose system or configured native application control.");
-      if (verb === "create" && fourth !== undefined)
-        throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired.");
+    else if (command === "session" && ["stop", "pause", "resume", "observe", "list", "journal"].includes(verb ?? "")) {
       method = observation?.mode === "metadata" ? "session.presence" : `session.${verb}`;
-      // The journal is how an autonomous run is reviewed after it finishes, and a restore is how one is
-      // put back, so both belong on the command line a person uses rather than in the agent API alone.
-      params = verb === "create" ? { backend: arg ?? "system", accountName: fourth, agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME, conversationName: process.env.ORBIT_CONVERSATION_NAME, projectName: process.env.ORBIT_PROJECT_NAME }
-        : verb === "restore" && fourth !== undefined ? { sessionId: arg, sequence: Number(fourth) }
-        : { sessionId: arg };
+      params = { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session create/list/stop/pause/resume/observe/journal/restore, or act ID JSON|@FILE|-");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session list/stop/pause/resume/observe/journal, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
     await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }

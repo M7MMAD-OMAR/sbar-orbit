@@ -91,10 +91,13 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "this plugin source has no release evidence"):
                     plugin_owner.operate(operation, "/unused")
 
-    def test_evidence_matches_the_committed_plugin_source(self):
+    def test_historical_evidence_cannot_certify_the_changed_plugin_source(self):
         import hashlib
         source = Path(__file__).resolve().parents[1] / RECORD["plugin"]["source"]
-        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), SOURCE)
+        current = hashlib.sha256(source.read_bytes()).hexdigest()
+        self.assertNotEqual(current, SOURCE)
+        with self.assertRaisesRegex(RuntimeError, "disabled after a compositor crash"):
+            handoff_release.require_owner_handoff(current, ABI)
 
 
 if __name__ == "__main__":

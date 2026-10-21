@@ -29,6 +29,8 @@ class Compositor:
 
     def _exchange(self, request, deadline=None):
         self.requests.append(request)
+        if request == "ghost-build-info":
+            return json.dumps({"source_sha256": "a" * 64, "abi_hash": "fixture"})
         if request == "j/clients":
             return json.dumps([{"address": self.address, "stableId": "ab", "workspace": {"id": 8},
                                 "size": [320, 180], "title": self.text, "xwayland": False}])
@@ -156,5 +158,14 @@ class ExistingApplicationTests(unittest.TestCase):
 if __name__ == "__main__":
     if "--unfixed-close" in sys.argv:
         sys.argv.remove("--unfixed-close")
-        ExistingApplicationSession.close = NativeSession.close
+        def unfixed_close(self):
+            errors = []
+            for app in self.apps.values():
+                try:
+                    app.close()
+                except BaseException as error:
+                    errors.append(error)
+            if errors:
+                raise BaseExceptionGroup("Native session cleanup failed", errors)
+        ExistingApplicationSession.close = unfixed_close
     unittest.main()

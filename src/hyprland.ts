@@ -1,11 +1,10 @@
 import { OrbitError, record } from "./errors";
+import { resolveInstalledApplication } from "./application-launch";
 import { requireOwnerHandoff } from "./native-handoff-release";
-import { desktopVisibility } from "./desktop-settings";
 import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
 import { requireResourceBudget } from "./resource-budget";
-import { loadNativeAppearance } from "./native-appearance";
 import { basename, join } from "node:path";
 import { copyFile, mkdir, rm, chmod, readdir, lstat } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -15,16 +14,21 @@ type NativeAction = { type: string; [key: string]: unknown };
 type Window = Target & { title: string; width: number; height: number };
 
 export type HandoffSelection = { workspace: number; address?: string; stableId?: string };
-export type NativeOpen = { workspace: number; argv: string[] };
+export type NativeOpen = { workspace: number; applicationId: string; window?: { width: number; height: number } };
 export function parseNativeOpen(value: unknown): NativeOpen {
   const input = record(value);
   parseHandoff({ workspace: input.workspace });
-  if (Object.keys(input).some(key => !["workspace", "argv"].includes(key))
-      || !Array.isArray(input.argv) || input.argv.length < 1 || input.argv.length > 64
-      || input.argv.some(arg => typeof arg !== "string" || Buffer.byteLength(arg) > 4096 || /[\0\r\n]/.test(arg))
-      || !input.argv[0] || Buffer.byteLength(input.argv.join("")) > 16384)
-    throw new OrbitError("INVALID_REQUEST", "Opening requires bounded application arguments and a workspace");
-  return { workspace: Number(input.workspace), argv: input.argv as string[] };
+  if (Object.keys(input).some(key => !["workspace", "applicationId", "window"].includes(key))
+      || typeof input.applicationId !== "string" || input.applicationId.length > 1024
+      || !/^[^/\\\0\r\n]+\.desktop$/.test(input.applicationId))
+    throw new OrbitError("INVALID_REQUEST", "Opening requires a registered applicationId and a numbered workspace; arbitrary commands are unavailable");
+  const window = input.window === undefined ? undefined : record(input.window);
+  if (window && (Object.keys(window).some(key => !["width", "height"].includes(key))
+      || typeof window.width !== "number" || !Number.isInteger(window.width) || window.width < 320 || window.width > 3840
+      || typeof window.height !== "number" || !Number.isInteger(window.height) || window.height < 240 || window.height > 2160))
+    throw new OrbitError("INVALID_REQUEST", "Window size requires width 320 to 3840 and height 240 to 2160");
+  return { workspace: Number(input.workspace), applicationId: input.applicationId,
+    ...(window ? { window: { width: Number(window.width), height: Number(window.height) } } : {}) };
 }
 export function parseHandoff(value: unknown): HandoffSelection {
   const input = record(value);
@@ -51,8 +55,8 @@ function target(value: Record<string, unknown>): Target {
 
 /** The compositor is fixed at broker startup. All application targets are worker-owned handles. */
 export class NativeBackend {
-  readonly visible = false;
-  readonly capabilities = ["launch", "windows", "cursor", "move", "click", "scroll", "text", "key", "state", "hide-cursor", "observe", "close-application", "pause", "resume", "stop"];
+  readonly visible = true;
+  readonly capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "hide-cursor", "observe", "close-application", "pause", "resume", "stop"];
   private applications = new Set<string>();
   private windows = new Map<string, Window>();
   private selected?: Target;
@@ -68,20 +72,17 @@ export class NativeBackend {
   }
 
   static async create(_profile: string, options: NativeOptions, handoff?: HandoffSelection) {
-    if (handoff !== undefined) requireOwnerHandoff();
+    if (handoff === undefined) throw new OrbitError("UNSUPPORTED", "Private native sessions were removed; select an existing application explicitly");
+    requireOwnerHandoff();
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
-    // This experimental adapter uses a hidden special workspace. It must not bypass the same
-    // owner setting that protects private desktop creation.
-    await desktopVisibility(false);
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker;
     let appearance: Readonly<Record<string, string>> = Object.freeze({});
     try {
-      if (options.appearanceDirectory !== undefined) appearance = await loadNativeAppearance(options.appearanceDirectory);
       worker = await NativeWorker.create(join(directory, "worker"), options,
-        handoff === undefined ? undefined : ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
+        ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
     }
     catch (error) {
       try { await rm(directory, { recursive: true, force: true }); }
@@ -133,6 +134,8 @@ export class NativeBackend {
   }
 
   static async openApplication(options: NativeOptions, value: NativeOpen) {
+    value = parseNativeOpen(value);
+    const application = await resolveInstalledApplication(value.applicationId);
     await requireResourceBudget();
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker | undefined;
@@ -143,7 +146,7 @@ export class NativeBackend {
     try {
       worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
-      result = await worker.request("open", value);
+      result = await worker.request("open", { workspace: value.workspace, argv: application.argv, ...(value.window ? { window: value.window } : {}), ...(application.cwd ? { cwd: application.cwd } : {}) });
       remove = true;
     } catch (error) {
       // A denied approval did not dispatch. Other errors retain uncertain launch evidence.
@@ -201,7 +204,7 @@ export class NativeBackend {
     const input = record(value);
     if (typeof input.type !== "string") throw new OrbitError("INVALID_REQUEST", "Native action requires a type");
     const fields: Record<string, string[]> = {
-      launch: ["argv", "configuration"], windows: ["appId"], "close-application": ["appId"],
+      windows: ["appId"], "close-application": ["appId"],
       cursor: ["appId", "windowId", "x", "y"], move: ["appId", "windowId", "x", "y"],
       click: ["appId", "windowId", "x", "y", "button"], scroll: ["appId", "windowId", "x", "y", "dy"],
       text: ["appId", "windowId", "text"], key: ["appId", "windowId", "key"],
@@ -210,32 +213,14 @@ export class NativeBackend {
     const allowed = fields[input.type];
     if (!allowed || Object.keys(input).some(key => key !== "type" && !allowed.includes(key)))
       throw new OrbitError("INVALID_REQUEST", "Unknown native action or unexpected fields");
-    if (input.type === "launch") {
-      if (this.borrowed) throw new OrbitError("UNSUPPORTED", "A handed-off session cannot launch applications");
-      if (!Array.isArray(input.argv) || !input.argv.length || input.argv.some(value => typeof value !== "string" || value.includes("\0")))
-        throw new OrbitError("INVALID_REQUEST", "Native launch requires an argv array");
-    } else {
-      identifier(input.appId);
-      if (allowed.includes("windowId")) target(input);
-    }
+    identifier(input.appId);
+    if (allowed.includes("windowId")) target(input);
     // Full shape and coordinate validation runs in the worker before admission or delivery.
     return { ...input, type: input.type };
   }
 
   async act(value: unknown): Promise<unknown> {
     const action = this.parseAction(value);
-    if (action.type !== "close-application" && action.type !== "windows") await desktopVisibility(false);
-    if (action.type === "launch") {
-      const configuration = action.configuration === undefined ? undefined : record(action.configuration);
-      const result = record(await this.worker.request("launch", {
-        argv: action.argv,
-        ...(configuration === undefined && !Object.keys(this.appearance).length ? {} : {
-          configuration: { ...this.appearance, ...configuration },
-        }),
-      }));
-      this.applications.add(identifier(result.appId));
-      return result;
-    }
     const appId = identifier(action.appId);
     if (!this.applications.has(appId)) throw new OrbitError("INVALID_REQUEST", "Native application belongs to another session or is closed");
     if (action.type === "close-application") {

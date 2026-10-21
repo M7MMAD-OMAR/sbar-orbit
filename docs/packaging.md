@@ -1,117 +1,15 @@
-# Packaging and installation
+# Packaging
 
-Orbit is desktop-only. Package creation, release publication, installation and
-native application acceptance are separate steps. An archive or healthy broker
-does not prove that an application can be controlled.
+Orbit packages the native application broker, CLI, MCP adapter, panel and owner
+compositor integration. Bun dependencies are the MCP SDK and Zod. No browser
+automation library, browser binary, extension, browser viewer or private compositor
+runtime belongs to the product.
 
-## Prepare one reviewed source tree
+Use `bun install --frozen-lockfile --ignore-scripts`, `bun run typecheck`, and
+`bun run verify`. The supported suite uses native logic and protocol fixtures,
+never browser sessions or substitute desktops. The former `--native` bootstrap
+is unavailable. Native opening uses the configured original owner compositor.
 
-Install frozen dependencies with `bun install --frozen-lockfile --ignore-scripts`.
-Review the public paths, version metadata, license notices and current capability
-limits. Stage every intended addition, modification and deletion. Both archives
-must describe the same reviewed revision with no unreviewed working-tree changes.
-Never replace an existing version or published archive.
-
-Run one bounded command at a time:
-
-```sh
-bun run scripts/limited.ts bun run scripts/public-audit.ts
-bun run scripts/limited.ts bun run typecheck
-bun run verify
-bun run verify tests/packaging.test.ts tests/agent-contract.test.ts tests/service-paths.test.ts tests/macos-service-simulation.test.ts
-bun run scripts/limited.ts bun run scripts/package.ts
-bun run scripts/limited.ts bun run scripts/registry-package.ts output/packages
-```
-
-`scripts/package.ts` builds the source archive in `output/packages` from Git index
-bytes and executable modes. It adds a SHA-256 source manifest and an archive
-checksum. An extracted source archive can instead be repackaged from its verified
-manifest. Private paths, credentials, dependency directories and generated output
-are excluded by the public source policy.
-
-`scripts/registry-package.ts` selects tracked public paths, reads their current
-working-tree bytes, applies Bun's package file selection and restores the exact
-tracked `bun.lock`. It refuses symlinks and an existing output archive. Untracked
-files do not ship. Publish this completed `.tgz`, not an implicit repack of the
-working directory. Source and registry packaging use different byte sources, so
-check index and working-tree agreement before building them.
-
-## Verify an extracted source archive
-
-```sh
-bun run scripts/limited.ts bun run scripts/verify-source.ts /path/to/extracted-source
-```
-
-Verify the archive digest against the chosen release channel separately. The
-manifest check establishes content consistency, not publisher authentication or
-application runtime acceptance. The former browser-based package smoke experiment
-is not a current desktop release gate and must not be used as desktop evidence.
-
-## Install the selected source
-
-Use the extracted source or the intended checkout:
-
-```sh
-./install.sh --dry-run --json
-./install.sh --connect auto --json
-```
-
-Windows uses `install.cmd` for installation contracts, but native Windows desktop
-control is not implemented. Native macOS desktop control is also not implemented.
-The authoritative report fields, exit codes, remediation rules and host-registration
-contract are in [agent installation](agent-install.md).
-
-The installer checks prerequisites, prepares dependencies, links the command,
-configures the supported service and requested host connections, and checks broker
-health. It never grants native application support merely because installation
-succeeded. A running host must reload its MCP configuration after registration.
-Service activation can affect existing sessions; package publication itself does
-not restart the broker.
-
-## Native prerequisites and measured limits
-
-The private desktop currently requires Linux and the supported private compositor
-runtime. The Fedora bootstrap lives in the repository under
-`experiments/fedora-display/bootstrap.sh`; registry-format packages do not carry
-that experimental bootstrap or runtime binaries. `--native` cannot build a runtime
-from a package that omits it. Missing dependencies and unsupported environments
-must return the installer's explicit remedy, not browser fallback.
-
-Run `ORBIT_TEST_NATIVE=1 bun run verify` only where the required native runtime is
-available. Keep skipped tests and unsupported systems visible as not measured.
-The existing-owner handoff remains under the
-[compositor incident release hold](native-handoff-incident.md). New private launches
-are not access to existing signed-in sessions and private HOME is not a universal
-filesystem sandbox. See [desktop capabilities](desktop-only.md).
-
-## Publish and deploy
-
-Publish source and registry-format artifacts with their checksums against the same
-reviewed commit and new version. Verify downloaded artifact identity after publication.
-GitHub and the package registry are separate destinations. Historical artifacts and
-reports describe their original source revisions, not the current checkout.
-
-The [website deployment](../website/README.md) is a separate Cloudflare operation.
-A Git push does not deploy the website, activate the installed broker or remove a
-native capability hold. Retain Apache-2.0, NOTICE and dependency license obligations.
-
-
-## Continuous verification
-
-The `verify` workflow runs on `main` with three runner families: Ubuntu,
-Windows and macOS. Each runs the bounded desktop suite, host registration and
-fresh registry installation contracts. The installed check verifies broker
-health, application discovery, refusal of retired browser sessions and a tokened
-`127.0.0.1` viewer link from `preview`. It launches no browser and does not claim
-native application acceptance.
-
-The suite wrapper preserves the test process exit status and records runner
-resources plus `verification-result.json`. It no longer requires a Chrome
-transport trace from the retired browser suite. Missing optional application
-registration directories are allowed; other incomplete scans report truncation.
-Platform tests compare canonical executable paths, including macOS temporary
-path aliases and Windows short path names.
-
-Actual private desktop application control requires the native runtime and
-`ORBIT_TEST_NATIVE=1`. Without that run it remains `not measured`, even when
-all installation and metadata jobs pass.
+A source release and installation are not runtime acceptance. Managed activation
+requires an idle broker. Preserve unrelated settings and work. See
+[installation](agent-install.md) and [the contract](desktop-only.md).

@@ -117,7 +117,7 @@ const recordlessGraceMs = 60 * 60 * 1000;
  * every browser profile it removes. Nothing here reads a profile's contents.
  */
 async function clearReadOnlySubvolumes(directory: string): Promise<void> {
-  const { isSubvolume } = await import("./restore");
+  const isSubvolume = async (path: string) => (await lstat(path)).ino === 256;
   const pending = (await readdir(directory, { withFileTypes: true }).catch(() => []))
     .filter(entry => entry.isDirectory() && entry.name.startsWith("restore-"))
     .map(entry => join(directory, entry.name));
