@@ -248,3 +248,37 @@ test.each(["firefox", "zen", "zen-bin", "helium"])("native opening refuses %s be
     }
   } finally { await f.close(); }
 });
+
+test("registered native Python entry script preserves its installed path without executing during resolution", async () => {
+  const f = await fixture(); try {
+    await writeFile(f.executable, '#!/usr/bin/python3\nraise RuntimeError("resolution must not run the app")\n', {mode:0o755});
+    await f.desktop("native-script.desktop", `"${f.executable}"`);
+    expect((await resolveInstalledApplication("native-script.desktop", f.options)).argv).toEqual([f.executable]);
+    await writeFile(f.executable, '#!/usr/bin/python3 -c\nprint(1)\n');
+    await expect(resolveInstalledApplication("native-script.desktop", f.options)).rejects.toThrow("unsupported interpreter");
+  } finally { await f.close(); }
+});
+
+test("registered rendering environment wrapper preserves only finite toolkit values and still rejects browser aliases", async () => {
+  const f = await fixture(); try {
+    const options = {...f.options, env:{...f.options.env,PATH:f.bin+":/usr/bin"}};
+    await f.desktop("native-env.desktop", `env GSK_RENDERER=cairo "${f.executable}"`);
+    expect((await resolveInstalledApplication("native-env.desktop",options)).argv).toEqual(["/usr/bin/env","GSK_RENDERER=cairo",f.executable]);
+    for(const value of ["HOME=/other","LD_PRELOAD=/tmp/code.so","GSK_RENDERER=cairo=extra","GSK_RENDERER=$(touch /tmp/no)","GSK_RENDERER=cairo GSK_RENDERER=gl"]){
+      await f.desktop("native-env.desktop",`env ${value} "${f.executable}"`);
+      await expect(resolveInstalledApplication("native-env.desktop",options)).rejects.toThrow();
+    }
+    const alias=join(f.bin,"zen");await copyFile(f.executable,alias);await chmod(alias,0o755);
+    await f.desktop("native-env.desktop",`env GSK_RENDERER=cairo "${alias}"`);
+    await expect(resolveInstalledApplication("native-env.desktop",options)).rejects.toThrow("browser");
+  } finally { await f.close(); }
+});
+
+
+test("versioned interpreter commands cannot evaluate a registration as a native app", async () => {
+  const f = await fixture(); try {
+    const interpreter=join(f.bin,"python3.14");await copyFile(f.executable,interpreter);await chmod(interpreter,0o755);
+    await f.desktop("eval.desktop",`"${interpreter}" -c "raise RuntimeError()"`);
+    await expect(resolveInstalledApplication("eval.desktop",f.options)).rejects.toThrow("unsupported command adapter");
+  } finally {await f.close();}
+});

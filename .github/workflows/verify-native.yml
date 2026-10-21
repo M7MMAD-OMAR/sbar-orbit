@@ -1,0 +1,50 @@
+name: Native source contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  platform-contracts:
+    name: Source contracts (${{ matrix.os }}), no desktop acceptance
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Typecheck within the platform resource budget
+        run: bun run scripts/limited.ts bun run typecheck
+      - name: Metadata and installation contracts only
+        run: bun run verify:platform-contracts
+
+  website:
+    name: English and Arabic static website
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun install --frozen-lockfile --ignore-scripts
+        working-directory: website
+      - run: bun run scripts/limited.ts bun run --cwd website typecheck
+      - run: bun run scripts/limited.ts bun test website/tests
+      - run: bun run scripts/limited.ts bun run --cwd website build

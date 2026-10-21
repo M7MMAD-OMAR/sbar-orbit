@@ -1,37 +1,15 @@
-# Platform verification without a local Mac
+# Native platform evidence
 
-Run `bun run verify:platform-contracts` from the checkout. This bounded command
-runs the portable macOS path, browser argument, Keychain switch and platform
-contracts, plus a service lifecycle simulation. It is useful on Linux even when
-no Mac is available. Tests requiring a real Darwin kernel are explicitly skipped.
+Updated 22 October 2026.
 
-The service simulation uses actual temporary files and production installation
-functions. Only the `launchctl` subprocess response is simulated. It checks first
-installation, repeated installation, bootstrap failure, status, removal, missing
-launchers and preservation of unrelated files. It cannot establish that launchd
-accepts the plist or that the real service starts. Windows skips this Unix UID
-simulation; its managed service has separate real-VM coverage.
+Historical browser measurements do not certify the current native-only product.
+See [actual platform support](support-tiers.md), [the real native opening report](native-opening.md)
+and [the native adapter contract](porting.md). Opening on Windows and macOS is
+not implemented. Application input and capture remain held. Git history retains
+retired implementation measurements.
 
-For real macOS verification without owning a Mac, use the repository's GitHub
-Actions `verify` workflow. GitHub provides a fresh macOS VM for each hosted job:
-https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-The workflow tests the actual Darwin kernel, browser, installed broker and MCP
-entries. These results complement the portable contracts rather than replacing
-them. A cloud runner still does not prove behavior on every physical Mac or on a
-person's existing Keychain and desktop account.
-
-Do not change `process.platform` and describe a Linux process as a measured Mac.
-Do not remove a failing test merely to obtain a passing run. Keep kernel-only
-coverage and report skips separately. Diagnose failures from their retained logs;
-a successful rerun does not explain an earlier intermittent failure.
-
-The manual `macos-cold-start` workflow compares scheduling orders on separate fresh
-Mac runners. Its background arm deliberately exercises the former policy, which
-can miss deadlines. Keep this diagnostic comparison separate from the release
-gate; the `verify` workflow runs the production utility QoS policy and retains
-real functional failures. No failing functional test was deleted for this change.
-
-Apple documents `taskpolicy -c utility` as a QoS clamp inherited by children:
-https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.8
-This prioritizes active agent work below interactive work without the former
-background I/O throttling. Resource accounting remains advisory on macOS.
+The Native source contracts GitHub workflow checks source types and metadata/service
+contracts on Linux, Windows and macOS runners. A separate Linux job builds the
+English/Arabic website. These jobs launch no browser and create no private session.
+Their results must be read from the actual workflow run; adding the YAML is not
+evidence that remote jobs passed or that a desktop application was controlled.

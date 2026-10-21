@@ -81,6 +81,18 @@ async function preparedExecutable(path: string, home: string, env: NodeJS.Proces
   finally { await handle.close(); }
   if (!content.startsWith("#!")) return path;
   if (content.includes("\r")) refuse("Application wrapper carriage returns are unsupported");
+  // Installed native applications can use an interpreter as their entry point.
+  // This does not admit interpreter command-line evaluation or shell setup.
+  const shebang = content.split("\n", 1)[0] ?? "";
+  const nativeScript = /^#![ \t]*(\/usr\/bin\/(?:python3(?:\.\d+)?|gjs(?:-console)?))([ \t]+-m)?[ \t]*$/.exec(shebang);
+  if (nativeScript?.[1] && (!nativeScript[2] || nativeScript[1].includes("gjs"))) {
+    const interpreterPath = await realpath(nativeScript[1]).catch(() => undefined);
+    const interpreterInfo = interpreterPath ? await stat(interpreterPath).catch(() => undefined) : undefined;
+    if (!interpreterPath?.startsWith("/usr/bin/") || !interpreterInfo?.isFile()
+        || interpreterInfo.uid !== 0 || interpreterInfo.mode & 0o022 || !(interpreterInfo.mode & 0o111))
+      refuse("Native application interpreter is not a trusted system executable");
+    return path;
+  }
   if (exceedsLimit) refuse("Application wrapper exceeds supported size");
   const lines = content.split(/\r?\n/); const interpreter = lines.shift() ?? "";
   if (!/^#![ \t]*\/(?:usr\/)?bin\/(?:ba|da)?sh[ \t]*$/.test(interpreter))
@@ -139,15 +151,32 @@ export async function resolveInstalledApplication(applicationId: string, options
     refuse("Application registration needs an unsupported activation adapter");
   const exec = fields.Exec;
   if (exec === undefined) return refuse("Application registration has no Exec recipe");
-  const args = words(exec); const command = args.shift();
+  const args = words(exec); let command = args.shift();
   if (!command || command.includes("%")) return refuse("Application registration has no literal executable");
-  const path = await executable(command, env);
-  const unsupportedCommands = ["env", "flatpak", "sh", "bash", "dash", "zsh", "fish", "python", "python3", "node", "bun", "xdg-open", "gio", "sensible-browser"];
-  if ([basename(path), basename(await realpath(path))].some(name => unsupportedCommands.includes(name)))
+  let path = await executable(command, env);
+  const renderingPrefix: string[] = [];
+  if (basename(path) === "env" && await realpath(path) === "/usr/bin/env") {
+    const seen = new Set<string>();
+    while (args[0]?.includes("=")) {
+      const assignment = args.shift() ?? "";
+      const [key, value] = assignment.split("=");
+      if (!key || assignment.indexOf("=") !== assignment.lastIndexOf("=") || seen.has(key) || !(key === "GSK_RENDERER" && ["cairo", "gl", "ngl", "vulkan", "opengl"].includes(value ?? "")))
+        return refuse("Unsupported application rendering environment assignment");
+      seen.add(key); renderingPrefix.push(assignment);
+    }
+    if (!renderingPrefix.length) refuse("Environment wrappers require an explicit supported rendering value");
+    command = args.shift();
+    if (!command || command.startsWith("-") || command.includes("%")) return refuse("Rendering wrapper has no literal executable");
+    renderingPrefix.unshift(path);
+    path = await executable(command, env);
+  }
+  const unsupportedCommands = ["env", "flatpak", "sh", "bash", "dash", "zsh", "fish", "python", "python3", "gjs", "gjs-console", "node", "bun", "xdg-open", "gio", "sensible-browser"];
+  const unsupportedCommand = (name: string) => unsupportedCommands.includes(name) || /^python(?:[0-9]+(?:\.[0-9]+)*)?$/.test(name);
+  if ([basename(path), basename(await realpath(path))].some(unsupportedCommand))
     refuse("Application registration needs an unsupported command adapter");
   if (fields.TryExec) await executable(fields.TryExec, env);
   const resolved = await preparedExecutable(path, home, env);
-  if ([basename(resolved), basename(await realpath(resolved))].some(name => unsupportedCommands.includes(name)))
+  if ([basename(resolved), basename(await realpath(resolved))].some(unsupportedCommand))
     refuse("Application wrapper needs an unsupported command adapter");
   // Resolve aliases and supported wrappers before applying the same native-only admission.
   const resolvedNames = [path, await realpath(path), resolved, await realpath(resolved)];
@@ -156,7 +185,7 @@ export async function resolveInstalledApplication(applicationId: string, options
   const standaloneBrowserName = /^(?:zen|zen-bin|helium|surf|midori|luakit|nyxt|netsurf|otter-browser|konqueror|firedragon|cachy-browser|slimjet|sidekick|wavebox)$/i;
   if (resolvedNames.some(name => browserName.test(name) || standaloneBrowserName.test(basename(name)) || terminalName.test(basename(name))))
     refuse("Resolved browser or terminal executables are unavailable through native opening");
-  const argv = [resolved];
+  const argv = [...renderingPrefix, resolved];
   for (const arg of args) {
     if (/^%[fFuU]$/.test(arg)) continue;
     if (arg === "%c") { argv.push(fields.Name ?? applicationId); continue; }

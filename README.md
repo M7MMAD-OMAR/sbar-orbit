@@ -1,7 +1,7 @@
 # Orbit
 
-Open original installed native Linux applications on a numbered workspace while
-the person works on another. Applications retain their normal owner state and
+Open original installed native Linux applications on a numbered Hyprland workspace.
+The user can select another workspace for their own work. Applications retain their normal owner state and
 stay open after the opening worker exits.
 
 Browser launching, browser automation, copied profiles, private desktops and
@@ -29,3 +29,10 @@ bun run verify
 
 The supported suite never opens a browser or creates a private desktop. Unknown
 measurements are reported as `not measured`, never as a pass.
+
+![Original native application workspace diagram](docs/images/native-workspaces.svg)
+
+This is an architecture illustration, not a screenshot. See [real installed app
+results](docs/native-opening.md) and [the platform matrix](docs/support-tiers.md).
+Windows, macOS and other Linux compositor opening adapters are not implemented.
+Full desktop application work is unfinished while input and capture remain held.

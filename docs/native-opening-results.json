@@ -1,0 +1,515 @@
+{
+  "schema": 1,
+  "date": "2026-10-22",
+  "baseCommit": "189c377",
+  "initial": {
+    "schema": 1,
+    "host": "Fedora 44, Hyprland 0.56.2, Wayland, x86_64",
+    "date": "2026-10-22",
+    "sourceCommit": "189c377",
+    "scope": "Original installed app opening, measured geometry and exact newly opened window cleanup. No input, capture or account acceptance.",
+    "applications": [
+      {
+        "applicationId": "org.gnome.Calculator.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 7.93,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.TextEditor.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 9.61,
+        "sameActiveWindowAndWorkspaceAtEnd": false
+      },
+      {
+        "applicationId": "org.gnome.Characters.desktop",
+        "opening": "failed",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "no acknowledged window",
+        "error": "error: Application script requires an unsupported interpreter launch recipe",
+        "durationSeconds": 0.03,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.clocks.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.37,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Calendar.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 4.28,
+        "sameActiveWindowAndWorkspaceAtEnd": false
+      },
+      {
+        "applicationId": "org.gnome.font-viewer.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.09,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Loupe.desktop",
+        "opening": "failed",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "no acknowledged window",
+        "error": "error: Application registration needs an unsupported command adapter",
+        "durationSeconds": 0.03,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.FileRoller.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.1,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Nautilus.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.46,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.baobab.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 4.77,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Papers.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.11,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Decibels.desktop",
+        "opening": "failed",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "no acknowledged window",
+        "error": "error: Application script requires an unsupported interpreter launch recipe",
+        "durationSeconds": 0.03,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Showtime.desktop",
+        "opening": "failed",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "no acknowledged window",
+        "error": "error: Application script requires an unsupported interpreter launch recipe",
+        "durationSeconds": 0.03,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Maps.desktop",
+        "opening": "failed",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "no acknowledged window",
+        "error": "error: Native request failed; inspect its private worker journal",
+        "durationSeconds": 12.61,
+        "sameActiveWindowAndWorkspaceAtEnd": false
+      },
+      {
+        "applicationId": "org.gnome.Contacts.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.48,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.SimpleScan.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 4.31,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.inkscape.Inkscape.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 1.38,
+        "sameActiveWindowAndWorkspaceAtEnd": false
+      },
+      {
+        "applicationId": "org.pulseaudio.pavucontrol.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.03,
+        "sameActiveWindowAndWorkspaceAtEnd": false
+      },
+      {
+        "applicationId": "blender.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 4.45,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.kde.ark.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 0.64,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      }
+    ],
+    "phase": "before native script/rendering support"
+  },
+  "repair": {
+    "schema": 1,
+    "host": "Fedora 44, Hyprland 0.56.2, Wayland, x86_64",
+    "date": "2026-10-22",
+    "sourceCommit": "189c377",
+    "scope": "Original installed app opening, measured geometry and exact newly opened window cleanup. No input, capture or account acceptance.",
+    "applications": [
+      {
+        "applicationId": "org.gnome.Characters.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.81,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Decibels.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 5.14,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Showtime.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.45,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Loupe.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.01,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      }
+    ],
+    "phase": "after native script/rendering support",
+    "sourceState": "base commit plus application-launch.ts changes",
+    "applicationLaunchSha256": "9e67e437c7a201ac2eb0c8e9006aab17a4e7857fddc49929211c08b69d528075"
+  },
+  "measurementLimits": [
+    "These are executed original opening observations, not input/capture/account acceptance.",
+    "Active identity comparison is a before/after observation. Concurrent owner activity was not controlled, so changes cannot be attributed to Orbit.",
+    "Initial and first repair rounds used NativeBackend directly. The publicBroker round used native.open RPC through the restarted managed broker, still without MCP tool delivery acceptance.",
+    "Maps produced a launch receipt but no acknowledged launch-bound window within 12 seconds. No window matched that receipt during subsequent cleanup inspection.",
+    "No screenshots or application contents are included."
+  ],
+  "publicBroker": {
+    "schema": 1,
+    "host": "Fedora 44, Hyprland 0.56.2, Wayland, x86_64",
+    "date": "2026-10-22",
+    "sourceCommit": "189c377",
+    "scope": "Original installed app opening, measured geometry and exact newly opened window cleanup. No input, capture or account acceptance.",
+    "applications": [
+      {
+        "applicationId": "org.gnome.Characters.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 6.69,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Decibels.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 3.33,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Showtime.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 5.85,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      },
+      {
+        "applicationId": "org.gnome.Loupe.desktop",
+        "opening": "measured",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "cleanup": "closed",
+        "workspace": 2,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "durationSeconds": 11.24,
+        "sameActiveWindowAndWorkspaceAtEnd": true
+      }
+    ],
+    "phase": "public broker RPC after admission repair",
+    "sourceState": "base commit plus application-launch.ts admission repairs, before type-only return annotation",
+    "applicationLaunchSha256": "18f2b1de45ffd8b354b7c384d7fc6c31a1445da6d249e3e2b195e09ac6e81fad"
+  }
+}

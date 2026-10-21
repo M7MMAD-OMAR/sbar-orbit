@@ -1,7 +1,7 @@
 # Orbit native application contract
 
 Orbit opens the person's original installed native applications on an explicitly
-selected numbered Linux workspace. It preserves their normal HOME, configuration
+selected numbered Hyprland workspace on Linux. It preserves their normal HOME, configuration
 and application lifetime. It never creates a substitute desktop or application
 profile. Browser launch, browser automation, copied profiles, private desktops,
 hidden desktops and browser-based viewers have been removed.
@@ -10,8 +10,8 @@ Use application discovery, then `native-open` with the exact `applicationId` and
 workspace. Arbitrary commands and caller-supplied executable arguments are not
 accepted. Browser and terminal registrations, profile overrides, shell expressions
 and unsupported activation wrappers are refused. Failed opening has no fallback.
-The application stays open after the opening worker exits. Opening does not switch
-the person's workspace or take focus. Inspect its returned workspace and exact
+The application stays open after the opening worker exits. The opening request uses silent workspace placement and no-initial-focus rules.
+Continuous focus preservation has not been established in the live report. Inspect its returned workspace and exact
 window identity. An acknowledged open is not evidence of account state or input.
 
 Input and capture of an already-open owner application remain under the compositor

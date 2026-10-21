@@ -14,7 +14,8 @@ sbar-orbit session list
 ```
 
 Use an exact discovered registration ID. Opening keeps the normal owner profile,
-leaves the application open, and preserves the active workspace and focus.
+leaves the application open, and requests silent workspace placement with no initial
+focus. Continuous focus preservation is not established; see [the live report](native-opening.md).
 `ORBIT_REQUEST_ID` binds retries to one opening request. After uncertain delivery,
 inspect candidates before retrying. Discovery and opening do not prove signed-in
 state. `session create`, browser previews, cloned profiles and account snapshots

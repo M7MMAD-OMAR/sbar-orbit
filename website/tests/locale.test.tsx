@@ -15,7 +15,9 @@ test('every copy lookup has an Arabic rewrite', async () => {
 
 test('Arabic renders without JavaScript, keeps shell commands intact and offers English', () => {
   const html = renderToString(<App locale="ar" />);
-  expect(html).toContain('مساحة مستقلة لوكيلك.');
+  expect(html).toContain('افتح تطبيقات نظامك الأصلية.');
+  expect(html).toContain('لوكيلك عمل.');
+  expect(html).not.toContain('وعملك يستمر دون مقاطعة.');
   expect(html).toContain('ادعم المشروع بفنجان قهوة');
   expect(html).toContain('href="/" lang="en"');
   expect(html).toContain('dir="ltr"');
@@ -53,14 +55,14 @@ test('essential guidance is visible without disclosures or JavaScript', () => {
   expect(html).toContain('sbar-orbit applications');
 });
 
-test('presentation has no task-selection buttons and has a static reading mode', () => {
+test('public diagrams describe the current original application route without a retired viewer', () => {
   const html = renderToString(<App locale="en" />);
-  expect(html).not.toContain('role="tab"');
-  expect(html).toContain('reduced-story');
-  expect(html).toContain('A walkthrough, not a live session');
-  expect(html).toContain('Instructions go from your agent through Orbit to its workspace.');
+  expect(html).toContain('native-workspaces.svg');
+  expect(html).toContain('Diagram, not a live demonstration');
+  expect(html).toContain('Registered app, exact approval, workspace');
+  expect(html).toContain('Input is a separate gate.');
+  expect(html).not.toMatch(/private desktop|private workspace|take over|optional viewer|viewer-control\.webp/i);
 });
-
 
 test('Arabic copy and metadata contain no vocalization marks or long dashes', async () => {
   const texts = [Object.values(arabic).join(' '), renderToString(<App locale="ar" />), await Bun.file(new URL('../scripts/prerender.tsx', import.meta.url)).text()];
