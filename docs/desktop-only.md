@@ -12,13 +12,22 @@ a supported public route and their measurements do not prove native behavior.
 Clicking a session card in the panel opens Orbit's native session window
 (`desktop/session_window.py`), a GTK window with no browser. It shows the private desktop
 live, and Take over pauses the agent so the owner can click, scroll and type into it, then
-Hand back. A private session created with `visible: true` goes further: its compositor is
+Hand back. Private sessions are visible by default: the compositor is
 drawn as one real window on the owner's desktop instead of off screen, its applications run
 inside that window and can be used directly, and the agent's input still goes only to that
 private desktop. Its surface follows the size the owner's compositor gives the window.
 `sbar-orbit preview` remains a tokened loopback page for those who want it. Clicking the
 Orbit mark still opens the native session list. Settings remain editable through
 `sbar-orbit config`.
+
+Hidden sessions are disabled unless the person explicitly enables `hiddenSessions`
+in Orbit settings. With that setting enabled, an omitted `visible` selects hidden
+mode; `visible: true` still forces a visible desktop. A request for `visible: false`
+without the setting is refused before starting the compositor. A missing or failed
+visible display never falls back to hidden mode. Turning the setting off blocks
+subsequent input to an existing hidden desktop. Session status reports `visible`.
+The experimental native adapter uses a hidden special workspace, so its creation
+and input obey this same gate; it cannot claim to meet the visible default.
 
 ## Acceptance contract
 

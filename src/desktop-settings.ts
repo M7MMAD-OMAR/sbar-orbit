@@ -43,6 +43,15 @@ export async function listSettings(): Promise<DesktopSetting[]> {
   return await config(["list"]) as DesktopSetting[];
 }
 
+/** Visible by default. Only the persistent settings choice can permit a hidden desktop. */
+export async function desktopVisibility(requested?: boolean): Promise<boolean> {
+  if (requested === true) return true;
+  const hidden = await config(["get", "hiddenSessions"]) === true;
+  if (requested === false && !hidden)
+    throw new OrbitError("POLICY_DENIED", "Hidden sessions are disabled. Enable hiddenSessions explicitly in Orbit settings before requesting visible:false");
+  return !hidden;
+}
+
 /**
  * Change one setting, or put one back the way it was. Values travel as the text the command line takes,
  * because that is where the coercion and the clamping live: a number typed into a box and a number

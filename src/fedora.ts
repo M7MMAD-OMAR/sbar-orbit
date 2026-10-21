@@ -18,6 +18,7 @@ import { nativeRendererFromEnv, rendererBound, type NativeRenderer } from "./nat
 import { parseDesktopAction, SwayWorkspaceAdapter, type DesktopAction } from "./desktop-workspaces";
 import { accessibilityEnvironment, accessibilityProcess, inspectAccessibility } from "./private-accessibility";
 import { resolveInstalledApplication } from "./application-launch";
+import { desktopVisibility } from "./desktop-settings";
 
 export type NativeAction = { type: "inspect"; windowId: string } | { type: "launch"; argv: string[]; selectedFiles?: string[]; toolkit: "wayland" | "x11" }
   | { type: "launch-installed"; applicationId: string; toolkit?: "wayland" | "x11" }
@@ -161,11 +162,13 @@ export async function hostWaylandDisplay(runtime: string | undefined, named: str
   const [only] = candidates;
   if (candidates.length !== 1 || !only) throw new OrbitError("UNSUPPORTED", "A visible desktop needs exactly one Wayland display on this desktop");
   const path = only.startsWith("/") ? only : join(runtime, only);
-  if (!(await lstat(path)).isSocket()) throw new OrbitError("UNSUPPORTED", "The person's Wayland display is not a socket");
+  if (!(await lstat(path).catch(() => undefined))?.isSocket())
+    throw new OrbitError("UNSUPPORTED", "The person's Wayland display is unavailable or is not a socket");
   return path;
 }
 
 export class FedoraBackend {
+  visible = true;
   parseAction = (value: unknown) => parseNativeAction(value, this.size);
   private pointer: { x: number; y: number } | null = null;
   /** The compositor output: HEADLESS-1 when private and off screen, WL-1 when drawn as a window. */
@@ -214,9 +217,10 @@ export class FedoraBackend {
     compositor.once("exit", () => { void this.close(); });
     compositor.on("error", () => { void this.close(); });
   }
-  static async create(size: Viewport = defaultViewport, origins: () => string[] | "any" = () => "any", visible = false) {
+  static async create(size: Viewport = defaultViewport, origins: () => string[] | "any" = () => "any", requestedVisibility?: boolean) {
   await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Fedora backend requires Linux");
+    const visible = await desktopVisibility(requestedVisibility);
     // Resolved per session rather than at import, because the runtime is shared between versions now
     // and a session started after a build should see it without the broker being restarted.
     const { runtime, executables, source: runtimeSource } = await usableNativeRuntime(project);
@@ -225,7 +229,6 @@ export class FedoraBackend {
     // Pixman unless the broker's environment opts into a pinned GPU renderer; see native-renderer.ts.
     // Read before anything is created on disk, so a misconfigured broker leaves nothing behind.
     const renderer = nativeRendererFromEnv();
-    const directory = await mkdtemp("/tmp/orbit-native-");
     // Until the backend exists, its close() cannot run, so the directory is removed here on any throw.
     let compositor: ChildProcessWithoutNullStreams, log: ReturnType<typeof createWriteStream>, head = "";
     let preferenceSnapshot: NativePreferenceSnapshot = "absent";
@@ -236,6 +239,7 @@ export class FedoraBackend {
     // it receives their input only when they choose to work in it, and capture still reads only its
     // own output, never the person's screen.
     const hostDisplay = visible ? await hostWaylandDisplay(hostRuntime, process.env.WAYLAND_DISPLAY) : undefined;
+    const directory = await mkdtemp("/tmp/orbit-native-");
     const output = visible ? "WL-1" : "HEADLESS-1";
     const env = { ...process.env };
     try {
@@ -290,6 +294,7 @@ export class FedoraBackend {
     compositor.once("close", () => log.end());
     } catch (error) { await rm(directory, { recursive: true, force: true }).catch(() => {}); throw error; }
     const backend = new FedoraBackend(directory, env, compositor, size, preferenceSnapshot, audioSockets, hostRuntime, origins);
+    backend.visible = visible;
     backend.output = output;
     backend.extent = { width: size.width, height: size.height };
     try {
@@ -540,6 +545,7 @@ export class FedoraBackend {
   async act(value: unknown): Promise<unknown> {
     let action = this.parseAction(value);
     this.ensureOpen();
+    if (!this.visible) await desktopVisibility(false);
     await this.accessibilityStopping;
     if (this.accessibilityCleanupError) throw new OrbitError("BACKEND_FAILED", "Private accessibility cleanup failed");
     let installed: Awaited<ReturnType<typeof resolveInstalledApplication>> | undefined;

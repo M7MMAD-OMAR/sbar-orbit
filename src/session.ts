@@ -156,7 +156,7 @@ export class Sessions {
   private ensureOpen(session: Session) {
     if (["closing", "closed"].includes(session.state)) throw new OrbitError("SESSION_CLOSED", "Session is closed");
   }
-  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...(session.backend instanceof NativeBackend && session.backend.handoff ? { handoff: session.backend.handoff } : {}), ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid, preferenceSnapshot: session.backend.preferenceSnapshot, busServices: session.backend.busServices } : {}) }; }
+  private info(session: Session) { return { sessionId: session.id, state: session.state, backend: session.kind, agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName, projectName: session.projectName, activity: session.activity, createdAt: session.createdAt, lastActivityAt: session.lastActivityAt, accountName: session.account?.name, capabilities: session.backend.capabilities, surface: session.backend.surface, policy: session.policy, egressTier: session.egress.tier, ...(session.backend instanceof NativeBackend && session.backend.handoff ? { handoff: session.backend.handoff } : {}), ...("visible" in session.backend ? { visible: session.backend.visible } : {}), ...("renderer" in session.backend ? { renderer: session.backend.renderer, compositorPid: session.backend.compositorPid, preferenceSnapshot: session.backend.preferenceSnapshot, busServices: session.backend.busServices } : {}) }; }
   create(input: Record<string, unknown>): Promise<unknown> {
     if (this.updateLease && this.updateLease.expires > Date.now())
       return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
@@ -190,7 +190,7 @@ export class Sessions {
     const handoff = input.handoff === undefined ? undefined : parseHandoff(input.handoff);
     if (input.visible !== undefined && (typeof input.visible !== "boolean" || requested !== "fedora"))
       throw new OrbitError("INVALID_REQUEST", "visible is a true or false option of the private system desktop");
-    const visible = input.visible === true;
+    const visible = input.visible as boolean | undefined;
     if (this.sessions.size + this.creating.size + this.pendingBrowserCleanup.size >= 32) throw new OrbitError("LIMIT_REACHED", "Restart the broker after 32 sessions");
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;

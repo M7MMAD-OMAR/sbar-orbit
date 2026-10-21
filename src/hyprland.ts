@@ -1,5 +1,6 @@
 import { OrbitError, record } from "./errors";
 import { requireOwnerHandoff } from "./native-handoff-release";
+import { desktopVisibility } from "./desktop-settings";
 import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
@@ -50,6 +51,7 @@ function target(value: Record<string, unknown>): Target {
 
 /** The compositor is fixed at broker startup. All application targets are worker-owned handles. */
 export class NativeBackend {
+  readonly visible = false;
   readonly capabilities = ["launch", "windows", "cursor", "move", "click", "scroll", "text", "key", "state", "hide-cursor", "observe", "close-application", "pause", "resume", "stop"];
   private applications = new Set<string>();
   private windows = new Map<string, Window>();
@@ -69,6 +71,9 @@ export class NativeBackend {
     if (handoff !== undefined) requireOwnerHandoff();
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
+    // This experimental adapter uses a hidden special workspace. It must not bypass the same
+    // owner setting that protects private desktop creation.
+    await desktopVisibility(false);
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker;
@@ -219,6 +224,7 @@ export class NativeBackend {
 
   async act(value: unknown): Promise<unknown> {
     const action = this.parseAction(value);
+    if (action.type !== "close-application" && action.type !== "windows") await desktopVisibility(false);
     if (action.type === "launch") {
       const configuration = action.configuration === undefined ? undefined : record(action.configuration);
       const result = record(await this.worker.request("launch", {

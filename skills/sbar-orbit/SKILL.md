@@ -69,6 +69,12 @@ application/window control. Standalone browser sessions, DOM actions, cloned
 browser profiles and saved browser accounts are retired. Never substitute browser
 automation when desktop work fails. Report the actual unsupported operation.
 
+Sessions must be visible by default. Hidden sessions are forbidden unless the
+person explicitly enables `hiddenSessions` in Orbit settings. Never enable that
+setting merely to finish a task or recover from a visible display failure.
+`visible: false` is a request, not permission. Report an unavailable visible
+display rather than silently creating a hidden session. Status reports `visible`.
+
 For a new private non-browser application, use a discovered `registrationIds` entry with
 `launch-installed` and `applicationId`. Let the installed-application adapter resolve
 the current executable, arguments and working directory. Do not guess fixed paths

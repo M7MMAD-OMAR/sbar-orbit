@@ -44,8 +44,11 @@ sbar-orbit session create system
 sbar-orbit session list
 ```
 
-`session create` defaults to `system`; `fedora` is its legacy alias. Discovery
-reports application registration and process metadata, not input authority.
+`session create` defaults to `system`; `fedora` is its legacy alias. Sessions
+use a visible desktop by default. Hidden mode requires the explicit
+`hiddenSessions` choice in Orbit settings; a tool argument cannot enable it.
+If no visible desktop is available, creation refuses instead of falling back.
+Discovery reports application registration and process metadata, not input authority.
 Use a discovered registration ID to launch a new private Linux application:
 
 ```sh
