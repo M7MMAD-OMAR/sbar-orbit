@@ -66,6 +66,11 @@ without restoring the owner's runtime HOME. Invocation aliases are preserved.
 Known profile-selection arguments are refused. This is not a general filesystem
 sandbox and does not prove every application ignores owner state.
 
+For registrations declaring `DBusActivatable=true`, Orbit uses the validated
+literal `Exec` compatibility recipe on the session's private bus. It does not send
+an activation request to the owner's bus. A missing or unsupported `Exec` recipe
+still refuses. This is direct application launch, not a general D-Bus activation adapter.
+
 Unsupported activation recipes, complex scripts, ambiguous identities and missing
 executables return errors. They do not trigger a guessed binary or another
 application. The operation defaults to the private Wayland display, with an explicit
@@ -73,6 +78,12 @@ application. The operation defaults to the private Wayland display, with an expl
 and `runtimeHome: "private"`; it does not acquire an already-open owner window.
 The [adaptive architecture](native-adaptive-architecture.md) separates this launch
 path from existing-window acquisition and semantic control.
+
+`text` accepts up to 2048 well-formed Unicode code units, including tabs and
+newlines. Printable ASCII keeps direct keyboard input; other text uses the
+existing private-session clipboard and Ctrl+V. `paste` always selects that
+clipboard path. Neither route reads or writes the owner's clipboard. Applications
+that handle paste differently from keystrokes still need operation-specific acceptance.
 
 ## Runtime activation
 

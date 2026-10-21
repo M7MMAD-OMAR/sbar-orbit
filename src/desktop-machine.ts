@@ -1,8 +1,10 @@
 import { distributionName } from "./platform";
+import { ownerHandoffStatus } from "./native-handoff-release";
 
 /** Desktop metadata only. Never discovers browsers, opens profiles or queries their credentials. */
 export async function describeDesktopMachine(): Promise<Record<string, unknown>> {
   const linux = process.platform === "linux";
+  const ownerHandoff = ownerHandoffStatus();
   return {
     report: "orbit-desktop-capabilities", sessionMode: "desktop-only",
     platform: process.platform, architecture: process.arch,
@@ -12,9 +14,10 @@ export async function describeDesktopMachine(): Promise<Record<string, unknown>>
     browserBackendSupported: false, browsers: [],
     nativeDisplaySupported: linux,
     nativeDisplayEvidence: "Implementation availability only; runtime acceptance is not measured by this report",
-    existingApplicationControl: "released for the evidenced plugin build; live owner claim not measured",
+    existingApplicationControl: `${ownerHandoff.state}: ${ownerHandoff.reason}`,
+    ownerHandoff,
     notes: linux
-      ? ["Private desktop runtime and application acceptance must be tested separately", "Existing owner application handoff is released only for the plugin build measured in the isolated lab"]
+      ? ["Private desktop runtime and application acceptance must be tested separately", ownerHandoff.reason]
       : ["A native desktop adapter is not implemented for this platform; no browser fallback is available"],
     redacted: ["no browser profile discovery", "no cookie database access", "no account names", "no viewer tokens"],
   };

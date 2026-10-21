@@ -98,15 +98,12 @@ export function parseNativeAction(value: unknown, size: Viewport = defaultViewpo
     return { type: "pointer", x: at.x, y: at.y };
   }
   if (a.type === "scroll") return parseScrollInput(a, size);
-  if (a.type === "text") {
-    if (typeof a.text !== "string" || a.text.length > 2048 || /[^\x20-\x7e]/.test(a.text))
-      throw new OrbitError("UNSUPPORTED", "Native text currently supports up to 2048 printable ASCII characters");
-    return { type: "text", text: a.text };
-  }
-  if (a.type === "paste") {
+  if (a.type === "text" || a.type === "paste") {
     if (typeof a.text !== "string" || a.text.length > 2048 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(a.text) || !a.text.isWellFormed())
-      throw new OrbitError("INVALID_REQUEST", "Paste requires up to 2048 well-formed Unicode code units without control characters other than tab and newlines");
-    return { type: "paste", text: a.text };
+      throw new OrbitError("INVALID_REQUEST", "Text requires up to 2048 well-formed Unicode code units without control characters other than tab and newlines");
+    // Preserve direct key input for printable ASCII. Other text uses the existing session-only
+    // clipboard path, which supports Unicode without depending on the person's keyboard layout.
+    return { type: a.type === "text" && !/[^\x20-\x7e]/.test(a.text) ? "text" : "paste", text: a.text };
   }
   if (a.type === "key") {
     if (typeof a.key !== "string" || !nativeKey.test(a.key))

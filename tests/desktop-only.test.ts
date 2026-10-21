@@ -90,6 +90,7 @@ test("desktop health never invokes the legacy browser profile probe", async () =
     const doctor = await call(broker.socket, "doctor");
     expect(doctor).toMatchObject({ sessionMode: "desktop-only", machine: {
       report: "orbit-desktop-capabilities", browserBackendSupported: false, browsers: [],
+      ownerHandoff: { state: "held" },
     } });
     expect(probe).not.toHaveBeenCalled();
   } finally { probe.mockRestore(); await broker.close(); }

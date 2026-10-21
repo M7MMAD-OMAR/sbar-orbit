@@ -21,6 +21,7 @@ const files = requested.length ? requested : [
   "tests/native-handoff-release.test.ts",
   "tests/native-transport.test.ts",
   "tests/native-keyboard.test.ts",
+  "tests/native-paste.test.ts",
   "tests/native-action-control.test.ts",
   "tests/native-cleanup-control.test.ts",
   "tests/native-mapping.test.ts",

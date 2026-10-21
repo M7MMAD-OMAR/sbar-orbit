@@ -1,15 +1,19 @@
 import { test, expect } from "bun:test";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Sessions } from "../src/session";
 import { parseNativeAction } from "../src/fedora";
 import { tmpdir } from "node:os";
 
-test("native paste validates Unicode without broadening keyboard text semantics", () => {
+test("native text routes well-formed Unicode to the private clipboard", () => {
   expect(parseNativeAction({ type: "paste", text: "مرحبا Orbit 🌍" })).toEqual({ type: "paste", text: "مرحبا Orbit 🌍" });
   for (const text of ["\ud800", "\u0000", "\u001b", "x".repeat(2049)])
     expect(() => parseNativeAction({ type: "paste", text })).toThrow();
-  expect(() => parseNativeAction({ type: "text", text: "مرحبا" })).toThrow();
+  expect(parseNativeAction({ type: "text", text: "مرحبا" })).toEqual({ type: "paste", text: "مرحبا" });
+  expect(parseNativeAction({ type: "text", text: "line one\nline two" })).toEqual({ type: "paste", text: "line one\nline two" });
+  expect(parseNativeAction({ type: "text", text: "plain" })).toEqual({ type: "text", text: "plain" });
+  for (const text of ["\ud800", "\u0000", "\u001b", "x".repeat(2049)])
+    expect(() => parseNativeAction({ type: "text", text })).toThrow();
 });
 
 (process.env.ORBIT_TEST_NATIVE === "1" ? test : test.skip)("private clipboard pastes Arabic and emoji into Wayland and Xwayland apps", async () => {
@@ -27,7 +31,7 @@ test("native paste validates Unicode without broadening keyboard text semantics"
       pids.push(app.pid);
       const text = `مرحبا Orbit 🌍 ${toolkit}`;
       await act({ type: "pointer", x: 120, y: 180 });
-      expect(await act({ type: "paste", text })).toMatchObject({ applied: true, clipboard: "session" });
+      expect(await act({ type: "text", text })).toMatchObject({ applied: true, clipboard: "session" });
       let entered: string | undefined;
       for (let i = 0; i < 60; i++) {
         try { entered = JSON.parse(await readFile(file, "utf8")).text; } catch {}
@@ -49,5 +53,5 @@ test("native paste validates Unicode without broadening keyboard text semantics"
     }
     await run("session.stop", session);
     for (const pid of pids) expect(await Bun.file(`/proc/${pid}/stat`).exists()).toBe(false);
-  } finally { await sessions.close(); }
+  } finally { await sessions.close(); await rm(root, { recursive: true, force: true }); }
 }, 30000);

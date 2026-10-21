@@ -1,6 +1,6 @@
 # Native handoff release hold
 
-**Status, 18 October 2026:** released only for the plugin source and Hyprland build recorded in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json). Any other plugin source or compositor build is refused. A live owner claim with a throwaway fixture is partly traced below; agent input did not reach the fixture on the live session.
+**Status, 21 October 2026:** owner handoff remains held. The nested lab success in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json) is retained as historical evidence, but cannot release live owner input. The TypeScript and Python gates additionally require an `ownerAcceptance` record with `state: "passed"` and measured `inputDelivered`, `selectionIsolated`, `ownerFocusPreserved`, `ownerPointerPreserved` and `handbackVerified` values of `true`. The committed evidence has no such acceptance. A live owner claim with a throwaway fixture is partly traced below; agent input did not reach the fixture on the live session.
 
 The owner compositor crashed during an existing Chrome window claim on 6 October 2026 at 3:40 AM, Asia/Dubai. Opening the requested account on workspace 4 had succeeded. The pointer demonstration did not run.
 
@@ -26,3 +26,18 @@ The private compositor path remains available for verification on a separate mac
 | Remote regression and cleanup | Not measured |
 
 Raw crash dumps and owner logs are private diagnostic data and must not be uploaded as public CI artifacts.
+
+## Reproducible private input diagnosis
+
+`experiments/ghost-cursor/host_gtk_input_probe.py` runs only inside a guarded nested
+lab with its own Wayland socket, bus and resource budget. It retains exact IPC
+requests and replies, plugin build identity, GTK state and protocol events. It
+checks raw keyboard refusal, prepared keyboard delivery, pointer effects and an
+unchanged stand-in client, then hands back the lease and terminates its fixtures.
+It never invokes the public owner handoff gate or changes its release evidence.
+
+The headless lab needs its own virtual pointer before GTK starts, otherwise GTK
+does not bind a pointer resource and click requests correctly refuse. This is a
+lab prerequisite, not a diagnosis of the historical live failure. The live cache
+does not retain the commands, target identity or replies needed to establish that
+failure's cause. A successful new private probe does not upgrade live owner support.

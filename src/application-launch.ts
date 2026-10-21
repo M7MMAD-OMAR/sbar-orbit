@@ -131,7 +131,9 @@ export async function resolveInstalledApplication(applicationId: string, options
     fields[key] = ["Exec", "Name", "Icon", "Path", "TryExec"].includes(key) ? desktopString(raw) : raw;
   }
   if (fields.Type !== "Application" || fields.Hidden === "true" || !fields.Exec) refuse("Application registration is disabled or has no Exec recipe");
-  if (fields.DBusActivatable === "true" || fields.Terminal === "true" || fields["X-Flatpak"])
+  // Use the validated Exec compatibility recipe, including for D-Bus activatable applications.
+  // The private desktop launches it directly on its own bus; never activate it on the owner's bus.
+  if (fields.Terminal === "true" || fields["X-Flatpak"])
     refuse("Application registration needs an unsupported activation adapter");
   const exec = fields.Exec;
   if (exec === undefined) return refuse("Application registration has no Exec recipe");

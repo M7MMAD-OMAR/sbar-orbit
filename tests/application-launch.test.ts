@@ -154,9 +154,20 @@ test("same-root flattened registration ID collision refuses rather than selectin
   } finally { await f.close(); }
 });
 
+test("D-Bus activatable registrations retain a validated direct Exec compatibility route", async () => {
+  const f = await fixture(); try {
+    await f.desktop("tool.desktop", `"${f.executable}" %U`, "DBusActivatable=true\n");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([f.executable]);
+    await f.desktop("tool.desktop", `"${f.executable}" $(touch marker)`, "DBusActivatable=true\n");
+    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("expression");
+    await writeFile(join(f.registrations, "tool.desktop"), "[Desktop Entry]\nType=Application\nDBusActivatable=true\n");
+    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("no Exec");
+  } finally { await f.close(); }
+});
+
 test("unsafe expressions and unsupported activation adapters refuse before execution", async () => {
   const f = await fixture(); try {
-    for (const extra of ["Terminal=true\n", "DBusActivatable=true\n", "X-Flatpak=example.App\n"]) {
+    for (const extra of ["Terminal=true\n", "X-Flatpak=example.App\n"]) {
       await f.desktop("tool.desktop", `"${f.executable}"`, extra);
       await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("unsupported activation");
     }

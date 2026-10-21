@@ -13,7 +13,7 @@ import { startBroker, call } from "../src/ipc";
     const applicationId = `org.orbit.Fixture-${crypto.randomUUID()}.desktop`;
     const report = join(root, "state.json");
     await writeFile(join(root, "applications", applicationId),
-      `[Desktop Entry]\nType=Application\nName=Disposable editor\nExec=/usr/bin/python3 "${resolve("experiments/fedora-display/fixture.py")}" "${report}"\nPath=${root}\n`);
+      `[Desktop Entry]\nType=Application\nName=Disposable editor\nDBusActivatable=true\nExec=/usr/bin/python3 "${resolve("experiments/fedora-display/fixture.py")}" "${report}"\nPath=${root}\n`);
     process.env.XDG_DATA_HOME = root;
     const act = (action: unknown) => call(broker.socket, "session.act", { ...session, requestId: crypto.randomUUID(), action });
     expect(await act({ type: "launch-installed", applicationId })).toMatchObject({
