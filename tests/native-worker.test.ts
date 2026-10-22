@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm, stat, readdir, readlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NativeWorker, nativeOptionsFromEnv } from "../src/native-worker";
+import { NativeWorker } from "../src/native-worker";
 import { orbitActionSchema } from "../src/mcp";
 
 const enabled = process.platform === "linux" ? test : test.skip;

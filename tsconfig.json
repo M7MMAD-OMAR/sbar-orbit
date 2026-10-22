@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ESNext", "module": "Preserve", "moduleResolution": "Bundler",
-    "strict": true, "noUncheckedIndexedAccess": true, "noEmit": true,
+    "strict": true, "noUnusedLocals": true, "noUnusedParameters": true, "noUncheckedIndexedAccess": true, "noEmit": true,
     "types": ["bun"], "skipLibCheck": true
   },
-  "include": ["extension/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "experiments/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "experiments/**/*.ts", "scripts/**/*.ts"]
 }

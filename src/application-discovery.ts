@@ -1,49 +1,15 @@
-import { lstat, opendir, readFile, readlink, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, posix, win32, relative, resolve } from "node:path";
 import { parseExec } from "./desktop-exec";
 import { OrbitError } from "./errors";
 
-export type Application = {
-  id: string; name: string; executable: string; packaging: "local" | "flatpak" | "bundle" | "registry" | "unknown";
-  sources: string[]; runningPids: number[]; profileDirectories: string[];
-  channel: "not measured" | "release" | "stable" | "beta" | "nightly"; channelSource?: string;
-  version?: string; lastUsed?: string;
-  flatpak?: FlatpakReference & { deploymentFiles: string };
-  profileNames?: string[]; profileResolutionFailed?: boolean;
-  availability?: "verified" | "unresolved";
-  registrationIds?: string[];
-};
-export type FlatpakReference = { appId: string; branch?: string; architecture?: string; installation?: string };
-export type DiscoveryOptions = {
-  home?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; query?: string;
-  applicationDirectories?: string[]; bundleRoots?: string[]; procRoot?: string;
-  registryEntries?: { id: string; executable: string }[]; includeRunning?: boolean;
-  recentFile?: string;
-  metadataProbe?: (reference: FlatpakReference) => Promise<string | undefined>;
-};
-const maxEntries = 4096;
-export async function boundedApplicationEntries(root: string, limit = maxEntries, recursive = true, deadline = Infinity) {
-  const entries: string[] = []; const pending = [""]; let scanned = 0;
-  while (pending.length) {
-    if (Date.now() >= deadline) return { entries, scanned, truncated: true };
-    const directory = pending.pop(); if (directory === undefined) break;
-    try {
-      // Bun can defer directory errors until iteration, after opendir resolves.
-      const handle = await opendir(join(root, directory));
-      for await (const entry of handle) {
-        if (scanned >= limit || Date.now() >= deadline) return { entries, scanned, truncated: true };
-        scanned++;
-        const path = join(directory, entry.name); entries.push(path);
-        if (recursive && entry.isDirectory()) pending.push(path);
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT" && code !== "ENOTDIR") return { entries, scanned, truncated: true };
-    }
-  }
-  return { entries, scanned, truncated: false };
-}
+import { boundedApplicationEntries, maxApplicationEntries as maxEntries } from "./applications/entries";
+import type { Application, DiscoveryOptions, FlatpakReference } from "./applications/types";
+
+export { boundedApplicationEntries } from "./applications/entries";
+export type { Application, DiscoveryOptions, FlatpakReference } from "./applications/types";
+
 export function parseFlatpakReference(words: string[]): FlatpakReference | undefined {
   const run = words.indexOf("run"); if (run < 0) return;
   const reference: FlatpakReference = { appId: "" };

@@ -66,8 +66,7 @@ export class NativeBackend {
 
   private closing?: Promise<void>;
   handoff?: { appId: string; selectedWindowId: string; scope: string; windows: Window[] };
-  private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions,
-    private appearance: Readonly<Record<string, string>>, readonly borrowed = false) {
+  private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions, readonly borrowed = false) {
     if (borrowed) this.capabilities = this.capabilities.filter(value => value !== "launch");
   }
 
@@ -79,7 +78,6 @@ export class NativeBackend {
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker;
-    let appearance: Readonly<Record<string, string>> = Object.freeze({});
     try {
       worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
@@ -89,7 +87,7 @@ export class NativeBackend {
       catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and directory cleanup failed"); }
       throw error;
     }
-    const backend = new NativeBackend(worker, directory, options, appearance, handoff !== undefined);
+    const backend = new NativeBackend(worker, directory, options, handoff !== undefined);
     try {
       const response = record(await worker.request("status", {}));
       if (response.ready !== true) throw new OrbitError("BACKEND_ERROR", "Native worker did not become ready");

@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { Sessions } from "../src/session";
 import { NativeBackend } from "../src/hyprland";
 import { OrbitError } from "../src/errors";
-import { activateVersion, currentVersion, launcherName } from "../src/update";
+import { activateVersion, currentVersion } from "../src/update";
 import { installService, serviceUnit, serviceUnitDrift } from "../src/service";
 import { brokerAgentPlist } from "../src/macos-autostart";
 import { fixtureRoot } from "./platform-support";

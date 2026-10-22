@@ -30,6 +30,8 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Typecheck within the platform resource budget
         run: bun run scripts/limited.ts bun run typecheck
+      - name: Runtime dependency boundaries
+        run: bun run scripts/limited.ts bun run check:architecture
       - name: Metadata and installation contracts only
         run: bun run verify:platform-contracts
 

@@ -1,6 +1,6 @@
 import { lstat, mkdir, readFile, readlink, realpath, rename, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { launcherName } from "./update";
+import { launcherName } from "./runtime-command";
 import { createHash } from "node:crypto";
 import { withUpdateLock } from "./update-lock";
 import { managedTarget } from "./managed-entry";

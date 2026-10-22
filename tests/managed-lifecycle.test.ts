@@ -3,7 +3,7 @@ import { expect, test, spyOn } from "bun:test";
 import { mkdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { activateLocal } from "../src/local-install";
-import { activateVersion, currentVersion, launcherName, prepareManagedInstall, updatableInstall } from "../src/update";
+import { activateVersion, currentVersion, prepareManagedInstall, updatableInstall } from "../src/update";
 import { brokerTaskXml } from "../src/windows-autostart";
 import { managedLifecycle, updateAgentPlist, updateTaskXml, boundedCommand, type CommandRunner } from "../src/managed-lifecycle";
 import { BROKER_LABEL, brokerAgentPlist, launchAgentPath } from "../src/macos-autostart";

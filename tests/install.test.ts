@@ -1,13 +1,12 @@
 import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { blockingPrerequisites, buildNativeRuntime, onPath, runInstall, stepTitles } from "../src/install";
 import { InstallDisplay, offerings, supportsDisplay, type StepView } from "../src/install-ui";
 import { commandName } from "../src/local-install";
 import { resolvedTmpdir } from "./platform-support";
 import { tmpdir } from "node:os";
 
-const project = resolve(import.meta.dir, "..");
 // No package manager is ever spawned from a test. The dependency step is the one part of the
 // installer that reaches the network, and a test that let it would be testing bun, not Orbit.
 const refuse = async () => { throw new Error("A test must not run a package manager"); };

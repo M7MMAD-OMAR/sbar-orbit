@@ -9,7 +9,7 @@
  */
 
 import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
-import { tmpdir, homedir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const results: Record<string, unknown> = {};

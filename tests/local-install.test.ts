@@ -3,7 +3,6 @@ import { linuxOnlySuite, resolvedTmpdir } from "./platform-support";
 import { mkdtemp, mkdir, writeFile, readFile, readlink, lstat, symlink, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { activateLocal, deactivateLocal } from "../src/local-install";
-import { tmpdir } from "node:os";
 
 async function fixture() {
   // Resolved, because `activateLocal` returns a `realpath` and macOS's `/var` is a symlink to

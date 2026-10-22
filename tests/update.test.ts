@@ -1,8 +1,7 @@
 import { activateLocal } from "../src/local-install";
 import { releaseFixture } from "./managed-release-fixture";
 import { test, expect } from "bun:test";
-import { mkdtemp, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { fixtureRoot } from "./platform-support";
 import { join } from "node:path";
 import { summarize } from "../src/status";

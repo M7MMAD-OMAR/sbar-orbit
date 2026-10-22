@@ -1,6 +1,7 @@
+import { bunExecutable } from "./runtime-command";
 import { installedStartupEnvironment } from "./installed-startup-diagnostic";
 import { homedir } from "node:os";
-import { dirname, join, resolve, delimiter } from "node:path";
+import { join, resolve, delimiter } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./preflight";
 import { activateLocal, commandName } from "./local-install";
@@ -20,7 +21,7 @@ import { registerAgentHosts, type AgentHost } from "./host-registration";
  * new here is the order, the fact that a failure carries its own remedy, and that the report
  * distinguishes "this did not run" from "this passed".
  *
- * It installs nothing that needs root. Bun, a browser, Xwayland and the capture tools are the
+ * It installs nothing that needs root. Bun, XWayland and compositor prerequisites are the
  * person's package manager's job, and a step that pretended otherwise would be lying about a failure
  * a person would meet minutes later.
  */
@@ -35,7 +36,7 @@ export type InstallOptions = {
   service?: boolean;
   dryRun?: boolean;
   reinstallDependencies?: boolean;
-  /** Build the private display runtime from the tracked bootstrap. Off by default: browser sessions do not need it. */
+  /** Retired private-runtime option, retained to return an explicit compatibility refusal. */
   native?: boolean;
   /** Explicit authorization to add Orbit to these hosts' own configuration. */
   connect?: "auto" | AgentHost[];
@@ -58,17 +59,7 @@ function remediesOf(checks: PrerequisiteCheck[]): Remedy[] {
   return found;
 }
 
-/**
- * The Bun that is running this code, not whatever `bun` resolves to on PATH.
- *
- * Both launchers already resolve Bun by location, for the reason `bin/sbar-orbit` states: a service
- * or an agent host starts Orbit with its own PATH, which need not carry Bun at all. Spawning a bare
- * "bun" threw that away and failed with `Executable not found in $PATH`, measured on the Windows
- * guest where Bun lives outside PATH. `process.execPath` is the interpreter already in hand.
- */
-export function bunExecutable() {
-  return process.execPath || Bun.which("bun") || "bun";
-}
+export { bunExecutable } from "./runtime-command";
 
 async function runBunInstall(source: string) {
   const child = Bun.spawn([bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"],

@@ -34,7 +34,7 @@ export class NativeWorker {
   private listeners: (() => void)[] = [];
   private exit: Promise<number | null>;
 
-  private constructor(readonly child: ChildProcess, private stdin: Writable, private stdout: Readable, private log: FileHandle) {
+  private constructor(readonly child: ChildProcess, private stdin: Writable, stdout: Readable, private log: FileHandle) {
     this.exit = new Promise(resolve => child.once("close", async code => {
       this.ended = true;
       this.reject(this.failure ?? new OrbitError("BACKEND_ERROR", "Native worker closed"));

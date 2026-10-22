@@ -2,7 +2,7 @@
 export {};
 const requested = process.argv.slice(2);
 const files = requested.length ? requested : [
-  "tests/native-only.test.ts", "tests/native-window-geometry.test.ts", "tests/native-open.test.ts", "tests/native-existing.test.ts",
+  "tests/architecture.test.ts", "tests/native-only.test.ts", "tests/native-window-geometry.test.ts", "tests/native-open.test.ts", "tests/native-existing.test.ts",
   "tests/native-worker.test.ts", "tests/native-handoff-release.test.ts", "tests/native-action-control.test.ts",
   "tests/native-cleanup-control.test.ts", "tests/native-data-control.test.ts",
   "tests/application-launch.test.ts", "tests/application-discovery.test.ts", "tests/application-discovery-native.test.ts",

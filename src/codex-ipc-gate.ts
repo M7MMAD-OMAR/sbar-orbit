@@ -1,5 +1,5 @@
 import { chmod, lstat, mkdir, realpath, rm } from "node:fs/promises";
-import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 
 const MAX_FRAME = 16 * 1024 * 1024;

@@ -10,11 +10,7 @@ import { preparedIdentity, pointerVersion, sealRelease, releaseDigest, sameBroke
 import { requireUpdateAdmission } from "./update-admission";
 import { managedUpdateRoot } from "./update-admission";
 import { managedTarget } from "./managed-entry";
-// One spelling of "how Orbit finds its own Bun". This path had `process.execPath || "bun"`, which
-// drops the `Bun.which` fallback the install path keeps, so a host where `execPath` is empty behaved
-// differently depending on which of the two ran. The whole point of resolving Bun by location is
-// that it is off PATH on Windows.
-import { bunExecutable } from "./install";
+import { bunExecutable, launcherName } from "./runtime-command";
 
 /**
  * Changing which version of Orbit is the running one, without taking away a session.
@@ -37,14 +33,7 @@ export function updateRoot() {
   return managedUpdateRoot();
 }
 
-/**
- * What makes a directory a prepared version: its launcher, which is the file `current` ultimately
- * resolves to. The name differs by platform, and hardcoding the bash one made every Windows
- * activation refuse with "is not a prepared version" even though the directory was complete.
- */
-export function launcherName() {
-  return process.platform === "win32" ? "bin/sbar-orbit.cmd" : "bin/sbar-orbit";
-}
+export { launcherName } from "./runtime-command";
 
 /** Where the launcher this install runs from is expected to live, per platform. */
 export function defaultLauncherPath() {

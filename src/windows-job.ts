@@ -19,7 +19,7 @@
 import { dlopen, FFIType, ptr, suffix, type Pointer } from "bun:ffi";
 import { OrbitError } from "./errors";
 
-const { i32, u32, u64, bool, ptr: pointer } = FFIType;
+const { i32, u32, bool, ptr: pointer } = FFIType;
 
 /**
  * Only ever opened on win32. Every caller goes through `requireWindows` first.
