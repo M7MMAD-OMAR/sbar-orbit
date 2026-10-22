@@ -32,6 +32,7 @@ class OpenTests(unittest.TestCase):
         self.workspace = 4
         self.layout = [960, 640]
         self.floating = True
+        self.xwayland = False
         self.session = SimpleNamespace(directory=self.directory, control=self.control,
                                        transport=SimpleNamespace(_exchange=self.exchange))
 
@@ -39,7 +40,7 @@ class OpenTests(unittest.TestCase):
         self.commands.append(command)
         if command == "j/clients":
             return json.dumps([{"address": "0xabc", "stableId": "123", "pid": self.pid,
-                                "workspace": {"id": self.workspace}, "xwayland": False,
+                                "workspace": {"id": self.workspace}, "xwayland": self.xwayland,
                                 "floating": self.floating, "size": self.layout, "at": [(1920 - self.layout[0]) / 2, (1080 - self.layout[1]) / 2]}] if self.launched else [])
         if command == "j/workspaces":
             return json.dumps([{"id": 4, "monitor": "test-monitor"}])
@@ -96,6 +97,14 @@ class OpenTests(unittest.TestCase):
         with patch("src.native.owner_open.time.monotonic", side_effect=[0, 1, 20]), patch("src.native.owner_open.time.sleep"):
             with self.assertRaisesRegex(SessionError, "uncertain"):
                 open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+
+    def test_xwayland_original_opening_does_not_require_wayland_input_handoff(self):
+        self.control.configure(mode="full")
+        self.xwayland = True
+        result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+        self.assertTrue(result["opened"])
+        self.assertEqual(result["windowProtocol"], "xwayland")
+        self.assertIn("held", result["handoff"])
 
     def test_wrong_workspace_refuses_identity(self):
         self.control.configure(mode="full")

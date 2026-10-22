@@ -30,6 +30,11 @@ def placement(workspace, requested, workspaces, monitors):
     if (not 0 < scale <= 8 or width <= 0 or height <= 0 or not isinstance(reserved, list)
             or len(reserved) != 4 or any(type(value) is not int or value < 0 for value in reserved)):
         raise ValueError("Monitor work area is unavailable")
+    transform = monitor.get("transform", 0)
+    if type(transform) is not int or not 0 <= transform <= 7:
+        raise ValueError("Monitor transform is unavailable")
+    if transform % 2:
+        width, height = height, width
     left, top, right, bottom = reserved
     available_width = math.floor(width / scale) - left - right
     available_height = math.floor(height / scale) - top - bottom

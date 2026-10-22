@@ -511,5 +511,122 @@
     "phase": "public broker RPC after admission repair",
     "sourceState": "base commit plus application-launch.ts admission repairs, before type-only return annotation",
     "applicationLaunchSha256": "18f2b1de45ffd8b354b7c384d7fc6c31a1445da6d249e3e2b195e09ac6e81fad"
+  },
+  "compatibilityRound": {
+    "date": "2026-10-22",
+    "host": "Fedora 44, Hyprland 0.56.2, fractional scale 1.3333334, transform0",
+    "baseCommit": "c61ef82",
+    "sourceState": "working tree compatibility corrections",
+    "route": "public native.open RPC after exact protected approval",
+    "scope": "Original installed binaries and normal owner state, no copied profiles or private display",
+    "results": [
+      {
+        "application": "Original Text Editor through a path containing operations",
+        "requestedWindow": {
+          "width": 840,
+          "height": 620
+        },
+        "expectedProtocol": "wayland",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "opened": true,
+        "window": {
+          "floating": true,
+          "width": 840,
+          "height": 620,
+          "x": 846,
+          "y": 1745
+        },
+        "protocol": "wayland",
+        "workspace": 2,
+        "cleanup": "closed",
+        "protocolMatched": true,
+        "sameFocusAtEnd": true
+      },
+      {
+        "application": "Original GTK Calculator over owner XWayland",
+        "requestedWindow": {
+          "width": 720,
+          "height": 600
+        },
+        "expectedProtocol": "xwayland",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "opened": true,
+        "window": {
+          "floating": true,
+          "width": 720,
+          "height": 600,
+          "x": 906,
+          "y": 1755
+        },
+        "protocol": "xwayland",
+        "workspace": 2,
+        "cleanup": "closed",
+        "protocolMatched": true,
+        "sameFocusAtEnd": false
+      },
+      {
+        "application": "Original Qt Ark over owner XWayland",
+        "requestedWindow": {
+          "width": 960,
+          "height": 640
+        },
+        "expectedProtocol": "xwayland",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "opened": true,
+        "window": {
+          "floating": true,
+          "width": 960,
+          "height": 640,
+          "x": 786,
+          "y": 1735
+        },
+        "protocol": "xwayland",
+        "workspace": 2,
+        "cleanup": "closed",
+        "protocolMatched": true,
+        "sameFocusAtEnd": true
+      },
+      {
+        "application": "Original Inkscape default owner backend",
+        "requestedWindow": {
+          "width": 1000,
+          "height": 700
+        },
+        "expectedProtocol": "wayland",
+        "input": "not measured",
+        "capture": "not measured",
+        "account": "not measured",
+        "opened": true,
+        "window": {
+          "floating": true,
+          "width": 1000,
+          "height": 700,
+          "x": 766,
+          "y": 1705
+        },
+        "protocol": "wayland",
+        "workspace": 2,
+        "cleanup": "closed",
+        "protocolMatched": true,
+        "sameFocusAtEnd": true
+      }
+    ],
+    "sourceSha256": {
+      "src/application-launch.ts": "bb1b258399b13eb7b3088bd86b490c2b98609fc319b6545d3a03c0514e1eaa8c",
+      "src/native/owner_open.py": "8b8cfd3c99d2ea1789b3ddd99e892bdabb3c3f4a6b112c69e3a79c2eb56784ba",
+      "src/native/window_geometry.py": "1a4bd4c2cb968601f4bd581b9d8186d56eaa46d005cb5c48b8a360f4e770dcf8"
+    },
+    "registrationMethod": "Temporary exact owned desktop registrations pointed at the unchanged installed Text Editor, Calculator and Ark executables. Text Editor used an installation symlink under an operations directory. Inkscape used its existing registration. Temporary registrations were removed after testing.",
+    "limits": [
+      "Original windows opened, geometry measured and exact new windows closed. No application input, capture, account or continuous focus acceptance.",
+      "The Calculator before/after active identity differed during concurrent owner work. Causality is not established.",
+      "The physical monitor had transform 0. Rotated and flipped placement has regression coverage only, no live portrait monitor measurement."
+    ]
   }
 }

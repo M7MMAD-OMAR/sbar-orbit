@@ -95,14 +95,14 @@ def open_application(session, value):
                     window = matches[0]
                     if window.get("workspace", {}).get("id") != value["workspace"]:
                         raise SessionError("Application did not open on the requested workspace")
-                    if (window.get("xwayland") or not re.fullmatch(r"0x[0-9a-f]{1,16}", str(window.get("address")))
+                    if (not re.fullmatch(r"0x[0-9a-f]{1,16}", str(window.get("address")))
                             or not re.fullmatch(r"[0-9a-f]{1,16}", str(window.get("stableId")))):
-                        raise SessionError("Opened application has no supported Wayland handoff identity")
+                        raise SessionError("Opened application has no stable compositor window identity")
                     measured = measured_window(window, fitted)
                     if measured is None:
                         time.sleep(0.05)
                         continue
-                    return {"opened": True, "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
+                    return {"opened": True, "windowProtocol": "xwayland" if window.get("xwayland") else "wayland", "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
                             "stableId": window["stableId"], "pid": window["pid"],
                             "title": str(window.get("title", ""))[:160], "applicationLifetime": "owner",
                             "handoff": "held pending compositor crash release evidence"}

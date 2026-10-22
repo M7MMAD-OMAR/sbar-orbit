@@ -29,6 +29,18 @@ class GeometryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             placement(9, window_size(), [], [monitor, {**monitor, "name": "other"}])
 
+    def test_rotated_and_flipped_monitors_transform_before_scaling(self):
+        monitor = {"name": "portrait", "x": -720, "y": 100, "width": 1920, "height": 1080,
+                   "scale": 1.5, "focused": True, "reserved": [0, 30, 0, 0]}
+        for transform in range(8):
+            with self.subTest(transform=transform):
+                fitted = placement(2, {"width": 960, "height": 640}, [], [{**monitor, "transform": transform}])
+                self.assertEqual(fitted["right"] - fitted["left"], 720 if transform % 2 else 1280)
+                self.assertEqual(fitted["bottom"] - fitted["top"], 1250 if transform % 2 else 690)
+        for transform in [-1, 8, True, 1.5, "1"]:
+            with self.subTest(transform=transform), self.assertRaises(ValueError):
+                placement(2, {"width": 960, "height": 640}, [], [{**monitor, "transform": transform}])
+
     def test_small_or_unknown_monitor_is_not_guessed(self):
         for monitors in [[], [{"name": "target", "focused": True}],
                          [{"name": "target", "focused": True, "x": 0, "y": 0,

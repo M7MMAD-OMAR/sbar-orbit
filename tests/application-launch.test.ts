@@ -282,3 +282,30 @@ test("versioned interpreter commands cannot evaluate a registration as a native 
     await expect(resolveInstalledApplication("eval.desktop",f.options)).rejects.toThrow("unsupported command adapter");
   } finally {await f.close();}
 });
+
+
+test("native installations beneath browser-like directory names are not browser identities", async () => {
+  const f = await fixture(); try {
+    for(const directory of ["brave", "operations", "firefox-documents"]) {
+      const targetDirectory=join(f.root,directory);await mkdir(targetDirectory);
+      const target=join(targetDirectory,"native-tool");await copyFile(f.executable,target);await chmod(target,0o755);
+      await f.desktop("org.example.Native.desktop",`"${target}"`,"Categories=Utility;\n");
+      expect((await resolveInstalledApplication("org.example.Native.desktop",f.options)).argv).toEqual([target]);
+    }
+  } finally {await f.close();}
+});
+
+
+test("registered visible GTK and Qt backend customization preserves the normal display environment", async () => {
+  const f = await fixture(); try {
+    const options = {...f.options,env:{...f.options.env,PATH:f.bin+":/usr/bin"}};
+    for(const assignment of ["GDK_BACKEND=x11", "GDK_BACKEND=wayland", "QT_QPA_PLATFORM=xcb"]) {
+      await f.desktop("native-display.desktop",`env ${assignment} "${f.executable}"`);
+      expect((await resolveInstalledApplication("native-display.desktop",options)).argv).toEqual(["/usr/bin/env",assignment,f.executable]);
+    }
+    for(const assignment of ["GDK_BACKEND=broadway", "QT_QPA_PLATFORM=offscreen", "DISPLAY=:99", "WAYLAND_DISPLAY=other-session"]) {
+      await f.desktop("native-display.desktop",`env ${assignment} "${f.executable}"`);
+      await expect(resolveInstalledApplication("native-display.desktop",options)).rejects.toThrow();
+    }
+  } finally {await f.close();}
+});

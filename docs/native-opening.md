@@ -72,3 +72,38 @@ leaves the application open. Test operators must close only their exact newly
 opened windows, preserving any unsaved-content prompt. A successful command alone
 is not proof of input delivery. Missing acknowledgement must remain uncertain,
 not become a blind retry or closure of another window.
+
+## Native backend and installation compatibility repair
+
+A further source review found three compatibility defects: browser names matched
+ordinary installation parent directories, XWayland opening was incorrectly coupled
+to held Wayland handoff, and monitor work areas ignored output transform. The
+resolver now checks application and executable identities, opening reports its
+window protocol independently from handoff, and placement exchanges axes before
+scaling for portrait transforms. Visible GTK and Qt backend registrations retain
+only finite supported values. Display redirection and offscreen backends remain
+unavailable.
+
+Four further original windows were opened through public `native.open` RPC on
+22 October 2026 with the repaired broker:
+
+| Original installed application | Backend | Requested and measured size | Workspace | Cleanup |
+| --- | --- | --- | --- | --- |
+| Text Editor through an `operations` installation path | Wayland | 840 by 620 | 2 | closed |
+| Calculator with registered `GDK_BACKEND=x11` | XWayland | 720 by 600 | 2 | closed |
+| Ark with registered `QT_QPA_PLATFORM=xcb` | XWayland | 960 by 640 | 2 | closed |
+| Inkscape with its existing registration | Wayland | 1000 by 700 | 2 | closed |
+
+Temporary owned registrations pointed to the unchanged installed binaries and
+were removed afterward. Text Editor used a symlink to its original executable,
+without copying a profile or changing HOME. All four windows were floating and
+closed by exact new identity. Calculator's active identity differed at the end;
+the other three were equal. Concurrent owner work prevents causal attribution.
+The machine-readable record includes source digests and all four observations.
+
+Three regression cases failed on the unfixed source and passed after repair.
+The focused suite then passed 35 tests, including registered GTK/Qt backends,
+all eight monitor transforms and launch-bound XWayland opening. These are distinct
+from the four actual application observations. The host monitor had transform 0;
+a physically rotated display, input, screenshots, account continuity, other
+compositors, Windows and macOS application operation remain not measured.
