@@ -3,12 +3,12 @@ import { discoverApplications } from "./application-discovery";
 import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { NativeBackend, parseHandoff, parseNativeOpen } from "./hyprland";
+import { NativeBackend, parseHandoff, parseNativeOpen, parseNativePresentation } from "./hyprland";
 import { nativeOptionsFromEnv } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { resourceStatus } from "./resource-budget";
 import { describeDesktopMachine } from "./desktop-machine";
-import { decide, freshProfilePolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
+import { decide, nativeApplicationPolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
 import { consultAdvisor } from "./advisor";
 import { Diagnostics } from "./diagnostics";
 import { autostartPaths } from "./autostart";
@@ -43,6 +43,7 @@ export class Sessions {
   private creating = new Set<Promise<unknown>>();
   private creationTail: Promise<unknown> = Promise.resolve();
   private nativeOpens = new Map<string, { fingerprint: string; result: Promise<unknown> }>();
+  private nativePresentations = new Map<string, { fingerprint: string; result?: Promise<unknown> }>();
   private shuttingDown = false;
   private readonly releaseIdentity = brokerIdentity().catch(() => null);
   constructor(private root: string, _accountRoot?: string, readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot()) {}
@@ -77,7 +78,7 @@ export class Sessions {
   }
   private async createOwned(input: Record<string, unknown>) {
     if ((input.backend ?? "native") !== "native" || input.handoff === undefined)
-      throw new OrbitError("UNSUPPORTED", "Private desktop sessions were removed. Use native.open for an original application or an explicit native handoff after its release hold clears.");
+      throw new OrbitError("UNSUPPORTED", "Private desktop sessions were removed. Use native.open for an original application or an explicit native application handoff.");
     const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff"]);
     if (Object.keys(input).some(key => !allowed.has(key)))
       throw new OrbitError("UNSUPPORTED", "Private profiles, viewports and browser session options were removed");
@@ -90,7 +91,8 @@ export class Sessions {
         throw new OrbitError("INVALID_REQUEST", "Session labels require 1 to 80 printable characters");
       return value.trim();
     };
-    const policy = input.policy === undefined ? freshProfilePolicy : parsePolicy(input.policy);
+    const suppliedPolicy = input.policy === undefined ? {} : record(input.policy);
+    const policy = parsePolicy({ ...nativeApplicationPolicy, ...suppliedPolicy, origins: suppliedPolicy.origins === undefined ? "any" : suppliedPolicy.origins });
     if (policy.origins !== "any") throw new OrbitError("UNSUPPORTED", "Native origin enforcement is unavailable");
     const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
     if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Application lease is already held");
@@ -327,6 +329,60 @@ export class Sessions {
     if (request.method === "native.candidates") {
       if (!this.native) throw new OrbitError("UNSUPPORTED", "Native handoff is not configured");
       return NativeBackend.candidates(this.native, parseHandoff(params));
+    }
+    if (request.method === "native.monitors" || request.method === "native.present") {
+      const presentation = request.method === "native.present";
+      let requestId = "", selected: ReturnType<typeof parseNativePresentation> | undefined;
+      if (presentation) {
+        if (Object.keys(params).some(key => !["requestId", "workspace", "monitor"].includes(key)))
+          throw new OrbitError("INVALID_REQUEST", "Unknown native presentation field");
+        requestId = text(params.requestId, "requestId");
+        if (requestId.length > 128) throw new OrbitError("INVALID_REQUEST", "Presentation request identity is too long");
+        selected = parseNativePresentation({ workspace: params.workspace, monitor: params.monitor });
+      } else if (Object.keys(params).length) {
+        throw new OrbitError("INVALID_REQUEST", "Monitor discovery accepts no parameters");
+      }
+      await requireUpdateAdmission(this.updateDirectory);
+      if (this.updateLease && this.updateLease.expires > Date.now())
+        throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
+      if (!this.native) throw new OrbitError("UNSUPPORTED", "Native monitor control is not configured");
+      if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+      const fingerprint = selected ? JSON.stringify(selected) : "";
+      if (presentation) {
+        const previous = this.nativePresentations.get(requestId);
+        if (previous) {
+          if (previous.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Presentation request identity conflicts");
+          if (previous.result) return previous.result;
+        }
+        if (!previous && this.nativePresentations.size >= 256) throw new OrbitError("LIMIT_REACHED", "Native presentation request limit reached");
+      }
+      const options = this.native, target = selected;
+      let dispatched = false;
+      const result = this.creationTail.then(async () => {
+        await requireUpdateAdmission(this.updateDirectory);
+        if (this.updateLease && this.updateLease.expires > Date.now())
+          throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
+        if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
+        if (target) {
+          dispatched = true;
+          return NativeBackend.present(options, target);
+        }
+        return NativeBackend.monitors(options);
+      });
+      this.creationTail = result.catch(() => {});
+      if (presentation) {
+        this.nativePresentations.set(requestId, { fingerprint, result });
+        void result.catch(error => {
+          if (this.nativePresentations.get(requestId)?.result !== result) return;
+          if (!dispatched || (error instanceof OrbitError && error.code === "PRESENTATION_NOT_READY"))
+            this.nativePresentations.set(requestId, { fingerprint });
+          else if (error instanceof OrbitError && ["APPROVAL_REQUIRED", "NATIVE_INCOMPATIBLE"].includes(error.code))
+            this.nativePresentations.delete(requestId);
+        });
+      }
+      this.creating.add(result);
+      void result.then(() => this.creating.delete(result), () => this.creating.delete(result));
+      return result;
     }
     if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
     if (request.method === "session.act") return this.act(params);

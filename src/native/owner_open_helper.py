@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import re
 import sys
 import time
 
@@ -28,6 +29,22 @@ def main(path):
     temporary.unlink()
     if "cwd" in spec:
         os.chdir(spec["cwd"])
+    environment = None
+    if "activationToken" in spec:
+        token = spec["activationToken"]
+        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{32}", token):
+            raise RuntimeError("Invalid original application activation token")
+        environment = {**os.environ, "XDG_ACTIVATION_TOKEN": token, "DESKTOP_STARTUP_ID": token}
+    if "scope" in spec:
+        if not isinstance(spec["scope"], str) or not re.fullmatch(r"orbit-open-[0-9a-f]{32}\.scope", spec["scope"]):
+            raise RuntimeError("Invalid original application scope")
+        # Scope mode inherits the real owner environment and cwd. It neither
+        # creates a desktop/profile nor ties application lifetime to this worker.
+        argv = ["/usr/bin/systemd-run", "--user", "--scope", "--quiet", "--collect",
+                 "--unit=" + spec["scope"], "--slice=app.slice", "--expand-environment=no", "--", *spec["argv"]]
+        return os.execve("/usr/bin/systemd-run", argv, environment) if environment is not None else os.execv("/usr/bin/systemd-run", argv)
+    if environment is not None:
+        return os.execve(spec["argv"][0], spec["argv"], environment)
     os.execv(spec["argv"][0], spec["argv"])
 
 

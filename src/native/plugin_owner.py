@@ -12,7 +12,7 @@ import uuid
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.native.handoff_release import require_owner_handoff
+from src.native.plugin_compatibility import require_native_plugin
 from src.native.budget import require_budget
 from src.native.host import verify_host
 from src.native.plugin_bundle import fingerprint, input_file, unchanged, unique_fields, verify_staged_plugin
@@ -291,17 +291,15 @@ class OwnerJournal:
 def operate(operation, directory):
     if operation not in ("status", "load", "unload", "resume"):
         raise ValueError("Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY")
-    if operation in ("load", "resume"):
-        require_owner_handoff()
     require_budget()
     bundle = PreparedPlugin(directory)
-    if operation in ("load", "resume"):
-        # Only the exact plugin source and Hyprland build the release evidence measured may enter the owner compositor.
-        require_owner_handoff(bundle.artifact["source_sha256"], bundle.plan["abi_hash"])
     journal = None
     sent = False
     pause_sent = False
     try:
+        if operation in ("load", "resume"):
+            # Verify current source and prepared compositor identity, without a historical policy gate.
+            require_native_plugin(bundle.artifact["source_sha256"], bundle.plan["abi_hash"], expected_abi=bundle.plan["abi_hash"])
         transport = NativeTransport(bundle.plan)
         if operation == "status":
             result = status(bundle, transport)

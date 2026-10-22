@@ -86,3 +86,22 @@ test("Hermes registration follows its active profile without changing the defaul
     expect((await registerAgentHosts(["hermes"], entry, { home: root, env: {} }))[0]?.state).toBe("failed");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const host of agentHosts) {
+  test(`${host}: upgrading a managed adapter changes its version without replacing transport or neighbour settings`, () => {
+    const before = addHostEntry(host, samples[host], entry).text;
+    const upgradedEntry = { ...entry, env: { ...entry.env, ORBIT_CLIENT_VERSION: "0.3.0" } };
+    const changed = addHostEntry(host, before, upgradedEntry);
+    expect(changed.changed).toBe(true);
+    const parsed = host === "codex" ? Bun.TOML.parse(changed.text) : host === "hermes" ? Bun.YAML.parse(changed.text) : JSON.parse(changed.text);
+    const servers = (parsed as Record<string, any>)[host === "claude" ? "mcpServers" : "mcp_servers"];
+    expect(servers.orbit).toEqual(upgradedEntry);
+    expect(servers.neighbour.command).toBe("keep-me");
+    expect(addHostEntry(host, changed.text, upgradedEntry).changed).toBe(false);
+    const next = addHostEntry(host, changed.text, { ...upgradedEntry, env: { ...upgradedEntry.env, ORBIT_CLIENT_VERSION: "0.3.1" } });
+    expect(next.changed).toBe(true);
+    expect(() => addHostEntry(host, next.text, { ...upgradedEntry, command: "foreign" })).toThrow("left unchanged");
+    expect(() => addHostEntry(host, next.text, { ...upgradedEntry, env: { ...upgradedEntry.env, ORBIT_SOCKET: "/foreign/socket" } })).toThrow("left unchanged");
+    if (host === "codex") expect(next.text).toContain("# keep this comment");
+  });
+}

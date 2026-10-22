@@ -137,8 +137,8 @@ Sbar Orbit, desktop application control for your AI agent
 
 Client commands default to the managed socket; ORBIT_SOCKET selects another broker.
 Set ORBIT_CONVERSATION_ID uniquely per conversation to share CLI/MCP usage state.
-Requires Bun. Private desktop sessions currently require Linux and the native runtime.
-Standalone browser sessions are retired. Existing owner handoff is release-blocked.
+Requires Bun. Original native opening currently requires Linux and Hyprland.
+Private desktops and standalone browser sessions are retired. Native handoff requires a matching prepared plugin.
 Native desktop adapters for Windows and macOS are not implemented. See docs/desktop-only.md.
 HELP
     ;;

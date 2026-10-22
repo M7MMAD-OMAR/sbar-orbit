@@ -7,7 +7,7 @@ import { inspectPrerequisites, type PrerequisiteCheck, type Remedy } from "./pre
 import { activateLocal, commandName } from "./local-install";
 import { installService, serviceSocketPath, connectorConfigDirectory } from "./service";
 import { autostartPaths, enableAutostart, autostartStatus } from "./autostart";
-import { connectorEntry } from "./connector-entry";
+import { connectorEntry, connectorEnvironment } from "./connector-entry";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 import { registerAgentHosts, type AgentHost } from "./host-registration";
@@ -160,8 +160,8 @@ export async function runInstall(options: InstallOptions = {}) {
     return {
       state: "done",
       detail: missing.length ? `${missing.length} optional item missing` : "everything this step can see is present",
-      // Not fatal: a machine without the native runtime still runs browser sessions, and saying so at
-      // the end is more use than refusing to install.
+      // Install the broker even when owner compositor integration is incomplete.
+      // Prerequisite metadata is separate from actual native input acceptance.
       remedies: remediesOf(missing),
       data: { browser: false, native: report.nativePrerequisitesFound, missing: missing.map(check => check.id) },
     };
@@ -186,9 +186,8 @@ export async function runInstall(options: InstallOptions = {}) {
   });
 
   await step("native", async () => {
-    // Opt-in, because it downloads packages and compiles, and because it has only ever been run on
-    // Fedora. A machine without it still runs browser sessions, and the prerequisites step already
-    // says how to get it.
+    // Original native applications use owner compositor integration. Retain the
+    // old flag only to return an explicit migration result, never a substitute desktop.
     if (!options.native) return { state: "skipped", detail: "Private desktop runtime removed; original native applications use the owner compositor" };
     return buildNativeRuntime(source, { dryRun, bootstrap: options.bootstrap });
   });
@@ -284,7 +283,7 @@ export async function runInstall(options: InstallOptions = {}) {
     const socket = serviceSocketPath();
     // The launcher, not this Bun and this checkout: see connector-entry.ts for why a source path
     // cannot survive an upgrade, a rollback or a machine that is not the one it was written on.
-    const configuration = { mcpServers: { orbit: { ...connectorEntry({ launcher, source }), env: { ORBIT_SOCKET: socket } } } };
+    const configuration = { mcpServers: { orbit: { ...connectorEntry({ launcher, source }), env: connectorEnvironment(socket) } } };
     const directory = connectorConfigDirectory();
     const path = join(directory, "mcp.json");
     // This path does not follow --prefix: one machine has one registered connector, whichever source
@@ -347,7 +346,7 @@ export async function runInstall(options: InstallOptions = {}) {
       return { state: "skipped", detail: "installation failed; host settings left unchanged" };
     const registration = await registerAgentHosts(options.connect, {
       ...connectorEntry({ launcher, source, preferInterpreter: process.platform === "win32" }),
-      env: { ORBIT_SOCKET: serviceSocketPath() },
+      env: connectorEnvironment(serviceSocketPath()),
     }, { dryRun, ...(options.home === undefined ? {} : { home: options.home }) });
     const failed = registration.some(host => host.state === "failed");
     return { state: failed ? "failed" : dryRun ? "skipped" : "done",

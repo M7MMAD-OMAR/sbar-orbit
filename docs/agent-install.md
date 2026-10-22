@@ -1,7 +1,8 @@
 # Install Orbit for native applications
 
-Use Bun and the existing checkout. Do not use sudo, install a browser, copy a
-profile, create a private desktop, or bypass the owner input release hold.
+Use Bun and the existing checkout. Install without sudo. Work with original
+installed applications and their normal owner state. No profile copy or hidden
+substitute desktop is needed.
 
 ```sh
 ./install.sh --dry-run --json
@@ -23,11 +24,14 @@ Original Linux opening requires owner compositor metadata prepared by
 `native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY`, and the explicit native
 plan and control directory configured for the broker. The preparation directory
 contains owner-only transport files, never a separate application HOME or
-profile. Preparation initializes protected mode. Approve only the requested
-opening action; do not silently enable full control.
+profile. Preparation initializes protected mode. The owner can select full control in
+native-settings or keep protected mode with exact action approval. An existing
+explicit request for full control is standing authorization; do not ask again for
+each local action.
 
 Discover the exact applicationId, choose an explicit numbered workspace, then
-use `native-open`. Browser and terminal registrations and arbitrary argv are
-unavailable. Opening leaves the application open with its normal owner state.
-Existing application input and capture retain the compositor crash release hold.
+use `native-open`. Original browser and terminal registrations are accepted;
+caller-supplied arbitrary argv is outside the registration API. Opening leaves the application open with its normal owner state.
+Input and capture require an explicit native handoff and the matching prepared
+plugin. The historical incident record is not a permanent policy switch.
 See [CLI](cli.md) and [the contract](desktop-only.md).

@@ -4,8 +4,8 @@ Open original installed native Linux applications on a numbered Hyprland workspa
 The user can select another workspace for their own work. Applications retain their normal owner state and
 stay open after the opening worker exits.
 
-Browser launching, browser automation, copied profiles, private desktops and
-browser viewers were removed. There is no hidden or substitute session mode.
+Original browser and terminal registrations use the same native application route.
+Copied profiles, private desktops and browser viewers are absent. There is no hidden or substitute session mode.
 
 ```sh
 bun install --frozen-lockfile --ignore-scripts
@@ -14,10 +14,12 @@ bun install --frozen-lockfile --ignore-scripts
 ./bin/sbar-orbit native-open '{"workspace":2,"applicationId":"org.gnome.Calculator.desktop"}'
 ```
 
-Opening requires the configured native owner compositor metadata and protected
-action approval. Input and capture of owner applications remain under the
-[compositor crash release hold](docs/native-handoff-incident.md). Opening is not
-proof of input support or signed-in account state.
+Opening requires configured native compositor metadata and owner action settings.
+Protected mode asks for exact action approval; full mode uses the owner's standing authorization.
+Explicit handoff enables target input and capture with a prepared plugin matching
+current source and the running compositor ABI. Historical incident evidence is
+[retained](docs/native-handoff-incident.md), not used as a permanent policy ban.
+An acknowledgement is not proof of application acceptance or signed-in state.
 
 See the [contract](docs/desktop-only.md), [CLI](docs/cli.md),
 [connectors](docs/connectors.md), and [installation](docs/agent-install.md).
@@ -33,6 +35,6 @@ measurements are reported as `not measured`, never as a pass.
 ![Original native application workspace diagram](docs/images/native-workspaces.svg)
 
 This is an architecture illustration, not a screenshot. See [real installed app
-results](docs/native-opening.md) and [the platform matrix](docs/support-tiers.md).
+results](docs/native-opening.md), [current shared clipboard acceptance](docs/native-acceptance-0.3.0.md), and [the platform matrix](docs/support-tiers.md).
 Windows, macOS and other Linux compositor opening adapters are not implemented.
-Full desktop application work is unfinished while input and capture remain held.
+Complete application workflows, dialogs and other platform adapters need their own real acceptance.

@@ -6,10 +6,11 @@ control and complete cross-platform compatibility remain unfinished.
 
 - [Product contract](desktop-only.md)
 - [Actual platform support](support-tiers.md)
-- [Real application opening results](native-opening.md)
+- [Current native acceptance](native-acceptance-0.3.0.md)
+- [Historical application opening results](native-opening.md)
 - [Architecture and diagram](architecture.md)
 - [Installation](agent-install.md), [CLI](cli.md), [MCP](connectors.md)
-- [Input/capture incident and release hold](native-handoff-incident.md)
+- [Historical compositor incident](native-handoff-incident.md)
 - [Adapter contract](porting.md) and [remaining work](roadmap.md)
 
 Removed browser, profile-cloning, viewer and private desktop guides are available

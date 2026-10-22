@@ -1,3 +1,28 @@
+# Historical opening measurements
+
+The report below records earlier revisions. The current registered-launch contract
+accepts original browsers, terminals and vendor wrappers without a category ban.
+The historical input hold is retired. Earlier tests did not measure current input.
+See [the current contract](desktop-only.md) for current behavior and prerequisites.
+
+## Current focus behavior
+
+Opening requests silent placement, no initial focus and disabled focus-on-activation.
+An existing activation server can activate its application before request
+attribution. Orbit does not dispatch owner refocus or warp the physical pointer
+back. If a new exact candidate already has owner focus, it returns `opened:false`
+with `candidateReason:owner-input`, without post-map placement. Inspect that
+candidate without taking owner input. A focus race after earlier placement
+returns opening uncertainty rather than claiming no placement happened. These
+checks do not prove that arbitrary applications never activate themselves.
+
+Atomic post-map placement of activation-token and launch-scope windows currently
+requires Hyprland's Lua config manager (`eval`). With a non-Lua configuration,
+ordinary exec-rule opening can use the existing dispatch fallback, but forwarded
+placement returns `OPENING_UNCERTAIN` rather than inventing success or switching
+focus. That non-Lua forwarded path has no live acceptance on this host. Inspect
+the mapped candidate before doing anything further; never blindly relaunch it.
+
 # Executed original application opening
 
 On 22 October 2026, 20 installed native applications were attempted on the actual
@@ -55,7 +80,8 @@ this is not causal proof that Orbit stole or preserved focus. Continuous focus
 and pointer preservation remain not measured.
 
 No editing, clicking, typing, screenshot, account state or signed-in continuity was
-measured. The input/capture hold remains active. These results do not establish
+measured at that revision, when its historical input/capture hold was active.
+That hold is now retired. These earlier results do not establish
 complete application compatibility or support for another desktop environment.
 
 ## Reproduce the public opening route

@@ -17,4 +17,4 @@ export type DiscoveryOptions = {
   metadataProbe?: (reference: FlatpakReference) => Promise<string | undefined>;
 };
 
-export type ResolvedApplication = { argv: string[]; cwd?: string; applicationId: string };
+export type ResolvedApplication = { argv: string[]; cwd?: string; busName?: string; applicationId: string };

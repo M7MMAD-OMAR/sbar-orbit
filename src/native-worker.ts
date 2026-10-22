@@ -59,8 +59,13 @@ export class NativeWorker {
     await mkdir(directory, { mode: 0o700 });
     const log = await open(join(directory, "worker.log"), "wx", 0o600);
     try {
+      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" };
+      // Read the same owner preferences as the panel without inheriting credentials.
+      for (const key of ["HOME", "XDG_CONFIG_HOME"] as const) {
+        if (process.env[key] !== undefined) env[key] = process.env[key];
+      }
       const child = spawn(entry[0] ?? "/usr/bin/python3", [...entry.slice(1), directory, options.controlDirectory, options.planPath],
-        { env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" }, stdio: ["pipe", "pipe", log.fd] });
+        { env, stdio: ["pipe", "pipe", log.fd] });
       if (!child.stdin || !child.stdout) {
         child.kill("SIGTERM");
         throw new OrbitError("BACKEND_ERROR", "Native worker did not expose its framed streams");
@@ -127,8 +132,21 @@ export class NativeWorker {
         this.pending = undefined;
         if (response.ok) pending.resolve(response.result);
         else {
-          pending.reject(new OrbitError(typeof failure?.code === "string" ? failure.code : "BACKEND_ERROR",
-            "Native request failed; inspect its private worker journal"));
+          const code = typeof failure?.code === "string" ? failure.code : "BACKEND_ERROR";
+          const publicMessages: Record<string, string> = {
+            SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",
+            OPENING_UNCERTAIN: "Application launch was attempted and delivery is uncertain. Inspect native candidates and reuse the same requestId; do not relaunch blindly.",
+            NATIVE_INCOMPATIBLE: "Native plugin does not match this installation or compositor. Prepare the current compositor, rebuild and reload its matching plugin.",
+            PRESENTATION_NOT_READY: "Workspace presentation was refused before display changes. Inspect monitors and wait until the requested output is unfocused with no special workspace. Retry the same requestId with unchanged parameters when ready.",
+            OWNER_BUSY: "The application client is receiving owner input. Handoff leaves owner focus unchanged; wait until the client is no longer receiving owner input.",
+          };
+          pending.reject(new OrbitError(code, (Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
+            ?? "Native request failed; inspect its private worker journal"));
+          // A compositor handback ends this backend even if its worker still
+          // accepts framed requests. EOF performs normal lease cleanup and the
+          // existing close listener updates broker status.
+          if (failure?.code === "SESSION_CLOSED")
+            void this.close().catch(error => { this.recoveryFailure = error; });
         }
       } catch (error) {
         this.abort(new OrbitError("BACKEND_ERROR", "Native worker returned malformed framing or response"));
@@ -152,7 +170,7 @@ export class NativeWorker {
         reject(this.failure ?? new OrbitError("SESSION_CLOSED", "Native worker is closed"));
         return;
       }
-      const timer = setTimeout(() => this.abort(new OrbitError("TIMEOUT", "Native worker request exceeded its deadline; delivery is uncertain")), 20_000);
+      const timer = setTimeout(() => this.abort(new OrbitError("TIMEOUT", "Native worker request exceeded its deadline; delivery is uncertain")), method === "open" ? 75_000 : 20_000);
       this.pending = { id, resolve, reject, timer };
       this.stdin.write(bytes, error => { if (error) this.abort(error); });
     })).finally(() => { this.queued--; });

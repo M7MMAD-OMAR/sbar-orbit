@@ -1,6 +1,6 @@
 import { isAbsolute, join } from "node:path";
 import { OrbitError } from "./errors";
-import { requireOwnerHandoff } from "./native-handoff-release";
+import { requireNativeAdapter } from "./native-availability";
 import { requireResourceBudget } from "./resource-budget";
 
 /** Owner command only; writes an unapplied configuration bundle. */
@@ -21,7 +21,7 @@ export async function nativePlugin(operation: string | undefined, directory: str
     throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");
   if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native plugin loading requires Linux and Hyprland");
   if (operation === "load" || operation === "resume")
-    requireOwnerHandoff();
+    requireNativeAdapter();
   await requireResourceBudget();
   let outcome: Awaited<ReturnType<typeof runOwnerCommand>>;
   try {

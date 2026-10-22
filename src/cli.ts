@@ -241,6 +241,17 @@ try {
       method = "native.open";
       params = { ...opening, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID() };
     }
+    else if (command === "native-monitors") {
+      if (verb !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-monitors without arguments");
+      method = "native.monitors";
+    }
+    else if (command === "native-present") {
+      if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-present JSON|@FILE|-");
+      const presentation = (await import("./errors")).record(await actionDocument(verb));
+      method = "native.present";
+      params = { ...presentation, requestId: Object.hasOwn(presentation, "requestId")
+        ? presentation.requestId : process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID() };
+    }
     else if (command === "native-candidates") {
       if (arg !== undefined || !verb || !/^[1-9][0-9]*$/.test(verb))
         throw new OrbitError("INVALID_REQUEST", "Use native-candidates WORKSPACE");
@@ -262,7 +273,7 @@ try {
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
-    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session list/stop/pause/resume/observe/journal, or act ID JSON|@FILE|-");
+    } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-monitors, native-present JSON|@FILE|-, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session list/stop/pause/resume/observe/journal, or act ID JSON|@FILE|-");
     const result = await call(socket, method, params);
     await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }

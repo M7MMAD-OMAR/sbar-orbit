@@ -1,0 +1,436 @@
+{
+  "environment": {
+    "distribution": "Fedora 44",
+    "compositor": "Hyprland 0.56.2",
+    "architecture": "x86_64",
+    "protocol": "native Wayland"
+  },
+  "pluginSourceSha256": "6d1c75d9880b8642befcd06eb2830ed2f0421aca98662aa4d3b87c429c2561a7",
+  "applications": [
+    {
+      "applicationId": "org.gnome.Calculator.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.TextEditor.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Nautilus.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.FileRoller.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Characters.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.clocks.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "activation-token",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Calendar.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Contacts.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Maps.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "activation-token",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Logs.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Decibels.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Showtime.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Papers.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.font-viewer.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.baobab.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.gnome.Ptyxis.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.kde.konsole.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.kde.dolphin.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "gimp.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "org.inkscape.Inkscape.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        933,
+        897
+      ],
+      "capturedLogicalSize": [
+        700,
+        673
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "google-chrome.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    },
+    {
+      "applicationId": "btop.desktop",
+      "opening": {
+        "floating": true,
+        "width": 1000,
+        "height": 720
+      },
+      "identityEvidence": "launch-ancestry",
+      "capturedPixels": [
+        1333,
+        960
+      ],
+      "capturedLogicalSize": [
+        1000,
+        720
+      ],
+      "normalClosureVerified": true,
+      "workspaceEmptyAfter": true
+    }
+  ],
+  "limits": [
+    "Opening, exact handoff, capture, state and normal closure only.",
+    "Fonts required reconciling a read-only IPC timeout before its fresh completed row.",
+    "No authenticated account verification.",
+    "Later null-object guard and monitor/dialog overlays have separately identified runtime measurements.",
+    "Other compositor ABIs, XWayland, Windows and macOS native operation are not measured."
+  ]
+}

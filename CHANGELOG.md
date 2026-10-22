@@ -2,6 +2,24 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.3.0 (22 October 2026)
+
+Original registered applications, including browsers and terminals, use visible
+numbered Linux workspaces and their ordinary user state. Native handoff uses the
+shared system clipboard. The static historical release hold is replaced with
+actual plugin source and compositor ABI verification.
+
+Repairs include toolkit size negotiation, cold startup observation, registered
+startup activation-token and launch-scope attribution, keyboard focus continuity,
+export capture geometry, exact normal window closure, and versioned host adapter
+registration. A D-Bus PID alone returns an unmodified candidate. Full-monitor
+work indicators include the workspace number, latest agent pointer and click
+pulse. Parent-linked portal dialogs stay with the controlled workspace and
+require a separate exact input handoff.
+Retired hidden desktops, profile cloning and browser viewer APIs stay removed.
+
+[Release notes](docs/release-0.3.0.md) describe measured workflows and platform limits.
+
 ## 0.2.1 (14 October 2026)
 
 Preserves the local desktop pilot and its approved compact Orbit badge, Codex

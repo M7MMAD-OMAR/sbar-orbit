@@ -4,7 +4,7 @@ Updated 22 October 2026. The goal is original application work on an explicitly
 selected visible workspace. This is a development plan, not a compatibility claim.
 
 1. Restore trustworthy input delivery and capture without risking the person's
-   compositor. The [incident](native-handoff-incident.md) release gate remains held.
+   compositor. The [incident](native-handoff-incident.md) remains historical diagnostic evidence.
    A successful IPC reply must be matched by an actual application state change,
    visible pointer evidence, owner focus and pointer checks, and verified handback.
 2. Extend registered opening using real application failures. Retain exact launch
@@ -22,5 +22,5 @@ selected visible workspace. This is a development plan, not a compatibility clai
    enabling a platform claim. CI, installation and source review are supporting
    checks, not substitutes for real application acceptance.
 
-Browser/private session code and obsolete viewer assets were removed. Their old
+Private session code and obsolete viewer assets were removed. Original browsers use registered native launch. Their old
 results remain in Git history, and cannot close these native milestones.

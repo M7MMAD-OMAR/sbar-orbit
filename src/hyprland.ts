@@ -1,6 +1,6 @@
 import { OrbitError, record } from "./errors";
 import { resolveInstalledApplication } from "./application-launch";
-import { requireOwnerHandoff } from "./native-handoff-release";
+import { requireNativeAdapter } from "./native-availability";
 import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
@@ -15,6 +15,15 @@ type Window = Target & { title: string; width: number; height: number };
 
 export type HandoffSelection = { workspace: number; address?: string; stableId?: string };
 export type NativeOpen = { workspace: number; applicationId: string; window?: { width: number; height: number } };
+export type NativePresentation = { workspace: number; monitor: string };
+export function parseNativePresentation(value: unknown): NativePresentation {
+  const input = record(value);
+  if (Object.keys(input).some(key => !["workspace", "monitor"].includes(key))
+      || typeof input.monitor !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(input.monitor))
+    throw new OrbitError("INVALID_REQUEST", "Presentation requires one explicit connected monitor name and numbered workspace");
+  const { workspace } = parseHandoff({ workspace: input.workspace });
+  return { workspace, monitor: input.monitor };
+}
 export function parseNativeOpen(value: unknown): NativeOpen {
   const input = record(value);
   parseHandoff({ workspace: input.workspace });
@@ -56,7 +65,7 @@ function target(value: Record<string, unknown>): Target {
 /** The compositor is fixed at broker startup. All application targets are worker-owned handles. */
 export class NativeBackend {
   readonly visible = true;
-  readonly capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "hide-cursor", "observe", "close-application", "pause", "resume", "stop"];
+  readonly capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "observe", "close-window", "close-application", "pause", "resume", "stop"];
   private applications = new Set<string>();
   private windows = new Map<string, Window>();
   private selected?: Target;
@@ -65,14 +74,14 @@ export class NativeBackend {
   private scales = new Map<string, { x: number; y: number }>();
 
   private closing?: Promise<void>;
-  handoff?: { appId: string; selectedWindowId: string; scope: string; windows: Window[] };
+  handoff?: { workspace: number; appId: string; selectedWindowId: string; scope: string; clipboard: "shared"; windowEnrollment?: "client-windows" | "selected-dialog-family"; pointer: { x: number; y: number }; windows: Window[] };
   private constructor(private worker: NativeWorker, private directory: string, private options: NativeOptions, readonly borrowed = false) {
     if (borrowed) this.capabilities = this.capabilities.filter(value => value !== "launch");
   }
 
   static async create(_profile: string, options: NativeOptions, handoff?: HandoffSelection) {
     if (handoff === undefined) throw new OrbitError("UNSUPPORTED", "Private native sessions were removed; select an existing application explicitly");
-    requireOwnerHandoff();
+    requireNativeAdapter();
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
@@ -94,8 +103,10 @@ export class NativeBackend {
       if (handoff !== undefined) {
         const claimed = record(await worker.request("claim", handoff));
         const appId = identifier(claimed.appId);
-        if (claimed.scope !== "entire-wayland-client" || !Array.isArray(claimed.windows))
+        if (claimed.scope !== "entire-wayland-client" || claimed.clipboard !== "shared" || !Array.isArray(claimed.windows))
           throw new OrbitError("BACKEND_ERROR", "Invalid application handoff acknowledgement");
+        if (claimed.windowEnrollment !== undefined && claimed.windowEnrollment !== "client-windows" && claimed.windowEnrollment !== "selected-dialog-family")
+          throw new OrbitError("BACKEND_ERROR", "Invalid application window enrollment acknowledgement");
         backend.applications.add(appId);
         const windows = claimed.windows.map(value => {
           const window = record(value), identity = target(window);
@@ -105,13 +116,23 @@ export class NativeBackend {
         });
         for (const window of windows) backend.windows.set(window.windowId, window);
         const selectedWindowId = identifier(claimed.selectedWindowId);
-        if (!backend.windows.has(selectedWindowId)) throw new OrbitError("BACKEND_ERROR", "Selected handoff window was not acknowledged");
+        const selectedWindow = backend.windows.get(selectedWindowId);
+        if (!selectedWindow) throw new OrbitError("BACKEND_ERROR", "Selected handoff window was not acknowledged");
+        const point = record(claimed.pointer);
+        if (typeof point.x !== "number" || typeof point.y !== "number" || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+            || point.x < 0 || point.y < 0 || point.x >= selectedWindow.width || point.y >= selectedWindow.height)
+          throw new OrbitError("BACKEND_ERROR", "Invalid initial native pointer acknowledgement");
         backend.selected = { appId, windowId: selectedWindowId };
-        backend.handoff = { appId, selectedWindowId, scope: "entire-wayland-client", windows };
+        backend.size = { width: selectedWindow.width, height: selectedWindow.height };
+        backend.pointer = { x: point.x, y: point.y };
+        backend.handoff = { workspace: handoff.workspace, appId, selectedWindowId, scope: "entire-wayland-client", clipboard: "shared", pointer: backend.pointer, windows,
+          ...(claimed.windowEnrollment === undefined ? {} : { windowEnrollment: claimed.windowEnrollment }) };
       }
       return backend;
     } catch (error) {
-      try { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+      // Retain the same private diagnostics as a normal close. Deleting a failed
+      // claim's journal made its public diagnostic reference impossible to inspect.
+      try { await backend.close(); }
       catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and cleanup failed"); }
       throw error;
     }
@@ -131,6 +152,74 @@ export class NativeBackend {
     }
   }
 
+  private static async presentationRequest(options: NativeOptions, method: "monitors" | "present", params: Record<string, unknown>) {
+    requireNativeAdapter();
+    let directory: string | undefined;
+    let dispatched = false;
+    let backend: NativeBackend | undefined;
+    let result: unknown;
+    try {
+      await requireResourceBudget();
+      directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
+      const worker = await NativeWorker.create(join(directory, "worker"), options,
+        ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
+      backend = new NativeBackend(worker, directory, options, true);
+      try {
+        dispatched = true;
+        result = await worker.request(method, params);
+      }
+      catch (error) {
+        if (method === "present" && !(error instanceof OrbitError && ["APPROVAL_REQUIRED", "NATIVE_INCOMPATIBLE", "PRESENTATION_NOT_READY"].includes(error.code)))
+          throw new OrbitError("PRESENTATION_UNCONFIRMED", "Workspace presentation was not confirmed and display state may have changed. Inspect monitors and reuse the same requestId; do not replay the mutation blindly.");
+        throw error;
+      }
+    } catch (error) {
+      try {
+        if (backend) await backend.close();
+        else if (directory) await rm(directory, { recursive: true, force: true });
+      } catch (cleanup) {
+        if (error instanceof Error)
+          Object.defineProperty(error, "cause", { value: cleanup, configurable: true });
+      }
+      if (method === "present" && !dispatched) {
+        const failure = new OrbitError("PRESENTATION_NOT_READY", "Presentation did not start. Inspect native readiness and retry the same requestId after resolving the startup failure.");
+        Object.defineProperty(failure, "cause", { value: error, configurable: true });
+        throw failure;
+      }
+      throw error;
+    }
+    try { await backend.close(); }
+    catch (error) {
+      if (method !== "present") throw error;
+      const failure = new OrbitError("PRESENTATION_UNCONFIRMED", "Workspace presentation was not confirmed and display state may have changed. Inspect monitors and reuse the same requestId; do not replay the mutation blindly.");
+      Object.defineProperty(failure, "cause", { value: error, configurable: true });
+      throw failure;
+    }
+    return result;
+  }
+
+  static async monitors(options: NativeOptions) {
+    const result = record(await this.presentationRequest(options, "monitors", {}));
+    if (!Array.isArray(result.monitors) || result.monitors.length > 64
+        || result.monitors.some(value => {
+          const monitor = record(value);
+          return typeof monitor.name !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/.test(monitor.name)
+            || typeof monitor.focused !== "boolean" || !(monitor.workspace === null
+              || typeof monitor.workspace === "number" && Number.isInteger(monitor.workspace) && monitor.workspace >= 1 && monitor.workspace <= 2147483647);
+        }))
+      throw new OrbitError("BACKEND_ERROR", "Native worker returned invalid monitor metadata");
+    return result;
+  }
+
+  static async present(options: NativeOptions, value: NativePresentation) {
+    value = parseNativePresentation(value);
+    const result = record(await this.presentationRequest(options, "present", value));
+    if (result.workspace !== value.workspace || result.monitor !== value.monitor || result.visible !== true
+        || result.ownerFocusPreserved !== "during-presentation" || result.sampled !== "compositor-acknowledgement")
+      throw new OrbitError("PRESENTATION_UNCONFIRMED", "Presentation acknowledgement was invalid. Inspect monitors before further work; do not replay the mutation blindly.");
+    return result;
+  }
+
   static async openApplication(options: NativeOptions, value: NativeOpen) {
     value = parseNativeOpen(value);
     const application = await resolveInstalledApplication(value.applicationId);
@@ -144,7 +233,7 @@ export class NativeBackend {
     try {
       worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
-      result = await worker.request("open", { workspace: value.workspace, argv: application.argv, ...(value.window ? { window: value.window } : {}), ...(application.cwd ? { cwd: application.cwd } : {}) });
+      result = await worker.request("open", { workspace: value.workspace, argv: application.argv, ...(value.window ? { window: value.window } : {}), ...(application.cwd ? { cwd: application.cwd } : {}), ...(application.busName ? { busName: application.busName } : {}) });
       remove = true;
     } catch (error) {
       // A denied approval did not dispatch. Other errors retain uncertain launch evidence.
@@ -206,7 +295,7 @@ export class NativeBackend {
       cursor: ["appId", "windowId", "x", "y"], move: ["appId", "windowId", "x", "y"],
       click: ["appId", "windowId", "x", "y", "button"], scroll: ["appId", "windowId", "x", "y", "dy"],
       text: ["appId", "windowId", "text"], key: ["appId", "windowId", "key"],
-      state: ["appId", "windowId"], "hide-cursor": ["appId", "windowId"],
+      "close-window": ["appId", "windowId"], state: ["appId", "windowId"],
     };
     const allowed = fields[input.type];
     if (!allowed || Object.keys(input).some(key => key !== "type" && !allowed.includes(key)))
@@ -249,7 +338,6 @@ export class NativeBackend {
       const scale = this.scales.get(this.selected.windowId) ?? { x: 1, y: 1 };
       this.pointer = { x: Number(action.x) * scale.x, y: Number(action.y) * scale.y };
     }
-    if (action.type === "hide-cursor") this.pointer = null;
     return result;
   }
 
@@ -261,7 +349,7 @@ export class NativeBackend {
   async presence() {
     const entries = [...this.windows.values()];
     const selected = this.selected && this.windows.get(this.selected.windowId);
-    return { title: selected?.title ?? "Native target not selected", location: "Orbit native scoped applications",
+    return { title: selected?.title ?? "Native target not selected", location: this.handoff ? `Workspace ${this.handoff.workspace}` : "Orbit native scoped applications",
       pointer: this.pointer, pageCount: entries.length, pageIndex: selected ? entries.indexOf(selected) + 1 : 0,
       tabs: entries.map((window, index) => ({ tab: index + 1, label: window.title, active: window.windowId === this.selected?.windowId,
         appId: window.appId, windowId: window.windowId })), sampled: "acknowledged metadata" };
@@ -275,6 +363,7 @@ export class NativeBackend {
     if (frame.appId !== selected.appId || frame.windowId !== selected.windowId || frame.mimeType !== "image/png"
         || typeof frame.image !== "string" || typeof frame.width !== "number" || typeof frame.height !== "number")
       throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target frame");
+    await this.act({ type: "windows", appId: selected.appId });
     this.selected = selected;
     this.size = { width: frame.width, height: frame.height };
     this.scales.set(selected.windowId, { x: frame.width / Number(frame.surfaceWidth), y: frame.height / Number(frame.surfaceHeight) });

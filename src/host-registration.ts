@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { homedir } from "node:os";
 import { dirname, join, posix, win32 } from "node:path";
 import { lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -39,6 +40,34 @@ function sameEntry(value: unknown, desired: HostEntry) {
     && !entry.url && entry.enabled !== false && entry.disabled !== true;
 }
 
+/** Refresh only version metadata on a matching existing Orbit transport. */
+function upgradeAdapterVersion(host: AgentHost, text: string, config: Record<string, unknown>, key: string, entry: HostEntry) {
+  const { ORBIT_CLIENT_VERSION: version, ...requiredEnvironment } = entry.env;
+  const servers = mapping(config[key]), previous = mapping(servers.orbit);
+  if (!version || !sameEntry(previous, { ...entry, env: requiredEnvironment })) return undefined;
+  config[key] = { ...servers, orbit: { ...previous, env: { ...mapping(previous.env), ORBIT_CLIENT_VERSION: version } } };
+  if (host !== "codex") return host === "hermes" ? Bun.YAML.stringify(config) : `${JSON.stringify(config, null, 2)}\n`;
+  // Preserve TOML comments and formatting. Parse every candidate and compare the
+  // complete semantic document, so a header inside a multiline string cannot
+  // redirect this metadata edit or change an unrelated setting.
+  const sections = [...text.matchAll(/^[ \t]*\[[^\r\n]*\][ \t]*(?:#[^\r\n]*)?$/gm)];
+  for (const [index, section] of sections.entries()) {
+    try {
+      const probe = Bun.TOML.parse(section[0] + "\n__orbit_probe=1");
+      if (mapping(mapping(mapping(mapping(probe).mcp_servers).orbit).env).__orbit_probe !== 1) continue;
+      const start = (section.index ?? 0) + section[0].length;
+      const end = sections[index + 1]?.index ?? text.length;
+      const block = text.slice(start, end);
+      const assignment = `"ORBIT_CLIENT_VERSION" = ${JSON.stringify(version)}\n`;
+      const line = /^[ \t]*(?:"ORBIT_CLIENT_VERSION"|ORBIT_CLIENT_VERSION)[ \t]*=[^\r\n]*(?:\r?\n|$)/gm;
+      const updated = line.test(block) ? block.replace(line, assignment) : block.replace(/\s*$/, "\n") + assignment;
+      const candidate = text.slice(0, start) + updated + text.slice(end);
+      if (isDeepStrictEqual(Bun.TOML.parse(candidate), config)) return candidate;
+    } catch { /* A nonmatching or incomplete candidate is never written. */ }
+  }
+  throw new Error("Managed Orbit version metadata could not be updated; settings were left unchanged");
+}
+
 /** Preserve unrelated settings. Never claim ownership of an existing, different orbit entry. */
 export function addHostEntry(host: AgentHost, text: string, entry: HostEntry) {
   const parsed = text.trim() ? host === "codex" ? Bun.TOML.parse(text)
@@ -48,6 +77,8 @@ export function addHostEntry(host: AgentHost, text: string, entry: HostEntry) {
   const servers = mapping(config[key]);
   if (Object.hasOwn(servers, "orbit")) {
     if (sameEntry(servers.orbit, entry)) return { changed: false, text };
+    const upgraded = upgradeAdapterVersion(host, text, config, key, entry);
+    if (upgraded !== undefined) return { changed: true, text: upgraded };
     throw new Error("An orbit entry already exists with different settings; it was left unchanged");
   }
   if (host === "codex") {

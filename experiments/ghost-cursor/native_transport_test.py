@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.host import HostError, inspect_host
 from src.native.transport import NativeTransport
-from action_control import ActionControl, ControlError, dispatch_native
+from action_control import ActionControl, ControlError
 import native_host_test as fixtures
 
 if "--transport-source" in sys.argv:
@@ -107,7 +107,7 @@ class TransportTests(unittest.TestCase):
         self.plan["compositor"][1] = 1
         self.plan["signature"] = "other"
         self.control.configure(mode="full")
-        self.assertEqual(self.transport.execute("ghost-hide-cursor 0x123", self.control), "ok")
+        self.assertEqual(self.transport.execute("ghost-cursor 0x123 40 50", self.control), "ok")
 
     def test_journal_failure_precedes_action(self):
         self.prepare()
@@ -127,7 +127,7 @@ class TransportTests(unittest.TestCase):
 
     def test_unrelated_commands_and_multiline_input_refused(self):
         self.prepare()
-        for request in ("dispatch focuswindow 0x123", "ghost-mode full", "ghost-cursor 0x123\nfoo",
+        for request in ("dispatch focuswindow 0x123", "ghost-mode full", "ghost-hide-cursor 0x123", "ghost-cursor 0x123\nfoo",
                         "ghost-cursor\0foo", "ghost-type " + "x" * 65536):
             with self.subTest(request=request[:40]), self.assertRaises(HostError):
                 self.transport.execute(request, self.control)
@@ -152,9 +152,6 @@ class TransportTests(unittest.TestCase):
             with self.subTest(response=response), self.assertRaises(HostError):
                 self.transport.execute("ghost-state 0x123", self.control)
             self.assertEqual(self.control.inspect()["events"][-1]["outcome"], "error")
-            with patch.dict(sys.modules, {"ghost": types.SimpleNamespace(_hypr=lambda _: response.decode())}):
-                with self.assertRaises(ControlError):
-                    dispatch_native("ghost-state 0x123")
         self.response = b'{"suspended":false,"render_unfocused":true}'
         self.assertEqual(json.loads(self.transport.execute("ghost-state 0x123", self.control)),
                          {"suspended": False, "render_unfocused": True})

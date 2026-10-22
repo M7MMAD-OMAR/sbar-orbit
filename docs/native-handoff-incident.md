@@ -1,4 +1,13 @@
-# Native handoff release hold
+# Current status
+
+On 22 October 2026 the owner revoked the permanent policy hold. Current runtime
+checks bind the loaded plugin to current source and the prepared compositor ABI.
+The historical record below describes earlier failures and retired instructions.
+It is not the current operational contract.
+Removing its policy gate does not certify dialogs, selection isolation, other
+applications or other platforms. See [the current contract](desktop-only.md).
+
+# Historical native handoff incident
 
 **Status, 21 October 2026:** owner handoff remains held. The nested lab success in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json) is retained as historical evidence, but cannot release live owner input. The TypeScript and Python gates additionally require an `ownerAcceptance` record with `state: "passed"` and measured `inputDelivered`, `selectionIsolated`, `ownerFocusPreserved`, `ownerPointerPreserved` and `handbackVerified` values of `true`. The committed evidence has no such acceptance. A live owner claim with a throwaway fixture is partly traced below; agent input did not reach the fixture on the live session.
 
@@ -6,21 +15,21 @@ The owner compositor crashed during an existing Chrome window claim on 6 October
 
 The core trace identifies `CExtDataDeviceProtocol::dataDeviceForClient` called by the Orbit claim handler. The pinned upstream lookup dereferences each device without checking for an empty entry. This establishes the failing lookup, but does not by itself establish why the device entry was invalid. An ABI or lifetime defect remains to be ruled out.
 
-The candidate now checks every WLR and ext device and client, rejects incomplete inventories, and checks mandatory seat and selection protocols before lease insertion. Owner handoff, borrowed input, borrowed resume, and owner plugin load or admission resume remain disabled before host access. Status, pause, handback and unload remain available for recovery. There is no runtime override for this release hold.
+At that revision, the candidate checked every WLR and ext device and client, rejected incomplete inventories, and checked mandatory seat and selection protocols before lease insertion. At that revision, owner handoff, borrowed input, borrowed resume, and owner plugin load or admission resume were disabled before host access. Status, pause, handback and unload remained available for recovery. That historical release hold had no runtime override.
 
 The old private compositor harness and browser probes were removed. Historical
 results below describe the previous source only. They do not authorize loading
-the changed plugin. Releasing the hold requires a reviewed method of regression
+the changed plugin. That revision required a reviewed method of regression
 on a separate non-production host, application-state proof of input, selection
 isolation, visible cursor behavior, focus preservation and exact cleanup.
 
-| Evidence | Current result |
+| Evidence | Result at that revision |
 | --- | --- |
 | Real Chrome opening on workspace 4 | Observed before the incident |
 | Owner compositor crash during claim | Confirmed by core trace |
 | Cause of invalid device entry | Not measured. The corrected plugin no longer calls the upstream lookup that dereferenced it |
-| New device inventory guard | Synthetic old-source failure and corrected-source pass measured in [run 37403797681](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37403797681). Actual compositor ABI safety and owner claim remain not measured; the release hold remains active. |
-| New release gate tests | Pure refusal fixtures measured in [run 37409928412](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412): `native-handoff-release.test.ts` checks refusal before worker creation and before owner plugin load or resume spawning; its Linux wrapper runs `native_handoff_release_test.py` for direct claim, input, existing lease resume and plugin mutation refusal before initialization. This does not measure real compositor safety or a completed owner claim; the release hold remains active. |
+| New device inventory guard | Synthetic old-source failure and corrected-source pass measured in [run 37403797681](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37403797681). Actual compositor ABI safety and owner claim remain not measured; the release hold remained active at that revision. |
+| New release gate tests | Pure refusal fixtures measured in [run 37409928412](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/37409928412): `native-handoff-release.test.ts` checks refusal before worker creation and before owner plugin load or resume spawning; its Linux wrapper runs `native_handoff_release_test.py` for direct claim, input, existing lease resume and plugin mutation refusal before initialization. This does not measure real compositor safety or a completed owner claim; the release hold remained active at that revision. |
 | Old crash reproduced | Nested lab, 18 October 2026: the 2116c4b source ended the lab Hyprland with SIGSEGV in `CExtDataDeviceProtocol::dataDeviceForClient` during a real Chrome claim with clipboard watchers present |
 | Corrected Chrome claim and visible cursor | Nested lab, 18 October 2026: claimed; agent cursor, click and typing reached Chrome while a person window kept focus and the pointer stayed put; handback left Chrome and the compositor running (historical probes removed, retained in Git history). Host nested lab, not a separate machine |
 | Selection isolation | Not measured |

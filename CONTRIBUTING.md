@@ -19,8 +19,17 @@ The supported suite exercises native product contracts without launching browser
 or creating private desktops. Platform-specific tests can skip on other hosts;
 report those skips explicitly. Tests and typechecks run one budgeted command at a
 time. See [support tiers](docs/support-tiers.md) for the difference between a source
-contract and actual application acceptance. Never bypass the native input/capture
-release hold to test a refactor.
+contract and actual application acceptance. Verify the actual loaded plugin source and compositor ABI before native
+input or capture, and preserve unrelated owner work. Historical incident reports
+are not a permanent static admission policy.
+
+The generated forwarded-placement Lua behavior probe in
+`tests/native_open_test.py` requires the optional `luajit` executable on PATH.
+Bun exposes this probe as a separate test and explicitly reports it as skipped
+when LuaJIT is absent. The ordinary opening fixture runs independently and does
+not count the probe as passed. This probe ran with LuaJIT on the measured Linux
+host. The hosted metadata-contract
+jobs below do not establish its execution or native desktop acceptance.
 
 `.github/workflows/verify-native.yml` runs source contracts and the dependency guard
 on Linux, Windows and macOS. Its website job checks and builds the English and

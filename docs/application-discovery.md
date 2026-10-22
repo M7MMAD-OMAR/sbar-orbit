@@ -28,5 +28,6 @@ See [actual application results](native-opening.md), [the CLI](cli.md) and
 
 macOS bundle metadata and Windows App Paths adapters are implemented for discovery.
 Their fixtures do not certify real native application opening or control. No native
-opening adapter is implemented for those platforms. Owner input and capture remain
-under the [compositor release hold](native-handoff-incident.md).
+opening adapter is implemented for those platforms. Native input and capture require a matching loaded source and compositor ABI.
+See [current acceptance](native-acceptance-0.3.0.md); the compositor incident is
+retained as historical evidence.

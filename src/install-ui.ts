@@ -23,8 +23,8 @@ const mark = [
 export const offerings = [
   "Open original native applications on an explicitly selected numbered workspace.",
   "Applications keep their normal owner profiles and remain open.",
-  "No browser launch, profile copying or private desktop fallback exists.",
-  "Opening is separate from input control, which remains under the compositor crash hold.",
+  "Original browser and terminal registrations use normal owner application state.",
+  "Explicit native handoff enables input and capture with a matching prepared plugin.",
   "Requests have stable identities and decisions are journalled.",
   "The broker runs inside the shared CPU and memory budget.",
 ];

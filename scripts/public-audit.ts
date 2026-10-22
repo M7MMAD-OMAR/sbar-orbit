@@ -12,10 +12,13 @@ const git = async (...args: string[]) => {
  * Keyed by content, not by path, so replacing an approved file with different bytes fails the audit
  * again rather than inheriting its approval. Each of these was opened and looked at: flat brand
  * artwork, generated website illustrations, the supplied coffee button, and the licensed DM Sans
- * font. Website provenance is recorded in website/ASSETS.md. Images contain no personal metadata
- * or captures of the person's machine. A binary that is not listed here still fails, which is the whole point of the rule.
+ * font. Website provenance is recorded in website/ASSETS.md. Images contain no personal metadata. Native application captures require an
+ * individual content review recorded beside their digest. A binary that is not listed here still fails, which is the whole point of the rule.
  */
 const reviewedBinaries = new Map([
+  // Reviewed 22 October 2026: original Calculator capture, only disposable
+  // arithmetic history, no account, document, owner desktop or personal metadata.
+  ["docs/images/native-shared-clipboard.png", "d0938216da250b60ed0a41620ce3e95e4c63d3be25715d47466b83c37eb917a3"],
   // Reviewed 7 October 2026: viewed solid blue 32 by 24 test JPEG, JFIF only, no personal metadata.
   ["tests/fixtures/controlled-frame-32x24.jpg", "1ab7074552f237f12bb69c219b768321ca43697df1de8d0f0e6a2ace16d3a9d8"],
   ["brand/logo/lockup-arabic-black.png", "3193c90cc1a4f8168e99e1d803d1d8068fcab8515df26d05db3152f7b4fc0b13"],

@@ -10,7 +10,8 @@ from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
 from src.native.host import read_plan
-from src.native.session import NativeSession, SessionError, identifier
+from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, PresentationNotReady, identifier
+from src.native.plugin_compatibility import NativeCompatibilityError
 from src.native.host import verify_host
 
 
@@ -85,13 +86,12 @@ def main(directory, control_directory, plan_path, session_type=None):
                             result = {"ready": True}
                         elif method == "act":
                             result = session.execute(params)
-                        elif method in ("claim", "candidates", "open") and session_type is not NativeSession:
+                        elif method in ("claim", "candidates", "open", "monitors", "present") and session_type is not NativeSession:
                             result = getattr(session, method)(params)
                         elif method in ("pause", "resume") and not params and session_type is not NativeSession:
                             result = session.set_paused(method == "pause")
                         elif method == "close-application" and set(params) == {"appId"}:
-                            session.close_application(params["appId"])
-                            result = {"closed": True}
+                            result = session.close_application(params["appId"]) or {"closed": True}
                         elif method == "close" and not params:
                             session.close()
                             result = {"closed": True}
@@ -100,7 +100,11 @@ def main(directory, control_directory, plan_path, session_type=None):
                         response = {"ok": True, "result": result}
                     except BaseException as error:
                         traceback.print_exception(error, file=sys.stderr)
-                        code = ("APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
+                        code = ("OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
+                                else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
+                                else "OWNER_BUSY" if isinstance(error, ApplicationOwnerBusy)
+                                else "NATIVE_INCOMPATIBLE" if isinstance(error, NativeCompatibilityError)
+                                else "SESSION_CLOSED" if isinstance(error, ApplicationControlEnded) else "APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
                                 else "INVALID_REQUEST" if isinstance(error, SessionError) else "NATIVE_FAILED")
                         message = str(error)[:300] if session_type is not NativeSession and isinstance(error, SessionError) else "Native request failed; see the private worker log"
                         response = {"ok": False, "error": {"code": code, "message": message}}

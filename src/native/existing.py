@@ -10,9 +10,10 @@ from types import SimpleNamespace
 import uuid
 
 from .application import private_directory
-from .handoff_release import require_owner_handoff
+from .plugin_compatibility import require_native_plugin
+from .indicator_style import apply_indicator_style
 from .budget import require_budget
-from .session import NativeSession, SessionError, identifier
+from .session import NativeSession, SessionError, ApplicationControlEnded, ApplicationOwnerBusy, PresentationNotReady, identifier
 from .transport import NativeTransport, action_response
 
 
@@ -74,6 +75,59 @@ class ExistingApplicationSession(NativeSession):
                 raise SessionError("Workspace contains too many handoff candidates")
         return {"workspace": selection["workspace"], "candidates": result}
 
+    def monitors(self, value):
+        require_budget()
+        if not isinstance(value, dict) or value:
+            raise SessionError("Monitor discovery accepts no parameters")
+        if self.closed:
+            raise SessionError("Native worker is closed")
+        monitors = json.loads(self.transport._exchange("j/monitors"))
+        if not isinstance(monitors, list) or len(monitors) > 64:
+            raise SessionError("Invalid compositor monitor metadata")
+        result, names = [], set()
+        for monitor in monitors:
+            if not isinstance(monitor, dict):
+                raise SessionError("Invalid compositor monitor metadata")
+            name, focused = monitor.get("name"), monitor.get("focused")
+            active = monitor.get("activeWorkspace")
+            workspace = active.get("id") if isinstance(active, dict) else None
+            if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", name)
+                    or name in names or type(focused) is not bool):
+                raise SessionError("Invalid compositor monitor identity")
+            names.add(name)
+            result.append({"name": name, "focused": focused,
+                           "workspace": workspace if type(workspace) is int and 1 <= workspace <= 2147483647 else None})
+        return {"monitors": result, "sampled": "compositor-monitor-metadata"}
+
+    def present(self, value):
+        require_budget()
+        if not isinstance(value, dict) or set(value) != {"workspace", "monitor"}:
+            raise SessionError("Presentation requires an explicit monitor and numbered workspace")
+        workspace, monitor = value["workspace"], value["monitor"]
+        if (type(workspace) is not int or not 1 <= workspace <= 2147483647
+                or not isinstance(monitor, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", monitor)):
+            raise SessionError("Invalid presentation workspace or monitor")
+        if self.closed:
+            raise SessionError("Native worker is closed")
+        request = "native-present " + json.dumps(value, sort_keys=True)
+
+        def operation():
+            build = json.loads(self.transport._exchange("ghost-build-info"))
+            if (not isinstance(build, dict) or not isinstance(build.get("source_sha256"), str)
+                    or not isinstance(build.get("abi_hash"), str)):
+                raise SessionError("Invalid compositor plugin build")
+            require_native_plugin(build["source_sha256"], build["abi_hash"], expected_abi=self.plan.get("abi_hash"))
+            # Only the typed compositor marker guarantees pre-mutation refusal.
+            # Generic failures can follow the presentation callback and stay uncertain.
+            response = self.transport._exchange(f"ghost-workspace-present {workspace} {monitor}")
+            if response.startswith("not-ready: "):
+                raise PresentationNotReady(response)
+            action_response("workspace-present", response)
+            return {"workspace": workspace, "monitor": monitor, "visible": True,
+                    "ownerFocusPreserved": "during-presentation", "sampled": "compositor-acknowledgement"}
+
+        return self.control.execute(request, operation)
+
     def _info(self):
         if self.lease_id is None:
             raise SessionError("No application has been handed off")
@@ -88,14 +142,13 @@ class ExistingApplicationSession(NativeSession):
         return reply
 
     def claim(self, value):
-        require_owner_handoff()
         require_budget()
         build = json.loads(self.transport._exchange("ghost-build-info"))
         if (not isinstance(build, dict) or not isinstance(build.get("source_sha256"), str)
                 or not isinstance(build.get("abi_hash"), str)):
             raise SessionError("Invalid compositor plugin build")
-        # The loaded plugin must be the build the release evidence measured, on the same compositor.
-        require_owner_handoff(build.get("source_sha256"), build.get("abi_hash"))
+        # Bind actual loaded source and ABI before claiming any application.
+        require_native_plugin(build.get("source_sha256"), build.get("abi_hash"), expected_abi=self.plan.get("abi_hash"))
         with self.lock:
             if self.closed or self.lease_id is not None:
                 raise SessionError("Existing application session already claimed or closed")
@@ -116,8 +169,11 @@ class ExistingApplicationSession(NativeSession):
                 "address": selected["address"], "stableId": selected["stableId"]}, sort_keys=True)
 
             def operation():
+                apply_indicator_style(self.transport)
                 command = f"ghost-application-claim {selected['address']} {selected['stableId']} {lease_id}"
                 raw = self.transport._exchange(command)
+                if raw.strip() == "refused: application client is receiving owner input":
+                    raise ApplicationOwnerBusy("Application client is receiving owner keyboard or pointer input; handoff preserves owner focus")
                 if raw.startswith("refused:"):
                     raise SessionError("Application handoff " + raw[:300])
                 reply = json.loads(raw)
@@ -126,13 +182,20 @@ class ExistingApplicationSession(NativeSession):
                         or reply.get("scope") != "entire-wayland-client"
                         or type(reply.get("windows")) is not int or not 1 <= reply["windows"] <= 64):
                     raise SessionError("Application handoff failed; retained identity needs cleanup")
+                enrollment = reply.get("windowEnrollment")
+                if enrollment is not None and enrollment not in ("client-windows", "selected-dialog-family"):
+                    raise SessionError("Invalid application window enrollment acknowledgement")
                 self.apps[lease_id] = SimpleNamespace(unit="lease-" + lease_id, profile=self.directory, closed=False)
                 windows = self._owned_windows(lease_id)
                 selected_window = next((window["windowId"] for window in windows
                     if self.windows[window["windowId"]]["key"][1] == selected["stableId"]), None)
                 if selected_window is None:
                     raise SessionError("Selected window disappeared during application handoff")
-                return {"appId": lease_id, "selectedWindowId": selected_window, "scope": reply["scope"], "windows": windows}
+                target = self._target(lease_id, selected_window)
+                address = target["address"] + "@" + target["key"][1] + "@lease-" + lease_id
+                pointer = self._ensure_pointer(target, address)
+                return {"appId": lease_id, "selectedWindowId": selected_window, "scope": reply["scope"], "clipboard": "shared", "pointer": pointer, "windows": windows,
+                        **({"windowEnrollment": enrollment} if enrollment is not None else {})}
 
             return self.control.execute(request, operation)
 
@@ -140,7 +203,7 @@ class ExistingApplicationSession(NativeSession):
         self._app(app_id)
         info = self._info()
         if info["status"] == "unavailable":
-            raise SessionError("Application handoff is no longer live")
+            raise ApplicationControlEnded("Application control ended; inspect native candidates to distinguish window closure from owner handback")
         clients = json.loads(self.transport._exchange("j/clients"))
         if not isinstance(clients, list) or len(clients) > 4096:
             raise SessionError("Invalid compositor window list")
@@ -177,21 +240,30 @@ class ExistingApplicationSession(NativeSession):
         return result
 
     def execute(self, value):
-        require_owner_handoff()
         with self.lock:
             return super().execute(value)
 
     def set_paused(self, paused):
         if not paused:
-            require_owner_handoff()
-        require_budget()
+            require_budget()
         with self.lock:
             if self.closed or self.lease_id is None:
                 raise SessionError("Application handoff is unavailable")
+            if self._info()["status"] == "unavailable":
+                raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
             operation = "pause" if paused else "resume"
             request = f"ghost-application-control {self.lease_id} {operation}"
-            action = lambda: action_response("application-control", self.transport._exchange(request))
-            return self.control.cleanup(request, action) if paused else self.control.execute(request, action)
+            def action():
+                reply = self.transport._exchange(request)
+                if reply.strip() == "refused: application lease unavailable":
+                    return {"controlEnded": True}
+                return action_response("application-control", reply)
+            result = self.control.cleanup(request, action) if paused else self.control.execute(request, action)
+            # Preserve the reconciled terminal outcome outside cleanup's grouped
+            # journal errors so the worker can close this backend accurately.
+            if isinstance(result, dict) and result.get("controlEnded") is True:
+                raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
+            return result
 
     def launch(self, *args, **kwargs):
         raise SessionError("An existing application session cannot launch applications")
@@ -201,6 +273,7 @@ class ExistingApplicationSession(NativeSession):
         if app_id != self.lease_id:
             raise SessionError("Application belongs to another handoff")
         self.close()
+        return {"handedBack": True, "applicationClosed": False}
 
     def close(self):
         with self.lock:

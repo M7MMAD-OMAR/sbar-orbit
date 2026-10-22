@@ -33,7 +33,7 @@ test("HOME wrapper resolves the original installation and preserves owner HOME",
     await writeFile(wrapper, '#!/bin/sh\nexec "$HOME/random package location/arbitrary-tool" "$@"\n', { mode: 0o755 });
     await f.desktop("org.example.Tool.desktop", 'launcher HOME');
     const result = await resolveInstalledApplication("org.example.Tool.desktop", f.options);
-    expect(result.argv).toEqual([f.executable, "HOME"]);
+    expect(result.argv).toEqual([wrapper, "HOME"]);
     const child = Bun.spawn(result.argv, { env: { HOME: f.home }, stdout: "pipe", stderr: "pipe" });
     expect((await new Response(child.stdout).text()).trim()).toBe(f.home);
     expect(await child.exited).toBe(0);
@@ -45,9 +45,9 @@ test("literal wrappers resolve without executing setup scripts", async () => {
     const wrapper = join(f.bin, "launcher");
     await writeFile(wrapper, `#!/bin/sh\nexec "${f.executable}" "$@"\n`, { mode: 0o755 });
     await f.desktop("tool.desktop", 'launcher HOME');
-    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([f.executable, "HOME"]);
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper, "HOME"]);
     await writeFile(wrapper, `#!/bin/sh\nexport HOME=/other\nexec "${f.executable}" "$@"\n`);
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("supported launch recipe");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper, "HOME"]);
   } finally { await f.close(); }
 });
 
@@ -59,7 +59,7 @@ test("unquoted wrapper expansions are never reinterpreted as literal executable 
       const target = join(f.root, name);
       await copyFile(f.executable, target); await chmod(target, 0o755);
       await writeFile(wrapper, `#!/bin/sh\nexec ${target} "$@"\n`, { mode: 0o755 });
-      await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("expression");
+      expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper]);
     }
   } finally { await f.close(); }
 });
@@ -73,30 +73,30 @@ test("undefined desktop quoting and unquoted reserved arguments refuse", async (
   } finally { await f.close(); }
 });
 
-test("wrapper carriage returns cannot be normalized into a different program", async () => {
+test("wrapper carriage returns are left for the original entrypoint instead of normalized", async () => {
   const f = await fixture(); try {
     const wrapper = join(f.bin, "launcher");
     await f.desktop("tool.desktop", "launcher");
     await writeFile(wrapper, `#!/bin/sh\r\nexec "${f.executable}" "$@"\r\n`, { mode: 0o755 });
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow();
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper]);
   } finally { await f.close(); }
 });
 
-test("multibyte wrapper comments cannot hide statements beyond the read limit", async () => {
+test("large installed wrappers remain unchanged instead of being partially interpreted", async () => {
   const f = await fixture(); try {
     const wrapper = join(f.bin, "launcher");
     await f.desktop("tool.desktop", "launcher");
     await writeFile(wrapper, `#!/bin/sh\nexec "${f.executable}" "$@"\n#${"é".repeat(10000)}\nexit 1\n`, { mode: 0o755 });
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("size");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper]);
   } finally { await f.close(); }
 });
 
-test("an invocation alias does not hide an unsupported shell adapter", async () => {
+test("registered interpreter aliases preserve the original invocation without evaluation", async () => {
   const f = await fixture(); try {
     const alias = join(f.bin, "launcher");
     await symlink("/bin/sh", alias);
     await f.desktop("tool.desktop", 'launcher -c "exit 0"');
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("adapter");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([alias, "-c", "exit 0"]);
   } finally { await f.close(); }
 });
 
@@ -112,7 +112,7 @@ test("non-ASCII shell whitespace is not normalized into an exec statement", asyn
     const wrapper = join(f.bin, "launcher");
     await f.desktop("tool.desktop", "launcher");
     await writeFile(wrapper, `#!/bin/sh\n\u00a0exec "${f.executable}" "$@"\n`, { mode: 0o755 });
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow();
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper]);
   } finally { await f.close(); }
 });
 
@@ -125,11 +125,11 @@ test("registration preserves invocation alias instead of changing argv zero", as
   } finally { await f.close(); }
 });
 
-test("caller profile overrides are unavailable through registered opening", async () => {
+test("profile choices in the original registration remain literal arguments", async () => {
   const f = await fixture(); try {
-    for (const args of ['--profile /owner/profile', '--user-data-dir=/owner/profile', '-P personal', '--profile-directory=Default']) {
-      await f.desktop("profile.desktop", `"${f.executable}" ${args}`);
-      await expect(resolveInstalledApplication("profile.desktop", f.options)).rejects.toThrow("profile");
+    for (const args of [["--profile", "/owner/profile"], ["--user-data-dir=/owner/profile"], ["-P", "personal"], ["--profile-directory=Default"]]) {
+      await f.desktop("profile.desktop", `"${f.executable}" ${args.join(" ")}`);
+      expect((await resolveInstalledApplication("profile.desktop", f.options)).argv).toEqual([f.executable, ...args]);
     }
   } finally { await f.close(); }
 });
@@ -165,18 +165,44 @@ test("D-Bus activatable registrations retain a validated direct Exec compatibili
   } finally { await f.close(); }
 });
 
-test("unsafe expressions and unsupported activation adapters refuse before execution", async () => {
+test("Flatpak metadata and installed terminal dispatchers retain registered execution semantics", async () => {
   const f = await fixture(); try {
-    for (const extra of ["Terminal=true\n", "X-Flatpak=example.App\n"]) {
-      await f.desktop("tool.desktop", `"${f.executable}"`, extra);
-      await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("unsupported activation");
-    }
+    await f.desktop("tool.desktop", `"${f.executable}"`, "X-Flatpak=example.App\n");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([f.executable]);
+    const terminal = join(f.bin, "xdg-terminal-exec");
+    await copyFile(f.executable, terminal); await chmod(terminal, 0o755);
+    await f.desktop("tool.desktop", `"${f.executable}" HOME`, "Terminal=true\n");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([terminal, f.executable, "HOME"]);
     await f.desktop("tool.desktop", `"${f.executable}" $(touch marker)`);
     await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("expression");
     const wrapper = join(f.bin, "launcher");
     await writeFile(wrapper, '#!/bin/sh\nexec "$(touch marker)" "$@"\n', { mode: 0o755 });
     await f.desktop("tool.desktop", 'launcher');
-    await expect(resolveInstalledApplication("tool.desktop", f.options)).rejects.toThrow("expression");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([wrapper]);
+  } finally { await f.close(); }
+});
+
+test("terminal-hosted registrations use an installed normal terminal when the desktop dispatcher is absent", async () => {
+  const f = await fixture(); try {
+    const terminal = join(f.bin, "konsole");
+    await copyFile(f.executable, terminal); await chmod(terminal, 0o755);
+    await f.desktop("org.kde.konsole.desktop", 'konsole');
+    await f.desktop("tool.desktop", `"${f.executable}" HOME`, "Terminal=true\n");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv).toEqual([terminal, "-e", f.executable, "HOME"]);
+  } finally { await f.close(); }
+});
+
+for (const terminal of [
+  { id: "org.gnome.Ptyxis.desktop", executable: "ptyxis" },
+  { id: "org.gnome.Terminal.desktop", executable: "gnome-terminal" },
+]) test(`terminal-hosted registrations preserve ${terminal.executable} registered arguments`, async () => {
+  const f = await fixture(); try {
+    const executable = join(f.bin, terminal.executable);
+    await copyFile(f.executable, executable); await chmod(executable, 0o755);
+    await f.desktop(terminal.id, `${terminal.executable} --new-window %U`);
+    await f.desktop("tool.desktop", `"${f.executable}" "literal payload"`, "Terminal=true\n");
+    expect((await resolveInstalledApplication("tool.desktop", f.options)).argv)
+      .toEqual([executable, "--new-window", "--", f.executable, "literal payload"]);
   } finally { await f.close(); }
 });
 
@@ -208,32 +234,30 @@ test("desktop string escapes decode before the Exec quoting layer", async () => 
   } finally { await f.close(); }
 });
 
-test("expanded Name and Icon cannot synthesize profile selection arguments", async () => {
+test("expanded desktop fields remain literal argv entries including profile-looking values", async () => {
   const f = await fixture(); try {
     for (const flag of ["--profile", "--user-data-dir=/owner/profile", "--profile-directory=Default", "-P"]) {
       await writeFile(join(f.registrations, "expanded.desktop"),
         `[Desktop Entry]\nType=Application\nName=${flag}\nExec="${f.executable}" %c /owner/profile\n`);
-      await expect(resolveInstalledApplication("expanded.desktop", f.options)).rejects.toThrow("profile");
+      expect((await resolveInstalledApplication("expanded.desktop", f.options)).argv).toEqual([f.executable, flag, "/owner/profile"]);
     }
     await f.desktop("expanded.desktop", `"${f.executable}" %i`, "Icon=--user-data-dir=/owner/profile\n");
-    await expect(resolveInstalledApplication("expanded.desktop", f.options)).rejects.toThrow("profile");
+    expect((await resolveInstalledApplication("expanded.desktop", f.options)).argv).toEqual([f.executable, "--icon", "--user-data-dir=/owner/profile"]);
   } finally { await f.close(); }
 });
 
-test("browser and terminal registrations are refused before executable launch", async () => {
-  const f = await fixture();
-  try {
+test("application categories and browser names do not impose launch prohibitions", async () => {
+  const f = await fixture(); try {
     for (const category of ["WebBrowser", "TerminalEmulator"]) {
-      await f.desktop("org.example.Refused.desktop", `"${f.executable}"`, `Categories=${category};\n`);
-      await expect(resolveInstalledApplication("org.example.Refused.desktop", f.options))
-        .rejects.toMatchObject({ code: "UNSUPPORTED" });
+      await f.desktop("org.example.Allowed.desktop", `"${f.executable}"`, `Categories=${category};\n`);
+      expect((await resolveInstalledApplication("org.example.Allowed.desktop", f.options)).argv).toEqual([f.executable]);
     }
     await f.desktop("firefox.desktop", `"${f.executable}"`);
-    await expect(resolveInstalledApplication("firefox.desktop", f.options)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect((await resolveInstalledApplication("firefox.desktop", f.options)).argv).toEqual([f.executable]);
   } finally { await f.close(); }
 });
 
-test.each(["firefox", "zen", "zen-bin", "helium"])("native opening refuses %s behind aliases and wrappers", async browserName => {
+test.each(["firefox", "zen", "zen-bin", "helium"])("native opening preserves original %s aliases and wrappers", async browserName => {
   const f = await fixture();
   try {
     const browser = join(f.bin, browserName);
@@ -243,8 +267,7 @@ test.each(["firefox", "zen", "zen-bin", "helium"])("native opening refuses %s be
       if (mode === "alias") await symlink(browser, entry);
       else await writeFile(entry, `#!/bin/sh\nexec "${browser}" "$@"\n`, { mode: 0o755 });
       await f.desktop("org.example.Tool.desktop", `"${entry}"`, "Categories=Utility;\n");
-      await expect(resolveInstalledApplication("org.example.Tool.desktop", f.options))
-        .rejects.toMatchObject({ code: "UNSUPPORTED" });
+      expect((await resolveInstalledApplication("org.example.Tool.desktop", f.options)).argv).toEqual([entry]);
     }
   } finally { await f.close(); }
 });
@@ -255,31 +278,30 @@ test("registered native Python entry script preserves its installed path without
     await f.desktop("native-script.desktop", `"${f.executable}"`);
     expect((await resolveInstalledApplication("native-script.desktop", f.options)).argv).toEqual([f.executable]);
     await writeFile(f.executable, '#!/usr/bin/python3 -c\nprint(1)\n');
-    await expect(resolveInstalledApplication("native-script.desktop", f.options)).rejects.toThrow("unsupported interpreter");
+    expect((await resolveInstalledApplication("native-script.desktop", f.options)).argv).toEqual([f.executable]);
   } finally { await f.close(); }
 });
 
-test("registered rendering environment wrapper preserves only finite toolkit values and still rejects browser aliases", async () => {
+test("registered environment customization stays unchanged and is not evaluated during resolution", async () => {
   const f = await fixture(); try {
     const options = {...f.options, env:{...f.options.env,PATH:f.bin+":/usr/bin"}};
-    await f.desktop("native-env.desktop", `env GSK_RENDERER=cairo "${f.executable}"`);
-    expect((await resolveInstalledApplication("native-env.desktop",options)).argv).toEqual(["/usr/bin/env","GSK_RENDERER=cairo",f.executable]);
-    for(const value of ["HOME=/other","LD_PRELOAD=/tmp/code.so","GSK_RENDERER=cairo=extra","GSK_RENDERER=$(touch /tmp/no)","GSK_RENDERER=cairo GSK_RENDERER=gl"]){
-      await f.desktop("native-env.desktop",`env ${value} "${f.executable}"`);
-      await expect(resolveInstalledApplication("native-env.desktop",options)).rejects.toThrow();
+    for (const assignment of ["GSK_RENDERER=cairo", "MOZ_ENABLE_WAYLAND=1", "QT_IM_MODULE=fcitx", "GSK_RENDERER=cairo=extra"]) {
+      await f.desktop("native-env.desktop", `env ${assignment} "${f.executable}"`);
+      expect((await resolveInstalledApplication("native-env.desktop",options)).argv).toEqual(["/usr/bin/env",assignment,f.executable]);
     }
+    await f.desktop("native-env.desktop", `env GSK_RENDERER=$(touch /tmp/no) "${f.executable}"`);
+    await expect(resolveInstalledApplication("native-env.desktop",options)).rejects.toThrow("expression");
     const alias=join(f.bin,"zen");await copyFile(f.executable,alias);await chmod(alias,0o755);
     await f.desktop("native-env.desktop",`env GSK_RENDERER=cairo "${alias}"`);
-    await expect(resolveInstalledApplication("native-env.desktop",options)).rejects.toThrow("browser");
+    expect((await resolveInstalledApplication("native-env.desktop",options)).argv).toEqual(["/usr/bin/env","GSK_RENDERER=cairo",alias]);
   } finally { await f.close(); }
 });
 
-
-test("versioned interpreter commands cannot evaluate a registration as a native app", async () => {
+test("registered versioned interpreters retain literal arguments without resolution-time execution", async () => {
   const f = await fixture(); try {
     const interpreter=join(f.bin,"python3.14");await copyFile(f.executable,interpreter);await chmod(interpreter,0o755);
     await f.desktop("eval.desktop",`"${interpreter}" -c "raise RuntimeError()"`);
-    await expect(resolveInstalledApplication("eval.desktop",f.options)).rejects.toThrow("unsupported command adapter");
+    expect((await resolveInstalledApplication("eval.desktop",f.options)).argv).toEqual([interpreter,"-c","raise RuntimeError()"]);
   } finally {await f.close();}
 });
 
@@ -305,7 +327,39 @@ test("registered visible GTK and Qt backend customization preserves the normal d
     }
     for(const assignment of ["GDK_BACKEND=broadway", "QT_QPA_PLATFORM=offscreen", "DISPLAY=:99", "WAYLAND_DISPLAY=other-session"]) {
       await f.desktop("native-display.desktop",`env ${assignment} "${f.executable}"`);
-      await expect(resolveInstalledApplication("native-display.desktop",options)).rejects.toThrow();
+      expect((await resolveInstalledApplication("native-display.desktop",options)).argv).toEqual(["/usr/bin/env",assignment,f.executable]);
     }
   } finally {await f.close();}
+});
+
+
+test("original browser and terminal registrations retain their installed entrypoint and profile arguments", async () => {
+  const f = await fixture(); try {
+    for (const category of ["WebBrowser", "TerminalEmulator"]) {
+      const entry = join(f.bin, category === "WebBrowser" ? "firefox" : "kgx");
+      await copyFile(f.executable, entry); await chmod(entry, 0o755);
+      await f.desktop("native-owner.desktop", `"${entry}" --profile-directory=Default`, `Categories=${category};\n`);
+      expect((await resolveInstalledApplication("native-owner.desktop", f.options)).argv).toEqual([entry, "--profile-directory=Default"]);
+    }
+  } finally { await f.close(); }
+});
+
+test("registered application setup wrapper is returned unchanged and never evaluated during resolution", async () => {
+  const f = await fixture(); try {
+    const entry = join(f.bin, "vendor-launcher");
+    await writeFile(entry, '#!/bin/sh\nexport VENDOR_SETUP=original\necho do-not-run-during-resolution >&2\nexec /usr/bin/printenv VENDOR_SETUP\n', { mode: 0o755 });
+    await f.desktop("vendor.desktop", `"${entry}"`);
+    expect((await resolveInstalledApplication("vendor.desktop", f.options)).argv).toEqual([entry]);
+  } finally { await f.close(); }
+});
+
+
+test("DBus launch identity comes only from an activatable desktop registration", async () => {
+  const f = await fixture();
+  try {
+    await f.desktop("org.example.Editor.desktop", `"${f.executable}"`, "DBusActivatable=true\n");
+    expect(await resolveInstalledApplication("org.example.Editor.desktop", f.options)).toMatchObject({ busName: "org.example.Editor", argv: [f.executable] });
+    await f.desktop("org.example.Editor.desktop", `"${f.executable}"`);
+    expect(await resolveInstalledApplication("org.example.Editor.desktop", f.options)).not.toHaveProperty("busName");
+  } finally { await f.close(); }
 });

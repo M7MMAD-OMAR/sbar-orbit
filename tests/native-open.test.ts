@@ -38,10 +38,21 @@ test("native opening deduplicates delivery and allows retry after approval denia
 });
 
 (process.platform === "linux" ? test : test.skip)("opening fixtures bind the window to the launcher and honor protected controls", async () => {
-  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native_open_test.py")], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native_open_test.py"), "OpenTests", "LaunchIdentityTests"], { stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect({ out, code }).toEqual({ out: "", code: 0 });
   expect(err).toContain("OK");
+  expect(err).not.toContain("skipped=");
+});
+
+test.skipIf(process.platform !== "linux" || !Bun.which("luajit"))("generated placement Lua preserves focus and pointer, requires LuaJIT", async () => {
+  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native_open_test.py"), "LuaPlacementTests"],
+    { stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect({ out, code, err }).toMatchObject({ out: "", code: 0 });
+  expect(err).toContain("Ran 1 test");
+  expect(err).toContain("OK");
+  expect(err).not.toContain("skipped=");
 });
 
 

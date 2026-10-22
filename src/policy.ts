@@ -45,14 +45,13 @@ const classOfAction: Record<string, ActionClass> = {
   read: "read", observe: "read", scroll: "read", resize: "read", "select-tab": "read",
   windows: "read", state: "read", desktops: "read", "list-windows": "read", inspect: "read",
   navigate: "navigate", "open-tab": "navigate",
-  // Everything that changes state inside the session's own workspace. `launch` belongs here rather
-  // than in the irreversible class: it starts an application on the private display, which is
-  // disposable and whose descendants are reaped when the session stops, so it leaves nothing behind.
-  // That is a statement about the display, not about the program: the native launcher is not
-  // permission containment and does not make an arbitrary same-user command safe.
+  // Application mutations use ordinary owner state. Classification determines
+  // the owner's chosen policy, not OS permissions or automatic process cleanup.
   fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
   pointer: "write", window: "write", launch: "write", "launch-installed": "write", "launch-app": "write", desktop: "write", "move-window": "write",
-  cursor: "write", move: "write", "hide-cursor": "write", "close-application": "write",
+  cursor: "write", move: "write", "close-application": "write",
+  // Normal window closure can discard unsaved application content.
+  "close-window": "irreversible",
   // Leaves the workspace for the filesystem, so stopping the session does not take it back.
   download: "irreversible",
   // Hands local files to a page, which sends them wherever that page sends them.
@@ -192,11 +191,8 @@ export type SessionPolicy = {
   /**
    * Origins this session may reach, as scheme plus host plus optional port. Never widened later.
    *
-   * "any" means unbounded, and it is spelled out rather than implied by an empty list so that it is
-   * greppable and cannot be reached by forgetting a field. It is correct for the session Orbit has
-   * always created, which starts from an empty profile and holds no credentials: there is nothing to
-   * steer such a session toward. It is refused for a session carrying the person's real logins, and
-   * `requireBoundedOrigins` is where that refusal lives.
+   * "any" allows every origin. Explicit origin lists remain available for callers
+   * choosing a narrower policy; native sessions use owner-authorized defaults.
    */
   origins: string[] | "any";
   /** Classes permitted without a person. Anything absent is refused. */
@@ -209,35 +205,16 @@ export type SessionPolicy = {
   advisor?: AdvisorConfig;
 };
 
-/** Look, do not touch, go nowhere that was not named in advance. The right policy for a session that carries real logins. */
+/** Explicit read-only template. Native sessions use nativeApplicationPolicy by default. */
 export const readOnlyPolicy: SessionPolicy = { mode: "supervised", origins: [], allow: ["read"], deny: ["irreversible"] };
 
-/**
- * The default for a session that starts from an empty profile, which is every session Orbit creates
- * today. It holds no credentials, so bounding where it may go protects nothing and would only break
- * the agent. What it still refuses is the irreversible class, including any action Orbit does not
- * recognise, because that is about the machine rather than about the person's accounts.
- */
-export const freshProfilePolicy: SessionPolicy = { mode: "supervised", origins: "any", allow: ["read", "navigate", "write"], deny: ["irreversible"] };
-
-/**
- * A session holding the person's real logins must name where it may go. This is the single refusal
- * that makes the clone survivable: a page can say anything, and the set of reachable origins was
- * closed before the page was read.
- */
-export function requireBoundedOrigins(policy: SessionPolicy): string[] {
-  if (policy.origins === "any")
-    throw new OrbitError("INVALID_REQUEST", "A session carrying real browser sessions must name the origins it may reach; unbounded origins are refused for it.");
-  if (!policy.origins.length)
-    throw new OrbitError("INVALID_REQUEST", "Name at least one origin this session may reach.");
-  return policy.origins;
-}
+/** Native owner controls authorize actions; callers may explicitly narrow the session policy. */
+export const nativeApplicationPolicy: SessionPolicy = { mode: "autonomous", origins: "any", allow: ["read", "navigate", "write", "irreversible"], deny: [] };
 
 function normaliseOrigin(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new OrbitError("INVALID_REQUEST", "An origin must be a non-empty string");
-  // A bare wildcard is refused rather than normalised. A session holding the person's real logins
-  // with an unbounded origin set is the case this whole module exists to prevent, so there is no
-  // spelling of it that Orbit accepts.
+  // Explicit origin lists contain exact origins. Unbounded policies use the
+  // separate "any" value rather than wildcard spellings inside a list.
   if (value === "*" || value.includes("://*")) throw new OrbitError("INVALID_REQUEST", "A wildcard origin is not allowed; name each origin the session may reach");
   let url: URL;
   try { url = new URL(value.includes("://") ? value : `https://${value}`); }
@@ -281,15 +258,13 @@ export function parsePolicy(value: unknown): SessionPolicy {
     return [...new Set(input.origins.map(normaliseOrigin))];
   })();
   const allow = input.allow === undefined ? readOnlyPolicy.allow : list(input.allow, "allow");
-  // An omitted deny is not an empty deny. The irreversible class covers downloads, launches and
-  // every action Orbit does not recognise, so leaving it out of the request must not quietly permit
-  // it. Reaching those takes two deliberate statements: name the class in allow AND pass an explicit
-  // deny that does not contain it.
+  // Explicit partial policies retain the read-only template's deny unless supplied.
+  // Native session creation supplies nativeApplicationPolicy defaults before parsing.
   const deny = input.deny === undefined ? [...readOnlyPolicy.deny] : list(input.deny, "deny");
   // Navigation with no origin named cannot be satisfied by any URL, so it is a contradiction rather
   // than a permission. Saying so at creation is better than refusing every navigation later.
   if (allow.includes("navigate") && origins !== "any" && !origins.length)
-    throw new OrbitError("INVALID_REQUEST", "Allowing navigate requires naming at least one origin the session may reach, or \"any\" for a session with no real logins");
+    throw new OrbitError("INVALID_REQUEST", "Allowing navigate requires naming at least one origin the session may reach, or \"any\" for an unbounded policy");
   const rules = input.rules === undefined ? undefined : (() => {
     if (!Array.isArray(input.rules)) throw new OrbitError("INVALID_REQUEST", "Policy rules must be an array");
     if (input.rules.length > 256) throw new OrbitError("INVALID_REQUEST", "At most 256 rules for one session");

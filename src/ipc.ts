@@ -34,6 +34,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
       if (request.method !== "POST" || new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
       try {
         const body = await request.json();
+        if (body?.method === "native.open") this.timeout(request, 90);
         if (body?.method === "settings.list" || body?.method === "settings.write")
           return Response.json({ ok: true, result: await settingsRequest(body) });
         return Response.json({ ok: true, result: await sessions.dispatch(body) });
@@ -66,7 +67,7 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
 }
 async function cancellableCall(socket: string, method: string, params: unknown, signal: AbortSignal): Promise<unknown> {
   const { request } = await import("node:http");
-  const combined = AbortSignal.any([signal, AbortSignal.timeout(45000)]);
+  const combined = AbortSignal.any([signal, AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000)]);
   combined.throwIfAborted();
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ method, params });
@@ -107,7 +108,7 @@ export async function call(socket: string, method: string, params: unknown = {},
   if (signal) return cancellableCall(socket, method, params, signal);
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method, params }),
-    signal: AbortSignal.timeout(45000) });
+    signal: AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000) });
   const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string } };
   if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
   return result.result;

@@ -1,6 +1,6 @@
 import { call } from "./ipc";
 import { serviceSocketPath } from "./service";
-import { connectorEntry } from "./connector-entry";
+import { connectorEntry, connectorEnvironment } from "./connector-entry";
 import { dirname, join } from "node:path";
 // Prefer the managed broker's fixed socket, so generated configuration survives a restart.
 let socket = process.env.ORBIT_SOCKET, managed = false;
@@ -31,5 +31,5 @@ const launcher = invoked && await Bun.file(invoked).exists() ? invoked
 const preferInterpreter = process.argv.includes("--no-launcher");
 console.log(JSON.stringify({ mcpServers: { orbit: {
   ...connectorEntry({ launcher, source, preferInterpreter }),
-  env: { ORBIT_SOCKET: socket },
+  env: connectorEnvironment(socket),
 } }, managedSocket: managed }, null, 2));

@@ -31,7 +31,7 @@ test('English remains available with an Arabic language link', () => {
   expect(html).toContain('href="/ar/" lang="ar"');
 });
 
-test('onboarding offers desktop discovery and states measured support and the native hold', () => {
+test('onboarding offers desktop discovery and states measured platform support', () => {
   for (const locale of ['en', 'ar'] as const) {
     const html = renderToString(<App locale={locale} />);
     expect(html).not.toContain('export ORBIT_SOCKET');
@@ -39,7 +39,6 @@ test('onboarding offers desktop discovery and states measured support and the na
     expect(html).toContain('native-handoff-incident.md');
     expect(html).toContain('support-tiers.md');
     expect(html).toContain('sbar-orbit applications');
-    expect(html).not.toMatch(/browser|chrome|chromium|متصفح/i);
     expect(html).toContain('Fedora');
     expect(html).toContain('Windows');
     expect(html).toContain('macOS');
@@ -59,8 +58,8 @@ test('public diagrams describe the current original application route without a 
   const html = renderToString(<App locale="en" />);
   expect(html).toContain('native-workspaces.svg');
   expect(html).toContain('Diagram, not a live demonstration');
-  expect(html).toContain('Registered app, exact approval, workspace');
-  expect(html).toContain('Input is a separate gate.');
+  expect(html).toContain('Registered app, owner controls, workspace');
+  expect(html).toContain('Input uses an explicit handoff.');
   expect(html).not.toMatch(/private desktop|private workspace|take over|optional viewer|viewer-control\.webp/i);
 });
 

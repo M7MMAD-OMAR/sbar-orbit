@@ -1,6 +1,7 @@
+import { version } from "../package.json";
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { connectorEntry } from "../src/connector-entry";
+import { connectorEntry, connectorEnvironment } from "../src/connector-entry";
 
 test("an agent host is handed the launcher, not an interpreter and a source file", () => {
   expect(connectorEntry({ launcher: "/prefix/bin/sbar-orbit", source: "/opt/orbit", platform: "linux" }))
@@ -48,4 +49,8 @@ test("the same escape hatch works on Linux, where the launcher is an extensionle
   expect(connectorEntry({ launcher: "/prefix/bin/sbar-orbit", source: "/opt/orbit", platform: "linux",
     interpreter: "/usr/bin/bun", preferInterpreter: true }))
     .toEqual({ command: "/usr/bin/bun", args: [join("/opt/orbit", "src/mcp.ts")] });
+});
+
+test("generated adapter environment carries the current release for host cache invalidation", () => {
+  expect(connectorEnvironment("/owner/broker.sock")).toEqual({ ORBIT_SOCKET: "/owner/broker.sock", ORBIT_CLIENT_VERSION: version });
 });

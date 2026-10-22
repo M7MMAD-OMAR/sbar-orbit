@@ -22,6 +22,7 @@
 #include <hyprland/src/protocols/core/Seat.hpp>
 #undef private
 #include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #define private public
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #undef private
@@ -48,6 +49,7 @@
 #undef protected
 #include <hyprland/src/render/pass/TexPassElement.hpp>
 #include <hyprland/src/render/Texture.hpp>
+#include <hyprland/src/render/ElementRenderer.hpp>
 #include <cairo/cairo.h>
 #include <functional>
 #include <array>
@@ -60,6 +62,12 @@
 #include <hyprland/src/protocols/ExtDataDevice.hpp>
 #undef private
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/state/WorkspacePlacementController.hpp>
+#include <hyprland/src/pointer/PointerManager.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/animation/WorkspaceAnimationController.hpp>
 #include <cstring>
 #include <fstream>
 #include <sys/syscall.h>
@@ -244,11 +252,22 @@ inline HANDLE PHANDLE = nullptr;
 struct SCursor {
     PHLWINDOWREF window;
     Vector2D local;
+    Vector2D clickLocal;
+    std::chrono::steady_clock::time_point clicked{};
+    uint64_t sequence = 0;
 };
 static std::map<std::string, SCursor> cursors;
+static uint64_t cursorSequence = 0;
 static std::map<std::string, PHLWINDOWREF> awakeWindows;
 static CHyprSignalListener renderListener;
 static SP<Render::ITexture> cursorTextures[2];
+static SP<Render::ITexture> clickTexture;
+static SP<Render::ITexture> frameTextures[4];
+static std::array<double, 3> indicatorColor{37.0 / 255, 95.0 / 255, 206.0 / 255};
+static bool indicatorPulse = true;
+static bool indicatorFrame = true;
+static bool indicatorStyleDirty = false;
+static std::map<int64_t, SP<Render::ITexture>> workspaceLabels;
 class CAgentKeyboard : public IKeyboard {
   public:
     bool isVirtual() override { return true; }
@@ -278,19 +297,9 @@ struct SClipboardGuard {
     wl_listener destroy{};
 };
 static std::map<wl_resource*, SClipboardGuard> clipboardGuards;
-static std::map<wl_client*, wl_listener> selectionClients;
 
-template <typename Device>
-struct SDataControlGuard {
-    Device* device = nullptr;
-    decltype(std::declval<Device>().requests.setSelection) original;
-    decltype(std::declval<Device>().requests.setPrimarySelection) originalPrimary;
-    wl_listener destroy{};
-};
-static std::map<wl_resource*, SDataControlGuard<CZwlrDataControlDeviceV1>> wlrGuards;
-static std::map<wl_resource*, SDataControlGuard<CExtDataControlDeviceV1>> extGuards;
 static wl_protocol_logger* selectionLogger = nullptr;
-static std::string selectionDiagnostic;
+
 static std::map<pid_t, int> registeredProcesses;
 static std::map<pid_t, std::unique_ptr<ScopedProcess>> scopedProcesses;
 static std::map<std::string, std::unique_ptr<RetainedScope>> retainedScopes;
@@ -309,16 +318,24 @@ struct SLeasedWindow {
     bool createdWhileLeased = false;
     std::optional<bool> noInitialFocus;
     std::string originalWorkspace;
+    std::optional<bool> originalFloating, originalCenter;
+    std::optional<Math::SExpressionVec2> originalSize;
 };
 struct SApplicationLease {
     wl_client* client = nullptr;
     wl_listener destroy{};
     bool paused = false;
+    bool windowBound = false;
+    PHLWINDOWREF windowRoot;
     std::array<char, 256> failure{};
     std::array<char, 256> claimFailure{};
     std::map<uint64_t, SLeasedWindow> windows;
+    // Related portal windows receive placement only, never this client's input grant.
+    std::map<uint64_t, SLeasedWindow> relatedWindows;
+    std::set<uint64_t> baselineWindows;
     std::string homeWorkspace;
     std::string homeWorkspaceRule;
+    std::optional<Math::SExpressionVec2> newWindowSize;
     std::string id;
 };
 static std::map<std::string, std::unique_ptr<SApplicationLease>> applicationLeases;
@@ -328,6 +345,18 @@ static SApplicationLease* applicationLeaseForClient(wl_client* client) {
         if (lease->client == client)
             return lease.get();
     return nullptr;
+}
+static bool applicationWindowAllowed(const SApplicationLease& lease, PHLWINDOW window) {
+    if (!lease.windowBound) return true;
+    const auto root = lease.windowRoot.lock();
+    if (!window || !root) return false;
+    if (window == root) return true;
+    std::set<uint64_t> visited;
+    for (auto parent = window->parent(); parent && visited.size() < 16; parent = parent->parent()) {
+        if (!visited.insert(parent->m_stableID).second) return false;
+        if (parent == root) return true;
+    }
+    return false;
 }
 static void recordApplicationFailure(wl_client* client, const char* reason) noexcept {
     if (auto lease = applicationLeaseForClient(client)) {
@@ -348,7 +377,8 @@ static void retainApplicationWindow(SApplicationLease& lease, PHLWINDOW window, 
     lease.windows.emplace(window->m_stableID, SLeasedWindow{window,
         saved(window->m_ruleApplicator->renderUnfocused()), saved(window->m_ruleApplicator->focusOnActivate()),
         std::ranges::find(g_pHyprRenderer->m_renderUnfocused, window) != g_pHyprRenderer->m_renderUnfocused.end(),
-        createdWhileLeased, window->m_ruleApplicator->static_.noInitialFocus, window->m_ruleApplicator->static_.workspace});
+        createdWhileLeased, window->m_ruleApplicator->static_.noInitialFocus, window->m_ruleApplicator->static_.workspace,
+        window->m_ruleApplicator->static_.floating, window->m_ruleApplicator->static_.center, window->m_ruleApplicator->static_.size});
 }
 static void applyApplicationWindow(PHLWINDOW window) {
     using namespace Desktop::Types;
@@ -356,103 +386,6 @@ static void applyApplicationWindow(PHLWINDOW window) {
     g_pHyprRenderer->addWindowToRenderUnfocused(window);
     window->m_ruleApplicator->focusOnActivate().set(false, PRIORITY_SET_PROP);
 }
-
-// The compositor's global offer invalidation must never visit agent offers.
-// Fixed slots keep Wayland destroy-listener addresses stable without allocation.
-template <typename Offer, size_t Capacity = 128>
-class CPrivateOffers {
-    struct SListener {
-        wl_listener listener{};
-        CPrivateOffers* owner = nullptr;
-        size_t index = 0;
-    };
-    static_assert(std::is_standard_layout_v<SListener>);
-    using DestroyHandler = decltype(std::declval<Offer>().m_resource->requests.destroy);
-    struct SSlot {
-        SP<Offer> offer;
-        wl_client* client = nullptr;
-        SListener destroy{};
-        DestroyHandler originalDestroy;
-        std::array<char, 33> leaseId{};
-    };
-    std::array<SSlot, Capacity> slots{};
-  public:
-    CPrivateOffers() {
-        for (size_t index = 0; index < Capacity; ++index) {
-            slots[index].destroy.owner = this;
-            slots[index].destroy.index = index;
-        }
-    }
-    CPrivateOffers(const CPrivateOffers&) = delete;
-    CPrivateOffers& operator=(const CPrivateOffers&) = delete;
-    size_t available() const {
-        return std::ranges::count_if(slots, [](const auto& slot) { return !slot.offer; });
-    }
-    void invalidate(wl_client* client) noexcept {
-        for (auto& slot : slots)
-            if (slot.offer && slot.client == client)
-                slot.offer->m_dead = true;
-    }
-    void retainLast(std::vector<SP<Offer>>& global, size_t before, wl_client* client, std::string_view leaseId = {}) {
-        if (!leaseId.empty() && leaseId.size() != 32) throw std::runtime_error("invalid private offer lease identity");
-        if (global.size() == before)
-            return;
-        if (global.size() != before + 1 || global.back()->m_resource->client() != client)
-            throw std::runtime_error("private offer construction changed namespace");
-        for (size_t index = 0; index < Capacity; ++index) {
-            auto& slot = slots[index];
-            if (slot.offer)
-                continue;
-            auto originalDestroy = global.back()->m_resource->requests.destroy;
-            DestroyHandler privateDestroy = [this, index](auto* wrapper) {
-                auto& retained = slots[index];
-                if (!retained.offer || retained.offer->m_resource.get() != wrapper)
-                    return;
-                // Keep the executing callback alive until native destruction returns.
-                auto resource = retained.offer->m_resource;
-                if (auto native = resource->resource())
-                    wl_resource_destroy(native);
-            };
-            slot.originalDestroy = std::move(originalDestroy);
-            slot.offer = global.back();
-            slot.client = client;
-            std::copy(leaseId.begin(), leaseId.end(), slot.leaseId.begin());
-            slot.leaseId[leaseId.size()] = 0;
-            slot.offer->m_resource->requests.destroy = std::move(privateDestroy);
-            slot.destroy.listener.notify = [](wl_listener* listener, void*) {
-                auto* context = reinterpret_cast<SListener*>(listener);
-                auto& retained = context->owner->slots[context->index];
-                wl_list_remove(&listener->link);
-                retained.client = nullptr;
-                retained.originalDestroy = {};
-                retained.offer.reset();
-            };
-            wl_resource_add_destroy_listener(slot.offer->m_resource->resource(), &slot.destroy.listener);
-            global.pop_back();
-            return;
-        }
-        throw std::runtime_error("private offer capacity exhausted");
-    }
-    void retire(wl_client* client, std::vector<SP<Offer>>& global, std::string_view leaseId = {}) {
-        size_t count = 0;
-        for (const auto& slot : slots)
-            if (slot.offer && (!client || slot.client == client) && (leaseId.empty() || std::string_view{slot.leaseId.data()} == leaseId))
-                ++count;
-        global.reserve(global.size() + count);
-        for (auto& slot : slots) {
-            if (!slot.offer || (client && slot.client != client) || (!leaseId.empty() && std::string_view{slot.leaseId.data()} != leaseId))
-                continue;
-            slot.offer->m_dead = true;
-            wl_list_remove(&slot.destroy.listener.link);
-            slot.offer->m_resource->requests.destroy = std::move(slot.originalDestroy);
-            global.push_back(slot.offer);
-            slot.offer.reset();
-            slot.client = nullptr;
-        }
-    }
-};
-static CPrivateOffers<CWLDataOfferResource> privateClipboardOffers;
-static CPrivateOffers<CPrimarySelectionOffer> privatePrimaryOffers;
 
 // Avoid the upstream lookup, whose predicate dereferences empty device entries.
 template <typename Protocol>
@@ -469,36 +402,69 @@ static bool clientHasDataControlDevice(const Protocol& protocol, wl_client* clie
     return found;
 }
 
-static void sendPrivateClipboardSelection(wl_client* client, SP<IDataSource> source) {
-    if (!client || !PROTO::data) throw std::runtime_error("private clipboard protocol is unavailable");
-    clientHasDataControlDevice(PROTO::data, client);
-    const auto devices = std::ranges::count_if(PROTO::data->m_devices,
-        [client](const auto& device) { return device->client() == client; });
-    if (source && privateClipboardOffers.available() < static_cast<size_t>(devices))
-        throw std::runtime_error("private clipboard offer limit reached");
-    for (const auto& target : PROTO::data->m_devices) {
-        if (target->client() != client)
-            continue;
-        const auto before = PROTO::data->m_offers.size();
-        PROTO::data->sendSelectionToDevice(target, source);
-        privateClipboardOffers.retainLast(PROTO::data->m_offers, before, client, applicationLeaseForClient(client)->id);
+// A launch token is passed through the original executable's normal startup
+// environment. Observing its activation request binds a forwarded window to
+// this request, rather than guessing from a shared service PID.
+struct SOpeningTicket {
+    std::chrono::steady_clock::time_point expires;
+    WP<CWLSurfaceResource> surface;
+    bool observed = false;
+    bool ambiguous = false;
+};
+static std::map<std::string, SOpeningTicket> openingTickets;
+static void pruneOpeningTickets() {
+    const auto now = std::chrono::steady_clock::now();
+    std::erase_if(openingTickets, [now](const auto& item) { return item.second.expires <= now; });
+}
+static void openingProtocolRequest(wl_protocol_logger_type direction, const wl_protocol_logger_message* message) noexcept {
+    if (direction != WL_PROTOCOL_LOGGER_REQUEST || !message || !message->resource || !message->message ||
+        !message->arguments || message->arguments_count != 2 ||
+        std::strcmp(wl_resource_get_class(message->resource), "xdg_activation_v1") ||
+        std::strcmp(message->message->name, "activate")) return;
+    try {
+        const char* token = message->arguments[0].s;
+        if (!token || std::strlen(token) != 32 || !message->arguments[1].o) return;
+        const auto found = openingTickets.find(token);
+        if (found == openingTickets.end() || found->second.expires <= std::chrono::steady_clock::now()) return;
+        auto surface = CWLSurfaceResource::fromResource(reinterpret_cast<wl_resource*>(message->arguments[1].o));
+        if (!surface || surface->client() != wl_resource_get_client(message->resource)) return;
+        auto& ticket = found->second;
+        if (ticket.observed && ticket.surface.lock() != surface) ticket.ambiguous = true;
+        else { ticket.surface = surface; ticket.observed = true; }
+    } catch (...) {
+        // Diagnostic observation must never unwind through Wayland dispatch.
     }
 }
-static void sendPrivatePrimarySelection(wl_client* client, SP<IDataSource> source) {
-    if (!client || !PROTO::primarySelection) throw std::runtime_error("private primary selection protocol is unavailable");
-    clientHasDataControlDevice(PROTO::primarySelection, client);
-    const auto devices = std::ranges::count_if(PROTO::primarySelection->m_devices,
-        [client](const auto& device) { return device->client() == client; });
-    if (source && privatePrimaryOffers.available() < static_cast<size_t>(devices))
-        throw std::runtime_error("private primary offer limit reached");
-    for (const auto& target : PROTO::primarySelection->m_devices) {
-        if (target->client() != client)
-            continue;
-        const auto before = PROTO::primarySelection->m_offers.size();
-        PROTO::primarySelection->sendSelectionToDevice(target, source);
-        privatePrimaryOffers.retainLast(PROTO::primarySelection->m_offers, before, client, applicationLeaseForClient(client)->id);
+static std::string openingRequest(const std::string& operation, const std::string& token) {
+    if (!std::regex_match(token, std::regex{"[0-9a-f]{32}"}))
+        throw std::runtime_error("invalid opening token");
+    pruneOpeningTickets();
+    if (operation == "forget") { openingTickets.erase(token); return "ok"; }
+    if (operation == "register") {
+        if (admissionPaused || openingTickets.size() >= 64 || openingTickets.contains(token))
+            throw std::runtime_error("opening ticket is unavailable");
+        openingTickets.emplace(token, SOpeningTicket{std::chrono::steady_clock::now() + std::chrono::seconds{90}});
+        return "ok";
     }
+    if (operation != "info") throw std::runtime_error("unknown opening operation");
+    const auto found = openingTickets.find(token);
+    std::string windows = "[";
+    bool first = true;
+    const bool ambiguous = found != openingTickets.end() && found->second.ambiguous;
+    if (found != openingTickets.end() && !ambiguous) {
+        const auto observed = found->second.surface.lock();
+        if (observed) for (const auto& window : Desktop::windowState()->windows()) {
+            if (!window->m_isMapped || window->resource() != observed) continue;
+            if (!first) windows += ',';
+            first = false;
+            windows += std::format("{{\"address\":\"0x{:x}\",\"stableId\":\"{:x}\"}}",
+                reinterpret_cast<uintptr_t>(window.get()), window->m_stableID);
+        }
+    }
+    windows += ']';
+    return std::format("{{\"schema\":1,\"token\":\"{}\",\"ambiguous\":{},\"windows\":{}}}", token, ambiguous, windows);
 }
+
 static size_t liveRootCount() {
     std::map<pid_t, bool> roots;
     for (const auto& [pid, identity] : scopedProcesses)
@@ -507,7 +473,8 @@ static size_t liveRootCount() {
     for (const auto& [pid, descriptor] : registeredProcesses)
         if (ScopedProcess::descriptorLive(descriptor))
             roots[pid] = true;
-    return roots.size();
+    pruneOpeningTickets();
+    return roots.size() + openingTickets.size();
 }
 
 static void pruneLaunchRules() {
@@ -548,27 +515,6 @@ static bool agentClient(wl_client* client) {
     return applicationLeaseForClient(client) != nullptr;
 }
 
-static bool privateSelectionClient(wl_client* client) {
-    if (selectionClients.contains(client))
-        return true;
-    if (!agentClient(client))
-        return false;
-    auto [it, inserted] = selectionClients.try_emplace(client);
-    it->second.notify = [](wl_listener* listener, void* data) {
-        wl_list_remove(&listener->link);
-        retireKeyboardClient(static_cast<wl_client*>(data));
-        selectionClients.erase(static_cast<wl_client*>(data));
-    };
-    wl_client_add_destroy_listener(client, &it->second);
-    return true;
-}
-
-static void clearSelectionClients() {
-    for (auto& [client, listener] : selectionClients)
-        wl_list_remove(&listener.link);
-    selectionClients.clear();
-}
-
 template <typename Device, typename Guards, typename Destroy, typename Configure>
 static void installSelectionGuard(Device* raw, Guards& guards, Destroy destroy, Configure configure) {
     auto resource = raw->resource();
@@ -595,144 +541,81 @@ static void restoreSelectionGuards(Guards& guards) {
     guards.clear();
 }
 
+// Background input uses the owner's ordinary shared selections. The lease
+// supplies action authority without changing the physical seat focus.
 static void guardPrimarySelection(wl_client* client) {
-    if (!client || !PROTO::primarySelection) throw std::runtime_error("primary selection admission is unavailable");
+    if (!client || !PROTO::primarySelection) throw std::runtime_error("primary selection protocol is unavailable");
     clientHasDataControlDevice(PROTO::primarySelection, client);
-    if (!privateSelectionClient(client))
-        return;
     for (const auto& device : PROTO::primarySelection->m_devices) {
-        if (device->client() != client)
-            continue;
+        if (device->client() != client) continue;
         installSelectionGuard(device->m_resource.get(), primaryGuards, [](wl_listener* listener, void* data) {
             wl_list_remove(&listener->link);
             primaryGuards.erase(static_cast<wl_resource*>(data));
-        }, [](auto* raw, auto) {
-          raw->setSetSelection([](CZwpPrimarySelectionDeviceV1* current, wl_resource* sourceR, uint32_t) {
-            // Existing-application leases need a functioning private PRIMARY namespace.
-            if (!applicationLeaseForClient(current->client()))
-                return;
-            auto source = sourceR ? CPrimarySelectionSource::fromResource(sourceR) : SP<CPrimarySelectionSource>{};
-            try { sendPrivatePrimarySelection(current->client(), source); }
-            catch (const std::exception& error) { recordApplicationFailure(current->client(), error.what()); }
-            catch (...) { recordApplicationFailure(current->client(), "private PRIMARY offer failed"); }
-          });
+        }, [](auto* raw, auto original) {
+            raw->setSetSelection([original](CZwpPrimarySelectionDeviceV1* current, wl_resource* source, uint32_t serial) {
+                const auto lease = applicationLeaseForClient(current->client());
+                if (!lease || lease->paused) { original(current, source, serial); return; }
+                g_pSeatManager->setCurrentPrimarySelection(source ? CPrimarySelectionSource::fromResource(source) : SP<CPrimarySelectionSource>{});
+            });
         });
     }
 }
 
 static void guardClipboard(wl_client* client) {
-    if (!client || !PROTO::data) throw std::runtime_error("clipboard admission is unavailable");
+    if (!client || !PROTO::data) throw std::runtime_error("clipboard protocol is unavailable");
     clientHasDataControlDevice(PROTO::data, client);
-    if (!privateSelectionClient(client))
-        return;
     for (const auto& device : PROTO::data->m_devices) {
-        if (device->client() != client)
-            continue;
+        if (device->client() != client) continue;
         installSelectionGuard(device->m_resource.get(), clipboardGuards, [](wl_listener* listener, void* data) {
             wl_list_remove(&listener->link);
             clipboardGuards.erase(static_cast<wl_resource*>(data));
-        }, [](auto* raw, auto) {
-          const auto originalDrag = raw->requests.startDrag;
-          raw->requests.startDrag = [originalDrag](CWlDataDevice* device, wl_resource* source, wl_resource* origin, wl_resource* icon, uint32_t serial) {
-            if (applicationLeaseForClient(device->client())) {
-                recordApplicationFailure(device->client(), "shared drag is unsupported during application handoff");
-                return;
-            }
-            originalDrag(device, source, origin, icon, serial);
-          };
-          raw->setSetSelection([](CWlDataDevice* current, wl_resource* sourceR, uint32_t) {
-            auto source = sourceR ? CWLDataSourceResource::fromResource(sourceR) : SP<CWLDataSourceResource>{};
-            if (source)
-                source->markUsed();
-            // Offers are client-local. Do not change the seat selection or invalidate owner offers.
-            if (auto lease = applicationLeaseForClient(current->client())) {
-                try { sendPrivateClipboardSelection(current->client(), source); }
-                catch (const std::exception& error) { recordApplicationFailure(current->client(), error.what()); }
-                catch (...) { recordApplicationFailure(current->client(), "private clipboard offer failed"); }
-            } else {
-                // A compositor callback, so an empty inventory entry is skipped rather than thrown:
-                // an exception here would end the owner compositor, the failure this guard exists for.
-                const auto client = current ? current->client() : nullptr;
-                if (!client)
-                    return;
-                for (const auto& target : PROTO::data->m_devices)
-                    if (target && target->client() == client)
-                        PROTO::data->sendSelectionToDevice(target, source);
-            }
-          });
+        }, [](auto* raw, auto original) {
+            raw->setSetSelection([original](CWlDataDevice* current, wl_resource* sourceResource, uint32_t serial) {
+                const auto lease = applicationLeaseForClient(current->client());
+                if (!lease || lease->paused) { original(current, sourceResource, serial); return; }
+                auto source = sourceResource ? CWLDataSourceResource::fromResource(sourceResource) : SP<CWLDataSourceResource>{};
+                if (source) source->markUsed();
+                g_pSeatManager->setCurrentSelection(source);
+            });
         });
     }
 }
 
-
-template <typename Device, typename Guards>
-static void guardDataControl(Device* raw, Guards& guards) {
-    auto client = raw->client();
-    if (!applicationLeaseForClient(client) || guards.contains(raw->resource())) return;
-    auto original = raw->requests.setSelection;
-    auto originalPrimary = raw->requests.setPrimarySelection;
-    auto [entry, inserted] = guards.try_emplace(raw->resource());
-    auto& retained = entry->second;
-    retained.device = raw;
-    retained.original = std::move(original);
-    retained.originalPrimary = std::move(originalPrimary);
-    retained.destroy.notify = [](wl_listener* listener, void* resource) {
-        wl_list_remove(&listener->link);
-        if constexpr (std::is_same_v<Device, CZwlrDataControlDeviceV1>)
-            wlrGuards.erase(static_cast<wl_resource*>(resource));
-        else extGuards.erase(static_cast<wl_resource*>(resource));
-    };
-    wl_resource_add_destroy_listener(raw->resource(), &retained.destroy);
-    raw->requests.setSelection = [](Device* device, wl_resource*) {
-        recordApplicationFailure(device->client(), "data-control is unsupported during application handoff");
-    };
-    raw->requests.setPrimarySelection = raw->requests.setSelection;
-    recordApplicationFailure(client, "data-control is unsupported during application handoff");
-}
-template <typename Guards>
-static void restoreDataControlGuards(Guards& guards, wl_client* client) {
-    for (auto entry = guards.begin(); entry != guards.end();) {
-        if (client && entry->second.device->client() != client) { ++entry; continue; }
-        entry->second.device->requests.setSelection = std::move(entry->second.original);
-        entry->second.device->requests.setPrimarySelection = std::move(entry->second.originalPrimary);
-        wl_list_remove(&entry->second.destroy.link);
-        entry = guards.erase(entry);
+static void sendSharedSelection(wl_client* client, bool primary) {
+    if (primary) {
+        clientHasDataControlDevice(PROTO::primarySelection, client);
+        for (const auto& device : PROTO::primarySelection->m_devices)
+            if (device->client() == client) PROTO::primarySelection->sendSelectionToDevice(device, g_pSeatManager->m_selection.currentPrimarySelection.lock());
+    } else {
+        clientHasDataControlDevice(PROTO::data, client);
+        for (const auto& device : PROTO::data->m_devices)
+            if (device->client() == client) PROTO::data->sendSelectionToDevice(device, g_pSeatManager->m_selection.currentSelection.lock());
     }
 }
+
+static void broadcastSharedSelection(bool primary) {
+    for (const auto& [id, lease] : applicationLeases) {
+        if (lease->paused) continue;
+        try { sendSharedSelection(lease->client, primary); }
+        catch (const std::exception& error) { recordApplicationFailure(lease->client, error.what()); }
+        catch (...) { recordApplicationFailure(lease->client, "shared selection delivery failed"); }
+    }
+}
+
 static void selectionRequest(void*, wl_protocol_logger_type direction, const wl_protocol_logger_message* message) {
+    openingProtocolRequest(direction, message);
     keyboardProtocolTransition(direction, message);
-    if (direction != WL_PROTOCOL_LOGGER_REQUEST ||
-        (std::strcmp(message->message->name, "set_selection") != 0 && std::strcmp(message->message->name, "set_primary_selection") != 0 && std::strcmp(message->message->name, "start_drag") != 0))
-        return;
+    if (!message || !message->resource || !message->message || direction != WL_PROTOCOL_LOGGER_REQUEST ||
+        std::strcmp(message->message->name, "set_selection") != 0) return;
     auto client = wl_resource_get_client(message->resource);
-    if (!privateSelectionClient(client)) {
-        const auto interface = wl_resource_get_class(message->resource);
-        if (std::strcmp(interface, "zwp_primary_selection_device_v1") == 0) {
-            std::string state;
-            for (const auto& window : Desktop::windowState()->windows()) {
-                auto surface = window->resource();
-                if (surface && surface->client() == client)
-                    state += std::format("mapped={} workspace={};", window->m_isMapped,
-                        window->m_workspace ? window->m_workspace->m_name : "none");
-            }
-            selectionDiagnostic = state.empty() ? "no known window for requesting client" : state;
-        }
-        return;
-    }
+    if (!agentClient(client)) return;
     try {
-    const auto interface = wl_resource_get_class(message->resource);
-    if (std::strcmp(interface, "zwlr_data_control_device_v1") == 0)
-        guardDataControl(static_cast<CZwlrDataControlDeviceV1*>(wl_resource_get_user_data(message->resource)), wlrGuards);
-    else if (std::strcmp(interface, "ext_data_control_device_v1") == 0)
-        guardDataControl(static_cast<CExtDataControlDeviceV1*>(wl_resource_get_user_data(message->resource)), extGuards);
-    else if (std::strcmp(interface, "zwp_primary_selection_device_v1") == 0)
-        guardPrimarySelection(client);
-    else if (std::strcmp(interface, "wl_data_device") == 0)
-        guardClipboard(client);
+        const auto interface = wl_resource_get_class(message->resource);
+        if (std::strcmp(interface, "zwp_primary_selection_device_v1") == 0) guardPrimarySelection(client);
+        else if (std::strcmp(interface, "wl_data_device") == 0) guardClipboard(client);
     } catch (const std::exception& error) { recordApplicationFailure(client, error.what()); }
-    catch (...) { recordApplicationFailure(client, "selection admission failed"); }
+    catch (...) { recordApplicationFailure(client, "shared selection admission failed"); }
 }
-
 
 static bool leasedWindow(PHLWINDOW window) {
     auto surface = window ? window->resource() : SP<CWLSurfaceResource>{};
@@ -755,6 +638,30 @@ static void restoreClientSelectionGuards(Guards& guards, wl_client* client) {
     }
 }
 
+static void restoreApplicationGeometry(Desktop::Rule::CWindowRuleApplicator* rules, const SLeasedWindow& retained) {
+    if (!retained.createdWhileLeased) return;
+    rules->static_.floating = retained.originalFloating;
+    rules->static_.center = retained.originalCenter;
+    rules->static_.size = retained.originalSize;
+}
+
+static void restoreRelatedWindows(SApplicationLease& lease, wl_client* selectedClient = nullptr,
+                                  const SApplicationLease* selection = nullptr) {
+    for (auto it = lease.relatedWindows.begin(); it != lease.relatedWindows.end();) {
+        auto window = it->second.window.lock();
+        auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
+        if (selectedClient && resource && resource->client() != selectedClient) { ++it; continue; }
+        if (selection && window && !applicationWindowAllowed(*selection, window)) { ++it; continue; }
+        if (window && window->m_stableID == it->first) {
+            auto rules = window->m_ruleApplicator.get();
+            rules->static_.noInitialFocus = it->second.noInitialFocus;
+            rules->static_.workspace = it->second.originalWorkspace;
+            restoreApplicationGeometry(rules, it->second);
+        }
+        it = lease.relatedWindows.erase(it);
+    }
+}
+
 static void handbackApplication(const std::string& id) {
     if (!g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("application handback protocols are unavailable; lease retained");
@@ -764,10 +671,7 @@ static void handbackApplication(const std::string& id) {
     auto& lease = *found->second;
     cancelKeyboardClient(lease.client);
     lease.paused = true;
-    // Keep dead offer resources valid until the toolkit destroys them. Normal
-    // compositor focus sends the person's current selections after handback.
-    privateClipboardOffers.invalidate(lease.client);
-    privatePrimaryOffers.invalidate(lease.client);
+    restoreRelatedWindows(lease);
     auto seat = g_pSeatManager->seatResourceForClient(lease.client);
     if (seat) {
         for (const auto& weak : seat->m_pointers)
@@ -781,13 +685,8 @@ static void handbackApplication(const std::string& id) {
                 agentKeyboards.erase(keyboard.get());
             }
     }
-    restoreDataControlGuards(wlrGuards, lease.client);
-    restoreDataControlGuards(extGuards, lease.client);
     restoreClientSelectionGuards(primaryGuards, lease.client);
     restoreClientSelectionGuards(clipboardGuards, lease.client);
-    if (auto retained = selectionClients.find(lease.client); retained != selectionClients.end()) {
-        wl_list_remove(&retained->second.link); selectionClients.erase(retained);
-    }
     for (auto cursor = cursors.begin(); cursor != cursors.end();) {
         const auto& target = cursor->first;
         const auto marker = target.rfind("@lease-");
@@ -809,6 +708,7 @@ static void handbackApplication(const std::string& id) {
         window->m_ruleApplicator->focusOnActivate().matchOptional(retained.focusOnActivate, PRIORITY_SET_PROP);
         window->m_ruleApplicator->static_.noInitialFocus = retained.noInitialFocus;
         window->m_ruleApplicator->static_.workspace = std::move(retained.originalWorkspace);
+        restoreApplicationGeometry(window->m_ruleApplicator.get(), retained);
     }
     for (auto awake = awakeWindows.begin(); awake != awakeWindows.end();) {
         const auto marker = awake->first.rfind("@lease-");
@@ -821,20 +721,6 @@ static void handbackApplication(const std::string& id) {
     retireKeyboardLease(id);
     applicationLeases.erase(found);
 }
-
-static bool sourceBelongsToClient(SP<IDataSource> source, wl_client* client) {
-    if (!source) return false;
-    if (const auto wayland = dynamic_cast<CWLDataSourceResource*>(source.get()))
-        return wayland->m_resource->client() == client;
-    if (const auto primary = dynamic_cast<CPrimarySelectionSource*>(source.get()))
-        return primary->m_resource->client() == client;
-    if (const auto wlr = dynamic_cast<CWLRDataSource*>(source.get()))
-        return wlr->m_resource->client() == client;
-    if (const auto ext = dynamic_cast<CExtDataSource*>(source.get()))
-        return ext->m_resource->client() == client;
-    return false;
-}
-
 
 static void clearApplicationCursors(std::string_view id) {
     for (auto cursor = cursors.begin(); cursor != cursors.end();) {
@@ -880,8 +766,15 @@ static std::string applicationInfo(const std::string& id) {
             reinterpret_cast<uintptr_t>(window.get()), stable, reinterpret_cast<uintptr_t>(window.get()), stable, id);
     }
     windows += ']';
-    return std::format("{{\"schema\":1,\"status\":\"{}\",\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windows\":{},\"failure\":{},\"claim_failure\":{}}}",
-        lease.paused ? "paused" : "active", id, windows, applicationJsonString(lease.failure.data()), applicationJsonString(lease.claimFailure.data()));
+    size_t excludedWindows = 0;
+    for (const auto& window : Desktop::windowState()->windows()) {
+        auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
+        if (window && window->m_isMapped && resource && resource->client() == lease.client &&
+            !lease.windows.contains(window->m_stableID)) ++excludedWindows;
+    }
+    return std::format("{{\"schema\":1,\"status\":\"{}\",\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windowEnrollment\":\"{}\",\"excludedWindows\":{},\"windows\":{},\"failure\":{},\"claim_failure\":{}}}",
+        lease.paused ? "paused" : "active", id, lease.windowBound ? "selected-dialog-family" : "client-windows", excludedWindows,
+        windows, applicationJsonString(lease.failure.data()), applicationJsonString(lease.claimFailure.data()));
 }
 static std::string claimApplication(const std::string& address, const std::string& stable, const std::string& id) {
     if (admissionPaused)
@@ -900,30 +793,35 @@ static std::string claimApplication(const std::string& address, const std::strin
     auto client = surface->client();
     if (!client || !g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("application handoff requires a live client and selection protocols");
+    // A client-wide lease must never take real input away from the owner,
+    // including a sibling window on another numbered workspace.
+    for (const auto& focused : {g_pSeatManager->m_state.keyboardFocus.lock(), g_pSeatManager->m_state.pointerFocus.lock()})
+        if (focused && focused->client() == client)
+            throw std::runtime_error("application client is receiving owner input");
     clientHasDataControlDevice(PROTO::data, client);
     clientHasDataControlDevice(PROTO::primarySelection, client);
-    auto keyboard = g_pSeatManager->m_state.keyboardFocus.lock();
-    auto pointer = g_pSeatManager->m_state.pointerFocus.lock();
-    if ((keyboard && keyboard->client() == client) || (pointer && pointer->client() == client))
-        throw std::runtime_error("switch to another application before handoff");
     if (g_pSeatManager->m_seatGrab || PROTO::data->dndActive())
         throw std::runtime_error("handoff is unsupported during a grab or drag");
-    if (clientHasDataControlDevice(PROTO::dataWlr, client) ||
-        clientHasDataControlDevice(PROTO::extDataDevice, client))
-        throw std::runtime_error("existing application uses unsupported data-control devices");
-    if (sourceBelongsToClient(g_pSeatManager->m_selection.currentSelection.lock(), client) ||
-        sourceBelongsToClient(g_pSeatManager->m_selection.currentPrimarySelection.lock(), client))
-        throw std::runtime_error("handoff is unsupported while this client owns a global selection source");
     if (applicationLeaseForClient(client) || applicationLeases.size() >= 16 || retiredApplicationLeases.size() >= 1024)
         throw std::runtime_error("application lease already exists or lease bound reached");
     auto retained = std::make_unique<SApplicationLease>();
     retained->client = client;
     retained->id = id;
+    const auto parent = selected->parent();
+    const auto parentResource = parent ? parent->resource() : SP<CWLSurfaceResource>{};
+    retained->windowBound = parentResource && parentResource->client() != client;
+    retained->windowRoot = selected;
+    for (const auto& window : Desktop::windowState()->windows())
+        retained->baselineWindows.insert(window->m_stableID);
     retained->homeWorkspace = selected->m_workspace->m_name;
     retained->homeWorkspaceRule = retained->homeWorkspace + " silent";
+    const auto selectedSize = selected->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+    if (selected->m_isFloating && std::isfinite(selectedSize.x) && std::isfinite(selectedSize.y) &&
+        selectedSize.x >= 320 && selectedSize.x <= 3840 && selectedSize.y >= 240 && selectedSize.y <= 2160)
+        retained->newWindowSize = Math::SExpressionVec2{std::to_string(std::lround(selectedSize.x)), std::to_string(std::lround(selectedSize.y))};
     for (const auto& window : Desktop::windowState()->windows()) {
         auto resource = window->resource();
-        if (window->m_isMapped && resource && resource->client() == client) {
+        if (window->m_isMapped && resource && resource->client() == client && applicationWindowAllowed(*retained, window)) {
             if (window->m_isX11 || !window->m_xdgSurface || retained->windows.size() >= 64)
                 throw std::runtime_error("client includes unsupported targets");
             retainApplicationWindow(*retained, window);
@@ -931,8 +829,11 @@ static std::string claimApplication(const std::string& address, const std::strin
     }
     if (!std::regex_match(id, std::regex{"[0-9a-fA-F]{32}"}) || retiredApplicationLeases.contains(id))
         throw std::runtime_error("cannot mint application lease identity");
-    auto success = std::format("{{\"schema\":1,\"status\":\"claimed\",\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windows\":{}}}", id, retained->windows.size());
+    auto success = std::format("{{\"schema\":1,\"status\":\"claimed\",\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windowEnrollment\":\"{}\",\"windows\":{}}}",
+        id, retained->windowBound ? "selected-dialog-family" : "client-windows", retained->windows.size());
     auto recoverableFailure = std::format("{{\"schema\":1,\"status\":\"recovery_required\",\"lease_id\":\"{}\",\"error\":\"claim_failed_handback_incomplete\"}}", id);
+    for (auto& [otherId, other] : applicationLeases)
+        restoreRelatedWindows(*other, client, retained.get());
     retiredApplicationLeases.insert(id);
     auto [entry, inserted] = applicationLeases.emplace(id, std::move(retained));
     auto& lease = *entry->second;
@@ -940,19 +841,17 @@ static std::string claimApplication(const std::string& address, const std::strin
         retireKeyboardClient(static_cast<wl_client*>(destroyed));
         wl_list_remove(&listener->link);
         for (auto entry = applicationLeases.begin(); entry != applicationLeases.end(); ++entry)
-            if (entry->second->client == destroyed) { clearApplicationCursors(entry->first); applicationLeases.erase(entry); return; }
+            if (entry->second->client == destroyed) {
+                restoreRelatedWindows(*entry->second);
+                clearApplicationCursors(entry->first); applicationLeases.erase(entry); return;
+            }
     };
     wl_client_add_destroy_listener(client, &lease.destroy);
     try {
         for (const auto& [stable, retainedWindow] : lease.windows)
             if (auto window = retainedWindow.window.lock()) applyApplicationWindow(window);
         guardPrimarySelection(client); guardClipboard(client);
-        // Remove incoming person offers from this client's private context only.
-        for (const auto& offer : PROTO::data->m_offers)
-            if (offer->m_resource->client() == client) offer->m_dead = true;
-        for (const auto& offer : PROTO::primarySelection->m_offers)
-            if (offer->m_resource->client() == client) offer->m_dead = true;
-        sendPrivateClipboardSelection(client, {}); sendPrivatePrimarySelection(client, {});
+        sendSharedSelection(client, false); sendSharedSelection(client, true);
     } catch (...) {
         try { throw; }
         catch (const std::exception& error) { std::snprintf(lease.claimFailure.data(), lease.claimFailure.size(), "%s", error.what()); }
@@ -973,8 +872,9 @@ static CFunctionHook* simulatedMotionHook = nullptr;
 static unsigned privatePopupMapDepth = 0;
 static CFunctionHook* staticRulesHook = nullptr;
 static CFunctionHook* staticRecheckHook = nullptr;
-static CFunctionHook* wlrSelectionHook = nullptr;
-static CFunctionHook* extSelectionHook = nullptr;
+static CFunctionHook* clipboardSelectionHook = nullptr;
+static CFunctionHook* primarySelectionHook = nullptr;
+static CFunctionHook* surfaceUVHook = nullptr;
 
 static void handbackFocusedApplication(SP<CWLSurfaceResource> surface) {
     if (!surface) return;
@@ -1033,23 +933,71 @@ static void privateSimulatedMotion(CInputManager* manager) {
     reinterpret_cast<Original>(simulatedMotionHook->m_original)(manager);
 }
 
+static void applyNewApplicationGeometry(Desktop::Rule::CWindowRuleApplicator* rules, const SApplicationLease& lease) {
+    if (!lease.newWindowSize) return;
+    rules->static_.floating = true;
+    rules->static_.center = true;
+    rules->static_.size = lease.newWindowSize;
+}
+
+static SApplicationLease* relatedApplicationLease(PHLWINDOW window) {
+    std::set<uint64_t> visited;
+    auto parent = window ? window->parent() : PHLWINDOW{};
+    for (int depth = 0; parent && depth < 16; ++depth, parent = parent->parent()) {
+        if (!visited.insert(parent->m_stableID).second) return nullptr;
+        auto surface = parent->resource();
+        auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
+        if (lease && !lease->paused && parent->m_isMapped && parent->m_workspace &&
+            parent->m_workspace->m_name == lease->homeWorkspace && lease->windows.contains(parent->m_stableID) &&
+            !lease->baselineWindows.contains(window->m_stableID)) return lease;
+    }
+    return nullptr;
+}
+
+static void routeRelatedApplicationWindow(Desktop::Rule::CWindowRuleApplicator* rules, PHLWINDOW window) {
+    auto lease = relatedApplicationLease(window);
+    if (!lease) return;
+    std::erase_if(lease->relatedWindows, [](const auto& entry) { return !entry.second.window.lock(); });
+    if (!lease->relatedWindows.contains(window->m_stableID)) {
+        if (lease->relatedWindows.size() >= 64) return;
+        SLeasedWindow saved;
+        saved.window = window; saved.createdWhileLeased = true;
+        saved.noInitialFocus = rules->static_.noInitialFocus;
+        saved.originalWorkspace = rules->static_.workspace;
+        saved.originalFloating = rules->static_.floating; saved.originalCenter = rules->static_.center;
+        saved.originalSize = rules->static_.size;
+        lease->relatedWindows.emplace(window->m_stableID, std::move(saved));
+    }
+    rules->static_.workspace = lease->homeWorkspaceRule;
+    rules->static_.noInitialFocus = true;
+    applyNewApplicationGeometry(rules, *lease);
+}
+
 static void enforceApplicationRules(Desktop::Rule::CWindowRuleApplicator* rules) {
     auto window = rules->m_window.lock();
     auto surface = window ? window->resource() : SP<CWLSurfaceResource>{};
     auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
-    if (!lease) return;
+    if (!lease || !applicationWindowAllowed(*lease, window)) { routeRelatedApplicationWindow(rules, window); return; }
     const auto existing = lease->windows.find(window->m_stableID);
     const bool newlyObserved = existing == lease->windows.end();
     const bool clampWorkspace = newlyObserved || existing->second.createdWhileLeased;
+    const auto originalFloating = rules->static_.floating, originalCenter = rules->static_.center;
+    const auto originalSize = rules->static_.size;
     std::string originalWorkspace;
     if (newlyObserved) originalWorkspace = std::move(rules->static_.workspace);
     try {
         // Place new same-client windows before bounded enrollment can refuse them.
         // Existing windows keep their original workspace throughout the lease.
-        if (clampWorkspace) rules->static_.workspace = lease->homeWorkspaceRule;
+        if (clampWorkspace) {
+            rules->static_.workspace = lease->homeWorkspaceRule;
+            applyNewApplicationGeometry(rules, *lease);
+        }
         retainApplicationWindow(*lease, window, true);
-        if (newlyObserved)
-            lease->windows.at(window->m_stableID).originalWorkspace = std::move(originalWorkspace);
+        if (newlyObserved) {
+            auto& saved = lease->windows.at(window->m_stableID);
+            saved.originalWorkspace = std::move(originalWorkspace);
+            saved.originalFloating = originalFloating; saved.originalCenter = originalCenter; saved.originalSize = originalSize;
+        }
         applyApplicationWindow(window);
     } catch (const std::exception& error) { recordApplicationFailure(surface->client(), error.what()); }
     catch (...) { recordApplicationFailure(surface->client(), "new application window enrollment failed"); }
@@ -1066,22 +1014,49 @@ static void privateStaticRecheck(Desktop::Rule::CWindowRuleApplicator* rules) {
     reinterpret_cast<Original>(staticRecheckHook->m_original)(rules);
     enforceApplicationRules(rules);
 }
-static void privateWlrSelection(CDataDeviceWLRProtocol* protocol, SP<CWLRDataDevice>& device, SP<IDataSource>& source, bool primary) {
-    if (device && applicationLeaseForClient(device->client())) {
-        recordApplicationFailure(device->client(), "data-control is unsupported during application handoff");
-        return;
-    }
-    using Original = void (*)(CDataDeviceWLRProtocol*, SP<CWLRDataDevice>&, SP<IDataSource>&, bool);
-    reinterpret_cast<Original>(wlrSelectionHook->m_original)(protocol, device, source, primary);
+static void sharedClipboardSelection(CSeatManager* manager, SP<IDataSource>& source) {
+    using Original = void (*)(CSeatManager*, SP<IDataSource>&);
+    reinterpret_cast<Original>(clipboardSelectionHook->m_original)(manager, source);
+    broadcastSharedSelection(false);
 }
-static void privateExtSelection(CExtDataDeviceProtocol* protocol, SP<CExtDataDevice>& device, SP<IDataSource>& source, bool primary) {
-    if (device && applicationLeaseForClient(device->client())) {
-        recordApplicationFailure(device->client(), "data-control is unsupported during application handoff");
-        return;
-    }
-    using Original = void (*)(CExtDataDeviceProtocol*, SP<CExtDataDevice>&, SP<IDataSource>&, bool);
-    reinterpret_cast<Original>(extSelectionHook->m_original)(protocol, device, source, primary);
+static void sharedPrimarySelection(CSeatManager* manager, SP<IDataSource>& source) {
+    using Original = void (*)(CSeatManager*, SP<IDataSource>&);
+    reinterpret_cast<Original>(primarySelectionHook->m_original)(manager, source);
+    broadcastSharedSelection(true);
 }
+// The pinned compositor omits XDG client decoration geometry from main-surface
+// UVs. Correct leased main surfaces in desktop rendering and window captures.
+static void applicationSurfaceUV(Render::IElementRenderer* renderer, PHLWINDOW& window,
+        SP<CWLSurfaceResource>& surface, PHLMONITOR& monitor, bool main,
+        const Vector2D& projected, const Vector2D& unscaled, bool fixMisaligned) {
+    using Original = void (*)(Render::IElementRenderer*, PHLWINDOW&, SP<CWLSurfaceResource>&,
+                             PHLMONITOR&, bool, const Vector2D&, const Vector2D&, bool);
+    reinterpret_cast<Original>(surfaceUVHook->m_original)(renderer, window, surface, monitor, main, projected, unscaled, fixMisaligned);
+    auto& data = g_pHyprRenderer->m_renderData;
+    if (!main || !window || !surface || !leasedWindow(window)) return;
+    const auto xdg = window->m_xdgSurface.lock();
+    if (!xdg) return;
+    const auto geometry = xdg->m_current.geometry;
+    const auto size = surface->m_current.size;
+    if (size.x <= 0 || size.y <= 0 || geometry.x < 0 || geometry.y < 0 || geometry.w <= 0 || geometry.h <= 0 ||
+        geometry.x + geometry.w > size.x || geometry.y + geometry.h > size.y ||
+        (geometry.x == 0 && geometry.y == 0)) return;
+    // Use the committed viewporter source directly. The compositor's original
+    // UVs can already contain an undersized-texture crop, which would crop twice.
+    auto top = Vector2D{};
+    auto bottom = Vector2D{1, 1};
+    if (surface->m_current.viewport.hasSource) {
+        const auto buffer = surface->m_current.bufferSize;
+        const auto source = surface->m_current.viewport.source;
+        if (buffer.x <= 0 || buffer.y <= 0) return;
+        top = Vector2D{source.x / buffer.x, source.y / buffer.y};
+        bottom = Vector2D{(source.x + source.w) / buffer.x, (source.y + source.h) / buffer.y};
+    }
+    const auto range = bottom - top;
+    data.primarySurfaceUVTopLeft = top + Vector2D{geometry.x / size.x, geometry.y / size.y} * range;
+    data.primarySurfaceUVBottomRight = top + Vector2D{(geometry.x + geometry.w) / size.x, (geometry.y + geometry.h) / size.y} * range;
+}
+
 static CFunctionHook* applicationHook(const std::string& qualified, void* replacement) {
     const auto matches = HyprlandAPI::findFunctionsByName(PHANDLE, qualified.substr(qualified.rfind("::") + 2));
     void* address = nullptr;
@@ -1096,6 +1071,7 @@ static CFunctionHook* applicationHook(const std::string& qualified, void* replac
     return hook;
 }
 static void installApplicationHooks() {
+    surfaceUVHook = applicationHook("Render::IElementRenderer::calculateUVForSurface", reinterpret_cast<void*>(applicationSurfaceUV));
     keyboardFocusHook = applicationHook("CSeatManager::setKeyboardFocus", reinterpret_cast<void*>(beforeKeyboardFocus));
     pointerFocusHook = applicationHook("CSeatManager::setPointerFocus", reinterpret_cast<void*>(beforePointerFocus));
     popupGrabHook = applicationHook("CXDGShellProtocol::addOrStartGrab", reinterpret_cast<void*>(privatePopupGrab));
@@ -1103,42 +1079,195 @@ static void installApplicationHooks() {
     simulatedMotionHook = applicationHook("CInputManager::simulateMouseMovement", reinterpret_cast<void*>(privateSimulatedMotion));
     staticRulesHook = applicationHook("Desktop::Rule::CWindowRuleApplicator::readStaticRules", reinterpret_cast<void*>(privateStaticRules));
     staticRecheckHook = applicationHook("Desktop::Rule::CWindowRuleApplicator::recheckStaticRules", reinterpret_cast<void*>(privateStaticRecheck));
-    wlrSelectionHook = applicationHook("CDataDeviceWLRProtocol::sendSelectionToDevice", reinterpret_cast<void*>(privateWlrSelection));
-    extSelectionHook = applicationHook("CExtDataDeviceProtocol::sendSelectionToDevice", reinterpret_cast<void*>(privateExtSelection));
+    clipboardSelectionHook = applicationHook("CSeatManager::setCurrentSelection", reinterpret_cast<void*>(sharedClipboardSelection));
+    primarySelectionHook = applicationHook("CSeatManager::setCurrentPrimarySelection", reinterpret_cast<void*>(sharedPrimarySelection));
 }
 static void removeApplicationHooks() {
     for (auto slot : {&keyboardFocusHook, &pointerFocusHook, &popupGrabHook, &popupMapHook, &simulatedMotionHook,
-                      &staticRulesHook, &staticRecheckHook, &wlrSelectionHook, &extSelectionHook}) {
+                      &staticRulesHook, &staticRecheckHook, &clipboardSelectionHook, &primarySelectionHook, &surfaceUVHook}) {
         if (!*slot) continue;
         if (!HyprlandAPI::removeFunctionHook(PHANDLE, *slot))
             throw std::runtime_error("cannot remove application lifecycle hook");
         *slot = nullptr;
     }
 }
+// Only pre-mutation readiness failures may be retried without inspecting a changed display.
+struct PresentationNotReady : std::runtime_error { using std::runtime_error::runtime_error; };
+
 // Render-only geometry has no Wayland surface or input region.
+static void presentWorkspace(PHLWORKSPACE workspace, PHLMONITOR monitor) {
+    if (!workspace || !monitor || workspace->m_id <= 0 || workspace->m_isSpecialWorkspace)
+        throw PresentationNotReady("numbered workspace and connected monitor required");
+    if (monitor->m_activeWorkspace == workspace) return;
+    const auto focus = Desktop::focusState();
+    if (focus->monitor() == monitor || monitor->m_activeSpecialWorkspace)
+        throw PresentationNotReady("presentation preserves the owner's active monitor and special workspace");
+    const auto source = workspace->m_monitor.lock();
+    if (source && source->m_activeWorkspace == workspace)
+        throw PresentationNotReady("workspace is already displayed on another monitor");
+    const auto ownerWindow = focus->window();
+    const auto ownerMonitor = focus->monitor();
+    const auto ownerKeyboard = g_pSeatManager->m_state.keyboardFocus.lock();
+    const auto ownerPointer = g_pSeatManager->m_state.pointerFocus.lock();
+    const auto position = Pointer::mgr()->position();
+    State::workspacePlacementController()->moveWorkspaceToMonitor(workspace, monitor, true);
+    // Internal presentation avoids input release, focus, simulated motion and
+    // workspace-switch dispatchers. Recalculate only the selected output.
+    const auto previous = monitor->m_activeWorkspace;
+    monitor->changeWorkspace(workspace, true, true, true);
+    if (previous) Animation::Workspace::startAnimation(previous, Animation::Workspace::ANIMATION_TYPE_OUT, true, true);
+    Animation::Workspace::startAnimation(workspace, Animation::Workspace::ANIMATION_TYPE_IN, true, true);
+    g_layoutManager->recalculateMonitor(monitor);
+    if (focus->window() != ownerWindow || focus->monitor() != ownerMonitor ||
+        g_pSeatManager->m_state.keyboardFocus.lock() != ownerKeyboard ||
+        g_pSeatManager->m_state.pointerFocus.lock() != ownerPointer || Pointer::mgr()->position() != position)
+        throw std::runtime_error("workspace presented but a compositor callback changed owner focus; inspect before continuing");
+}
+
+static std::array<CBox, 4> screenFrame(Vector2D extent, double scale) {
+    const double thickness = std::min(120 * scale, std::min(extent.x, extent.y) / 2);
+    return {{{0, 0, extent.x, thickness}, {0, extent.y - thickness, extent.x, thickness},
+             {0, 0, thickness, extent.y}, {extent.x - thickness, 0, thickness, extent.y}}};
+}
+
+static double indicatorOpacity(double seconds) {
+    // Match the original panel's 2600ms ease-in-out breathing, .62 to 1.
+    const double phase = std::fmod(std::max(0.0, seconds), 2.6) / 1.3;
+    const double x = phase <= 1 ? phase : 2 - phase;
+    double low = 0, high = 1;
+    for (int step = 0; step < 24; ++step) {
+        const double t = (low + high) / 2;
+        const double sample = 3 * .42 * (1 - t) * (1 - t) * t + 3 * .58 * (1 - t) * t * t + t * t * t;
+        if (sample < x) low = t; else high = t;
+    }
+    const double t = (low + high) / 2;
+    return .62 + .38 * (3 * t * t - 2 * t * t * t);
+}
+
+static double clickProgress(std::chrono::steady_clock::time_point clicked,
+                            std::chrono::steady_clock::time_point now) {
+    if (clicked == std::chrono::steady_clock::time_point{}) return -1;
+    const double elapsed = std::chrono::duration<double>(now - clicked).count();
+    return elapsed >= 0 && elapsed < 0.65 ? elapsed / 0.65 : -1;
+}
+
 static void drawCursors(eRenderStage stage) {
     if (stage != RENDER_LAST_MOMENT)
         return;
     auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
     if (!mon)
         return;
+    if (indicatorStyleDirty) {
+        for (auto& texture : frameTextures) texture.reset();
+        for (auto& texture : cursorTextures) texture.reset();
+        clickTexture.reset();
+        indicatorStyleDirty = false;
+    }
+    uint64_t latest = 0;
+    for (const auto& [address, cursor] : cursors) {
+        auto window = cursor.window.lock();
+        auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
+        auto lease = resource ? applicationLeaseForClient(resource->client()) : nullptr;
+        if (window && window->m_isMapped && window->m_workspace && leasedWindow(window) &&
+            window->m_monitor.lock() == mon && window->m_workspace->isVisibleNotCovered() &&
+            (!lease || !lease->paused)) latest = std::max(latest, cursor.sequence);
+    }
+    bool framed = false;
     for (auto it = cursors.begin(); it != cursors.end();) {
         auto w = it->second.window.lock();
         if (!w || !w->m_isMapped || !w->m_workspace || !leasedWindow(w)) {
             it = cursors.erase(it);
             continue;
         }
-        if (w->m_monitor.lock() != mon) {
+        if (w->m_monitor.lock() != mon || !w->m_workspace->isVisibleNotCovered()) {
             ++it;
             continue;
         }
+        auto resource = w->resource();
+        auto lease = resource ? applicationLeaseForClient(resource->client()) : nullptr;
+        if (lease && lease->paused) { ++it; continue; }
+        if (it->second.sequence != latest) { ++it; continue; }
         auto box = w->surfaceLogicalBox();
         if (!box) {
             ++it;
             continue;
         }
-        const Vector2D pos = (Vector2D{box->x, box->y} + it->second.local - mon->m_position) * mon->m_scale;
+        const auto goal = w->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+        if (goal.x <= 0 || goal.y <= 0) { ++it; continue; }
+        const auto animationScale = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) / goal;
+        const Vector2D pos = (w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + it->second.local * animationScale - mon->m_position) * mon->m_scale;
         const int variant = (reinterpret_cast<uintptr_t>(w.get()) >> 4) & 1;
+        if (!framed) {
+            framed = true;
+            if (indicatorFrame) {
+                const auto edges = screenFrame(mon->m_size * mon->m_scale, mon->m_scale);
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+                for (size_t edge = 0; edge < edges.size(); ++edge) {
+                    if (!frameTextures[edge]) {
+                        const int width = edge < 2 ? 1 : 480, height = edge < 2 ? 480 : 1;
+                        auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+                        auto cr = cairo_create(surface);
+                        auto gradient = cairo_pattern_create_linear(edge == 3 ? width : 0, edge == 1 ? height : 0,
+                                                                    edge == 2 ? width : 0, edge == 0 ? height : 0);
+                        // These are the original desktop/panel.py working-glow stops.
+                        for (const auto& stop : std::array<std::pair<double, double>, 5>{{{0, .80}, {.18, .45}, {.40, .20}, {.68, .07}, {1, 0}}})
+                            cairo_pattern_add_color_stop_rgba(gradient, stop.first, indicatorColor[0], indicatorColor[1], indicatorColor[2], stop.second);
+                        cairo_set_source(cr, gradient); cairo_paint(cr);
+                        cairo_pattern_destroy(gradient); cairo_destroy(cr); cairo_surface_flush(surface);
+                        frameTextures[edge] = g_pHyprRenderer->createTexture(surface); cairo_surface_destroy(surface);
+                    }
+                    CTexPassElement::SRenderData glow;
+                    glow.tex = frameTextures[edge]; glow.box = edges[edge];
+                    glow.a = indicatorPulse ? indicatorOpacity(seconds) : 1;
+                    glow.damage = CRegion{glow.box};
+                    g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(glow)));
+                    if (indicatorPulse) {
+                        const auto& area = screenFrame(mon->m_size, 1)[edge];
+                        g_pHyprRenderer->damageBox(CBox{mon->m_position + Vector2D{area.x, area.y}, {area.w, area.h}});
+                    }
+                }
+            }
+            const auto workspace = w->m_workspace->m_id;
+            if (!workspaceLabels.contains(workspace)) {
+                if (workspaceLabels.size() >= 64) workspaceLabels.clear();
+                auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 520, 64);
+                auto cr = cairo_create(surface);
+                cairo_set_source_rgba(cr, 0.04, 0.09, 0.10, 0.94); cairo_paint(cr);
+                cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, 26); cairo_set_source_rgb(cr, 0.95, 0.97, 1);
+                cairo_move_to(cr, 20, 42);
+                cairo_show_text(cr, std::format("Orbit  |  Desktop {}", workspace).c_str());
+                cairo_destroy(cr); cairo_surface_flush(surface);
+                workspaceLabels[workspace] = g_pHyprRenderer->createTexture(surface);
+                cairo_surface_destroy(surface);
+            }
+            CTexPassElement::SRenderData label;
+            label.tex = workspaceLabels.at(workspace);
+            label.box = CBox{(mon->m_size.x - 300) * mon->m_scale / 2, 40 * mon->m_scale, 300 * mon->m_scale, 38 * mon->m_scale};
+            label.damage = CRegion{label.box};
+            g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(label)));
+        }
+        const auto progress = clickProgress(it->second.clicked, std::chrono::steady_clock::now());
+        if (progress >= 0) {
+            if (!clickTexture) {
+                auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 128, 128);
+                auto cr = cairo_create(surface);
+                cairo_arc(cr, 64, 64, 52, 0, 2 * M_PI);
+                cairo_set_source_rgba(cr, indicatorColor[0], indicatorColor[1], indicatorColor[2], 0.18); cairo_fill_preserve(cr);
+                cairo_set_source_rgb(cr, 0.86, 1, 0.96); cairo_set_line_width(cr, 6); cairo_stroke(cr);
+                cairo_destroy(cr); cairo_surface_flush(surface);
+                clickTexture = g_pHyprRenderer->createTexture(surface); cairo_surface_destroy(surface);
+            }
+            const auto click = (w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + it->second.clickLocal * animationScale - mon->m_position) * mon->m_scale;
+            const double diameter = (28 + 30 * progress) * mon->m_scale;
+            CTexPassElement::SRenderData pulse;
+            pulse.tex = clickTexture; pulse.a = 1 - progress;
+            pulse.box = CBox{click.x - diameter / 2, click.y - diameter / 2, diameter, diameter};
+            pulse.damage = CRegion{pulse.box};
+            g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(pulse)));
+            // Keep frames coming through expiry so no final pulse is left on screen.
+            g_pHyprRenderer->damageMonitor(mon);
+        }
         if (!cursorTextures[variant]) {
             // Rasterize once at 4x resolution, then reuse one filtered texture.
             auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 120, 144);
@@ -1160,7 +1289,7 @@ static void drawCursors(eRenderStage stage) {
             cairo_stroke(cr);
             // A small accent distinguishes agent pointers from the owner's.
             cairo_arc(cr, 24, 28, 3.2, 0, 2 * M_PI);
-            cairo_set_source_rgb(cr, variant ? 0.28 : 0.08, variant ? 0.55 : 0.72, variant ? 0.98 : 0.62);
+            cairo_set_source_rgb(cr, indicatorColor[0], indicatorColor[1], indicatorColor[2]);
             cairo_fill_preserve(cr);
             cairo_set_source_rgb(cr, 0.98, 0.99, 1.0);
             cairo_set_line_width(cr, 1.2);
@@ -1172,7 +1301,9 @@ static void drawCursors(eRenderStage stage) {
         }
         CTexPassElement::SRenderData data;
         data.tex = cursorTextures[variant];
-        data.box = CBox{pos.x - 4 * mon->m_scale, pos.y - 3 * mon->m_scale, 30 * mon->m_scale, 36 * mon->m_scale};
+        const double pointerScale = 4.0 / 3.0;
+        data.box = CBox{pos.x - 4 * pointerScale * mon->m_scale, pos.y - 3 * pointerScale * mon->m_scale,
+                       40 * mon->m_scale, 48 * mon->m_scale};
         data.damage = CRegion{data.box};
         g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(data)));
         ++it;
@@ -1366,6 +1497,18 @@ static std::vector<SP<CWLKeyboardResource>> targetKeyboards(const STarget& targe
     return result;
 }
 
+static void prepareKeyboardResource(const SP<CWLKeyboardResource>& keyboard, const STarget& target, wl_array* keys) {
+    const auto previous = agentKeyboards.find(keyboard.get());
+    const bool enrolled = previous != agentKeyboards.end() && previous->second.lock() == keyboard;
+    if (!enrolled) keyboard->sendKeymap(agentKeyboard);
+    // Re-entering the same surface for every shortcut can reset toolkit focus
+    // and selection state. Retain the client's own keyboard focus between actions.
+    if (!enrolled || keyboard->m_currentSurface.lock() != target.surface)
+        keyboard->sendEnter(target.surface, keys);
+    keyboard->sendMods(0, 0, 0, 0);
+    agentKeyboards[keyboard.get()] = keyboard;
+}
+
 static bool preparationMatches(const SKeyboardPreparation& value, const STarget& target) {
     if (value.invalid || std::chrono::steady_clock::now() >= value.expires ||
         value.window.lock() != target.window || value.surface.lock() != target.surface ||
@@ -1411,7 +1554,7 @@ static std::string cmdKeyboardPreparation(eHyprCtlOutputFormat, std::string requ
     const auto producer = token.substr(0, 32);
     const auto sequence = std::stoull(token.substr(32), nullptr, 16);
     if (!sequence) return "refused: invalid keyboard operation sequence";
-    if (!privateSelectionClient(target.surface->client())) return "refused: keyboard client is unavailable";
+    if (!agentClient(target.surface->client())) return "refused: keyboard client is unavailable";
     auto& producers = keyboardSequences[{target.surface->client(), handle.substr(handle.rfind('@') + 1)}];
     const auto previous = producers.find(producer);
     if ((previous != producers.end() && sequence <= previous->second) ||
@@ -1429,7 +1572,8 @@ static std::string cmdKeyboardPreparation(eHyprCtlOutputFormat, std::string requ
     auto raw = value.get();
     value->ack = xdg->m_events.ack.listen([raw](uint32_t serial) {
         if (serial == raw->serial) raw->acknowledged = true;
-        else if (raw->acknowledged) raw->invalid = true;
+        // Later size or decoration configure acknowledgements do not revoke
+        // keyboard focus. Surface, resource and focus transitions are checked separately.
     });
     value->unmap = xdg->m_events.unmap.listen([raw] { raw->invalid = true; });
     value->destroy = xdg->m_events.destroy.listen([raw] { raw->invalid = true; });
@@ -1440,12 +1584,7 @@ static std::string cmdKeyboardPreparation(eHyprCtlOutputFormat, std::string requ
     raw->arming = true;
     wl_array keys;
     wl_array_init(&keys);
-    for (const auto& keyboard : keyboards) {
-        keyboard->sendKeymap(agentKeyboard);
-        keyboard->sendEnter(target.surface, &keys);
-        keyboard->sendMods(0, 0, 0, 0);
-        agentKeyboards[keyboard.get()] = keyboard;
-    }
+    for (const auto& keyboard : keyboards) prepareKeyboardResource(keyboard, target, &keys);
     wl_array_release(&keys);
     raw->arming = false;
     raw->serial = xdg->scheduleConfigure();
@@ -1604,6 +1743,19 @@ static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     return "ok";
 }
 
+// Public native coordinates describe the captured window content. Wayland
+// pointer events describe its root surface, including client decoration offsets.
+static std::optional<Vector2D> surfaceInputPoint(Vector2D goal, Vector2D surfaceSize, CBox geometry, Vector2D point) {
+    if (!std::isfinite(goal.x) || !std::isfinite(goal.y) || goal.x <= 0 || goal.y <= 0 ||
+        !std::isfinite(point.x) || !std::isfinite(point.y) || point.x < 0 || point.y < 0 || point.x >= goal.x || point.y >= goal.y)
+        return std::nullopt;
+    if (geometry.w <= 0 || geometry.h <= 0) geometry = CBox{0, 0, surfaceSize.x, surfaceSize.y};
+    const Vector2D local{geometry.x + point.x * geometry.w / goal.x, geometry.y + point.y * geometry.h / goal.y};
+    if (!std::isfinite(local.x) || !std::isfinite(local.y) || std::abs(local.x) > 8388607 || std::abs(local.y) > 8388607)
+        return std::nullopt;
+    return local;
+}
+
 static std::string pointerCmd(std::string req, int kind) {
     std::istringstream in(req);
     std::string        cmd, address;
@@ -1614,14 +1766,26 @@ static std::string pointerCmd(std::string req, int kind) {
     auto t = resolve(address);
     if (!t.error.empty())
         return t.error;
-    const Vector2D local{x, y};
-    const auto box = t.window->surfaceLogicalBox();
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(extra) || !box ||
-        x < 0 || y < 0 || x >= box->w || y >= box->h)
-        return "refused: coordinates outside target surface";
+    const Vector2D point{x, y};
+    const auto xdg = t.window->m_xdgSurface.lock();
+    const auto local = surfaceInputPoint(t.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL),
+        t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, point);
+    if (!std::isfinite(extra) || !local)
+        return "refused: coordinates outside target window";
     if (kind == 2 && (extra == 0 || std::abs(extra) > 10000 || std::trunc(extra) != extra))
         return "refused: scroll steps must be a nonzero integer within 10000";
-    cursors[address] = {t.window, local};
+    // One pointer per actor client. Retire stale pointers from sibling windows.
+    for (auto it = cursors.begin(); it != cursors.end();) {
+        auto window = it->second.window.lock();
+        auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
+        if (it->first != address && resource && resource->client() == t.surface->client()) {
+            g_pHyprRenderer->damageMonitor(window->m_monitor.lock());
+            it = cursors.erase(it);
+        } else ++it;
+    }
+    auto& cursor = cursors[address];
+    cursor.window = t.window; cursor.local = point; cursor.sequence = ++cursorSequence;
+    if (kind == 1) { cursor.clickLocal = point; cursor.clicked = std::chrono::steady_clock::now(); }
     g_pHyprRenderer->damageMonitor(t.window->m_monitor.lock());
     if (kind == 3)
         return "ok";
@@ -1631,8 +1795,8 @@ static std::string pointerCmd(std::string req, int kind) {
         if (!p)
             continue;
         ++sent;
-        p->sendEnter(t.surface, local);
-        p->sendMotion(nowMs(), local);
+        p->sendEnter(t.surface, *local);
+        p->sendMotion(nowMs(), *local);
         p->sendFrame();
         if (kind == 1) {
             const uint32_t button = extra == 2 ? 0x111 /* BTN_RIGHT */ : extra == 3 ? 0x112 /* BTN_MIDDLE */ : 0x110 /* BTN_LEFT */;
@@ -1733,8 +1897,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"refused: exact application lease identity required"};
             if (applicationLeases.contains(id)) return std::string{"refused: active application lease must be handed back first"};
             try {
-                privateClipboardOffers.retire(nullptr, PROTO::data->m_offers, id);
-                privatePrimaryOffers.retire(nullptr, PROTO::primarySelection->m_offers, id);
                 return std::string{"ok"};
             } catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
@@ -1751,12 +1913,48 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 else if (operation == "resume") {
                     cancelKeyboardClient(found->second->client);
                     if (found->second->failure.front()) return std::string{"refused: failed application lease requires handback"};
+                    sendSharedSelection(found->second->client, false);
+                    sendSharedSelection(found->second->client, true);
                     found->second->paused = false;
                 }
                 else if (operation == "handback") handbackApplication(id);
                 else return std::string{"refused: unknown application lease operation"};
+                if (operation == "pause" || operation == "resume")
+                    for (const auto& [stable, retained] : found->second->windows)
+                        if (auto window = retained.window.lock())
+                            if (auto monitor = window->m_monitor.lock()) g_pHyprRenderer->damageMonitor(monitor);
                 return std::string{"ok"};
             } catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
+        }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-indicator-style", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            std::istringstream input(request);
+            std::string command, hex, pulse, frame, extra;
+            if (!(input >> command >> hex >> pulse >> frame) || (input >> extra) ||
+                !std::regex_match(hex, std::regex{"[0-9a-fA-F]{6}"}) ||
+                (pulse != "0" && pulse != "1") || (frame != "0" && frame != "1"))
+                return std::string{"refused: six hex colour digits and binary pulse/frame flags required"};
+            const auto rgb = std::stoul(hex, nullptr, 16);
+            const std::array<double, 3> color{((rgb >> 16) & 255) / 255.0, ((rgb >> 8) & 255) / 255.0, (rgb & 255) / 255.0};
+            if (color != indicatorColor || (pulse == "1") != indicatorPulse || (frame == "1") != indicatorFrame) {
+                indicatorColor = color; indicatorPulse = pulse == "1"; indicatorFrame = frame == "1";
+                indicatorStyleDirty = true;
+                for (const auto& monitor : State::monitorState()->monitors()) g_pHyprRenderer->damageMonitor(monitor);
+            }
+            return std::string{"ok"};
+        }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-workspace-present", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            std::istringstream input(request);
+            std::string command, name, extra;
+            WORKSPACEID id = 0;
+            if (!(input >> command >> id >> name) || (input >> extra) || id <= 0)
+                return std::string{"refused: numbered workspace and exact monitor name required"};
+            try {
+                presentWorkspace(State::workspaceState()->query().id(id).run(), State::monitorState()->query().name(name).run());
+                return std::string{"ok"};
+            } catch (const PresentationNotReady& error) { return std::string{"not-ready: "} + error.what(); }
+            catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-admission", false,
         [](eHyprCtlOutputFormat, std::string request) {
@@ -1767,6 +1965,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             else
                 return std::string{"refused: admission requires pause or resume"};
             return std::string{admissionPaused ? "ok paused" : "ok running"};
+        }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-opening", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            std::istringstream input(request);
+            std::string command, operation, token, extra;
+            if (!(input >> command >> operation >> token) || (input >> extra))
+                return std::string{"refused: opening requires an operation and exact token"};
+            try { return openingRequest(operation, token); }
+            catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-unload-info", false,
         [](eHyprCtlOutputFormat, std::string request) {
@@ -1779,7 +1986,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                     if (!scope->empty())
                         empty = false;
                 const bool ready = admissionPaused && roots == 0 && empty && !legacyEnrollmentOccurred &&
-                    applicationLeases.empty() && privateClipboardOffers.available() == 128 && privatePrimaryOffers.available() == 128;
+                    applicationLeases.empty();
                 return std::format("{{\"schema\":1,\"admission_paused\":{},\"live_roots\":{},\"tracked_scopes\":{},\"scopes_empty\":{},\"legacy_enrollment\":{},\"ready\":{}}}",
                                    admissionPaused, roots, retainedScopes.size(), empty, legacyEnrollmentOccurred, ready);
             } catch (const std::exception& error) {
@@ -1862,7 +2069,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return std::string{"ok"};
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-selection-diagnostic", false,
-        [](eHyprCtlOutputFormat, std::string) { return selectionDiagnostic; }});
+        [](eHyprCtlOutputFormat, std::string) { return std::string{"shared owner clipboard and primary selection"}; }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-target-check", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string command, address, extra;
@@ -1870,6 +2077,20 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return std::string{"refused: guarded target required"};
         const auto target = resolve(address, false);
         return target.error.empty() ? std::string{"ok"} : target.error;
+    }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-window-close", false, [](eHyprCtlOutputFormat, std::string request) {
+        std::istringstream input(request);
+        std::string command, handle, extra;
+        if (!(input >> command >> handle) || (input >> extra) || handle.find('@') == std::string::npos)
+            return std::string{"refused: exact guarded window target required"};
+        auto target = resolve(handle, false);
+        if (!target.error.empty()) return target.error;
+        auto xdg = target.window->m_xdgSurface.lock();
+        if (!xdg || !xdg->m_toplevel) return std::string{"target has no native close request"};
+        // Ask this exact toplevel to close normally. The application owns its
+        // unsaved-content prompt and can decline. Never terminate its process.
+        xdg->m_toplevel->close();
+        return std::string{"ok"};
     }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-state", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
@@ -1883,9 +2104,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return std::string{"state unavailable: target is not an XDG toplevel"};
         const auto& states = xdg->m_toplevel->m_pendingApply.states;
         const bool suspended = std::ranges::find(states, XDG_TOPLEVEL_STATE_SUSPENDED) != states.end();
-        return std::format("{{\"suspended\":{},\"render_unfocused\":{}}}",
+        const auto geometry = xdg->m_current.geometry;
+        const auto goal = target.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+        const auto surface = target.surface->m_current.size;
+        return std::format("{{\"suspended\":{},\"render_unfocused\":{},\"window\":[{},{}],\"surface\":[{},{}],\"geometry\":[{},{},{},{}]}}",
             suspended ? "true" : "false",
-            target.window->m_ruleApplicator->renderUnfocused().valueOrDefault() ? "true" : "false");
+            target.window->m_ruleApplicator->renderUnfocused().valueOrDefault() ? "true" : "false",
+            goal.x, goal.y, surface.x, surface.y, geometry.x, geometry.y, geometry.w, geometry.h);
     }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-prepare", false, cmdKeyboardPreparation});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-cancel", false, cmdKeyboardPreparation});
@@ -1972,8 +2197,6 @@ APICALL EXPORT void PLUGIN_EXIT() {
     keyboardPreparations.clear();
     keyboardSequences.clear();
     removeApplicationHooks();
-    privateClipboardOffers.retire(nullptr, PROTO::data->m_offers);
-    privatePrimaryOffers.retire(nullptr, PROTO::primarySelection->m_offers);
     configReloadListener.reset();
     for (const auto& [pid, rule] : launchRules)
         Desktop::Rule::ruleEngine()->unregisterRule(rule);
@@ -2002,11 +2225,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         keyboard->sendKeymap(g_pSeatManager->m_keyboard.lock());
     }
     agentKeyboards.clear();
-    restoreDataControlGuards(wlrGuards, nullptr);
-    restoreDataControlGuards(extGuards, nullptr);
     restoreSelectionGuards(primaryGuards);
     restoreSelectionGuards(clipboardGuards);
-    clearSelectionClients();
     for (const auto& [address, weak] : awakeWindows) {
         if (auto window = weak.lock(); window && !g_pHyprRenderer->shouldRenderWindow(window))
             window->setSuspended(true);
@@ -2020,6 +2240,9 @@ APICALL EXPORT void PLUGIN_EXIT() {
     cursors.clear();
     for (auto& texture : cursorTextures)
         texture.reset();
+    clickTexture.reset();
+    for (auto& texture : frameTextures) texture.reset();
+    workspaceLabels.clear();
     agentKeyboard.reset();
     for (const auto& [pid, fd] : registeredProcesses)
         close(fd);

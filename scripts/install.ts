@@ -97,12 +97,12 @@ if (json) {
   const command = report.steps.find(step => step.id === "launcher")?.state === "done" ? report.launcher : join(report.source, "bin", commandName());
   if (report.installed) {
     display.summary(report.dryRun ? "Nothing was changed. This is what the run would do." : "Orbit is installed.", [
-      "  Session mode:      desktop-only (standalone browser sessions retired)",
-      `  Native sessions:   ${report.capabilities.nativeSessions ? "ready" : "not available on this machine yet"}`,
+      "  Application mode:  original native apps on numbered workspaces",
+      `  Native prerequisites: ${report.capabilities.nativeSessions ? "present" : "not found on this machine"}`,
       "",
       "  Try it:",
       `    ${command} status`,
-      `    ${command} session create`,
+      `    ${command} native-candidates 2`,
       `    ${command} applications`,
       "",
       ...(connect ? ["  Agent hosts:", `    ${report.steps.find(step => step.id === "hosts")?.detail ?? "not configured"}`,

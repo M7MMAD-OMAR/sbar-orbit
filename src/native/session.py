@@ -22,6 +22,22 @@ class SessionError(RuntimeError):
     pass
 
 
+class ApplicationControlEnded(SessionError):
+    """A missing lease is not evidence that the application window disappeared."""
+
+
+class OpeningDeliveryUncertain(SessionError):
+    """A launch may have taken effect, so another request must not repeat it."""
+
+
+class PresentationNotReady(SessionError):
+    """The compositor rejected presentation before any display mutation."""
+
+
+class ApplicationOwnerBusy(SessionError):
+    """A client-wide handoff cannot displace the owner's real input focus."""
+
+
 def identifier(value):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{32}", value):
         raise SessionError("Invalid generated native identifier")
@@ -119,7 +135,7 @@ class NativeSession:
         if not isinstance(value, dict) or not isinstance(value.get("type"), str):
             raise SessionError("Native action must be an object with a type")
         fields = {"windows": {"appId"}, "observe": {"appId", "windowId"},
-                  "state": {"appId", "windowId"}, "hide-cursor": {"appId", "windowId"},
+                  "close-window": {"appId", "windowId"}, "state": {"appId", "windowId"},
                   "cursor": {"appId", "windowId", "x", "y"}, "move": {"appId", "windowId", "x", "y"},
                   "click": {"appId", "windowId", "x", "y", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
@@ -149,7 +165,23 @@ class NativeSession:
         if kind == "key" and (not isinstance(result.get("key"), str)
                               or not re.fullmatch(r"[A-Za-z0-9_+.-]{1,80}", result["key"])):
             raise SessionError("Invalid native key combination")
+        if kind == "key":
+            modifiers, separator, key = result["key"].rpartition("+")
+            if key.lower() == "enter":
+                result["key"] = modifiers + separator + "Return"
         return result
+
+    def _ensure_pointer(self, target, address):
+        """Visible render-only presence, with no pointer or keyboard input."""
+        point = target["pointer"]
+        if (point is None or not 0 <= point["x"] < target["size"][0]
+                or not 0 <= point["y"] < target["size"][1]):
+            point = {"x": target["size"][0] // 2, "y": target["size"][1] // 2}
+        # Refresh the selected target after a sibling window or portal had the
+        # latest cursor. This is render-only and cannot replay pointer input.
+        self.transport._perform(f"ghost-cursor {address} {point['x']} {point['y']}")
+        target["pointer"] = point
+        return target["pointer"]
 
     def execute(self, value):
         require_budget()
@@ -166,22 +198,31 @@ class NativeSession:
                 return {"windows": self._owned_windows(app_id)}
             target = self._target(app_id, action["windowId"])
             address = target["address"] + "@" + target["key"][1] + "@" + self._app(app_id).unit
+            if kind in ("key", "text", "state"):
+                self._ensure_pointer(target, address)
             if kind == "observe":
                 verify_host(self.plan)
                 environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
-                captured = int(time.time() * 1000)
-                surface_size = tuple(target["size"])
-                self._check_target(address)
-                image, width, height = bounded_capture(
-                    ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
-                    self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log"))
-                verify_host(self.plan)
-                self._target(app_id, action["windowId"])
-                self._check_target(address)
-                if tuple(target["size"]) != surface_size:
-                    raise SessionError("Native target resized during capture")
+                for attempt in range(3):
+                    self._ensure_pointer(target, address)
+                    captured = int(time.time() * 1000)
+                    surface_size = tuple(target["size"])
+                    self._check_target(address)
+                    image, width, height = bounded_capture(
+                        ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
+                        self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log"))
+                    verify_host(self.plan)
+                    self._target(app_id, action["windowId"])
+                    self._check_target(address)
+                    if tuple(target["size"]) == surface_size:
+                        break
+                    if attempt == 2:
+                        raise SessionError("Native target keeps resizing; wait before observing again")
+                    # Capture is read-only. Keep the exact lifetime-bound target
+                    # and retry its new geometry, never any prior input action.
+                    time.sleep(0.05)
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],
@@ -189,6 +230,9 @@ class NativeSession:
                          "appId": app_id, "windowId": action["windowId"], "pointer": copy.deepcopy(target["pointer"])}
                 return {key: value for key, value in frame.items() if key != "image"} | {
                     "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest()}
+            if kind == "close-window":
+                self.transport._perform("ghost-window-close " + address)
+                return {"closeRequested": True}
             if kind in ("cursor", "move", "click", "scroll"):
                 if action["x"] >= target["size"][0] or action["y"] >= target["size"][1]:
                     raise SessionError("Native coordinates lie outside the target surface")
@@ -207,8 +251,6 @@ class NativeSession:
             response = self.transport._perform(command + " " + arguments)
             if kind in ("cursor", "move", "click", "scroll"):
                 target["pointer"] = {"x": action["x"], "y": action["y"]}
-            elif kind == "hide-cursor":
-                target["pointer"] = None
             return {"response": json.loads(response) if kind == "state" else response}
 
         result = self.control.execute(request, operation)

@@ -82,14 +82,14 @@ test("a thrown ceiling is recorded under its own name rather than as BACKEND_ERR
   const root = await mkdtemp(join(tmpdir(), "orbit-diag-codes-"));
   const diagnostics = new Diagnostics(root);
   const recorded: string[] = [];
-  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESTORE_REFUSED", "POLICY_DENIED"]) {
+  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED"]) {
     try {
       await diagnostics.run({ method: "session.act", params: {} }, async () => { throw new OrbitError(code, "ceiling"); });
     } catch { /* the throw is the point */ }
   }
   const report = await diagnostics.report() as { events?: { code?: string }[] };
   for (const event of report.events ?? []) if (event.code) recorded.push(event.code);
-  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESTORE_REFUSED", "POLICY_DENIED"]);
+  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED"]);
   // And the negative: a code that is genuinely not Orbit's still falls back, so the allowlist is
   // doing filtering rather than passing everything through.
   const fallback = new Diagnostics(await mkdtemp(join(tmpdir(), "orbit-diag-fallback-")));

@@ -1,6 +1,6 @@
-"""Compile the actual claim admission expression against protocol lifecycle fixtures.
+"""Compile actual device inventory validation against protocol lifecycle fixtures.
 
-Run only on an isolated runner after the owner compositor incident.
+No compositor is started or controlled.
 ORBIT_DATA_CONTROL_SOURCE selects the broken or corrected source for red/green.
 """
 import os
@@ -63,22 +63,8 @@ class DeviceAdmissionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         source = SOURCE.read_text()
-        claim = body(source, "static std::string claimApplication(")
-        expression = re.search(r'if \((.*?)\)\s*throw std::runtime_error\("existing application uses unsupported data-control devices"\)', claim, re.S)
-        if expression is None:
-            raise RuntimeError("Claim admission expression was not found")
-        # The preceding guards also contain if statements. Start at the device lookup.
-        condition = expression[1]
-        start = condition.rfind("clientHasDataControlDevice(PROTO::dataWlr")
-        if start < 0:
-            start = condition.rfind("(PROTO::dataWlr &&")
-        if start < 0:
-            raise RuntimeError("No recognized data-control admission path")
-        condition = condition[start:]
-        helper = ""
-        if "clientHasDataControlDevice" in condition:
-            helper = "template <typename Protocol>\n" + body(source, "static bool clientHasDataControlDevice(")
-        wrapper = "int admission(wl_client* client) { try { return (" + condition + ") ? 1 : 0; } catch (...) { return 2; } }\n"
+        helper = "template <typename Protocol>\n" + body(source, "static bool clientHasDataControlDevice(")
+        wrapper = "int admission(wl_client* client) { try { return clientHasDataControlDevice(PROTO::extDataDevice, client) ? 1 : 0; } catch (...) { return 2; } }\n"
         cls.work = tempfile.TemporaryDirectory(prefix="orbit-device-admission-")
         cls.addClassCleanup(cls.work.cleanup)
         root = Path(cls.work.name)

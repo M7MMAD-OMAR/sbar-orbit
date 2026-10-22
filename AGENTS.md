@@ -4,20 +4,29 @@ Read `~/AGENTS.md` directly. No long dashes anywhere. Bun only.
 Use `main` in this checkout. Do not create branches or worktrees. Preserve
 unrelated changes. Commit and push finished task paths to `main`.
 
-## Native applications only
+## Original applications and current owner authorization
 
-Browser launch, browser automation, copied profiles, private desktops, hidden
-sessions and browser viewers are removed and forbidden. Do not recreate them,
-including for tests or as recovery. No settings opt-in exists. Use Orbit's
-original native application opening with an explicit numbered workspace and a
-discovered applicationId. Preserve owner application state, focus and pointer.
+For ordinary web tasks, prefer the AI host's built-in browser or its normal web
+tools. Orbit provides native desktop application control, not a browser-specific
+session backend. Use Orbit for original installed desktop application tasks. Use
+the owner's normal browser or personal profile through Orbit only when the owner
+explicitly requests that browser or profile. Original browser and terminal
+registrations remain supported; this routing preference is not a category ban.
+Never copy profiles or create a hidden substitute desktop.
 
-Existing owner application input and capture remain under the compositor crash
-release hold. Do not bypass the hold or substitute a new application/profile.
-Opening an original app is supported independently and leaves it open. Report
-actual evidence; unknown measurements are `not measured`.
+The owner explicitly enabled original browsers, terminals and other installed
+applications on 22 October 2026. Do not invent a category ban or revive obsolete
+browser prohibitions from historical documents. Use Orbit with an exact installed
+registration and an explicit visible numbered workspace, preserving normal owner
+state. Do not create hidden substitute desktops or copy application profiles.
 
-Load `skills/sbar-orbit/SKILL.md` for computer work. Respect conversation off.
+Input and capture availability must follow the actual adapter and prepared build.
+The historical incident is diagnostic evidence, not permanent user policy. Repair
+and measure event delivery, cursor visibility and lifecycle behavior; do not call
+an operation successful merely because a command returned ok. Preserve unrelated
+windows, unsaved content, owner focus and pointer. Report actual measurements.
+
+Load `skills/sbar-orbit/SKILL.md` for native desktop application work. Respect conversation off.
 Never restart a shared broker while another task has active work.
 
 ## Verification
@@ -28,8 +37,8 @@ bun run scripts/limited.ts bun run typecheck
 bun run verify
 ```
 
-Run one budgeted command at a time. Tests must not launch browsers or create
-private desktops. Times use 12 hour form. Fix types at their source with
+Run one budgeted command at a time. Automated contract tests use owned fixtures; actual native browser
+acceptance uses the original visible application and preserves owner work. Times use 12 hour form. Fix types at their source with
 `noUncheckedIndexedAccess`. See `docs/desktop-only.md` for the product contract.
 
 <!-- graft:start -->

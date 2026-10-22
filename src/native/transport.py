@@ -17,7 +17,7 @@ from .budget import require_budget
 
 
 ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", "ghost-move", "ghost-target-check",
-                     "ghost-scroll", "ghost-cursor", "ghost-hide-cursor", "ghost-release", "ghost-state"})
+                     "ghost-window-close", "ghost-scroll", "ghost-cursor", "ghost-release", "ghost-state"})
 
 
 def action_request(request):

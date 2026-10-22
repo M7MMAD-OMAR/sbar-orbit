@@ -46,7 +46,7 @@ def placement(workspace, requested, workspaces, monitors):
             "right": x + left + available_width, "bottom": y + top + available_height}
 
 
-def measured_window(window, fitted):
+def measured_window(window, fitted, allow_adjusted=False):
     size, at = window.get("size"), window.get("at")
     if (window.get("floating") is not True or not isinstance(size, list) or len(size) != 2
             or not isinstance(at, list) or len(at) != 2
@@ -56,7 +56,8 @@ def measured_window(window, fitted):
     x, y = at
     if (abs((x + width / 2) - (fitted["left"] + fitted["right"]) / 2) > 2
             or abs((y + height / 2) - (fitted["top"] + fitted["bottom"]) / 2) > 2
-            or abs(width - fitted["width"]) > 2 or abs(height - fitted["height"]) > 2
+            or (not allow_adjusted and (abs(width - fitted["width"]) > 2 or abs(height - fitted["height"]) > 2))
+            or width < 320 or height < 240
             or x < fitted["left"] - 2 or y < fitted["top"] - 2
             or x + width > fitted["right"] + 2 or y + height > fitted["bottom"] + 2):
         return None

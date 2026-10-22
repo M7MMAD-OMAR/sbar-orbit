@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { classify, decide, freshProfilePolicy, journalEntry, narrow, parsePolicy, readOnlyPolicy, requireBoundedOrigins, type SessionPolicy } from "../src/policy";
+import { classify, decide, nativeApplicationPolicy, journalEntry, narrow, parsePolicy, readOnlyPolicy, type SessionPolicy } from "../src/policy";
 
 const autonomous = (over: Partial<SessionPolicy> = {}): SessionPolicy => ({
   mode: "autonomous", origins: ["https://example.test"], allow: ["read", "navigate", "write"], deny: ["irreversible"], ...over,
@@ -88,7 +88,7 @@ test("parsing refuses the spellings that would make the allowlist meaningless", 
   expect(parsed.mode).toBe("autonomous");
 });
 
-test("the default policy looks and does not touch", () => {
+test("an explicitly partial policy keeps the read-only template", () => {
   expect(readOnlyPolicy.allow).toEqual(["read"]);
   expect(readOnlyPolicy.deny).toEqual(["irreversible"]);
   expect(readOnlyPolicy.origins).toEqual([]);
@@ -96,8 +96,8 @@ test("the default policy looks and does not touch", () => {
   expect(decide(readOnlyPolicy, "navigate", "https://anywhere.test").outcome).toBe("deny");
   expect(parsePolicy({})).toEqual(readOnlyPolicy);
 
-  // Reaching the irreversible class takes two deliberate statements, not one. Naming it in allow is
-  // not enough, because an omitted deny still carries it.
+  // A partial policy inherits the template deny. Native session creation instead
+  // supplies nativeApplicationPolicy defaults before parsing.
   expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"] }), "download").outcome).toBe("deny");
   expect(decide(parsePolicy({ mode: "autonomous", allow: ["read", "irreversible"], deny: [] }), "download").outcome).toBe("allow");
 });
@@ -127,34 +127,18 @@ test("the journal records what happened without recording what was in it", () =>
   expect(refused.origin).toBe("https://attacker.test");
 });
 
-test("a fresh profile session is unbounded, a session with real logins cannot be", () => {
-  // Every session Orbit creates today starts from an empty profile, so there is nothing to steer it
-  // toward and bounding it would only break the agent.
-  expect(freshProfilePolicy.origins).toBe("any");
-  expect(decide(freshProfilePolicy, "navigate", "https://anywhere.test/x").outcome).toBe("allow");
-  expect(decide(freshProfilePolicy, "launch").outcome).toBe("allow");
-  expect(decide(freshProfilePolicy, "download").outcome).toBe("deny");
-
-  // The moment a session carries the person's real logins, unbounded origins are refused.
-  expect(() => requireBoundedOrigins(freshProfilePolicy)).toThrow();
-  expect(() => requireBoundedOrigins(parsePolicy({ origins: [], allow: ["read"] }))).toThrow();
-  expect(requireBoundedOrigins(parsePolicy({ mode: "autonomous", origins: ["https://mail.example.test"], allow: ["read", "navigate", "write"] })))
-    .toEqual(["https://mail.example.test"]);
-
-  // "any" can be narrowed to a named list, and a named list can never become "any".
-  expect(narrow(freshProfilePolicy, { origins: ["https://a.test"] }).origins).toEqual(["https://a.test"]);
-  expect(narrow(parsePolicy({ origins: ["https://a.test"], allow: ["read", "navigate"] }), {}).origins).toEqual(["https://a.test"]);
-});
-
-test("the lease is a property of the session, and a page cannot be an exception to it", () => {
-  // Recorded here because the enforcement itself is measured in experiments/origin-lease.ts: the
-  // broker's check governs what the AGENT asks for, and it governs nothing a page does on its own.
-  // Both depths read the same allowlist, so narrowing one narrows the other.
-  const policy = parsePolicy({ mode: "autonomous", origins: ["https://a.test"], allow: ["read", "navigate", "write"] });
-  expect(policy.origins).toEqual(["https://a.test"]);
-  expect(decide(policy, "navigate", "https://b.test").outcome).toBe("deny");
-  // A session with no credentials installs no lease, which is what "any" means to the backend.
-  expect(freshProfilePolicy.origins).toBe("any");
+test("native owner defaults permit application actions and remain explicitly narrowable", () => {
+  const policy = parsePolicy(nativeApplicationPolicy);
+  expect(policy.mode).toBe("autonomous");
+  for (const action of ["windows", "cursor", "move", "click", "scroll", "text", "paste", "key", "close-window", "launch"])
+    expect(decide(policy, action).outcome).toBe("allow");
+  expect(decide(policy, "navigate", "https://anywhere.test/x").outcome).toBe("allow");
+  const narrowed = narrow(policy, { origins: ["https://a.test"], allow: ["read"] });
+  expect(decide(narrowed, "windows").outcome).toBe("allow");
+  expect(decide(narrowed, "key").outcome).toBe("deny");
+  expect(decide(narrowed, "navigate", "https://b.test").outcome).toBe("deny");
+  expect(nativeApplicationPolicy.origins).toBe("any");
+  expect(nativeApplicationPolicy.deny).toEqual([]);
 });
 
 /**

@@ -4,8 +4,8 @@
 #   ./install.sh
 #
 # It links the sbar-orbit command, prepares dependencies, installs and starts the broker service,
-# writes the agent connector configuration and verifies that the broker answers. It installs nothing
-# that needs root: Bun, a browser and the capture tools stay the package manager's job, and the
+# writes the connector configuration and verifies that the broker answers. Registering an agent host
+# requires --connect. It installs nothing that needs root: Bun and native capture tools stay the package manager's job, and the
 # run prints the exact command for each one it finds missing.
 set -euo pipefail
 # BSD readlink has no portable -f flag. Resolve each link from its own directory,

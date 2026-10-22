@@ -80,6 +80,7 @@ was launched and no signed-in browser account was inspected.
 A completed workflow must show an external agent opening the original app through
 its actual host connector, executing input, observing application state, preserving
 owner work and returning control, with exact cleanup. Account continuity needs
-permitted in-application evidence. The current [handoff hold](native-handoff-incident.md)
-and [support boundaries](support-tiers.md) still apply. This report records failed
+permitted in-application evidence. The [handoff hold](native-handoff-incident.md) applied at the time of these
+measurements. See [current acceptance](native-acceptance-0.3.0.md) and the current
+[support boundaries](support-tiers.md). This report records failed
 and partial real tasks; it does not certify universal or problem-free use.

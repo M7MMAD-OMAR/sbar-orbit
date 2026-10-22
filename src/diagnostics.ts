@@ -24,12 +24,12 @@ const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'selec
  * list honest. An intentionally listed code that nothing throws belongs in that test's allowlist with
  * its reason, not here.
  */
-export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BROKER_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED',
+export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSION_NOT_FOUND', 'SESSION_CLOSED', 'PAUSED', 'NOT_PAUSED', 'PROFILE_BUSY', 'PRESENTATION_NOT_READY', 'PRESENTATION_UNCONFIRMED', 'REQUEST_CONFLICT', 'POLICY_DENIED', 'BACKEND_ERROR', 'BROKER_ERROR', 'BACKEND_FAILED', 'DEADLINE_EXCEEDED', 'TIMEOUT', 'RESOURCE_LIMIT_REQUIRED', 'SESSION_OPEN', 'SETTINGS_REFUSED',
   // Added after measuring what the layer recorded for each: every one of these was landing as
   // BACKEND_ERROR. They are refusals a person or an agent can act on, and an agent that cannot tell
   // "you hit a ceiling" from "something broke" retries the wrong thing.
-  'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_UNAVAILABLE', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
-  'RESTORE_REFUSED', 'POLICY_CONFIRMATION_REQUIRED', 'ACCOUNT_STATE_INVALID', 'USAGE_STATE_INVALID',
+  'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
+  'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID',
   'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;

@@ -1,3 +1,4 @@
+import { version } from "../package.json";
 import { preparedIdentitySync } from "./managed-identity";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -71,4 +72,9 @@ export function connectorEntry(options: { launcher?: string; source: string; pla
 function windowsLauncher(launcher?: string) {
   if (!launcher) return undefined;
   return /\.(cmd|bat)$/i.test(launcher) ? launcher : `${launcher}.cmd`;
+}
+
+/** A release change gives host configuration watchers a new adapter fingerprint. */
+export function connectorEnvironment(socket: string) {
+  return { ORBIT_SOCKET: socket, ORBIT_CLIENT_VERSION: version };
 }

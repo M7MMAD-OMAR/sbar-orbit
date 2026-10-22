@@ -13,7 +13,7 @@ from src.native.plugin_bundle import fingerprint
 
 class OwnerPluginTests(unittest.TestCase):
     def setUp(self):
-        gate = patch.object(plugin_owner, "require_owner_handoff")
+        gate = patch.object(plugin_owner, "require_native_plugin")
         gate.start()
         self.addCleanup(gate.stop)
         self.work = tempfile.TemporaryDirectory(prefix="orbit-owner-plugin-")
@@ -44,6 +44,17 @@ class OwnerPluginTests(unittest.TestCase):
         self.transport.start()
         self.mapping = patch.object(plugin_owner, "mapped_identity")
         self.mapping.start()
+
+    def test_compatibility_failure_releases_prepared_bundle(self):
+        from unittest.mock import MagicMock
+        bundle = MagicMock()
+        bundle.artifact = self.artifact
+        bundle.plan = self.plan
+        with patch.object(plugin_owner, "PreparedPlugin", return_value=bundle), \
+                patch.object(plugin_owner, "require_native_plugin", side_effect=ValueError("source changed")):
+            with self.assertRaisesRegex(ValueError, "source changed"):
+                plugin_owner.operate("load", self.directory)
+        bundle.close.assert_called_once()
 
     def tearDown(self):
         self.mapping.stop()

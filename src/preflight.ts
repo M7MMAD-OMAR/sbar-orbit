@@ -100,10 +100,8 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   // fail an install for the absence of something the Windows path never calls.
   const windows = probe.platform === "win32";
   const darwin = probe.platform === "darwin";
-  // The native backend nests a Wayland compositor, which only Linux can do. Asking `!windows` was
-  // asking the wrong question: on macOS or a BSD it still emitted `./install.sh --native` and
-  // `sudo dnf install` remedies, the exact unactionable Fedora instructions the Windows gate was
-  // added to stop, and `preflight` is documented as the read-only check that runs anywhere.
+  // The implemented desktop adapter uses the owner's Linux Hyprland session.
+  // Other platforms must not inherit its prerequisites or claim native control.
   const nativePossible = probe.platform === "linux";
   add("supported-platform", "common", probe.platform === "linux" || windows || darwin,
     { id: "unsupported-platform", needsElevation: false, agentMayRun: false,
@@ -137,9 +135,8 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
     add("taskpolicy", "common", await probe.file("/usr/sbin/taskpolicy", true),
       { id: "no-taskpolicy", needsElevation: false, agentMayRun: false,
         message: "taskpolicy is missing, so sessions cannot be placed under the utility QoS clamp. The budget's accounting half still works and sessions still run." });
-    // The supervisor that holds a browser tree here is TypeScript run by this same Bun, not the
-    // Python one Linux uses, so its absence is an incomplete source tree in exactly the same way.
-    add("supervisor-source", "common", await probe.file(join(project, "src/native/supervise-darwin.ts"), false),
+    // Metadata and owner-service installation use the shared broker source.
+    add("broker-source", "common", await probe.file(join(project, "src/service.ts"), false),
       { id: "incomplete-source", needsElevation: false, agentMayRun: false,
         message: "This source tree is missing files a release carries. Extract a complete Orbit source release, or check out the repository again." });
   }
@@ -165,14 +162,11 @@ export async function inspectPrerequisites(project = resolve(import.meta.dir, ".
   }
   const available = (group: string) => checks.filter(check => check.group === "common" || check.group === group).every(check => check.available);
   // `every` on an empty list is true, so skipping the native checks would report
-  // `nativePrerequisitesFound: true` on a machine that cannot have a private display at all. That is a
-  // worse answer than the Fedora remedies it replaced: one is noise, this would be a false capability
-  // claim in the field an agent branches on. Not measured is not a pass, and here it is not even a
-  // possibility, so it is stated as false, for every platform that cannot nest a compositor rather
-  // than for Windows alone.
+  // `nativePrerequisitesFound: true` without an implemented platform adapter.
+  // Metadata tooling does not establish native desktop control.
   const nativePrerequisitesFound = nativePossible && available("native");
   return { check: "prerequisite-availability", browserPrerequisitesFound: false, nativePrerequisitesFound, checks,
     nativeRuntime: { source: "removed" },
-    notVerified: ["Bun/runtime version compatibility", "cgroup delegation and the enforced resource budget", "shared libraries and executable startup", "disk-backed private workspace storage", "application behavior and desktop CPU acceptance"],
+    notVerified: ["Bun/runtime version compatibility", "platform resource budget enforcement", "shared libraries and executable startup", "owner application permissions", "application behavior and desktop CPU acceptance"],
     startsApplications: false };
 }

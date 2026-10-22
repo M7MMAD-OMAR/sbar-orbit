@@ -1,21 +1,20 @@
 # Native validation
 
-`bun run verify` is the supported native-only product suite. It tests refusal of
-removed browser/private routes, native registration admission, launch receipt
-attribution, protected controls, lifecycle, release holds, metadata, resource
-budgets and settings. It never opens a browser or creates a private desktop.
+`bun run verify` runs native product contracts within the shared resource budget.
+It checks original registration resolution, receipt/scope attribution, weaker
+D-Bus candidate handling, explicit controls, lifecycle, plugin compatibility,
+input/capture geometry, clipboard, metadata and settings. The source suite does
+not create a private desktop or launch applications. Run one bounded command at
+a time. Report skipped platform checks as skipped.
 
-Regression tests for retired admission were run against unfixed source and failed
-before the runtime deletion. Current source tests and independent reviews are
-recorded with matching source and plan hashes in task evidence. Skipped platform
-checks remain skipped; no fixture establishes live owner input acceptance.
+Regression checks must fail against the unfixed source before their passing
+result can demonstrate detection. Actual application measurements are separate
+from fixture and protocol acknowledgements. See [current acceptance](native-acceptance-0.3.0.md)
+for original apps, external agent workflows, full-monitor observations and limits.
+Earlier failures remain in [historical external acceptance](external-agent-acceptance.md).
 
-On 22 October 2026 this workstation acknowledged original Calculator and Text
-Editor windows on workspace 2 using normal owner state. After the registered
-native-only API change, original Inkscape was acknowledged on workspace 2 as well.
-These are opening observations, not account, screenshot or input measurements.
-
-Existing owner application input remains under the
-[compositor incident release hold](native-handoff-incident.md). Unknown
-measurements are `not measured`, never a pass. Historical browser measurements
-cannot establish current native application compatibility.
+The historical compositor incident is not a permanent runtime ban. Handoff
+requires the loaded plugin source and compositor ABI to match, and actual owner
+controls to permit the action. Unknown measurements are `not measured`. Opening
+is not input acceptance, account authentication or proof of compatibility with
+another application, compositor or operating system.
