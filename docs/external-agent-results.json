@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "date": "2026-10-22",
+  "host": "Fedora 44, Hyprland 0.56.2, Wayland, x86_64",
+  "checkoutCommit": "93aead2beb9512ff339f8f9f8043034989c85f96",
+  "runtimeScope": "Installed registered MCP command and existing managed broker. No broker restart for this round. The loaded broker module revision was not independently pinned.",
+  "scope": "Executed model-driven external CLI tasks and separate original-process/window verification. No completed application input, capture or account workflow.",
+  "agents": [
+    {
+      "agent": "Claude Code",
+      "modelDriven": true,
+      "modelOverride": false,
+      "toolsUsed": [
+        "orbit_usage",
+        "orbit_applications",
+        "orbit_open",
+        "orbit_handoff",
+        "orbit_status",
+        "orbit_diagnostics"
+      ],
+      "applicationId": "org.gnome.TextEditor.desktop",
+      "initialOpening": "APPROVAL_REQUIRED",
+      "ownerApproval": "Exact one-use approval granted by coordinator after owner authorization",
+      "opening": "acknowledged",
+      "requestedWindow": {
+        "width": 840,
+        "height": 620
+      },
+      "acknowledgedWorkspace": 2,
+      "independentVerification": {
+        "executable": "/usr/bin/gnome-text-editor",
+        "sameOwnerUid": true,
+        "normalOwnerHome": true,
+        "sameOwnerWaylandDisplay": true,
+        "workspace": 1,
+        "floating": true,
+        "size": [
+          840,
+          620
+        ],
+        "mapped": true,
+        "hidden": false
+      },
+      "handoffAttempts": [
+        "UNSUPPORTED: Native origin enforcement is unavailable when origins was omitted",
+        "UNSUPPORTED: Owner display handoff is disabled after a compositor crash; isolated validation is required after origins:any"
+      ],
+      "typing": "not performed",
+      "capture": "not performed",
+      "account": "not measured",
+      "browser": {
+        "applicationId": "google-chrome.desktop",
+        "attempted": true,
+        "result": "UNSUPPORTED: Browser and terminal launch routes were removed; choose a supported native application"
+      },
+      "cleanup": "closed"
+    },
+    {
+      "agent": "Hermes",
+      "modelDriven": true,
+      "modelOverride": false,
+      "toolsUsed": [
+        "orbit_usage",
+        "orbit_applications",
+        "orbit_open",
+        "orbit_handoff_candidates",
+        "orbit_handoff"
+      ],
+      "applicationId": "org.gnome.Calculator.desktop",
+      "initialOpening": "Stale gateway schema required argv while current MCP server required applicationId; then APPROVAL_REQUIRED",
+      "ownerApproval": "Exact one-use approval for 720 by 600 granted by coordinator after owner authorization",
+      "rootIntervention": "Current schema and custom window request supplied explicitly; gateway still required obsolete argv. Agent included it to pass gateway validation.",
+      "opening": "uncertain, INVALID_REQUEST after approximately 12 seconds; no successful opening acknowledgement",
+      "requestedWindow": {
+        "width": 720,
+        "height": 600
+      },
+      "independentVerification": {
+        "launchReceiptAncestryMatched": true,
+        "executable": "/usr/bin/gnome-calculator",
+        "sameOwnerUid": true,
+        "normalOwnerHome": true,
+        "sameOwnerWaylandDisplay": true,
+        "workspace": 2,
+        "floating": true,
+        "size": [
+          720,
+          616
+        ],
+        "mapped": true,
+        "hidden": false
+      },
+      "retry": "Agent changed the window payload under the same requestId, resulting in REQUEST_CONFLICT; no new requestId or second acknowledged opening",
+      "handoff": "UNSUPPORTED: Owner display handoff is disabled after a compositor crash; isolated validation is required",
+      "typing": "not performed",
+      "capture": "not performed",
+      "account": "not measured",
+      "browser": {
+        "attempted": false,
+        "result": "Agent-side refusal based on its stale standing browser prohibition, despite the current task clarification; not an Orbit browser error"
+      },
+      "hostCliLimitations": [
+        "Gateway rejected --run-budget although advertised by underlying CLI help",
+        "Gateway rejected --no-restore-cwd",
+        "Resume rejected a changed --max-turns value; minimal resume retained its frozen session policy"
+      ],
+      "cleanup": "closed"
+    },
+    {
+      "agent": "Codex CLI",
+      "modelDriven": false,
+      "modelOverride": false,
+      "configuredModel": "gpt-6.1-sol",
+      "orbitToolCalls": 0,
+      "result": "Provider error 400: configured model is not supported when using Codex with a ChatGPT account",
+      "opening": "not performed",
+      "typing": "not performed",
+      "capture": "not performed",
+      "account": "not measured",
+      "cleanup": "no window opened"
+    }
+  ],
+  "freshRegisteredConnectorProbe": {
+    "hosts": [
+      "Claude Code",
+      "Codex CLI",
+      "Hermes"
+    ],
+    "toolsPerHost": 14,
+    "openFields": [
+      "requestId",
+      "workspace",
+      "applicationId",
+      "window"
+    ],
+    "scope": "Actual fresh MCP initialize/listTools/usage checks. These are connection probes, separate from model-driven tasks."
+  },
+  "limits": [
+    "No guarantee of problem-free use or complete desktop control.",
+    "A normal owner process and HOME do not prove signed-in state or a particular application account.",
+    "Mapped and hidden:false are compositor metadata; no screenshot or visual pixel inspection was performed.",
+    "Text Editor acknowledged workspace2, but independent later metadata showed workspace1. Cause not established; owner input was not controlled or logged.",
+    "Calculator size mismatch was observed. Its underlying cause was not established.",
+    "Two exact new test windows were closed without process-wide termination. Existing windows and unsaved-content prompts were preserved.",
+    "No browser/private display/profile clone/DOM/CDP fallback, plugin hold bypass, model/provider reconfiguration or credential reset was used.",
+    "Raw transcripts, window titles, process identities and workstation paths remain private local evidence."
+  ]
+}

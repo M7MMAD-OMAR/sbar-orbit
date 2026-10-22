@@ -26,3 +26,8 @@ there is no acceptance evidence. None of these is universal support.
 Browser launch, copied profiles, hidden/private desktops and the old viewer are
 removed. There is no settings override. Original application processes use the
 normal owner environment and OS permissions, not a security sandbox.
+
+[Executed external-agent tasks](external-agent-acceptance.md) additionally record
+real Claude Code and Hermes tool calls, failed application operation, host cache
+incompatibility and the Codex CLI provider failure. Connection negotiation and
+original opening do not establish a completed model-driven application workflow.
