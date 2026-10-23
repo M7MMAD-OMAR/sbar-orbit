@@ -38,3 +38,9 @@ This is an architecture illustration, not a screenshot. See [real installed app
 results](docs/native-opening.md), [current shared clipboard acceptance](docs/native-acceptance-0.3.0.md), and [the platform matrix](docs/support-tiers.md).
 Windows, macOS and other Linux compositor opening adapters are not implemented.
 Complete application workflows, dialogs and other platform adapters need their own real acceptance.
+
+## Support
+
+Sbar Orbit is free and open source. If it makes your workday better, you can support its development:
+
+<a href="https://sbarah.com/support"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/support-sbarah-dark.svg"><img src="docs/assets/support-sbarah-light.svg" alt="Support Sbarah" width="380"></picture></a>
