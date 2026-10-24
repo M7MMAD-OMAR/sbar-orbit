@@ -65,6 +65,17 @@ export function panelAutostartEntry(launcher: string) {
 }
 
 /**
+ * Hyprland keeps endpoints that die with it, so each desktop start renews the native binding. A machine
+ * that never set native control up exits zero without touching anything.
+ */
+export function nativeRefreshAutostartEntry(launcher: string) {
+  return ["[Desktop Entry]", "Type=Application", "Name=Sbar Orbit native refresh",
+    "Comment=Renews the native desktop binding after the compositor restarted",
+    `Exec=${launcher} native-refresh --if-configured`, "Terminal=false", "NoDisplay=true",
+    "X-GNOME-Autostart-enabled=true", "Hidden=false", ""].join("\n");
+}
+
+/**
  * The launcher entry, which is not autostart but is the other half of the same complaint: a person who
  * has never opened a terminal has no way to find this at all.
  */
@@ -151,6 +162,9 @@ export async function enableAutostart(launcher: string, paths = autostartPaths()
   const entry = join(paths.xdgAutostart, "sbar-orbit-panel.desktop");
   await writeAtomic(entry, panelAutostartEntry(launcher));
   wrote.push(entry);
+  const refreshEntry = join(paths.xdgAutostart, "sbar-orbit-native-refresh.desktop");
+  await writeAtomic(refreshEntry, nativeRefreshAutostartEntry(launcher));
+  wrote.push(refreshEntry);
   const application = join(paths.applications, "sbar-orbit.desktop");
   await writeAtomic(application, applicationEntry(launcher));
   wrote.push(application);
@@ -170,7 +184,7 @@ export async function enableAutostart(launcher: string, paths = autostartPaths()
 /** Off means off on every path, including the one this desktop happens to ignore. */
 export async function disableAutostart(paths = autostartPaths(), register = true) {
   const removed: string[] = [];
-  for (const path of [join(paths.xdgAutostart, "sbar-orbit-panel.desktop")]) {
+  for (const path of [join(paths.xdgAutostart, "sbar-orbit-panel.desktop"), join(paths.xdgAutostart, "sbar-orbit-native-refresh.desktop")]) {
     if (await present(path)) { await rm(path, { force: true }); removed.push(path); }
   }
   const disabled = register ? {

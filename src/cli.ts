@@ -84,7 +84,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
-  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin") await usage.assertEnabled();
+  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh") await usage.assertEnabled();
   if (command === "usage") {
     if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");
     if (!["on", "off", "status"].includes(verb ?? "") || fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use usage on|off|status [ID]");
@@ -106,6 +106,14 @@ try {
       throw new OrbitError("INVALID_REQUEST", "Use native-prepare ABSOLUTE_EMPTY_PRIVATE_DIRECTORY [--plugin-manifest ABSOLUTE_PRIVATE_JSON]");
     const { prepareNative } = await import("./native-prepare");
     console.log(JSON.stringify(await prepareNative(verb, fourth)));
+  } else if (command === "native-refresh") {
+    const rest = process.argv.slice(3);
+    const manifest = rest[0] === "--plugin-manifest" ? rest[1] : undefined;
+    const ifConfigured = rest.includes("--if-configured");
+    if (rest.length !== (manifest === undefined ? 0 : 2) + (ifConfigured ? 1 : 0) || (manifest === undefined && rest.length > 0 && !ifConfigured))
+      throw new OrbitError("INVALID_REQUEST", "Use native-refresh [--plugin-manifest ABSOLUTE_PRIVATE_JSON] [--if-configured]");
+    const { refreshNative } = await import("./native-prepare");
+    console.log(JSON.stringify(await refreshNative(manifest, ifConfigured)));
   } else if (command === "native-plugin") {
     if (process.argv.slice(2).length !== 3)
       throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");

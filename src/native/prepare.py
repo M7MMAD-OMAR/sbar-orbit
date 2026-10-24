@@ -20,7 +20,7 @@ def quoted(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
-def prepare(directory, environment, plugin_manifest=None):
+def prepare(directory, environment, plugin_manifest=None, control_directory=None):
     require_budget()
     text = str(directory)
     if not directory.is_absolute() or str(directory.resolve(strict=True)) != text:
@@ -43,13 +43,22 @@ def prepare(directory, environment, plugin_manifest=None):
                 stream.flush()
                 os.fsync(stream.fileno())
 
-        plan_path, control_path = directory / "host.json", directory / "control"
+        plan_path = directory / "host.json"
         write("host.json", json.dumps(plan, indent=2) + "\n")
-        os.mkdir("control", mode=0o700, dir_fd=descriptor)
-        with ActionControl(control_path) as control:
-            control.configure(mode="protected")
-            if control.inspect()["settings"]["mode"] != "protected":
-                raise RuntimeError("Protected control initialization failed")
+        if control_directory is None:
+            control_path = directory / "control"
+            os.mkdir("control", mode=0o700, dir_fd=descriptor)
+            with ActionControl(control_path) as control:
+                control.configure(mode="protected")
+                if control.inspect()["settings"]["mode"] != "protected":
+                    raise RuntimeError("Protected control initialization failed")
+        else:
+            # An existing owner control directory carries the owner's mode across compositor restarts.
+            control_path = Path(control_directory)
+            if not control_path.is_absolute() or str(control_path.resolve(strict=True)) != str(control_path):
+                raise ValueError("Control directory must be absolute and canonical")
+            with ActionControl(control_path) as control:
+                mode = control.inspect()["settings"]["mode"]
         env_path = directory / "broker-native.env"
         write("broker-native.env", "ORBIT_NATIVE_PLAN=" + quoted(str(plan_path)) + "\n"
               + "ORBIT_NATIVE_CONTROL=" + quoted(str(control_path)) + "\n")
@@ -62,7 +71,7 @@ def prepare(directory, environment, plugin_manifest=None):
             raise RuntimeError("Preparation directory changed during preparation")
         source = Path(__file__).resolve().parent
         result = {"schema": 1, "prepared": True, "owner_activation": "not performed",
-                  "mode": "protected", "plan": str(plan_path), "control": str(control_path),
+                  "mode": "protected" if control_directory is None else mode, "plan": str(plan_path), "control": str(control_path),
                   "environment_file": str(env_path), "service_drop_in_template": str(directory / "service-drop-in.conf"),
                   "compositor": plan["compositor"], "abi_hash": plan["abi_hash"],
                   "source_sha256": {name: hashlib.sha256((source / name).read_bytes()).hexdigest()
@@ -100,9 +109,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory", type=Path)
     parser.add_argument("--plugin-manifest", type=Path)
+    parser.add_argument("--control-directory", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory, os.environ, args.plugin_manifest)
+        result = prepare(args.directory, os.environ, args.plugin_manifest, args.control_directory)
         print(json.dumps({"ok": True, "result": result}))
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, ExceptionGroup) as error:

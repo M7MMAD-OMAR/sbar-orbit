@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { OrbitError } from "./errors";
 import { requireNativeAdapter } from "./native-availability";
@@ -12,6 +13,26 @@ export async function prepareNative(directory: string | undefined, pluginManifes
   const { code, reply } = await runOwnerCommand("prepare.py", [directory,
     ...(pluginManifest === undefined ? [] : ["--plugin-manifest", pluginManifest])]);
   if (code !== 0) throw new OrbitError("CONFIG_REQUIRED", "Native preparation failed; its directory must be private, empty and bound to a live Hyprland host");
+  return reply;
+}
+
+/** Where the owner's control directory, plugin build and current plan live across compositor restarts. */
+export function nativeStateRoot(env: NodeJS.ProcessEnv = process.env) {
+  return join(env.XDG_DATA_HOME || join(env.HOME || homedir(), ".local/share"), "sbar-orbit/native");
+}
+
+/** Owner command only: renews the compositor binding and keeps the owner's control directory and mode. */
+export async function refreshNative(pluginManifest?: string, ifConfigured = false) {
+  if (pluginManifest !== undefined && !isAbsolute(pluginManifest)) throw new OrbitError("INVALID_REQUEST", "Plugin manifest must be absolute");
+  if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native refresh requires Linux and Hyprland");
+  await requireResourceBudget();
+  const { code, reply } = await runOwnerCommand("refresh.py", [nativeStateRoot(),
+    ...(pluginManifest === undefined ? [] : ["--plugin-manifest", pluginManifest]), ...(ifConfigured ? ["--if-configured"] : [])]);
+  if (code !== 0) {
+    const detail = typeof reply === "object" && reply !== null && "error" in reply && typeof reply.error === "object" && reply.error !== null
+      && "message" in reply.error && typeof reply.error.message === "string" ? reply.error.message : "Native refresh failed";
+    throw new OrbitError("CONFIG_REQUIRED", detail);
+  }
   return reply;
 }
 

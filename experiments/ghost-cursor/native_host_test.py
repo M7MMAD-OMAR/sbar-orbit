@@ -86,6 +86,11 @@ class HostTests(unittest.TestCase):
         self.assertEqual(plan["owner_activation"], "not performed")
         self.assertEqual(plan["theme_match"], "not measured")
 
+    def test_restarted_compositor_names_the_refresh_command(self):
+        stale = dict(self.env, HYPRLAND_INSTANCE_SIGNATURE="gone")
+        with self.assertRaisesRegex(HostError, "native-refresh"):
+            inspect_host(stale)
+
     def test_stale_process_abi_and_socket_fail(self):
         plan = inspect_host(self.env)
         for key, value in (("compositor", [os.getpid(), 1]), ("abi_hash", "other"), ("ipc_socket", [0, 0])):

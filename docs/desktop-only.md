@@ -56,3 +56,15 @@ Pause stops agent actions, new lease broadcasts and the lease's unfocused
 selection-write exception. Resume refreshes the current shared selections.
 Pause does not revoke ordinary OS clipboard access or previously offered data;
 this is not a clipboard privacy boundary.
+
+## After the compositor restarts
+
+A host plan and a loaded plugin belong to one compositor instance, so a Hyprland
+restart makes them stale. `sbar-orbit native-refresh` renews both: it re-stages the
+recorded plugin build when the compositor ABI, commit and version still match, loads it,
+and swaps the `current` plan atomically. The owner's control directory, with its mode
+and action log, is kept and never rewritten. A changed ABI stops with a rebuild
+instruction instead of loading a mismatched binary. Record the build once with
+`native-refresh --plugin-manifest ABSOLUTE_PRIVATE_JSON`; the autostart entry then runs
+`native-refresh --if-configured` at each desktop start, and every new worker binds the
+plan `current` points to, so a running broker needs no restart.

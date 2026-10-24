@@ -90,6 +90,7 @@ Sbar Orbit, desktop application control for your AI agent
   sbar-orbit settings            Show the native configuration notice; use config to edit
   sbar-orbit native-settings     Open protected/full native controls and the action log
   sbar-orbit native-prepare DIR  Prepare native owner configuration without activation
+  sbar-orbit native-refresh      Renew the compositor binding after Hyprland restarted, keeping your mode
   sbar-orbit native-plugin status|load|unload|resume DIR
                                 Inspect or load the fixed prepared native plugin
   sbar-orbit config list         Every setting, its value and its default
@@ -195,7 +196,7 @@ HELP
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec "$orbit_bun" run "$orbit_root/src/$orbit_entry.ts" "$@"
     ;;
-  native-settings|native-prepare|native-plugin)
+  native-settings|native-prepare|native-plugin|native-refresh)
     [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop "$1"
     exec "$orbit_bun" run "$orbit_root/scripts/limited.ts" "$orbit_bun" run "$orbit_root/src/cli.ts" "$@"
     ;;

@@ -54,6 +54,8 @@ test("enabling writes both paths and the launcher entry, and disabling removes t
     // Both paths, because a desktop honours one or the other and Orbit cannot tell which from here.
     expect(enabled.wrote).toContain(join(paths.units, "sbar-orbit-panel.service"));
     expect(enabled.wrote).toContain(join(paths.xdgAutostart, "sbar-orbit-panel.desktop"));
+    expect(enabled.wrote).toContain(join(paths.xdgAutostart, "sbar-orbit-native-refresh.desktop"));
+    expect((await readFile(join(paths.xdgAutostart, "sbar-orbit-native-refresh.desktop"), "utf8"))).toContain("native-refresh --if-configured");
     expect(enabled.wrote).toContain(join(paths.applications, "sbar-orbit.desktop"));
     // An entry naming an icon no theme resolves is a launcher row with a blank square in it.
     expect(enabled.wrote).toContain(join(paths.icons, "sbar-orbit.svg"));
@@ -67,7 +69,8 @@ test("enabling writes both paths and the launcher entry, and disabling removes t
     expect(await orbitOwnedUnits(paths)).toEqual([join(paths.units, "sbar-orbit-panel.service")]);
 
     const disabled = await disableAutostart(paths, false);
-    expect(disabled.removed).toEqual([join(paths.xdgAutostart, "sbar-orbit-panel.desktop")]);
+    expect(disabled.removed).toEqual([join(paths.xdgAutostart, "sbar-orbit-panel.desktop"),
+      join(paths.xdgAutostart, "sbar-orbit-native-refresh.desktop")]);
     // The launcher entry stays. It is how a person finds Orbit, not how it starts, and removing it
     // would answer a question nobody asked.
     expect((await stat(join(paths.applications, "sbar-orbit.desktop"))).isFile()).toBe(true);

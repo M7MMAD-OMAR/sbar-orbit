@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { open, mkdir, type FileHandle } from "node:fs/promises";
+import { open, mkdir, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { OrbitError, record } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
@@ -64,7 +64,9 @@ export class NativeWorker {
       for (const key of ["HOME", "XDG_CONFIG_HOME"] as const) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
       }
-      const child = spawn(entry[0] ?? "/usr/bin/python3", [...entry.slice(1), directory, options.controlDirectory, options.planPath],
+      // The plan path may be a stable name whose target a native refresh replaces; each worker binds the current one.
+      const planPath = await realpath(options.planPath).catch(() => options.planPath);
+      const child = spawn(entry[0] ?? "/usr/bin/python3", [...entry.slice(1), directory, options.controlDirectory, planPath],
         { env, stdio: ["pipe", "pipe", log.fd] });
       if (!child.stdin || !child.stdout) {
         child.kill("SIGTERM");

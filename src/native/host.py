@@ -24,7 +24,11 @@ def component(value):
 
 
 def metadata(path, directory=False):
-    info = path.lstat()
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        raise HostError("Compositor endpoint is gone, so the compositor was restarted since this plan was "
+                        "prepared; run sbar-orbit native-refresh") from None
     valid_type = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISSOCK(info.st_mode)
     if not valid_type or info.st_uid != os.getuid() or info.st_mode & 0o022:
         raise HostError("Endpoint must have trusted ownership, type and permissions")
