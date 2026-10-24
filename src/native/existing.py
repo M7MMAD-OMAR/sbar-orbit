@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 from types import SimpleNamespace
 import uuid
 
@@ -18,6 +19,10 @@ from .transport import NativeTransport, action_response
 
 
 class ExistingApplicationSession(NativeSession):
+    # The owner is working in the same application client; wait for a pause in their input before giving up.
+    owner_wait_seconds = 12.0
+    owner_poll_seconds = 0.25
+
     def open(self, value):
         from .owner_open import open_application
         with self.lock:
@@ -172,7 +177,12 @@ class ExistingApplicationSession(NativeSession):
                 apply_indicator_style(self.transport)
                 command = f"ghost-application-claim {selected['address']} {selected['stableId']} {lease_id}"
                 raw = self.transport._exchange(command)
-                if raw.strip() == "refused: application client is receiving owner input":
+                busy = "refused: application client is receiving owner input"
+                give_up = time.monotonic() + self.owner_wait_seconds
+                while raw.strip() == busy and time.monotonic() < give_up:
+                    time.sleep(self.owner_poll_seconds)
+                    raw = self.transport._exchange(command)
+                if raw.strip() == busy:
                     raise ApplicationOwnerBusy("Application client is receiving owner keyboard or pointer input; handoff preserves owner focus")
                 if raw.startswith("refused:"):
                     raise SessionError("Application handoff " + raw[:300])

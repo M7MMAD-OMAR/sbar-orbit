@@ -137,8 +137,28 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertFalse(self.transport.active)
         self.session.close()
 
+    def test_handoff_waits_for_the_owner_to_pause_instead_of_refusing(self):
+        busy = "refused: application client is receiving owner input"
+        self.transport.claim_refusal = busy
+        self.session.owner_poll_seconds = 0.01
+        original = self.transport._exchange
+        attempts = []
+
+        def exchange(request, *args, **kwargs):
+            if request.startswith("ghost-application-claim "):
+                attempts.append(request)
+                if len(attempts) == 3:
+                    self.transport.claim_refusal = None
+            return original(request, *args, **kwargs)
+        self.transport._exchange = exchange
+        claimed = self.session.claim({"workspace": 8})
+        self.assertEqual(len(attempts), 3)
+        self.assertTrue(claimed["appId"])
+        self.session.close()
+
     def test_owner_input_busy_refusal_retains_typed_readiness_error(self):
         self.transport.claim_refusal = "refused: application client is receiving owner input"
+        self.session.owner_wait_seconds = 0
         with self.assertRaisesRegex(ApplicationOwnerBusy, "owner keyboard or pointer input"):
             self.session.claim({"workspace": 8})
         self.assertFalse(self.transport.active)
