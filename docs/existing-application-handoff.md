@@ -12,9 +12,10 @@ its transient descendants become input targets. Other windows of a shared portal
 service are not enrolled or relocated. Clipboard and seat protocols remain
 client-wide; this is cooperative control, not an OS isolation boundary.
 
-If any surface of the selected Wayland client is receiving real owner keyboard
-or pointer input, handoff returns `OWNER_BUSY` before changing enrollment or
-lease state. This includes ordinary sibling windows and shared portal windows.
+Owner focus, hover and workspace changes never refuse a claim or end a lease, so
+the owner can watch the agent work. Real key, button or wheel input to the leased
+client pauses agent input until about two seconds of owner idle, then it resumes
+by itself. This includes ordinary sibling windows and shared portal windows.
 Owner focus and physical pointer coordinates remain unchanged. Do not force
 owner focus elsewhere to make a claim succeed. One active lease is allowed per
 Wayland client. Hand a portal back promptly after its exact dialog closes.

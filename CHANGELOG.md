@@ -2,6 +2,16 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.3.1 (24 October 2026)
+
+Native control survives a compositor restart: `sbar-orbit native-refresh` renews
+the host plan and plugin and keeps the owner's control directory and mode, and
+runs at each desktop start. Owner focus and hover no longer refuse a claim or end
+a lease; real key, button or wheel input pauses agent input until about two
+seconds of owner idle, then it resumes. The worker waits a bounded time for a
+pause in owner input before reporting `OWNER_BUSY`. The plugin source changed, so
+prepared builds must be rebuilt and recorded again. [Release notes](docs/release-0.3.1.md).
+
 ## 0.3.0 (22 October 2026)
 
 Original registered applications, including browsers and terminals, use visible
