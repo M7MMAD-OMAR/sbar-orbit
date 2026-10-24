@@ -9,9 +9,9 @@ Native handoff uses the ordinary shared system clipboard and PRIMARY selection,
 as explicitly chosen by the owner. Copy can replace the system clipboard just
 like a person copying in that application. Ordinary handoff enrolls client
 windows. A cross-client parented dialog enrolls only its selected dialog family,
-while clipboard and seat protocol authority remains client-wide. If any surface
-of that client is receiving owner keyboard or pointer input, handoff returns
-`OWNER_BUSY` before enrollment or lease mutation. It preserves owner focus and
+while clipboard and seat protocol authority remains client-wide. Owner focus and hover never block a claim or end a lease. Real key, button or
+wheel input to the client pauses agent input until about two seconds of owner
+idle. It preserves owner focus and
 physical pointer coordinates. Existing owner work must be preserved.
 
 The historical compositor incident is retained as evidence. It is no longer a

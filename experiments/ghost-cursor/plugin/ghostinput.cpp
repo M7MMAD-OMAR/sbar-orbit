@@ -19,6 +19,7 @@
 #include <hyprland/protocols/wayland.hpp>
 #undef private
 #define private public
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/protocols/core/Seat.hpp>
 #undef private
 #include <hyprland/src/desktop/state/WindowState.hpp>
@@ -325,6 +326,9 @@ struct SApplicationLease {
     wl_client* client = nullptr;
     wl_listener destroy{};
     bool paused = false;
+    // Physical key, button or axis input delivered to this client pauses agent
+    // input until this instant. Focus and hover alone never set it.
+    std::chrono::steady_clock::time_point ownerInputUntil{};
     bool windowBound = false;
     PHLWINDOWREF windowRoot;
     std::array<char, 256> failure{};
@@ -345,6 +349,10 @@ static SApplicationLease* applicationLeaseForClient(wl_client* client) {
         if (lease->client == client)
             return lease.get();
     return nullptr;
+}
+static constexpr auto ownerIdleResume = std::chrono::milliseconds{2000};
+static bool ownerInputActive(const SApplicationLease& lease) {
+    return std::chrono::steady_clock::now() < lease.ownerInputUntil;
 }
 static bool applicationWindowAllowed(const SApplicationLease& lease, PHLWINDOW window) {
     if (!lease.windowBound) return true;
@@ -662,6 +670,32 @@ static void restoreRelatedWindows(SApplicationLease& lease, wl_client* selectedC
     }
 }
 
+static uint32_t nowMs();
+// The seat keeps its own focus while an agent drives the same client, so ending
+// agent input must give the client back exactly what the seat last told it.
+static void returnClientPointer(const SP<CWLPointerResource>& pointer, wl_client* client) {
+    const auto focus = g_pSeatManager->m_state.pointerFocus.lock();
+    if (focus && focus->client() == client) {
+        // sendEnter is a no-op on the surface the pointer already occupies, so put
+        // the client's pointer back on the owner's position with a motion instead.
+        if (pointer->m_currentSurface.lock() == focus) pointer->sendMotion(nowMs(), g_pSeatManager->m_lastLocalCoords);
+        else { pointer->sendLeave(); pointer->sendEnter(focus, g_pSeatManager->m_lastLocalCoords); }
+    } else pointer->sendLeave();
+    pointer->sendFrame();
+}
+static void returnClientKeyboard(const SP<CWLKeyboardResource>& keyboard, wl_client* client) {
+    const auto focus = g_pSeatManager->m_state.keyboardFocus.lock();
+    const bool owned = focus && focus->client() == client;
+    if (!owned) keyboard->sendLeave();
+    keyboard->sendKeymap(g_pSeatManager->m_keyboard.lock());
+    if (owned && keyboard->m_currentSurface.lock() != focus) {
+        wl_array keys;
+        wl_array_init(&keys);
+        keyboard->sendEnter(focus, &keys);
+        wl_array_release(&keys);
+    }
+}
+
 static void handbackApplication(const std::string& id) {
     if (!g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("application handback protocols are unavailable; lease retained");
@@ -676,12 +710,11 @@ static void handbackApplication(const std::string& id) {
     if (seat) {
         for (const auto& weak : seat->m_pointers)
             if (auto pointer = weak.lock(); pointer && scrollPointers.contains(pointer.get())) {
-                pointer->sendLeave(); pointer->sendFrame(); scrollPointers.erase(pointer.get());
+                returnClientPointer(pointer, lease.client); scrollPointers.erase(pointer.get());
             }
         for (const auto& weak : seat->m_keyboards)
             if (auto keyboard = weak.lock(); keyboard && agentKeyboards.contains(keyboard.get())) {
-                keyboard->sendLeave();
-                keyboard->sendKeymap(g_pSeatManager->m_keyboard.lock());
+                returnClientKeyboard(keyboard, lease.client);
                 agentKeyboards.erase(keyboard.get());
             }
     }
@@ -772,8 +805,8 @@ static std::string applicationInfo(const std::string& id) {
         if (window && window->m_isMapped && resource && resource->client() == lease.client &&
             !lease.windows.contains(window->m_stableID)) ++excludedWindows;
     }
-    return std::format("{{\"schema\":1,\"status\":\"{}\",\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windowEnrollment\":\"{}\",\"excludedWindows\":{},\"windows\":{},\"failure\":{},\"claim_failure\":{}}}",
-        lease.paused ? "paused" : "active", id, lease.windowBound ? "selected-dialog-family" : "client-windows", excludedWindows,
+    return std::format("{{\"schema\":1,\"status\":\"{}\",\"ownerInput\":{},\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windowEnrollment\":\"{}\",\"excludedWindows\":{},\"windows\":{},\"failure\":{},\"claim_failure\":{}}}",
+        lease.paused ? "paused" : "active", ownerInputActive(lease) ? "true" : "false", id, lease.windowBound ? "selected-dialog-family" : "client-windows", excludedWindows,
         windows, applicationJsonString(lease.failure.data()), applicationJsonString(lease.claimFailure.data()));
 }
 static std::string claimApplication(const std::string& address, const std::string& stable, const std::string& id) {
@@ -793,11 +826,8 @@ static std::string claimApplication(const std::string& address, const std::strin
     auto client = surface->client();
     if (!client || !g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("application handoff requires a live client and selection protocols");
-    // A client-wide lease must never take real input away from the owner,
-    // including a sibling window on another numbered workspace.
-    for (const auto& focused : {g_pSeatManager->m_state.keyboardFocus.lock(), g_pSeatManager->m_state.pointerFocus.lock()})
-        if (focused && focused->client() == client)
-            throw std::runtime_error("application client is receiving owner input");
+    // Seat focus and hover never block a claim: agent input is client-local and
+    // never moves the seat. Physical input to the client pauses the lease instead.
     clientHasDataControlDevice(PROTO::data, client);
     clientHasDataControlDevice(PROTO::primarySelection, client);
     if (g_pSeatManager->m_seatGrab || PROTO::data->dndActive())
@@ -865,7 +895,9 @@ static std::string claimApplication(const std::string& address, const std::strin
 }
 
 static CFunctionHook* keyboardFocusHook = nullptr;
-static CFunctionHook* pointerFocusHook = nullptr;
+static CFunctionHook* keyboardKeyHook = nullptr;
+static CFunctionHook* pointerButtonHook = nullptr;
+static CFunctionHook* pointerAxisHook = nullptr;
 static CFunctionHook* popupGrabHook = nullptr;
 static CFunctionHook* popupMapHook = nullptr;
 static CFunctionHook* simulatedMotionHook = nullptr;
@@ -876,31 +908,75 @@ static CFunctionHook* clipboardSelectionHook = nullptr;
 static CFunctionHook* primarySelectionHook = nullptr;
 static CFunctionHook* surfaceUVHook = nullptr;
 
-static void handbackFocusedApplication(SP<CWLSurfaceResource> surface) {
-    if (!surface) return;
-    for (const auto& [id, lease] : applicationLeases)
-        if (lease->client == surface->client()) {
-            handbackApplication(id);
-            return;
-        }
-}
 #if !defined(__linux__) || !defined(__x86_64__)
 #error "Native lifecycle detours require the verified Linux x86_64 ABI"
 #endif
+// Real key, button and axis delivery is the only owner activity that pauses a
+// lease. Agent input writes to the client's own wl_keyboard and wl_pointer
+// resources and never calls these seat functions, so every call seen here is
+// physical. Focus and hover never end, block or pause a lease.
+static void restoreAgentKeyboards(wl_client* client) {
+    auto seat = client ? g_pSeatManager->seatResourceForClient(client) : SP<CWLSeatResource>{};
+    if (!seat) return;
+    for (const auto& weak : seat->m_keyboards)
+        if (auto keyboard = weak.lock(); keyboard && agentKeyboards.contains(keyboard.get())) {
+            returnClientKeyboard(keyboard, client);
+            agentKeyboards.erase(keyboard.get());
+        }
+}
+static void restoreAgentPointers(wl_client* client) {
+    auto seat = client ? g_pSeatManager->seatResourceForClient(client) : SP<CWLSeatResource>{};
+    if (!seat) return;
+    for (const auto& weak : seat->m_pointers)
+        if (auto pointer = weak.lock(); pointer && scrollPointers.contains(pointer.get())) {
+            returnClientPointer(pointer, client);
+            scrollPointers.erase(pointer.get());
+        }
+}
+static void noteOwnerInput(wl_client* client, bool keyboard) {
+    auto lease = client ? applicationLeaseForClient(client) : nullptr;
+    if (!lease) return;
+    const bool wasActive = ownerInputActive(*lease);
+    lease->ownerInputUntil = std::chrono::steady_clock::now() + ownerIdleResume;
+    cancelKeyboardClient(client);
+    if (keyboard) restoreAgentKeyboards(client);
+    else restoreAgentPointers(client);
+    if (wasActive) return;
+    for (const auto& [stable, retained] : lease->windows)
+        if (auto window = retained.window.lock())
+            if (auto monitor = window->m_monitor.lock()) g_pHyprRenderer->damageMonitor(monitor);
+}
+static wl_client* seatFocusClient(const WP<CWLSeatResource>& resource) {
+    auto locked = resource.lock();
+    return locked ? locked->client() : nullptr;
+}
 // These detours bridge the pinned x86_64 nontrivial-argument ABI. The caller owns
 // the supplied shared-pointer objects and can cache their control blocks for
 // destruction. Borrow their storage without moving or destroying them here.
 // Forwarding through new owning temporaries would release the same ownership
 // again when the optimized original caller performs its cached cleanup.
 static void beforeKeyboardFocus(CSeatManager* manager, SP<CWLSurfaceResource>& surface) {
-    handbackFocusedApplication(surface);
+    // The seat sends no keymap on enter, so retire the agent keymap first.
+    if (surface) restoreAgentKeyboards(surface->client());
     using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>&);
     reinterpret_cast<Original>(keyboardFocusHook->m_original)(manager, surface);
 }
-static void beforePointerFocus(CSeatManager* manager, SP<CWLSurfaceResource>& surface, const Vector2D& local) {
-    handbackFocusedApplication(surface);
-    using Original = void (*)(CSeatManager*, SP<CWLSurfaceResource>&, const Vector2D&);
-    reinterpret_cast<Original>(pointerFocusHook->m_original)(manager, surface, local);
+static void ownerKeyboardKey(CSeatManager* manager, uint32_t timeMs, uint32_t key, wl_keyboard_key_state state) {
+    noteOwnerInput(seatFocusClient(manager->m_state.keyboardFocusResource), true);
+    using Original = void (*)(CSeatManager*, uint32_t, uint32_t, wl_keyboard_key_state);
+    reinterpret_cast<Original>(keyboardKeyHook->m_original)(manager, timeMs, key, state);
+}
+static void ownerPointerButton(CSeatManager* manager, uint32_t timeMs, uint32_t key, wl_pointer_button_state state) {
+    noteOwnerInput(seatFocusClient(manager->m_state.pointerFocusResource), false);
+    using Original = void (*)(CSeatManager*, uint32_t, uint32_t, wl_pointer_button_state);
+    reinterpret_cast<Original>(pointerButtonHook->m_original)(manager, timeMs, key, state);
+}
+static void ownerPointerAxis(CSeatManager* manager, uint32_t timeMs, wl_pointer_axis axis, double value, int32_t discrete,
+                             int32_t value120, wl_pointer_axis_source source, wl_pointer_axis_relative_direction relative) {
+    noteOwnerInput(seatFocusClient(manager->m_state.pointerFocusResource), false);
+    using Original = void (*)(CSeatManager*, uint32_t, wl_pointer_axis, double, int32_t, int32_t, wl_pointer_axis_source,
+                              wl_pointer_axis_relative_direction);
+    reinterpret_cast<Original>(pointerAxisHook->m_original)(manager, timeMs, axis, value, discrete, value120, source, relative);
 }
 static void privatePopupGrab(CXDGShellProtocol* protocol, SP<CXDGPopupResource>& popup) {
     auto xdg = popup ? popup->m_surface.lock() : SP<CXDGSurfaceResource>{};
@@ -1073,7 +1149,9 @@ static CFunctionHook* applicationHook(const std::string& qualified, void* replac
 static void installApplicationHooks() {
     surfaceUVHook = applicationHook("Render::IElementRenderer::calculateUVForSurface", reinterpret_cast<void*>(applicationSurfaceUV));
     keyboardFocusHook = applicationHook("CSeatManager::setKeyboardFocus", reinterpret_cast<void*>(beforeKeyboardFocus));
-    pointerFocusHook = applicationHook("CSeatManager::setPointerFocus", reinterpret_cast<void*>(beforePointerFocus));
+    keyboardKeyHook = applicationHook("CSeatManager::sendKeyboardKey", reinterpret_cast<void*>(ownerKeyboardKey));
+    pointerButtonHook = applicationHook("CSeatManager::sendPointerButton", reinterpret_cast<void*>(ownerPointerButton));
+    pointerAxisHook = applicationHook("CSeatManager::sendPointerAxis", reinterpret_cast<void*>(ownerPointerAxis));
     popupGrabHook = applicationHook("CXDGShellProtocol::addOrStartGrab", reinterpret_cast<void*>(privatePopupGrab));
     popupMapHook = applicationHook("Desktop::View::CPopup::onMap", reinterpret_cast<void*>(privatePopupMap));
     simulatedMotionHook = applicationHook("CInputManager::simulateMouseMovement", reinterpret_cast<void*>(privateSimulatedMotion));
@@ -1083,7 +1161,7 @@ static void installApplicationHooks() {
     primarySelectionHook = applicationHook("CSeatManager::setCurrentPrimarySelection", reinterpret_cast<void*>(sharedPrimarySelection));
 }
 static void removeApplicationHooks() {
-    for (auto slot : {&keyboardFocusHook, &pointerFocusHook, &popupGrabHook, &popupMapHook, &simulatedMotionHook,
+    for (auto slot : {&keyboardFocusHook, &keyboardKeyHook, &pointerButtonHook, &pointerAxisHook, &popupGrabHook, &popupMapHook, &simulatedMotionHook,
                       &staticRulesHook, &staticRecheckHook, &clipboardSelectionHook, &primarySelectionHook, &surfaceUVHook}) {
         if (!*slot) continue;
         if (!HyprlandAPI::removeFunctionHook(PHANDLE, *slot))
@@ -1384,6 +1462,10 @@ static STarget resolve(const std::string& address, bool wake = true) {
             t.error = "refused: application lease is unavailable, paused or target changed";
             return t;
         }
+        if (ownerInputActive(*lease->second)) {
+            t.error = "refused: application lease is paused while the owner is typing or clicking; it resumes after a short idle";
+            return t;
+        }
     } else if (!unit.empty()) {
         pid_t pid = 0;
         wl_client_get_credentials(t.surface->client(), &pid, nullptr, nullptr);
@@ -1401,8 +1483,10 @@ static STarget resolve(const std::string& address, bool wake = true) {
     // Never deliver to whatever the seat itself focuses: that is the person's input path.
     auto keyboardFocus = g_pSeatManager->m_state.keyboardFocus.lock();
     auto pointerFocus = g_pSeatManager->m_state.pointerFocus.lock();
-    if ((keyboardFocus && keyboardFocus->client() == t.surface->client()) ||
-        (pointerFocus && pointerFocus->client() == t.surface->client())) {
+    // Application leases are the exception: agent input is client-local and
+    // physical input to the client pauses the lease instead.
+    if (!applicationTarget && ((keyboardFocus && keyboardFocus->client() == t.surface->client()) ||
+        (pointerFocus && pointerFocus->client() == t.surface->client()))) {
         t.error = "refused: target client holds the seat focus";
         return t;
     }
@@ -1820,8 +1904,7 @@ static std::string pointerCmd(std::string req, int kind) {
             // pointer focus until a later pointer action or explicit release.
             scrollPointers[p.get()] = p;
         } else {
-            p->sendLeave();
-            p->sendFrame();
+            returnClientPointer(p, t.surface->client());
             scrollPointers.erase(p.get());
         }
     }
@@ -2134,8 +2217,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (auto pointer = weak.lock()) {
                 if (!scrollPointers.contains(pointer.get()))
                     continue;
-                pointer->sendLeave();
-                pointer->sendFrame();
+                returnClientPointer(pointer, target.surface->client());
                 scrollPointers.erase(pointer.get());
             }
         }
@@ -2143,8 +2225,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (auto keyboard = weak.lock()) {
                 if (!agentKeyboards.contains(keyboard.get()))
                     continue;
-                keyboard->sendLeave();
-                keyboard->sendKeymap(g_pSeatManager->m_keyboard.lock());
+                returnClientKeyboard(keyboard, target.surface->client());
                 agentKeyboards.erase(keyboard.get());
             }
         }

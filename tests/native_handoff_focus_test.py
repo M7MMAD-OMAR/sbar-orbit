@@ -1,4 +1,4 @@
-"""Compile the actual claim function and check owner focus before enrollment."""
+"""Compile the actual claim function: owner focus and hover never block a claim or move seat focus."""
 import os
 from pathlib import Path
 import subprocess
@@ -7,7 +7,7 @@ import unittest
 
 
 class HandoffFocusTests(unittest.TestCase):
-    def test_busy_clients_are_refused_before_any_enrollment_or_focus_change(self):
+    def test_owner_focus_and_hover_never_block_a_claim_or_move_focus(self):
         source = Path(os.environ.get("ORBIT_HANDOFF_FOCUS_SOURCE", str(Path(__file__).resolve().parents[1]
             / "experiments/ghost-cursor/plugin/ghostinput.cpp"))).read_text()
         start = source.index("static std::string claimApplication(")
@@ -154,7 +154,7 @@ int main() {
         } catch (const std::runtime_error& error) {
             busy = std::string(error.what()) == "application client is receiving owner input";
         }
-        const bool expectedBusy = ownerFocus != 3;
+        const bool expectedBusy = false;
         const bool preserved = g_pSeatManager->m_state.keyboardFocus.lock() == keyboard &&
             g_pSeatManager->m_state.pointerFocus.lock() == pointer && Desktop::focus->active == keyboard &&
             Desktop::focus->focusWindow == focusWindow && !g_pSeatManager->keyboardCalls && !g_pSeatManager->pointerCalls &&

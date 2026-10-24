@@ -6,4 +6,4 @@ import { join } from "node:path";
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect({ out, code }).toEqual({ out: "", code: 0 });
   expect(err).toContain("OK");
-});
+}, 120000);

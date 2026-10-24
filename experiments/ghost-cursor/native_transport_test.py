@@ -156,6 +156,26 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(json.loads(self.transport.execute("ghost-state 0x123", self.control)),
                          {"suspended": False, "render_unfocused": True})
 
+    def test_owner_pause_refusal_is_retried_until_the_owner_is_idle(self):
+        paused = "refused: application lease is paused while the owner is typing or clicking; it resumes after a short idle"
+        transport = NativeTransport.__new__(NativeTransport)
+        replies = iter([paused, paused, "ok"])
+        sent = []
+        transport._exchange = lambda request, deadline=None: sent.append(request) or next(replies)
+        with patch("src.native.transport.require_budget"), patch("src.native.transport.time.sleep"):
+            self.assertEqual(transport._perform("ghost-click 0x1@2@lease-x 5 5"), "ok")
+        self.assertEqual(len(sent), 3)
+        other = NativeTransport.__new__(NativeTransport)
+        other._exchange = lambda request, deadline=None: "refused: target client holds the seat focus"
+        with patch("src.native.transport.require_budget"), patch("src.native.transport.time.sleep"):
+            with self.assertRaises(HostError):
+                other._perform("ghost-click 0x1@2@lease-x 5 5")
+        stuck = NativeTransport.__new__(NativeTransport)
+        stuck._exchange = lambda request, deadline=None: paused
+        with patch("src.native.transport.require_budget"), patch("src.native.transport.OWNER_RESUME_SECONDS", 0.2):
+            with self.assertRaises(HostError):
+                stuck._perform("ghost-click 0x1@2@lease-x 5 5")
+
     def test_stalled_action_has_deadline_and_no_retry(self):
         self.prepare()
         self.control.configure(mode="full")

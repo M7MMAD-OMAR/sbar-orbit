@@ -36,10 +36,11 @@ checks do not prove that arbitrary applications never activate themselves.
 Native handoff verifies the loaded plugin source and running compositor ABI.
 It grants the selected window's entire Wayland client. The native default permits
 ordinary actions; an owner can explicitly narrow it. Copy and paste use the
-ordinary shared system clipboard and PRIMARY selection. If any surface of that
-client is receiving real owner keyboard or pointer input, a claim returns
-`OWNER_BUSY` before enrollment or lease mutation. It preserves owner focus and
-physical pointer coordinates. Regaining real seat focus hands the client back. Lease loss is distinct from window disappearance: inspect
+ordinary shared system clipboard and PRIMARY selection. Owner focus, hover and workspace changes never end, block or pause the
+lease: agent input is client-local and does not go through the seat. Real key,
+button or wheel input delivered to the client pauses agent input for about two
+seconds after the last such event, then it resumes by itself. Claims never
+change owner focus or physical pointer coordinates. Lease loss is distinct from window disappearance: inspect
 native candidates before concluding that a normal close request succeeded.
 
 Input coordinates and capture account for client surface geometry. A render-only

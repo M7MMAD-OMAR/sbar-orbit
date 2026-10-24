@@ -20,6 +20,10 @@ ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", 
                      "ghost-window-close", "ghost-scroll", "ghost-cursor", "ghost-release", "ghost-state"})
 
 
+OWNER_PAUSED = "refused: application lease is paused while the owner"
+OWNER_RESUME_SECONDS = 4
+
+
 def action_request(request):
     if not isinstance(request, str) or not 1 <= len(request.encode("utf-8")) <= 65536:
         raise HostError("Native request must contain 1 to 65536 UTF-8 bytes")
@@ -99,17 +103,29 @@ class NativeTransport:
 
     def _perform(self, request):
         """Internal operation inside an already admitted durable action."""
-        require_budget()
-        command = action_request(request)
-        if command not in KEYBOARD_ACTIONS:
-            return action_response(command, self._exchange(request))
-        deadline = time.monotonic() + 3
-        if not self._input_lock.acquire(timeout=deadline_timeout(deadline)):
-            raise TimeoutError("Native keyboard action is busy")
-        try:
-            return action_response(command, prepared_input(request, self._exchange, deadline))
-        finally:
-            self._input_lock.release()
+        def attempt():
+            require_budget()
+            command = action_request(request)
+            if command not in KEYBOARD_ACTIONS:
+                return action_response(command, self._exchange(request))
+            deadline = time.monotonic() + 3
+            if not self._input_lock.acquire(timeout=deadline_timeout(deadline)):
+                raise TimeoutError("Native keyboard action is busy")
+            try:
+                return action_response(command, prepared_input(request, self._exchange, deadline))
+            finally:
+                self._input_lock.release()
+
+        give_up = time.monotonic() + OWNER_RESUME_SECONDS
+        while True:
+            try:
+                return attempt()
+            except HostError as error:
+                # The compositor refuses before delivering anything while the owner types
+                # or clicks in the client, and resumes by itself after a short idle.
+                if not str(error).startswith(OWNER_PAUSED) or time.monotonic() >= give_up:
+                    raise
+                time.sleep(0.1)
 
     def enroll(self, lease, process, control):
         request = self._enrollment_request(lease, process)
