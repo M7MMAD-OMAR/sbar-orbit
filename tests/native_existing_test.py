@@ -173,6 +173,19 @@ class ExistingApplicationTests(unittest.TestCase):
         self.assertFalse(any(request.startswith(("ghost-key ","ghost-texthex ","ghost-click "))for request in self.transport.requests))
         self.session.close()
 
+    def test_existing_client_lease_refusal_is_typed_and_never_takes_over(self):
+        from src.native import session
+        self.transport.claim_refusal = "refused: application lease already exists or lease bound reached"
+        with self.assertRaisesRegex(session.ApplicationLeaseConflict, "already leased or native lease capacity"):
+            self.session.claim({"workspace": 8})
+        self.assertFalse(self.transport.active)
+        self.assertEqual(self.session.apps, {})
+        self.assertEqual(self.session.windows, {})
+        claims = [r for r in self.transport.requests if r.startswith("ghost-application-claim ")]
+        self.assertEqual(len(claims), 1)
+        self.assertFalse(any("handback" in r for r in self.transport.requests))
+        self.session.close()
+
     def test_public_enter_alias_reaches_prepared_transport_as_return(self):
         claimed = self.session.claim({"workspace": 8})
         for supplied, expected in [("enter", "Return"), ("EnTeR", "Return"),

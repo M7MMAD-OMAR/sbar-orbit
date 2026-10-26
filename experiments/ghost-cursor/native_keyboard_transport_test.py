@@ -3,8 +3,90 @@
 import json
 import socket
 import unittest
+from unittest.mock import patch
 
 from native_transport_test import TransportTests, HostError
+from src.native.keyboard import prepared_input
+
+
+class PreparationTimingTests(unittest.TestCase):
+    """A virtual monotonic clock measures waits without scheduler noise."""
+    target = "0x123@1@lease-" + "a" * 32
+
+    def setUp(self):
+        self.now = 0.0
+        self.waits = []
+        self.requests = []
+        self.ready_after = 1
+        self.reply = "ok"
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, delay):
+        self.waits.append(delay)
+        self.now += delay
+
+    def exchange(self, request, deadline):
+        self.requests.append(request)
+        command, _, token, *_ = request.split()
+        if command == "ghost-keyboard-prepare":
+            polls = sum(r.startswith(command + " ") for r in self.requests)
+            return json.dumps({"schema": 1, "status": "ready" if polls > self.ready_after else "pending",
+                               "token": token, "serial": 9})
+        if command == "ghost-keyboard-cancel":
+            return "ok"
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+    def run_input(self, payload="ghost-key", deadline=1.0):
+        value = "End" if payload == "ghost-key" else "6162"
+        with patch("src.native.keyboard.time", self), patch("src.native.host.time.monotonic", self.monotonic):
+            return prepared_input(f"{payload} {self.target} {value}", self.exchange, deadline)
+
+    def test_fast_acknowledgement_uses_one_millisecond_wait(self):
+        self.assertEqual(self.run_input(), "ok")
+        self.assertEqual(self.waits, [0.001])
+        self.assertEqual(len(self.requests), 3)
+
+    def test_slow_acknowledgement_backs_off_at_ten_milliseconds(self):
+        self.ready_after = 7
+        self.run_input()
+        self.assertEqual(self.waits, [0.001, 0.002, 0.004, 0.008, 0.01, 0.01, 0.01])
+
+    def test_immediate_readiness_does_not_sleep(self):
+        self.ready_after = 0
+        self.run_input()
+        self.assertEqual(self.waits, [])
+
+    def test_wait_is_clipped_to_absolute_deadline_without_commit(self):
+        self.ready_after = 100
+        with self.assertRaises(TimeoutError):
+            self.run_input(deadline=0.0005)
+        self.assertEqual(self.waits, [0.0005])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_text_count_acknowledgement_skips_cleanup(self):
+        self.reply = "ok 4 keys\n"
+        self.assertEqual(self.run_input("ghost-texthex"), self.reply)
+        self.assertFalse(any("cancel" in r for r in self.requests))
+
+    def test_key_refuses_text_acknowledgement_and_unknown_reply_still_cancels(self):
+        for reply in ("ok 4 keys", "okay", "", "refused: owner active"):
+            with self.subTest(reply=reply):
+                self.requests = []
+                self.reply = reply
+                self.run_input()
+                self.assertTrue(self.requests[-1].startswith("ghost-keyboard-cancel "))
+
+    def test_lost_commit_reply_cancels_exact_token_without_resending_input(self):
+        self.reply = HostError("lost reply")
+        with self.assertRaisesRegex(HostError, "lost reply"):
+            self.run_input()
+        commits = [r for r in self.requests if r.startswith("ghost-key-prepared ")]
+        self.assertEqual(len(commits), 1)
+        self.assertEqual(self.requests[-1], "ghost-keyboard-cancel " + self.target + " " + commits[0].split()[2])
 
 
 class KeyboardTransportTests(unittest.TestCase):
@@ -55,7 +137,7 @@ class KeyboardTransportTests(unittest.TestCase):
                         self.pending_rejection = True
                         response = b"unknown modifier invalid"
                     else:
-                        response = b"ok"
+                        response = getattr(self, "commit_reply", b"ok")
                 elif request.startswith(b"ghost-keyboard-cancel "):
                     self.pending_rejection = False
                     response = b"ok"
@@ -85,6 +167,7 @@ class KeyboardTransportTests(unittest.TestCase):
         self.assertEqual(prepares[0], prepares[1])
         self.assertEqual(self.commits()[0].decode(), "ghost-key-prepared 0x123@1@lease-" + "a" * 32 + " " + token + " End")
         self.assertFalse(any(request.startswith(b"ghost-key ") for request in actions))
+        self.assertFalse(any(request.startswith(b"ghost-keyboard-cancel ") for request in actions))
 
     def test_wrong_preparation_token_refuses_before_input(self):
         self.full()
@@ -92,6 +175,14 @@ class KeyboardTransportTests(unittest.TestCase):
         with self.assertRaises(HostError):
             self.transport.execute("ghost-key 0x123@1@lease-" + "a" * 32 + " End", self.control)
         self.assertEqual(self.commits(), [])
+
+    def test_successful_text_receipt_does_not_send_redundant_cancellation(self):
+        self.full()
+        self.commit_reply = b"ok 4 keys\n"
+        self.assertEqual(self.transport.execute("ghost-type 0x123@1@lease-" + "a" * 32 + " ab", self.control), "ok 4 keys")
+        self.assertEqual(len(self.commits()), 1)
+        self.assertTrue(self.commits()[0].endswith(b" 6162"))
+        self.assertFalse(any(r.startswith(b"ghost-keyboard-cancel ") for r in self.actions()))
 
     def test_missing_readiness_never_sends_input(self):
         self.full()

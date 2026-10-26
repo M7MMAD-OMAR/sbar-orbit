@@ -14,7 +14,7 @@ from .application import private_directory
 from .plugin_compatibility import require_native_plugin
 from .indicator_style import apply_indicator_style
 from .budget import require_budget
-from .session import NativeSession, SessionError, ApplicationControlEnded, ApplicationOwnerBusy, PresentationNotReady, identifier
+from .session import NativeSession, SessionError, ApplicationControlEnded, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
 from .transport import NativeTransport, action_response
 
 
@@ -184,6 +184,8 @@ class ExistingApplicationSession(NativeSession):
                     raw = self.transport._exchange(command)
                 if raw.strip() == busy:
                     raise ApplicationOwnerBusy("Application client is receiving owner keyboard or pointer input; handoff preserves owner focus")
+                if raw.strip() == "refused: application lease already exists or lease bound reached":
+                    raise ApplicationLeaseConflict("Application client is already leased or native lease capacity is reached")
                 if raw.startswith("refused:"):
                     raise SessionError("Application handoff " + raw[:300])
                 reply = json.loads(raw)

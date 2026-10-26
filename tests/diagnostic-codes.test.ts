@@ -42,12 +42,12 @@ async function thrownCodes(): Promise<Set<string>> {
 }
 
 /**
- * Codes deliberately listed that no source throws. Empty on purpose: `SESSION_LIMIT` and
- * `RESOURCE_LIMIT` were removed rather than parked here, because a code nothing throws cannot be
- * recorded and its only effect was to make the list look complete. A future entry belongs here WITH
- * the reason it is expected, so the next person can tell an intention from a leftover.
+ * Codes not discovered by the literal TypeScript constructor scan. Entries must
+ * identify their real runtime producer. Unused codes belong in neither set.
  */
-const listedButNeverThrown = new Map<string, string>([]);
+const listedButNeverThrown = new Map<string, string>([
+  ["APPLICATION_BUSY", "Raised by Python ApplicationLeaseConflict in native/session_worker.py and forwarded dynamically by NativeWorker.receive"],
+]);
 
 /**
  * Codes thrown but deliberately unlisted. `BACKEND_ERROR` is what the layer falls back to, so it is
@@ -75,21 +75,21 @@ test("every code the allowlist carries is one the source can throw", async () =>
   expect(phantom).toEqual([]);
 });
 
-test("a thrown ceiling is recorded under its own name rather than as BACKEND_ERROR", async () => {
+test("a thrown ceiling or native lease conflict is recorded under its own name rather than as BACKEND_ERROR", async () => {
   // End to end through the real class, because the two tests above compare a list with a regex and
   // would both pass against a layer that never consulted the list at all.
   // A throwaway root, so this never writes into the person's own diagnostics directory.
   const root = await mkdtemp(join(tmpdir(), "orbit-diag-codes-"));
   const diagnostics = new Diagnostics(root);
   const recorded: string[] = [];
-  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED"]) {
+  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY"]) {
     try {
       await diagnostics.run({ method: "session.act", params: {} }, async () => { throw new OrbitError(code, "ceiling"); });
     } catch { /* the throw is the point */ }
   }
   const report = await diagnostics.report() as { events?: { code?: string }[] };
   for (const event of report.events ?? []) if (event.code) recorded.push(event.code);
-  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED"]);
+  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY"]);
   // And the negative: a code that is genuinely not Orbit's still falls back, so the allowlist is
   // doing filtering rather than passing everything through.
   const fallback = new Diagnostics(await mkdtemp(join(tmpdir(), "orbit-diag-fallback-")));

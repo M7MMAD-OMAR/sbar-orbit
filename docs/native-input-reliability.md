@@ -20,8 +20,9 @@ cleanup, expiration or handback. Two layers now handle this:
 1. The plugin consumes the matching prepared operation before validating its
    key or text payload. Invalid input sends no keystrokes and does not retain
    that operation. A different operation token cannot consume it.
-2. The Python transport attempts token-bound cancellation in `finally`, including
-   after a commit attempt. This also cleans up a rejection from an older plugin.
+2. The Python transport attempts token-bound cancellation in `finally` unless
+   the commit returned a recognized success receipt. This includes failed or
+   uncertain commit attempts and cleans up a rejection from an older plugin.
    Cancellation sends no input. A failed or uncertain commit is never replayed.
    The existing absolute deadline and server expiration remain in effect.
 
@@ -33,6 +34,77 @@ workflow or proof that a running installed plugin has been updated.
 
 The normal verification suite includes `tests/native-transport.test.ts`, so the
 socket rejection and no-replay checks are no longer confined to a manual run.
+
+## Bounded preparation latency
+
+The transport now polls pending preparation with delays of 1, 2, 4 and 8 ms,
+then at most 10 ms per poll. Immediate readiness does not sleep. Every delay is
+clipped to the existing absolute deadline; readiness must still carry the exact
+operation token and unchanged configure serial. Slow acknowledgements can incur
+more polling requests than the previous fixed interval, so the result is an
+early responsiveness improvement, not a lower CPU or universal speed guarantee.
+
+A recognized key receipt is exactly `ok`, after whitespace stripping. Text also
+accepts the existing `ok N keys` receipt. These predicates are shared with public
+transport response validation. A recognized receipt means the preparation was
+consumed, so there is no redundant cancellation request after it. Rejections,
+malformed replies and interrupted commits retain token-bound cleanup. No input
+commit is retried because its reply is missing.
+
+```mermaid
+flowchart TD
+    A[Guarded target and operation token] --> B[Prepare]
+    B --> C{Matching token and serial?}
+    C -->|No| X[Cancel exact token within deadline]
+    C -->|Yes| D{Ready?}
+    D -->|Pending| E[Bounded adaptive delay]
+    E --> B
+    D -->|Ready| F[Commit once]
+    F --> G{Recognized receipt?}
+    G -->|Yes| H[Return delivery receipt]
+    G -->|No or interrupted| X
+    H --> I[Observe actual application result]
+    X --> J[Inspect before any further input]
+```
+
+A local Unix socket fixture with exactly one pending reply per action measured
+40 actions against baseline commit `2ef6b68` and 40 against this change, in an
+alternating before/after order. Median transport duration was 11.963 ms before
+and 2.389 ms after; p95 was 13.776 ms and 3.826 ms. Action request count fell
+from four to three. This fixture controls readiness and does not measure desktop
+rendering, model thinking, network latency or a real application's completion
+time. Deterministic clock checks separately verify the delay schedule, deadline
+clipping, immediate readiness, ambiguous delivery and rejected-reply cleanup.
+
+An original installed GNOME Calculator was then opened on visible workspace 8
+and controlled through a newly started native worker. Native text entered
+`12345+6789`; Return produced the visibly observed result `19134`. The first
+immediate capture still showed the expression, so a later observation verified
+the result without repeating Return. The exact test window was normally closed
+and candidate discovery verified its disappearance. Presentation used an
+unfocused output, then restored its previous workspace after closure. No shared
+broker restart or plugin replacement was needed for this Python worker change.
+This is one Linux application acceptance case, not Windows acceptance or proof
+of the benchmark's latency improvement in all applications.
+
+## Existing application lease conflicts
+
+One active lease covers an ordinary Wayland client, which can own multiple
+windows. Opening a new window in that same client does not give a second task an
+independent lease. The legacy plugin refusal `application lease already exists
+or lease bound reached` is now classified as `APPLICATION_BUSY`, rather than
+`INVALID_REQUEST`. The public worker message directs callers to inspect active
+sessions and arrange an explicit handoff, without exposing another task's data.
+Diagnostic metadata retains `APPLICATION_BUSY` instead of collapsing the refusal
+into an unspecified backend failure.
+Because that legacy reply also covers capacity, it does not identify a particular
+lease or prove that any session is abandoned. There is no automatic takeover,
+lease deletion or relaunch. A closed lease is not a closed application window.
+
+The Python classification applies to newly started workers. The fixed public
+message also requires a broker running the updated TypeScript source. An already
+running shared broker must wait for a safe update boundary; it is not restarted
+over another task to activate this message.
 
 ## Historical selection report and current native measurement
 

@@ -38,6 +38,10 @@ class ApplicationOwnerBusy(SessionError):
     """A client-wide handoff cannot displace the owner's real input focus."""
 
 
+class ApplicationLeaseConflict(SessionError):
+    """An existing lease or native capacity prevents a new client claim."""
+
+
 def identifier(value):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{32}", value):
         raise SessionError("Invalid generated native identifier")

@@ -30,6 +30,9 @@ for line in sys.stdin:
     if request["method"] == "owner-busy":
         response = {"requestId": request["requestId"], "ok": False,
                     "error": {"code": "OWNER_BUSY", "message": "private owner surface details"}}
+    if request["method"] == "application-busy":
+        response = {"requestId": request["requestId"], "ok": False,
+                    "error": {"code": "APPLICATION_BUSY", "message": "private other task details"}}
     if request["method"] in ("opening-uncertain", "native-incompatible"):
         response = {"requestId": request["requestId"], "ok": False, "error": {
             "code": "OPENING_UNCERTAIN" if request["method"] == "opening-uncertain" else "NATIVE_INCOMPATIBLE",

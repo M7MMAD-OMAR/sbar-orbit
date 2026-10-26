@@ -25,6 +25,13 @@ def unique_fields(pairs):
     return result
 
 
+def input_acknowledged(command, response):
+    """Recognize delivery receipts, never application workflow completion."""
+    response = response.strip()
+    return command in KEYBOARD_ACTIONS and (response == "ok" or (
+        command != "ghost-key" and re.fullmatch(r"ok \d+ keys", response) is not None))
+
+
 def prepared_input(request, exchange, deadline):
     command, separator, rest = request.partition(" ")
     handle, payload_separator, payload = rest.partition(" ")
@@ -47,6 +54,8 @@ def prepared_input(request, exchange, deadline):
     token = _PRODUCER + format(sequence, "016x")
     prepare = f"ghost-keyboard-prepare {handle} {token}"
     serial = None
+    acknowledged = False
+    poll_delay = 0.001
     try:
         while True:
             deadline_timeout(deadline)
@@ -64,14 +73,18 @@ def prepared_input(request, exchange, deadline):
             serial = value["serial"]
             if value["status"] == "ready":
                 break
-            time.sleep(min(0.01, deadline_timeout(deadline)))
+            time.sleep(min(poll_delay, deadline_timeout(deadline)))
+            poll_delay = min(poll_delay * 2, 0.01)
         deadline_timeout(deadline)
-        return exchange(f"{commit_command} {handle} {token} {payload}", deadline)
+        response = exchange(f"{commit_command} {handle} {token} {payload}", deadline)
+        acknowledged = input_acknowledged(command, response)
+        return response
     finally:
         # Cancellation targets only this token and never sends input. It also
         # clears a preparation after a rejected commit on an older plugin.
+        # An acknowledged commit already consumed it, so needs no extra IPC.
         # An ambiguous commit is never resent; expiry bounds cleanup if needed.
-        if time.monotonic() < deadline:
+        if not acknowledged and time.monotonic() < deadline:
             try:
                 exchange(f"ghost-keyboard-cancel {handle} {token}", deadline)
             except Exception:

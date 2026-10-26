@@ -13,12 +13,12 @@ test.skipIf(process.platform !== "linux")("native transport binds journaled acti
 }, 15_000);
 
 test.skipIf(process.platform !== "linux")("native keyboard prepares first input and never replays an uncertain commit", async () => {
-  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "../experiments/ghost-cursor/native_keyboard_transport_test.py"), "KeyboardTransportTests"],
+  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "../experiments/ghost-cursor/native_keyboard_transport_test.py"), "KeyboardTransportTests", "PreparationTimingTests"],
     { stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 5 tests");
+  expect(stderr).toContain("Ran 13 tests");
   expect(stderr).toContain("OK");
 }, 10_000);

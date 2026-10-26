@@ -114,6 +114,19 @@ enabled("busy application input returns a typed readiness error without owner de
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+enabled("application lease conflict is actionable without disclosing another task", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orbit-worker-application-busy-"));
+  const worker = await NativeWorker.create(join(directory, "worker"), options, ["/usr/bin/python3", fixture]);
+  try {
+    await expect(worker.request("application-busy", {})).rejects.toMatchObject({
+      code: "APPLICATION_BUSY", message: expect.stringMatching(/already leased.*capacity.*active sessions.*explicit handoff/),
+    });
+    await expect(worker.request("application-busy", {})).rejects.not.toMatchObject({
+      message: expect.stringContaining("private other task details"),
+    });
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 enabled("native fatal response reaps a stopped worker without an explicit stop", async () => {
   const directory = await mkdtemp(join(tmpdir(), "orbit-worker-stopped-"));
   const worker = await NativeWorker.create(join(directory, "worker"), options, ["/usr/bin/python3", fixture]);

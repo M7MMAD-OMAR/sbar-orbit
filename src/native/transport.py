@@ -12,7 +12,7 @@ import time
 import threading
 
 from .host import HostError, metadata, peer, verify_host, deadline_timeout
-from .keyboard import KEYBOARD_ACTIONS, prepared_input
+from .keyboard import KEYBOARD_ACTIONS, input_acknowledged, prepared_input
 from .budget import require_budget
 
 
@@ -39,7 +39,7 @@ def action_response(command, response):
     response = response.strip()
     if response == "ok" and command != "ghost-state":
         return response
-    if command in ("ghost-type", "ghost-texthex") and re.fullmatch(r"ok \d+ keys", response):
+    if input_acknowledged(command, response):
         return response
     if command == "ghost-state":
         try:

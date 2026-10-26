@@ -10,7 +10,7 @@ from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
 from src.native.host import read_plan
-from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, PresentationNotReady, identifier
+from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
 from src.native.plugin_compatibility import NativeCompatibilityError
 from src.native.host import verify_host
 
@@ -103,6 +103,7 @@ def main(directory, control_directory, plan_path, session_type=None):
                         code = ("OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
                                 else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
                                 else "OWNER_BUSY" if isinstance(error, ApplicationOwnerBusy)
+                                else "APPLICATION_BUSY" if isinstance(error, ApplicationLeaseConflict)
                                 else "NATIVE_INCOMPATIBLE" if isinstance(error, NativeCompatibilityError)
                                 else "SESSION_CLOSED" if isinstance(error, ApplicationControlEnded) else "APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
                                 else "INVALID_REQUEST" if isinstance(error, SessionError) else "NATIVE_FAILED")

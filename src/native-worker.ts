@@ -141,6 +141,7 @@ export class NativeWorker {
             NATIVE_INCOMPATIBLE: "Native plugin does not match this installation or compositor. Prepare the current compositor, rebuild and reload its matching plugin.",
             PRESENTATION_NOT_READY: "Workspace presentation was refused before display changes. Inspect monitors and wait until the requested output is unfocused with no special workspace. Retry the same requestId with unchanged parameters when ready.",
             OWNER_BUSY: "The application client is receiving owner input. Handoff leaves owner focus unchanged; wait until the client is no longer receiving owner input.",
+            APPLICATION_BUSY: "The application client is already leased or native lease capacity is reached. Inspect active sessions and arrange an explicit handoff; do not stop another task or relaunch blindly.",
           };
           pending.reject(new OrbitError(code, (Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
             ?? "Native request failed; inspect its private worker journal"));
