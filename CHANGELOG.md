@@ -2,6 +2,21 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.3.3 (27 October 2026)
+
+Documentation maintenance release. Active discovery and acceptance guides no
+longer repeat retired browser/terminal category bans, an incident permission
+hold or opening-only capability descriptions. The maintained acceptance index
+separates dated real measurements from current operating guidance and platform
+limits. Historical failures retain their original outcomes.
+
+GitHub issue forms now request native operation evidence instead of removed
+browser, private-session and isolation gates. Agent skill guidance and discovery
+metadata, security wording and website asset documentation match the native
+product. Native runtime behavior is unchanged from 0.3.2.
+
+[Release notes](docs/release-0.3.3.md).
+
 ## 0.3.2 (26 October 2026)
 
 Native keyboard input accepts case-insensitive modifier names and left/right XKB

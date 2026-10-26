@@ -1,5 +1,12 @@
 # Viewer compliance and acceptance
 
+Historical implementation and acceptance log. Viewer, browser-session, private
+bus and substitute-desktop entries below describe their dated revisions. They
+are not current runtime instructions, permissions or release gates. Use the
+[current product contract](docs/desktop-only.md), [documentation index](docs/README.md)
+and [current acceptance index](docs/acceptance.md). Earlier failures and scoped
+results remain unchanged as evidence.
+
 Scope: viewer fullscreen, navigation and capture-error recovery. Reviewed 3 October 2026.
 Source revision: working tree based on HEAD; evidence applies only to the scoped files tested.
 

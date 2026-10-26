@@ -1,31 +1,29 @@
-name: Gate evidence
-description: You have evidence that closes or fails one of the open gates.
+name: Native capability evidence
+description: A measured result, failure or partial result for a current native adapter capability.
 labels: ["type:gate"]
 body:
   - type: markdown
     attributes:
       value: |
-        The gates are in [docs/porting.md section 9](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/porting.md).
-
-        A gate closes on a primary source URL, or on a command anyone can rerun, and on nothing else. A
-        reading of a secondary summary does not close one, and neither does a confident argument.
+        Use the [current adapter contract](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/porting.md)
+        and [acceptance procedure](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/acceptance-procedure.md).
+        Record the source, actual host, exact original application and observed operation.
+        An API reference supports an implementation choice; it does not prove application delivery.
+        Retired browser, private-session and isolation gates are not current acceptance criteria.
   - type: dropdown
     id: gate
     attributes:
-      label: Gate
+      label: Capability
       options:
-        - G1 to G7, Linux compositor, distribution and container
-        - G9, an all v10 Linux profile in the wild
-        - G10, a filtered session bus and a GTK file chooser
-        - G11, headed forwarding into the person's browser. Orbit never runs this, at any tier
-        - G12 to G14, the browser extension mint
-        - G15 to G17, Windows transport, job containment and limits
-        - G18, whether a service tolerates a forked session
-        - G19 to G26, macOS profile, Keychain, TCC, accounting and local network
-        - G27, human takeover with a participant
-        - G28, a Windows equivalent of an empty network namespace
-        - G29, unprivileged user namespaces on the other Linux families
-        - G30, a per process egress filter on macOS
+        - Original application discovery and registration
+        - Request-bound opening and floating geometry
+        - Native handoff and target-bound input
+        - Capture and actual application result
+        - Visible workspace, activity indicator and agent pointer
+        - Shared clipboard and original application state
+        - Dialogs, exact cleanup and owner activity
+        - Permissions, recovery and safe update lifecycle
+        - A new native platform adapter
     validations:
       required: true
   - type: dropdown
@@ -33,8 +31,8 @@ body:
     attributes:
       label: Outcome
       options:
-        - The gate closes
-        - The gate fails, and the failure is the result
+        - Measured for the stated host, source and operation
+        - Failed, with the actual failure retained
         - Partial, and I state exactly what is still open
     validations:
       required: true
@@ -42,6 +40,6 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: A primary source URL, or the exact command and its output. Say which host it ran on.
+      description: Exact command, source and host versions, observable result, cleanup and limits. Distinguish fixtures from original application measurements. Redact private data.
     validations:
       required: true

@@ -4,16 +4,21 @@
 
 `public/brand/logo.png`, `logo-white.png` and `public/favicon.svg` are the existing repository's approved Sbar Orbit artwork. Geometry and wordmark are unchanged.
 
-## Illustrations
+## Current diagram
 
-The original illustrations were generated with the built-in image generation tool on September 12, 2026 from the user-approved navy ink landing design. Three were edited with the same built-in tool on October 15, 2026 to replace the retired browser imagery with native application windows. Exact prompts and reference commit paths are recorded in [desktop-assets.json](desktop-assets.json). They are decorative illustrations, not screenshots or evidence of product behavior.
+`public/images/native-workspaces.svg` depicts two numbered workspaces in the
+existing desktop session, original application state, floating geometry, shared
+clipboard and activity indicators. It is a schematic, not a screenshot or proof
+of input delivery. [The product contract](../docs/desktop-only.md) defines the
+operational meaning; [dated acceptance](../docs/acceptance.md) records real results.
 
-- `hero-desktop.webp`: human desk on the left, agent file manager and image editor on the right, ivory paper, navy ink and small orange accents.
-- `hero-desktop-mobile.webp`: the same two desktop scenes arranged vertically, with a file manager replacing the old rear window.
-- `private-desktop-apps.webp`: text editor with a file sidebar, image editor with mountain artwork and a small cactus, navy ink on ivory paper.
-- `viewer-control.webp`: the original off-white ink drawing of a person watching application windows, solid navy background, no rendered controls.
+## Historical illustration provenance
 
-WebP encoding preserves the generated dimensions. Original generated PNG files remain outside the shipped assets. The three superseded WebP assets are removed from `public/images` and are not shipped by the new build.
+The original navy ink illustrations were generated on 12 September 2026 and edited
+on 15 October 2026. Their exact prompts and reference commit remain in
+[desktop-assets.json](desktop-assets.json). That JSON is historical provenance,
+not a current asset inventory or a product instruction. The old hero, private
+desktop and viewer WebP files are no longer shipped in `public/images`.
 
 ## Support button
 

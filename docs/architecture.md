@@ -79,5 +79,5 @@ flowchart TD
 Fedora/Hyprland has actual local measurements. Other compositor/platform native
 adapters and XWayland control are not implemented. Metadata and installation
 contracts do not establish desktop acceptance. See [support tiers](support-tiers.md)
-and [current native acceptance](native-acceptance-0.3.0.md). Historical incident
+and [current native acceptance](acceptance.md). Historical incident
 reports remain evidence, not a permanent static ban.

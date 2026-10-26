@@ -1,7 +1,9 @@
 # Native platform adapter contract
 
-See [current support](support-tiers.md). Only Hyprland owner opening is implemented;
-full Linux, Windows and macOS application control is not complete.
+See [current support](support-tiers.md). The Hyprland adapter implements registered
+opening, native handoff, input, capture and explicit workspace presentation, with
+the operation-specific limits in [current acceptance](acceptance.md). Other native
+platform adapters and universal application compatibility remain incomplete.
 
 Every adapter must provide:
 

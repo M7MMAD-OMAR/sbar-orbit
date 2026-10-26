@@ -1,7 +1,7 @@
 # Orbit
 
-[Latest release: 0.3.2](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/latest)
-| [Release notes](docs/release-0.3.2.md) | [Changelog](CHANGELOG.md)
+[Latest release: 0.3.3](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/latest)
+| [Release notes](docs/release-0.3.3.md) | [Changelog](CHANGELOG.md)
 
 Open original installed native Linux applications on a numbered Hyprland workspace.
 The user can select another workspace for their own work. Applications retain their normal owner state and
@@ -24,7 +24,7 @@ current source and the running compositor ABI. Historical incident evidence is
 [retained](docs/native-handoff-incident.md), not used as a permanent policy ban.
 An acknowledgement is not proof of application acceptance or signed-in state.
 
-See the [contract](docs/desktop-only.md), [CLI](docs/cli.md),
+See the [documentation index](docs/README.md), [contract](docs/desktop-only.md), [CLI](docs/cli.md),
 [connectors](docs/connectors.md), and [installation](docs/agent-install.md).
 
 ```sh

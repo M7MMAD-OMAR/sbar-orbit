@@ -12,4 +12,4 @@ Check the actual plugin source and compositor ABI. The historical incident hold
 is retired; [the incident record](native-handoff-incident.md) is evidence, not a
 current prohibition. Preserve owner work, inspect uncertain delivery and never
 relaunch blindly. Missing phases remain not measured. See
-[current acceptance](native-acceptance-0.3.0.md).
+[current acceptance](acceptance.md).

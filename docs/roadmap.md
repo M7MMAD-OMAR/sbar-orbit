@@ -1,12 +1,14 @@
 # Native desktop roadmap
 
-Updated 22 October 2026. The goal is original application work on an explicitly
+Updated 27 October 2026. The goal is original application work on an explicitly
 selected visible workspace. This is a development plan, not a compatibility claim.
 
-1. Restore trustworthy input delivery and capture without risking the person's
-   compositor. The [incident](native-handoff-incident.md) remains historical diagnostic evidence.
-   A successful IPC reply must be matched by an actual application state change,
-   visible pointer evidence, owner focus and pointer checks, and verified handback.
+1. Extend the [measured native workflows](acceptance.md) to more applications,
+   toolkits and owner activity patterns. The [incident](native-handoff-incident.md)
+   remains historical diagnostic evidence. Preserve real input and capture
+   results while investigating any recurrence with source-bound observations.
+   A successful IPC reply still requires application-state verification, visible
+   pointer evidence, owner focus/pointer checks and exact lifecycle cleanup.
 2. Extend registered opening using real application failures. Retain exact launch
    ancestry, normal owner state, custom floating geometry and precise test cleanup.
    Single-instance forwarding and applications with minimum sizes need explicit

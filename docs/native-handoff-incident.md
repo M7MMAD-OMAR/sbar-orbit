@@ -9,7 +9,16 @@ applications or other platforms. See [the current contract](desktop-only.md).
 
 # Historical native handoff incident
 
-**Status, 21 October 2026:** owner handoff remains held. The nested lab success in [owner-handoff-release.json](../experiments/ghost-cursor/owner-handoff-release.json) is retained as historical evidence, but cannot release live owner input. The TypeScript and Python gates additionally require an `ownerAcceptance` record with `state: "passed"` and measured `inputDelivered`, `selectionIsolated`, `ownerFocusPreserved`, `ownerPointerPreserved` and `handbackVerified` values of `true`. The committed evidence has no such acceptance. A live owner claim with a throwaway fixture is partly traced below; agent input did not reach the fixture on the live session.
+**Historical status on 21 October 2026:** owner handoff was held at that revision.
+The nested lab success recorded in the historical `owner-handoff-release.json`
+did not release live owner input. The TypeScript and Python gates at that revision
+required an `ownerAcceptance` record with `state: "passed"` and measured
+`inputDelivered`, `selectionIsolated`, `ownerFocusPreserved`, `ownerPointerPreserved`
+and `handbackVerified` values of `true`. That evidence had no such acceptance.
+A live owner claim with a throwaway fixture is partly traced below; agent input
+did not reach the fixture on that live session. Those removed gates and isolated
+selection requirements are not current instructions. See the
+[current acceptance index](acceptance.md) for subsequent measurements.
 
 The owner compositor crashed during an existing Chrome window claim on 6 October 2026 at 3:40 AM, Asia/Dubai. Opening the requested account on workspace 4 had succeeded. The pointer demonstration did not run.
 

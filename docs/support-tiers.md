@@ -1,11 +1,11 @@
 # Current native support
 
-Updated 22 October 2026. This table describes the current native-only implementation.
+Updated 27 October 2026. This table describes the current native-only implementation.
 Retired browser and private desktop measurements do not establish current support.
 
 | System | Discovery | Original opening | Input and capture |
 | --- | --- | --- | --- |
-| Fedora 44, Hyprland 0.56.2, Wayland, x86_64 | Implemented, locally exercised | Limited, real installed application results below | Experimental source/ABI control; real editor save and three consecutive shared clipboard Calculator workflows measured, other operations need their own evidence |
+| Fedora 44, Hyprland 0.56.2, Wayland, x86_64 | Implemented, locally exercised | Limited, real installed application results below | Implemented source/ABI-bound control; dated editor Save, shared clipboard, Chrome local selection and Calculator input/capture/closure measurements. Other operations need their own evidence. |
 | Other Linux distributions with Hyprland | Registration implementation available | Not measured on another host | Not measured |
 | GNOME, KDE, Sway and other Linux compositors | Linux metadata discovery available | No opening adapter implemented | No working adapter certified |
 | Windows | App Paths metadata implementation and service contracts | No native opening adapter implemented | No native control adapter implemented |
@@ -36,3 +36,8 @@ original opening do not establish a completed model-driven application workflow.
 application results and source identity. Owner focus/pointer preservation during
 concurrent owner activity and visible cross-workspace cursor appearance are not
 certified by those captures.
+
+Use the [current acceptance index](acceptance.md) to distinguish those 22 October
+measurements from the later [keyboard and Calculator checks](native-input-reliability.md).
+Source CI on Windows and macOS establishes its named source/service contracts,
+not native control on either platform.

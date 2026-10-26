@@ -1,12 +1,19 @@
 # Security and publication privacy
 
-Orbit is an experimental local automation tool. Display/input separation is not a security sandbox: applications retain the OS user's filesystem permissions. Only tool calls routed through Orbit receive its session behavior. Do not expose its local broker or viewer publicly.
+Orbit controls original local applications with the owner's OS permissions and
+ordinary shared clipboard. Application leases and target checks are cooperative
+control, not an OS security sandbox. Only calls routed through Orbit receive its
+session behavior. Keep the local broker private. See the
+[current product contract](docs/desktop-only.md).
 
 ## Reporting
 
 Do not place credentials, login snapshots or private screenshots in public issues. Report a vulnerability privately through GitHub's private vulnerability reporting on [M7MMAD-OMAR/sbar-orbit](https://github.com/M7MMAD-OMAR/sbar-orbit/security/advisories/new). If that is unavailable to you, open an issue saying only that you have a security report and asking for a private channel, with no detail in it.
 
-Orbit has one maintainer and no response-time commitment. What it does commit to: a report that turns out to be real is fixed with the measurement beside it, and a report that turns out not to be real is written down as such rather than deleted. The macOS security audit in `docs/research/macos/security-audit.md` includes the one finding of its eight that was not real, for that reason.
+Orbit has one maintainer and no response-time commitment. Confirmed findings and
+their measurements are retained alongside repairs. Rejected findings retain their
+reason rather than being silently erased. Historical audits apply to their dated
+source; they do not establish a current application isolation boundary.
 
 ## Before publication
 

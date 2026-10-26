@@ -1,4 +1,8 @@
-# Current original application acceptance
+# Original application measurements, 22 October 2026
+
+This is a dated measurement record. Use the [current acceptance index](acceptance.md)
+for later results and the [product contract](desktop-only.md) for operational
+guidance. Its source hashes and incomplete phases apply to this recorded run.
 
 Measured on 22 October 2026 on Fedora 44, Hyprland 0.56.2, native Wayland,
 x86_64. This report supplements the historical failures in

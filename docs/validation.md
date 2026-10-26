@@ -9,7 +9,7 @@ a time. Report skipped platform checks as skipped.
 
 Regression checks must fail against the unfixed source before their passing
 result can demonstrate detection. Actual application measurements are separate
-from fixture and protocol acknowledgements. See [current acceptance](native-acceptance-0.3.0.md)
+from fixture and protocol acknowledgements. See [current acceptance](acceptance.md)
 for original apps, external agent workflows, full-monitor observations and limits.
 Earlier failures remain in [historical external acceptance](external-agent-acceptance.md).
 

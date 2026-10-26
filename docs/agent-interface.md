@@ -79,3 +79,10 @@ reported as `observed-size-difference`, without claiming an unmeasured cause.
 A lost application lease returns `SESSION_CLOSED`. That is distinct from window
 disappearance. Check native candidates after a normal close request, and preserve
 remaining windows and unsaved prompts.
+
+An existing client lease or legacy lease-capacity refusal returns `APPLICATION_BUSY`.
+Opening another window in the same client does not provide an independent lease.
+Inspect active sessions before arranging an explicit handoff. Do not stop another
+task or relaunch after uncertainty to work around that conflict. `OWNER_BUSY`
+instead describes physical owner input. Use [current acceptance](acceptance.md)
+for measured behavior; old incident and external-agent reports are dated evidence.

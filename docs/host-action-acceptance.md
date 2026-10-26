@@ -1,5 +1,14 @@
 # Host action acceptance
 
-Updated 22 October 2026.
+Updated 27 October 2026.
 
-Opening and closing exact newly created test windows are separate from input/capture acceptance. See [real opening observations](native-opening.md). No returned compositor success string alone proves a click, keystroke, screenshot, saved edit or account continuity. Existing owner control remains under the [incident hold](native-handoff-incident.md).
+Opening, native input, capture, saved content, account continuity and exact window
+closure require separate observations. A compositor success receipt proves none
+of the later application effects by itself. See the [current acceptance index](acceptance.md)
+for named operations, sources and limits.
+
+Native handoff is implemented for the source/ABI-matched Hyprland adapter, subject
+to owner controls and actual OS capabilities. The earlier
+[incident hold](native-handoff-incident.md) is a historical record, not a current
+policy switch. Later measured tasks do not relabel the failed earlier tasks as
+successful. Inspect exact candidates and preserve owner work after uncertain input.

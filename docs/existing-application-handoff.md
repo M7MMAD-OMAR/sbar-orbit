@@ -3,7 +3,7 @@
 Native control follows the actual loaded plugin source and prepared compositor
 ABI. The historical policy hold was retired on 22 October 2026. It is retained
 in [the incident record](native-handoff-incident.md), not enforced as current policy.
-See [current application evidence](native-acceptance-0.3.0.md).
+See the [current acceptance index](acceptance.md).
 
 Select exact address and stableId on a numbered workspace. Ordinary applications
 grant their Wayland client's windows. A cross-client parented dialog instead
@@ -21,6 +21,13 @@ owner focus elsewhere to make a claim succeed. One active lease is allowed per
 Wayland client. Hand a portal back promptly after its exact dialog closes.
 Opening, input acceptance, account UI and normal closure are separate measurements.
 Never replace the owner profile or use a hidden substitute desktop.
+
+`APPLICATION_BUSY` identifies the legacy refusal for an existing client lease or
+native lease capacity. A new window in that client remains part of the same
+reservation. Inspect active sessions and arrange an explicit handoff; no automatic
+takeover or stale-session inference is justified by that reply. `OWNER_BUSY`
+describes physical owner input and its bounded wait, while `SESSION_CLOSED` means
+control ended, not that the application closed. See [diagnostics](diagnostics.md).
 
 The shared clipboard is bidirectional. Active leased clients receive the current
 clipboard and PRIMARY selection, including later owner copies or text highlights,

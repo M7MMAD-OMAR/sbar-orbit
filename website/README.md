@@ -1,6 +1,6 @@
 # Sbar Orbit website
 
-A static landing site built with React, TanStack Router and Vite. The production build includes prerendered HTML, local fonts and optimized illustrations. Cloudflare Workers serves the static assets, with no application backend or analytics.
+A static landing site built with React, TanStack Router and Vite. The production build includes prerendered HTML, local fonts and a native workspace diagram. Cloudflare Workers serves static assets, with no application backend or analytics.
 
 Live site: https://orbit.sbarah.com/
 
@@ -41,17 +41,23 @@ sitemap use https://orbit.sbarah.com/.
 
 ## Content and assets
 
-- `src/App.tsx`: page content, menu, viewer explanation, install clipboard and disclosures.
+- `src/App.tsx`: page content, menu, native operation evidence, install clipboard and support.
 - `src/styles.css`: responsive layout, typography and theme.
 - `src/main.tsx`: TanStack routes and client mounting.
 - `scripts/prerender.tsx`: readable initial HTML for browsers and crawlers.
-- `public/images/`: AI-generated navy ink illustrations and the supplied Buy Me a Coffee button.
+- `public/images/`: current native workspace SVG and the supplied support button.
 - `public/brand/`: existing approved logo artwork.
 - `design-qa.md`: verification evidence and limits.
 
-The viewer controls explain capabilities, they do not connect to an actual Orbit session. Installation commands are copied, never executed by the website. Support links to the user's supplied Buy Me a Coffee account in a separate tab, without loading a third-party widget.
+The page explains original application opening and scoped evidence; it does not
+connect to an Orbit session or provide a desktop viewer. Installation commands
+are copied, never executed by the website. Support opens its configured external
+destination without loading a third-party widget.
 
-The source illustration reference is the user-approved long ivory and navy landing mockup (`exec-84293ea4-fd30-411e-b415-cbda3ec8ea34.png`). The final layout adds the user-requested problem, benefits and support sections. Generated imagery is illustrative, not a product screenshot.
+Earlier navy ink illustration prompts remain in `desktop-assets.json` as dated
+provenance. Their deleted image names and private-desktop wording do not describe
+the current shipped assets or product. See [asset provenance](ASSETS.md). The
+current SVG is an architecture diagram, not an application screenshot.
 
 ## Languages
 
@@ -64,14 +70,8 @@ labelled accordingly. Terminal commands remain LTR in both layouts.
 Run `bun run scripts/limited.ts bun test website/tests/locale.test.tsx` from the
 repository root. The test file checks both locales without a graphical session.
 
-The landing page includes an illustrated bento overview, an always-visible
-architecture diagram and a three-step quick guide in both languages. The viewer
-walkthrough explains session controls; it does not control a live agent. Deeper technical
-reference stays on GitHub. No essential guidance is hidden in disclosures.
-
-The large viewer illustration uses its full aspect ratio. Its walkthrough advances
-every four seconds, with a pause control and progress indicators. The architecture
-highlights an explanatory stage every 1.8 seconds. Both pause on hover, keyboard
-focus, hidden tabs and offscreen placement. Reduced-motion users receive static
-content, including all four viewer descriptions. These are illustrations, not live
-session state.
+The landing page includes native application evidence, an architecture diagram
+and a three-step quick guide in both languages. Deeper technical reference stays
+on GitHub. Source rendering tests do not certify current visual layout, native
+input or live session state. Use [the current product contract](../docs/desktop-only.md)
+and [acceptance index](../docs/acceptance.md) for operational meaning.

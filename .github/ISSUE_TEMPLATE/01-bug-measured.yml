@@ -1,21 +1,22 @@
-name: Bug on a measured host class
-description: Something the support tiers call Measured did not hold on Fedora 44, wlroots, cgroup delegation.
-labels: ["type:bug", "tier:measured", "needs:report-bundle"]
+name: Native application bug
+description: A discovery, opening, control or lifecycle operation failed or contradicted its documented behavior.
+labels: ["type:bug", "needs:report-bundle"]
 body:
   - type: markdown
     attributes:
       value: |
-        This form is only for a host class [docs/support-tiers.md](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/support-tiers.md) calls **Measured**.
-
-        On any other host class you have not found a bug, you have become the first person to run Orbit
-        there, which is form 02. `sbar-orbit doctor --report` prints which row applies to you.
+        Compare the exact operation with the [current support matrix](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/support-tiers.md)
+        and [acceptance index](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/acceptance.md).
+        Include the Orbit version, OS, compositor, application registration and observed result.
+        Another host can reveal a real defect; use form 02 for a broader platform measurement.
   - type: textarea
     id: report
     attributes:
       label: Capability report
       description: |
         `sbar-orbit doctor --report > ~/orbit-report.json`, then paste it here. Write it outside the work
-        tree, as shown: a diagnostic built from a browser profile does not belong in a git repository.
+        tree. Review and redact it before posting. Do not upload account state, personal paths,
+        document contents, credentials, raw worker logs or private screenshots.
       render: json
     validations:
       required: true
@@ -23,7 +24,7 @@ body:
     id: command
     attributes:
       label: The command you ran
-      placeholder: bun run verify, or sbar-orbit session create browser
+      placeholder: sbar-orbit native-open JSON, native handoff, or bun run verify
     validations:
       required: true
   - type: textarea
@@ -40,5 +41,5 @@ body:
       options:
         - label: I read the report above before pasting it, and it contains nothing I would not publish.
           required: true
-        - label: This is not a way out of a session boundary. Those go to SECURITY.md privately, never here.
+        - label: Sensitive input, permission or credential disclosures go through SECURITY.md privately.
           required: true

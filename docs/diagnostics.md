@@ -11,4 +11,12 @@ Report the exact operation, source, host class and failure reason. Public report
 must omit account names, document text, personal paths, tokens and raw owner logs.
 
 See [the application results](native-opening.md), [platform support](support-tiers.md)
-and [the held compositor incident](native-handoff-incident.md).
+and [the historical compositor incident](native-handoff-incident.md).
+
+`APPLICATION_BUSY` means the selected Wayland client already has a lease or the
+legacy plugin reached lease capacity. A new window in the same client does not
+create an independent lease. Inspect active sessions and arrange an explicit
+handoff; do not infer that a session is abandoned or stop another task automatically.
+`OWNER_BUSY` instead describes current physical owner input and its bounded wait.
+`SESSION_CLOSED` describes ended control, not proof that a window closed. See
+[handoff](existing-application-handoff.md) and [current acceptance](acceptance.md).

@@ -31,6 +31,15 @@ Never restart a shared broker while another task has active work.
 
 ## Verification
 
+Use `docs/desktop-only.md` for the current product contract and `docs/acceptance.md`
+for dated operation evidence. Incident reports, `COMPLIANCE.md`, release notes and
+research files describe their recorded source; they do not restore retired policy
+holds, browser category bans, isolated clipboards or private desktop workflows.
+When a search or context graph returns an experiment, check its actual runtime
+callers before treating it as a production interface. The plugin under
+`experiments/ghost-cursor/plugin/` is a production build input, as documented in
+`experiments/README.md`.
+
 ```sh
 bun install --frozen-lockfile --ignore-scripts
 bun run scripts/limited.ts bun run typecheck

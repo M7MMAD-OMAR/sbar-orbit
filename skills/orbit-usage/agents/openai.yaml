@@ -1,4 +1,4 @@
 interface:
   display_name: "Orbit Usage"
-  short_description: "off / on / status for this conversation"
-  default_prompt: "$orbit-usage status"
+  short_description: "Original native apps on visible numbered workspaces"
+  default_prompt: "Use $orbit-usage to control an original installed application on an explicit visible numbered workspace."

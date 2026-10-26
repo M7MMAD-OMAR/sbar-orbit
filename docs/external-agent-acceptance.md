@@ -1,5 +1,11 @@
 # Executed external agent application tasks
 
+Historical failed and partial measurements from an earlier revision. The former
+browser category refusal, crash hold and cached standing instructions described
+below are not current operating rules. Use [the current contract](desktop-only.md)
+and [current acceptance index](acceptance.md) for later measurements. These earlier
+outcomes remain failures; later success does not rewrite them.
+
 On 22 October 2026, the installed Claude Code, Hermes and Codex CLIs were given
 actual model-driven desktop tasks. Each task required the registered Orbit MCP
 connector, original installed applications, visible workspace 2, bounded floating
@@ -75,7 +81,7 @@ policy still prohibited browsers, despite the current task clarification. That
 is an agent-side policy refusal, not a measured Orbit browser failure. No browser
 was launched and no signed-in browser account was inspected.
 
-## Acceptance still required
+## Acceptance missing from this historical run
 
 A completed workflow must show an external agent opening the original app through
 its actual host connector, executing input, observing application state, preserving

@@ -28,7 +28,7 @@ checks do not prove that arbitrary applications never activate themselves.
 The panel reports native state. There is no substitute desktop viewer, browser
 viewer, private session or profile copy. Opening an app does not establish input
 support. Visible agent pointer and native input require the loaded plugin source and
-compositor ABI to match. See [current actual acceptance](native-acceptance-0.3.0.md).
+compositor ABI to match. See [current actual acceptance](acceptance.md).
 A shared D-Bus activation process yields an unmodified candidate, not a claimed
 launch identity. Inspect that candidate before selecting an exact handoff.
 
