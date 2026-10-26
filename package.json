@@ -20,6 +20,7 @@
     "src",
     "scripts",
     "desktop",
+    "experiments/README.md",
     "experiments/ghost-cursor/plugin/ghostinput.cpp",
     "experiments/ghost-cursor/plugin/build.sh",
     "!**/__pycache__",

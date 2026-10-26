@@ -161,7 +161,7 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     for (const required of ["skills/orbit-usage/SKILL.md", "skills/orbit-usage/agents/openai.yaml",
       "docs/agent-interface.md", "docs/desktop-only.md", "docs/support-tiers.md",
       "docs/images/native-workspaces.svg", "src/native/session_worker.py", "src/native/keyboard.py",
-      "experiments/ghost-cursor/plugin/ghostinput.cpp", "experiments/ghost-cursor/plugin/build.sh"])
+      "experiments/README.md", "experiments/ghost-cursor/plugin/ghostinput.cpp", "experiments/ghost-cursor/plugin/build.sh"])
       expect(shipped).toContain(required);
     const metadata = await Bun.file(join(project, "package.json")).json();
     expect(shipped).toContain(`docs/release-${metadata.version}.md`);
