@@ -7,6 +7,79 @@ import unittest
 
 
 class KeyboardFocusTests(unittest.TestCase):
+    def test_actual_key_handler_normalizes_modifiers_and_consumes_rejected_operations(self):
+        source = Path(os.environ.get("ORBIT_KEYBOARD_SOURCE", str(Path(__file__).resolve().parents[1] / "experiments/ghost-cursor/plugin/ghostinput.cpp"))).read_text()
+        start = source.index("static std::string cmdKey(")
+        end = source.index("\n}\n", start) + 3
+        fixture = r'''
+#include <algorithm>
+#include <cctype>
+#include <cstdint>
+#include <format>
+#include <sstream>
+#include <string>
+#include <vector>
+using eHyprCtlOutputFormat=int;using xkb_keysym_t=unsigned;using xkb_mod_index_t=unsigned;
+struct xkb_keymap{};struct STarget{std::string error;};struct SStroke{unsigned evdev=0,mods=0,group=0;};
+#define XKB_MOD_NAME_CTRL "Control"
+#define XKB_MOD_NAME_SHIFT "Shift"
+#define XKB_MOD_NAME_ALT "Mod1"
+#define XKB_MOD_NAME_LOGO "Mod4"
+#define XKB_MOD_INVALID 99
+#define XKB_KEY_NoSymbol 0
+#define XKB_KEYSYM_CASE_INSENSITIVE 1
+#define XKB_KEY_Return 10
+#define XKB_KEY_Tab 9
+static bool pending=true;static unsigned sends=0,lastMods=0;
+static STarget resolve(const std::string&,bool){return {};}
+static xkb_keymap* seatKeymap(){static xkb_keymap k;return &k;}
+static unsigned xkb_keymap_mod_get_index(xkb_keymap*,const char*n){std::string s=n;return s=="Control"?0:s=="Shift"?1:s=="Mod1"?2:3;}
+static unsigned xkb_keysym_from_name(const char*n,int){return std::string(n)=="l"?1:0;}
+static unsigned xkb_utf32_to_keysym(unsigned n){return n;}
+static bool findKeysym(xkb_keymap*,unsigned,SStroke& s){s={38,0,0};return true;}
+static bool consumeKeyboardPreparation(const STarget&,const std::string&,const std::string& token){
+ if(token!="mine"||!pending)return false;pending=false;return true;
+}
+static bool sendStrokes(const STarget&,const std::vector<SStroke>& strokes){++sends;lastMods=strokes.at(0).mods;return true;}
+'''
+        main = r'''
+int main(int argc,char**argv){std::string mode=argv[1];
+ if(mode=="aliases"){
+ for(auto alias:{"ctrl","CTRL","Ctrl","control","Control_L","Control_R"}){
+  pending=true;sends=0;
+  if(cmdKey(0,std::string("ghost-key-prepared target mine ")+alias+"+l")!="ok"||pending||sends!=1||lastMods!=1)return 1;
+ }
+ for(auto entry:std::vector<std::pair<std::string,unsigned>>{{"SHIFT+l",2},{"Alt_L+l",4},{"Super_R+l",8},{"CTRL+Shift_L+l",3}}){
+  pending=true;sends=0;
+  if(cmdKey(0,"ghost-key-prepared target mine "+entry.first)!="ok"||pending||sends!=1||lastMods!=entry.second)return 2;
+ }
+ }
+ if(mode=="key-rejection"){
+ for(auto combo:{"invalid+l","ctrl+unknown"}){
+  pending=true;sends=0;
+  if(cmdKey(0,std::string("ghost-key-prepared target mine ")+combo)=="ok"||pending||sends)return 3;
+ }
+ pending=true;sends=0;
+ if(cmdKey(0,"ghost-key-prepared target other ctrl+l")=="ok"||!pending||sends)return 4;
+ }
+ if(mode=="text-rejection"){
+ for(auto hex:{"gg","0","c0af","f4908080","eda080"}){
+  pending=true;sends=0;
+  if(cmdType(0,std::string("ghost-texthex-prepared target mine ")+hex).starts_with("ok")||pending||sends)return 5;
+ }
+ }
+}
+'''
+        type_start = source.index("static std::string cmdType(")
+        type_end = source.index("\n}\n", type_start) + 3
+        with tempfile.TemporaryDirectory(prefix="orbit-key-handler-") as directory:
+            root=Path(directory);cpp=root/"probe.cpp";binary=root/"probe"
+            cpp.write_text(fixture+source[start:end]+source[type_start:type_end]+main)
+            subprocess.run(["g++","-std=c++23",str(cpp),"-o",str(binary)],check=True,timeout=30)
+            for case in ["aliases", "key-rejection", "text-rejection"]:
+                with self.subTest(case=case):
+                    subprocess.run([str(binary),case],check=True,timeout=5)
+
     def test_same_surface_retains_keyboard_focus_and_selection(self):
         source = Path(os.environ.get("ORBIT_KEYBOARD_SOURCE", str(Path(__file__).resolve().parents[1] / "experiments/ghost-cursor/plugin/ghostinput.cpp"))).read_text()
         signature = "static void prepareKeyboardResource("

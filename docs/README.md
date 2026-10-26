@@ -7,6 +7,7 @@ control and complete cross-platform compatibility remain unfinished.
 - [Product contract](desktop-only.md)
 - [Actual platform support](support-tiers.md)
 - [Current native acceptance](native-acceptance-0.3.0.md)
+- [Keyboard reliability and unresolved selection replacement](native-input-reliability.md)
 - [Historical application opening results](native-opening.md)
 - [Architecture and diagram](architecture.md)
 - [Installation](agent-install.md), [CLI](cli.md), [MCP](connectors.md)

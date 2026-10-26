@@ -12,6 +12,8 @@
 //   ghost-cursor <address> <x> <y>             render the agent cursor without input
 //   ghost-hide-cursor <address>                remove that window's cursor
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 // Load generated request storage before other protocol headers include it.
@@ -1729,6 +1731,10 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
     in >> cmd >> address;
     if (cmd != "ghost-texthex-prepared") return "refused: keyboard preparation required";
     if (!(in >> token)) return "refused: keyboard operation identity required";
+    auto t = resolve(address, false);
+    if (!t.error.empty()) return t.error;
+    // A matching commit consumes its identity even when payload validation fails.
+    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     std::string text;
     std::getline(in, text);
     if (!text.empty() && text[0] == ' ')
@@ -1752,9 +1758,6 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
         }
         text = std::move(decoded);
     }
-    auto t = resolve(address, false);
-    if (!t.error.empty())
-        return t.error;
     auto km = seatKeymap();
     if (!km)
         return "no seat keymap";
@@ -1782,7 +1785,6 @@ static std::string cmdType(eHyprCtlOutputFormat, std::string req) {
             return std::format("no key for U+{:04X} in the seat keymap", cp);
         strokes.push_back(s);
     }
-    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     if (!sendStrokes(t, strokes))
         return "target has no keyboard resource";
     return std::format("ok {} keys", strokes.size());
@@ -1797,6 +1799,7 @@ static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     auto t = resolve(address, false);
     if (!t.error.empty())
         return t.error;
+    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     auto km = seatKeymap();
     if (!km)
         return "no seat keymap";
@@ -1806,7 +1809,11 @@ static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     while ((plus = key.find('+')) != std::string::npos && plus + 1 < key.size()) {
         std::string m = key.substr(0, plus);
         key           = key.substr(plus + 1);
-        const char* name = m == "ctrl" ? XKB_MOD_NAME_CTRL : m == "shift" ? XKB_MOD_NAME_SHIFT : m == "alt" ? XKB_MOD_NAME_ALT : m == "super" ? XKB_MOD_NAME_LOGO : nullptr;
+        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char c) { return std::tolower(c); });
+        const char* name = m == "ctrl" || m == "control" || m == "control_l" || m == "control_r" ? XKB_MOD_NAME_CTRL :
+            m == "shift" || m == "shift_l" || m == "shift_r" ? XKB_MOD_NAME_SHIFT :
+            m == "alt" || m == "alt_l" || m == "alt_r" ? XKB_MOD_NAME_ALT :
+            m == "super" || m == "super_l" || m == "super_r" ? XKB_MOD_NAME_LOGO : nullptr;
         if (!name)
             return "unknown modifier " + m;
         const auto index = xkb_keymap_mod_get_index(km, name);
@@ -1821,7 +1828,6 @@ static std::string cmdKey(eHyprCtlOutputFormat, std::string req) {
     if (!findKeysym(km, sym, s))
         return "no key for " + key;
     s.mods |= mods;
-    if (!consumeKeyboardPreparation(t, address, token)) return "refused: keyboard preparation is unavailable or stale";
     if (!sendStrokes(t, {s}))
         return "target has no keyboard resource";
     return "ok";

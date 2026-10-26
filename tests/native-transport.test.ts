@@ -8,7 +8,7 @@ test.skipIf(process.platform !== "linux")("native transport binds journaled acti
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 12 tests");
+  expect(stderr).toContain("Ran 13 tests");
   expect(stderr).toContain("OK");
 }, 15_000);
 
@@ -19,6 +19,6 @@ test.skipIf(process.platform !== "linux")("native keyboard prepares first input 
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 4 tests");
+  expect(stderr).toContain("Ran 5 tests");
   expect(stderr).toContain("OK");
 }, 10_000);

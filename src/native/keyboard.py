@@ -46,7 +46,6 @@ def prepared_input(request, exchange, deadline):
         raise HostError("Native keyboard operation sequence exhausted")
     token = _PRODUCER + format(sequence, "016x")
     prepare = f"ghost-keyboard-prepare {handle} {token}"
-    attempted = False
     serial = None
     try:
         while True:
@@ -67,12 +66,12 @@ def prepared_input(request, exchange, deadline):
                 break
             time.sleep(min(0.01, deadline_timeout(deadline)))
         deadline_timeout(deadline)
-        attempted = True
         return exchange(f"{commit_command} {handle} {token} {payload}", deadline)
     finally:
-        # An ambiguous commit is never resent. Pending preparation has a server
-        # expiry even if the original absolute deadline leaves no cleanup time.
-        if not attempted and time.monotonic() < deadline:
+        # Cancellation targets only this token and never sends input. It also
+        # clears a preparation after a rejected commit on an older plugin.
+        # An ambiguous commit is never resent; expiry bounds cleanup if needed.
+        if time.monotonic() < deadline:
             try:
                 exchange(f"ghost-keyboard-cancel {handle} {token}", deadline)
             except Exception:

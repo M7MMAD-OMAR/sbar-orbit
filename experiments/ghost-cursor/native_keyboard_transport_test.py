@@ -37,6 +37,9 @@ class KeyboardTransportTests(unittest.TestCase):
                 if request == b"j/version":
                     response = json.dumps(self.version).encode()
                 elif request.startswith(b"ghost-keyboard-prepare "):
+                    if getattr(self, "pending_rejection", False):
+                        connection.sendall(b"refused: another keyboard operation is pending")
+                        continue
                     self.prepare_count = getattr(self, "prepare_count", 0) + 1
                     token = request.decode().split()[2]
                     status = "ready" if self.prepare_count >= 2 else "pending"
@@ -48,6 +51,13 @@ class KeyboardTransportTests(unittest.TestCase):
                 elif request.startswith((b"ghost-key-prepared ", b"ghost-texthex-prepared ")):
                     if getattr(self, "drop_commit_reply", False):
                         continue
+                    if getattr(self, "reject_commit", False):
+                        self.pending_rejection = True
+                        response = b"unknown modifier invalid"
+                    else:
+                        response = b"ok"
+                elif request.startswith(b"ghost-keyboard-cancel "):
+                    self.pending_rejection = False
                     response = b"ok"
                 else:
                     response = b"ok"
@@ -97,6 +107,20 @@ class KeyboardTransportTests(unittest.TestCase):
             self.transport.execute("ghost-type 0x123@1@lease-" + "a" * 32 + " -first", self.control)
         self.assertEqual(len(self.commits()), 1)
         self.assertTrue(self.commits()[0].endswith(b" 2d6669727374"))
+
+    def test_rejected_commit_releases_its_preparation_before_next_operation(self):
+        self.full()
+        self.reject_commit = True
+        target = "0x123@1@lease-" + "a" * 32
+        with self.assertRaisesRegex(HostError, "unknown modifier"):
+            self.transport.execute("ghost-key " + target + " invalid+l", self.control)
+        self.reject_commit = False
+        self.assertEqual(self.transport.execute("ghost-key " + target + " End", self.control), "ok")
+        commits = self.commits()
+        self.assertEqual(len(commits), 2)
+        failed_token = commits[0].decode().split()[2]
+        cancels = [r.decode() for r in self.actions() if r.startswith(b"ghost-keyboard-cancel ")]
+        self.assertIn("ghost-keyboard-cancel " + target + " " + failed_token, cancels)
 
 
 if __name__ == "__main__":
