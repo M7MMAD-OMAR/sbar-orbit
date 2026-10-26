@@ -2,6 +2,22 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.3.2 (26 October 2026)
+
+Native keyboard input accepts case-insensitive modifier names and left/right XKB
+aliases. Rejected key and text operations release their preparation, and uncertain
+commits are not replayed. Adaptive readiness polling starts at 1 ms and backs off
+to 10 ms; acknowledged commits avoid a redundant cancellation round trip.
+
+An existing Wayland client lease or lease capacity refusal now returns
+`APPLICATION_BUSY` with an actionable public message and diagnostic metadata.
+No other task's lease is taken over automatically.
+
+This GitHub release also includes the original application, visible workspace,
+shared clipboard and compositor refresh work documented in 0.3.0 and 0.3.1,
+which did not have published GitHub releases. Native desktop acceptance remains
+limited to measured Linux Hyprland cases. [Release notes](docs/release-0.3.2.md).
+
 ## 0.3.1 (24 October 2026)
 
 Native control survives a compositor restart: `sbar-orbit native-refresh` renews

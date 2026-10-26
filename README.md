@@ -1,5 +1,8 @@
 # Orbit
 
+[Latest release: 0.3.2](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/latest)
+| [Release notes](docs/release-0.3.2.md) | [Changelog](CHANGELOG.md)
+
 Open original installed native Linux applications on a numbered Hyprland workspace.
 The user can select another workspace for their own work. Applications retain their normal owner state and
 stay open after the opening worker exits.

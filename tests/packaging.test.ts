@@ -4,7 +4,6 @@ import { bareLineFeeds } from "../scripts/package-endings";
 import { chmod, mkdir, mkdtemp, rm, readdir, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { buildNativeRuntime } from "../src/install";
 import { registryPackage } from "../scripts/registry-package";
 
 /**
@@ -160,33 +159,14 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     // The shipped agent guide links the portable skill and instructs users to copy it.
     // Support-tier links and the README image must also resolve from the extracted artifact.
     for (const required of ["skills/orbit-usage/SKILL.md", "skills/orbit-usage/agents/openai.yaml",
-      "docs/agent-interface.md", "docs/fragments/installed-command-acceptance.md",
-      "docs/fragments/macos-keychain.md", "docs/images/viewer-window.jpg"])
+      "docs/agent-interface.md", "docs/desktop-only.md", "docs/support-tiers.md",
+      "docs/images/native-workspaces.svg", "src/native/session_worker.py", "src/native/keyboard.py",
+      "experiments/ghost-cursor/plugin/ghostinput.cpp", "experiments/ghost-cursor/plugin/build.sh"])
       expect(shipped).toContain(required);
+    const metadata = await Bun.file(join(project, "package.json")).json();
+    expect(shipped).toContain(`docs/release-${metadata.version}.md`);
   } finally { await rm(destination, { recursive: true, force: true }); }
 }, 60_000);
-
-test("a native build the package does not carry refuses by name rather than by a missing file", async () => {
-  // The registry package ships no `experiments/`, so the bootstrap the installer spawns is not there.
-  // Before this was handled, `bash` reported a path it could not open and that text became the step's
-  // whole explanation, which says nothing about why the file is absent or what to do instead.
-  const source = await mkdtemp(join(tmpdir(), "orbit-native-"));
-  // A data home of its own, or this reads whatever the machine running the test has already built: the
-  // runtime is shared between versions, so the step would answer "already built" instead of refusing.
-  const dataHome = await mkdtemp(join(tmpdir(), "orbit-native-data-"));
-  const previousDataHome = process.env.XDG_DATA_HOME;
-  process.env.XDG_DATA_HOME = dataHome;
-  try {
-    const outcome = await buildNativeRuntime(source, { which: () => "/usr/bin/true" });
-    expect(outcome.state).toBe("failed");
-    expect(outcome.detail).toMatch(/registry|clone|repository/i);
-    expect(outcome.remedies?.[0]?.id).toBe("native-bootstrap-absent");
-  } finally {
-    if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previousDataHome;
-    await rm(source, { recursive: true, force: true });
-    await rm(dataHome, { recursive: true, force: true });
-  }
-});
 
 /**
  * The source release carries batch files a Windows cmd.exe can read.
