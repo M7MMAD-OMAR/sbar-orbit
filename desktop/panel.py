@@ -86,7 +86,7 @@ import math  # noqa: E402
 
 from panel_broker import (BrokerClient, BrokerError, broker_socket, build_report, claim_the_mark, command_socket_path,
                            launcher_json, notify, read_journal, read_sessions, rpc, session_action,
-                           session_shape)  # noqa: E402
+                           session_shape, stable_order)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 from panel_sessions import SESSIONS_CSS, DetailPage, SessionList  # noqa: E402
@@ -275,6 +275,7 @@ class Panel(Gtk.Application):
         self.language = language()
         self.closed = []
         self.busy = set()
+        self.pointer_in_cards = False
         self.notes = {}
         self.confirming = None
         self.detail_id = None
@@ -364,6 +365,10 @@ class Panel(Gtk.Application):
         # rather than to the card, so the card's own padding is added to it instead of eaten out of it.
         self.cards = SessionList(self)
         self.cards.set_size_request(280, -1)
+        self.pointer_in_cards = False
+        over = Gtk.EventControllerMotion()
+        over.connect("notify::contains-pointer", self.cards_pointer)
+        self.cards.add_controller(over)
         self.detail = DetailPage(self)
         self.page_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.scrollers = {}
@@ -407,6 +412,7 @@ class Panel(Gtk.Application):
         menu.connect("pressed", lambda *_: self.open_settings())
         self.shell.add_controller(menu)
 
+        window.connect("notify::focus-widget", lambda *_: self.expanded and self.refresh_views())
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self.key_pressed)
         window.add_controller(keys)
@@ -1001,7 +1007,15 @@ class Panel(Gtk.Application):
             self.fill_cards()
 
     def everyone(self):
-        return self.sessions + self.closed
+        return stable_order(self.sessions + self.closed)
+
+    def list_in_use(self):
+        """Whether the person is using the list: the pointer is over it, or a control in it has the
+        keyboard. A list in use does not reflow; what arrived meanwhile is applied when they let go."""
+        if self.pointer_in_cards:
+            return True
+        focus = self.window.get_focus() if self.window is not None and self.window.is_active() else None
+        return focus is not None and focus.is_ancestor(self.cards)
 
     def fill_cards(self):
         """Bring the visible views up to date, in place. Widgets are created when a session first
@@ -1018,7 +1032,10 @@ class Panel(Gtk.Application):
             del self.notes[session_id]
         if self.confirming is not None and self.confirming not in known:
             self.confirming = None
-        self.cards.update(everyone, self.reachable)
+        if self.cards.update(everyone, self.reachable, self.list_in_use()) and self.confirming is not None:
+            # A Stop question armed for one session must not survive the list changing under it.
+            self.confirming = None
+            self.cards.update(everyone, self.reachable, True)
         if self.detail_id is not None:
             current = next((s for s in everyone if s["sessionId"] == self.detail_id), None)
             if current is None:
@@ -1027,6 +1044,11 @@ class Panel(Gtk.Application):
                 self.detail.update(current)
                 self.detail.set_rows(self.journal)
         self.fit()
+
+    def cards_pointer(self, controller, _pspec):
+        self.pointer_in_cards = controller.get_property("contains-pointer")
+        if not self.pointer_in_cards:
+            self.refresh_views()
 
     def fit(self):
         """A scrolling view asks for almost no height of its own, so the card would be laid out at its

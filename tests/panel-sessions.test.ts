@@ -211,3 +211,33 @@ print(json.dumps(json.dumps(STRINGS, ensure_ascii=False)))
 `);
   expect(all).not.toMatch(/[\u0660-\u0669\u00ab\u00bb\u2014\u2013]/);
 });
+
+test("the card order is creation order, and a list in use never reflows", async () => {
+  const result = await python(`
+import json
+from panel_broker import card_plan, short_id, stable_order
+
+sessions = [{"sessionId": "b", "createdAt": 20, "state": "running"}, {"sessionId": "a", "createdAt": 10, "state": "closed"},
+            {"sessionId": "c", "createdAt": 30, "state": "running"}]
+ordered = [s["sessionId"] for s in stable_order(sessions)]
+# A session that ends keeps its place: the order does not depend on the state.
+ended = [s["sessionId"] for s in stable_order([{**s, "state": "closed"} if s["sessionId"] == "b" else s for s in sessions])]
+shown = ["a", "b"]
+print(json.dumps({
+    "ordered": ordered, "ended": ended,
+    "free": card_plan(shown, ["a", "b", "c"], False),
+    "frozen": card_plan(shown, ["a", "b", "c"], True),
+    "frozenGone": card_plan(shown, ["b"], True),
+    "frozenEmpty": card_plan([], ["a"], True),
+    "suffix": short_id("9faed5bb-4c4d-4d0d-afbe-76620f8ee8ec"),
+}))
+`);
+  expect(result.ordered).toEqual(["a", "b", "c"]);
+  expect(result.ended).toEqual(["a", "b", "c"]);
+  expect(result.free).toEqual(["a", "b", "c"]);
+  // While the pointer or the keyboard is in the list, a new session is not added and none is removed.
+  expect(result.frozen).toEqual(["a", "b"]);
+  expect(result.frozenGone).toEqual(["a", "b"]);
+  expect(result.frozenEmpty).toEqual(["a"]);
+  expect(result.suffix).toBe("9faed5bb");
+});

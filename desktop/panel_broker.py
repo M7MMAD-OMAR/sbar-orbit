@@ -122,6 +122,26 @@ def read_status(client, with_presence=True):
     return read_sessions(client, with_presence)[0]
 
 
+def stable_order(sessions):
+    """Creation order, new sessions appended. The broker lists open sessions and closed ones as they are
+    kept; the cards must not regroup when a session ends, or the card under the pointer moves to another
+    place and the click lands on a different session."""
+    return sorted(sessions, key=lambda s: s.get("createdAt") or 0)
+
+
+def card_plan(shown, wanted, frozen):
+    """The session ids the list should hold, in order. While the person is using the list, that is
+    exactly what it holds already: nothing is added, removed or moved under their hand, and the
+    pending change is applied when they leave. An empty list is never frozen, there is nothing to move."""
+    return list(shown) if frozen and shown else list(wanted)
+
+
+def short_id(session_id):
+    """The part of a session id a control's accessible name carries, so one button can be told from the
+    same button on another session by name alone."""
+    return str(session_id)[:8]
+
+
 # The controls. Each takes its own connection with room to wait: a pause is acknowledged only after the
 # session's queued action finishes, which is longer than the poll connection's three seconds. They run
 # on a worker thread the panel starts, never on the GTK thread.

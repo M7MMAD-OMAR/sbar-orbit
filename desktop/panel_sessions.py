@@ -11,6 +11,7 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk  # noqa: E402
 
 from panel_draw import label, start  # noqa: E402
+from panel_broker import card_plan, short_id  # noqa: E402
 from panel_text import CHIPS, clock, state_key, text  # noqa: E402
 
 # How tall the journal may grow inside the detail page before it scrolls: six rows.
@@ -57,6 +58,24 @@ def wrapped(value, *classes):
     return item
 
 
+def session_button(words):
+    """A button whose only child is its label widget. A button made with a `label` is named from that
+    label by the toolkit, which overrides the accessible name set on it; this one keeps the name it is
+    given, which is how a control carries the id of the session it belongs to."""
+    button = Gtk.Button()
+    button.set_child(Gtk.Label(label=words))
+    return button
+
+
+def button_words(button, words=None):
+    child = button.get_child()
+    if words is None:
+        return child.get_label()
+    if child.get_label() != words:
+        child.set_label(words)
+    return None
+
+
 class Chip(Gtk.Label):
     """The state, as a shape and a word on a colour. Never a colour alone."""
 
@@ -90,44 +109,52 @@ class Controls(Gtk.Stack):
         self.set_vhomogeneous(False)
         self.add_css_class("orbit-controls")
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.toggle = Gtk.Button()
-        self.stop = Gtk.Button(label=text("stop"))
-        self.remove = Gtk.Button(label=text("remove"))
+        self.toggle = session_button("")
+        self.stop = session_button(text("stop"))
+        self.remove = session_button(text("remove"))
         for button in (self.toggle, self.stop, self.remove):
             row.append(button)
         self.toggle.connect("clicked", lambda *_: panel.act("resume" if self.toggle_verb == "resume" else "pause", session_id))
         self.stop.connect("clicked", lambda *_: panel.ask_stop(session_id))
         self.remove.connect("clicked", lambda *_: panel.act("forget", session_id))
         self.toggle_verb = "pause"
-        self.stop.update_property([Gtk.AccessibleProperty.LABEL], [text("stop-hint")])
+        self.suffix = short_id(session_id)
+        self.name(self.stop, text("stop-hint"))
         self.stop.set_tooltip_text(text("stop-hint"))
-        self.remove.update_property([Gtk.AccessibleProperty.LABEL], [text("remove-hint")])
+        self.name(self.remove, text("remove-hint"))
         self.remove.set_tooltip_text(text("remove-hint"))
         self.add_named(row, "buttons")
 
         ask = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         ask.append(wrapped(text("stop-ask"), "orbit-ask"))
         answers = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.confirm = Gtk.Button(label=text("stop-confirm"))
+        self.confirm = session_button(text("stop-confirm"))
         self.confirm.add_css_class("destructive-action")
-        self.cancel = Gtk.Button(label=text("cancel"))
+        self.cancel = session_button(text("cancel"))
         answers.append(self.confirm)
         answers.append(self.cancel)
         ask.append(answers)
         self.confirm.connect("clicked", lambda *_: panel.act("stop", session_id))
         self.cancel.connect("clicked", lambda *_: panel.ask_stop(None))
         self.add_named(ask, "ask")
+        self.name(self.confirm, text("stop-confirm"))
+        self.name(self.cancel, text("cancel"))
         self.set_visible_child_name("buttons")
         self.asking = False
+
+    def name(self, button, words):
+        """The accessible name carries the session's id, so a control is addressed by which session it
+        belongs to and not by where it happens to be drawn."""
+        button.update_property([Gtk.AccessibleProperty.LABEL], [f"{words} [{self.suffix}]"])
 
     def update(self, session, busy):
         key = state_key(session)
         over = key in ("closed", "closing")
         verb = "resume" if key in ("paused",) else "pause"
-        if verb != self.toggle_verb or not self.toggle.get_label():
+        if verb != self.toggle_verb or not button_words(self.toggle):
             self.toggle_verb = verb
-            self.toggle.set_label(text(verb))
-            self.toggle.update_property([Gtk.AccessibleProperty.LABEL], [text(f"{verb}-hint")])
+            button_words(self.toggle, text(verb))
+            self.name(self.toggle, text(f"{verb}-hint"))
             self.toggle.set_tooltip_text(text(f"{verb}-hint"))
         self.toggle.set_visible(not over)
         # A pause is acknowledged before it can be undone; the broker refuses a resume until then.
@@ -197,7 +224,7 @@ class SessionCard(Gtk.Box):
         put_text(self.meta, "  ·  ".join(f"⁨{p}⁩" for p in parts))
         description = text("label-card", agent=agent, task=task, state=text(key))
         self.select.update_property([Gtk.AccessibleProperty.LABEL, Gtk.AccessibleProperty.DESCRIPTION],
-                                    [description, text("details")])
+                                    [f"{description} [{short_id(self.session_id)}]", text("details")])
         self.controls.update(session, busy)
         put_text(self.note, note or "")
         self.note.set_visible(bool(note))
@@ -225,25 +252,42 @@ class SessionList(Gtk.Box):
         self.empty = label("", "orbit-dim")
         self.append(self.empty)
 
-    def update(self, sessions, reachable):
+    def update(self, sessions, reachable, frozen=False):
+        """Bring the cards up to date. Returns whether the set or the order of cards changed.
+
+        While frozen, the cards that are there are refreshed in place and none is added, removed or moved,
+        so a session starting or ending cannot shift a control away from under the pointer."""
         panel = self.panel
-        seen = set()
+        by_id = {s["sessionId"]: s for s in sessions}
+        shown = [c.session_id for c in self.card_order()]
+        wanted = [s["sessionId"] for s in sessions]
+        plan = card_plan(shown, wanted, frozen)
         previous = None
-        for session in sessions:
-            session_id = session["sessionId"]
-            seen.add(session_id)
+        for session_id in plan:
             card = self.cards.get(session_id)
             if card is None:
                 card = self.cards[session_id] = SessionCard(panel, session_id)
                 self.insert_child_after(card, previous if previous is not None else self.empty)
             elif card.get_prev_sibling() is not (previous if previous is not None else self.empty):
                 self.reorder_child_after(card, previous if previous is not None else self.empty)
-            card.update(session, session_id in panel.busy, panel.notes.get(session_id))
+            session = by_id.get(session_id)
+            if session is not None:
+                card.update(session, session_id in panel.busy, panel.notes.get(session_id))
+            else:
+                # Gone from the broker while the list is held still: keep the card, and make it inert.
+                card.set_sensitive(False)
             previous = card
-        for session_id in [i for i in self.cards if i not in seen]:
+        for session_id in [i for i in self.cards if i not in plan]:
             self.remove(self.cards.pop(session_id))
-        put_text(self.empty, "" if sessions else text("offline" if not reachable else "no-sessions"))
-        self.empty.set_visible(not sessions)
+        put_text(self.empty, "" if plan else text("offline" if not reachable else "no-sessions"))
+        self.empty.set_visible(not plan)
+        return plan != shown
+
+    def card_order(self):
+        child = self.empty.get_next_sibling()
+        while child is not None:
+            yield child
+            child = child.get_next_sibling()
 
 
 class DetailPage(Gtk.Box):
