@@ -253,14 +253,14 @@ class NativeSession:
         return target["pointer"]
 
     def _await_drag(self, address):
-        """The compositor runs a drag on its own loop; return once it released the button."""
+        """The compositor times a click and runs a drag on its own loop; return once it is done."""
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             state = json.loads(self.transport._perform("ghost-state " + address))
             if not state.get("motion_active"):
                 return
             time.sleep(min(max(state.get("motion_ms", 0), 10), 100) / 1000)
-        raise SessionError("Native drag did not finish; the button is released by the compositor timeout")
+        raise SessionError("Native pointer action did not finish; a held button is released by the compositor timeout")
 
     def execute(self, value):
         require_budget()
@@ -366,7 +366,7 @@ class NativeSession:
                 if kind != "text":
                     raise
                 response = paste_text(self.plan, action["text"], lambda: self.transport._perform("ghost-key " + address + " ctrl+v"))
-            if kind == "drag":
+            if kind in ("click", "mouse-up", "drag"):
                 self._await_drag(address)
             if kind in ("cursor", "move", "click", "scroll", "mouse-down", "mouse-up", "drag"):
                 target["pointer"] = ({"x": action["toX"], "y": action["toY"]} if kind == "drag"

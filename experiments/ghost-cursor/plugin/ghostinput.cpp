@@ -2057,6 +2057,9 @@ struct SPointerPump {
     bool approach = false;
     cursor_motion::Vec dragFrom, dragTo;
     uint64_t seed = 0;
+    // A silent pump sends no motion: it only waits until notBefore, then runs done.
+    bool silent = false;
+    double notBefore = 0;
     std::function<void(bool)> done;
 };
 static std::map<std::string, SPointerPump> pumps;
@@ -2097,6 +2100,13 @@ static void pumpTick() {
         if (cursor == cursors.end()) { it = pumps.erase(it); continue; }
         auto& pump = it->second;
         auto& motion = cursor->second.motion;
+        if (now < pump.notBefore) { ++it; continue; }
+        if (pump.silent) {
+            auto done = std::move(pump.done);
+            it = pumps.erase(it);
+            if (done) done(false);
+            continue;
+        }
         if (pump.approach) {
             if (cursor_motion::traveling(motion, now)) { ++it; continue; }
             motion = cursor_motion::plan(pump.dragFrom, pump.dragTo, pump.seed, now, false, false);
@@ -2122,6 +2132,7 @@ static void flushPump(const std::string& address) {
     pumps.erase(it);
     const auto cursor = cursors.find(address);
     const auto end = pump.approach ? pump.dragTo : (cursor != cursors.end() ? cursor->second.motion.to : pump.dragTo);
+    if (pump.silent) { if (pump.done) pump.done(true); return; }
     if (pumpSend(pump, end) && pump.done) pump.done(true);
 }
 
@@ -2155,6 +2166,50 @@ static void releaseAgentButton(const WP<CWLSeatResource>& weakSeat, uint32_t but
             const auto at = cursor->second.motion.to;
             cursor->second.motion = cursor_motion::plan(at, at, cursorSequence * 0x9e3779b97f4a7c15ULL + 1, motionClock(), true);
         }
+}
+
+// Press or release one agent button on every pointer the agent holds on this seat.
+static void sendAgentButton(const WP<CWLSeatResource>& weakSeat, uint32_t button, bool press) {
+    auto seat = weakSeat.lock();
+    if (!seat) return;
+    for (const auto& weak : seat->m_pointers) {
+        auto pointer = weak.lock();
+        if (!pointer || !scrollPointers.contains(pointer.get())) continue;
+        auto& hold = pointerHolds[pointer.get()];
+        if (press) hold.buttons.insert(button); else hold.buttons.erase(button);
+        pointer->sendButton(nowMs(), button, press ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
+        pointer->sendFrame();
+        hold.expires = std::chrono::steady_clock::now() + (hold.buttons.empty() ? hoverHold : buttonHold);
+    }
+    armHoldTimer();
+}
+
+// A person's click is motion, a short pause, a press and a release a few tens of
+// milliseconds later. Pages that decide a link click from the pointer position the
+// content process has seen need that spacing, so the press and release are timed.
+static void scheduleClick(const std::string& address, const STarget& t, uint32_t button) {
+    const WP<CWLSeatResource> seat = t.seat;
+    SPointerPump press;
+    press.window = t.window; press.surface = t.surface; press.seat = t.seat;
+    press.silent = true;
+    press.notBefore = motionClock() + 0.045;
+    press.done = [seat, button, address](bool flushed) {
+        sendAgentButton(seat, button, true);
+        if (flushed) { sendAgentButton(seat, button, false); return; }
+        SPointerPump release;
+        release.seat = seat;
+        release.silent = true;
+        release.notBefore = motionClock() + 0.06;
+        release.done = [seat, button](bool) { sendAgentButton(seat, button, false); };
+        pumps[address] = std::move(release);
+        armPumpTimer();
+    };
+    pumps[address] = std::move(press);
+    if (!pumpTimer) {
+        pumpTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { pumpTick(); }, nullptr);
+        g_pEventLoopManager->addTimer(pumpTimer);
+    }
+    armPumpTimer();
 }
 
 static uint32_t buttonCode(double extra) {
@@ -2257,10 +2312,7 @@ static std::string pointerCmd(std::string req, int kind) {
             p->sendFrame();
         }
         if (kind == 1) {
-            p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_PRESSED);
-            p->sendFrame();
-            p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
-            p->sendFrame();
+            // Pressed and released later by scheduleClick, after the pointer is registered below.
         } else if (kind == 4) {
             p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_PRESSED);
             p->sendFrame();
@@ -2288,6 +2340,7 @@ static std::string pointerCmd(std::string req, int kind) {
     }
     std::erase_if(scrollPointers, [](const auto& entry) { return !entry.second.lock(); });
     armHoldTimer();
+    if (kind == 1 && sent) scheduleClick(address, t, button);
     return sent ? "ok" : "target has no pointer resource";
 }
 
