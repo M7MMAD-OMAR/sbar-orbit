@@ -355,11 +355,20 @@ export class NativeBackend {
         appId: window.appId, windowId: window.windowId })), sampled: "acknowledged metadata" };
   }
 
-  async observe(value?: unknown, format: "image" | "text" | "both" = "image") {
+  /** A digest of the window as it is now, so a later settled capture can tell a stale frame from a new one. */
+  async baseline(selected: Target): Promise<string> {
+    if (!this.applications.has(selected.appId)) throw new OrbitError("INVALID_REQUEST", "Baseline requires an owned native target");
+    const reply = record(await this.worker.request("act", { type: "observe", ...selected, digestOnly: true }));
+    if (typeof reply.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(reply.sha256))
+      throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid baseline digest");
+    return reply.sha256;
+  }
+
+  async observe(value?: unknown, format: "image" | "text" | "both" = "image", settle?: { since?: string; timeoutMs: number }) {
     const selected = value === undefined ? this.selected : target(record(value));
     if (!selected || !this.applications.has(selected.appId))
       throw new OrbitError("INVALID_REQUEST", "Observe requires an explicit owned native target");
-    const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }) }));
+    const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }), ...(settle ?? {}) }));
     // A text frame carries the accessibility tree and no pixels; every other frame is an image.
     const textOnly = frame.mimeType === "text/x-orbit-a11y" && format === "text" && frame.image === undefined;
     if (frame.appId !== selected.appId || frame.windowId !== selected.windowId

@@ -32,6 +32,23 @@ function treeBlock(tree: unknown) {
   return [treeHeader, JSON.stringify({ toolkit: body.toolkit, count: nodes.length, truncated: body.truncated ?? null }), ...lines].join("\n");
 }
 
+/**
+ * Tool content for an act call that carried a settled capture: the receipts as text, the frame as an
+ * image block. The pixels never ride inside the JSON text, where they would cost far more tokens than
+ * the round trip they replace.
+ */
+export function renderAct(value: unknown) {
+  const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const { capture, ...rest } = body;
+  const frame = capture && typeof capture === "object" ? capture as Record<string, unknown> : undefined;
+  const { image, tree: _tree, ...metadata } = frame ?? {};
+  const structured = { ...rest, ...(frame === undefined ? {} : { capture: metadata }) };
+  const content: ({ type: "image"; data: string; mimeType: string } | { type: "text"; text: string })[] =
+    [{ type: "text", text: JSON.stringify(structured) }];
+  if (typeof image === "string") content.push({ type: "image", data: image, mimeType: String(metadata.mimeType) });
+  return { content, structuredContent: structured as Record<string, unknown>, ...(body.ok === false ? { isError: true } : {}) };
+}
+
 export function observationOptions(args: string[]) {
   if (args.length === 0) return { mode: "image" as const };
   if (args.length === 1 && args[0] === "--metadata") return { mode: "metadata" as const };

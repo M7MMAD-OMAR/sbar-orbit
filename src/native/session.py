@@ -143,8 +143,8 @@ class NativeSession:
             raise SessionError("Native window identity is no longer live")
         return target
 
-    @staticmethod
-    def parse(value):
+    @classmethod
+    def parse(cls, value):
         if not isinstance(value, dict) or not isinstance(value.get("type"), str):
             raise SessionError("Native action must be an object with a type")
         fields = {"windows": {"appId"}, "observe": {"appId", "windowId", "format"},
@@ -153,6 +153,7 @@ class NativeSession:
                   "click": {"appId", "windowId", "x", "y", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -165,6 +166,8 @@ class NativeSession:
                 coordinate(result.get(field))
         if kind == "observe" and result.setdefault("format", "image") not in a11y.FORMATS:
             raise SessionError("Unknown observation format")
+        if kind == "observe":
+            cls._settle_options(result)
         if kind == "click":
             result.setdefault("button", "left")
             if result["button"] not in ("left", "middle", "right"):
@@ -185,6 +188,53 @@ class NativeSession:
             if key.lower() == "enter":
                 result["key"] = modifiers + separator + "Return"
         return result
+
+    @staticmethod
+    def _settle_options(result):
+        """Validate the optional settled-capture fields of an observe, and fill the defaults."""
+        if "digestOnly" in result and result["digestOnly"] is not True:
+            raise SessionError("digestOnly must be true when present")
+        if "since" in result and (not isinstance(result["since"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["since"])):
+            raise SessionError("Settled capture baseline must be a SHA-256 digest")
+        for name, low, high in (("timeoutMs", 100, 3000), ("quietMs", 20, 1000), ("graceMs", 0, 2000)):
+            if name in result and (type(result[name]) is not int or not low <= result[name] <= high):
+                raise SessionError(f"{name} must be an integer from {low} to {high}")
+        if "timeoutMs" in result:
+            result.setdefault("quietMs", 200)
+            result.setdefault("graceMs", 300)
+        elif "since" in result or "quietMs" in result or "graceMs" in result:
+            raise SessionError("Settle options require timeoutMs")
+
+    @staticmethod
+    def _settle(capture, first, action):
+        """Re-capture until the window stops changing, bounded by timeoutMs.
+
+        Two identical frames are not enough: a slow redraw leaves two identical OLD frames. With a
+        baseline digest the frame must first differ from it and then hold still for quietMs. A frame
+        that never leaves the baseline is returned after graceMs with changed false, which is what a
+        move or a click on nothing really looks like. Every outcome is reported, never assumed.
+        """
+        since, started = action.get("since"), time.monotonic()
+        limit, quiet, grace = action["timeoutMs"] / 1000, action["quietMs"] / 1000, action["graceMs"] / 1000
+        current, captures = first, 1
+        digest = hashlib.sha256(current[0]).hexdigest()
+        stable_since = time.monotonic()
+        while True:
+            now = time.monotonic()
+            changed = None if since is None else digest != since
+            if changed is False:
+                ready = now - started >= grace
+            else:
+                ready = now - stable_since >= quiet
+            if ready or now - started >= limit:
+                return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
+                                   "waitedMs": int((now - started) * 1000)})
+            time.sleep(0.02)
+            current = capture()
+            captures += 1
+            latest = hashlib.sha256(current[0]).hexdigest()
+            if latest != digest:
+                digest, stable_since = latest, time.monotonic()
 
     def _ensure_pointer(self, target, address):
         """Visible render-only presence, with no pointer or keyboard input."""
@@ -232,29 +282,43 @@ class NativeSession:
                 environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
-                for attempt in range(3):
-                    self._ensure_pointer(target, address)
-                    captured = int(time.time() * 1000)
-                    surface_size = tuple(target["size"])
-                    self._check_target(address)
-                    image, width, height = bounded_capture(
-                        ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
-                        self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log"))
-                    verify_host(self.plan)
-                    self._target(app_id, action["windowId"])
-                    self._check_target(address)
-                    if tuple(target["size"]) == surface_size:
-                        break
-                    if attempt == 2:
-                        raise SessionError("Native target keeps resizing; wait before observing again")
-                    # Capture is read-only. Keep the exact lifetime-bound target
-                    # and retry its new geometry, never any prior input action.
-                    time.sleep(0.05)
+
+                def capture():
+                    for attempt in range(3):
+                        self._ensure_pointer(target, address)
+                        captured = int(time.time() * 1000)
+                        surface_size = tuple(target["size"])
+                        self._check_target(address)
+                        image, width, height = bounded_capture(
+                            ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
+                            self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log"))
+                        verify_host(self.plan)
+                        self._target(app_id, action["windowId"])
+                        self._check_target(address)
+                        if tuple(target["size"]) == surface_size:
+                            return image, width, height, captured, surface_size
+                        if attempt == 2:
+                            raise SessionError("Native target keeps resizing; wait before observing again")
+                        # Capture is read-only. Keep the exact lifetime-bound target
+                        # and retry its new geometry, never any prior input action.
+                        time.sleep(0.05)
+
+                image, width, height, captured, surface_size = capture()
+                if action.get("digestOnly"):
+                    # A baseline for a later settled capture: a digest and no pixels leave the worker.
+                    return {"appId": app_id, "windowId": action["windowId"], "width": width, "height": height,
+                            "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest()}
+                settle = None
+                if "timeoutMs" in action:
+                    image, width, height, captured, surface_size, settle = self._settle(
+                        capture, (image, width, height, captured, surface_size), action)
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],
                          "cursorVariant": (int(target["address"], 16) >> 4) & 1,
                          "appId": app_id, "windowId": action["windowId"], "pointer": copy.deepcopy(target["pointer"])}
+                if settle is not None:
+                    frame["settle"] = settle
                 if tree is not None:
                     # Fallback or both: the tree status says which, including why no tree came back.
                     frame["tree"] = tree

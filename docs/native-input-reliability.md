@@ -247,3 +247,46 @@ Limits, stated plainly:
 - A window whose compositor title matches none of the application's accessible windows, with several
   windows open, is refused rather than guessed, and falls back to the screenshot.
 - Windows (UI Automation) and macOS (AX) are not implemented and not measured.
+
+## Settled capture and action batching
+
+Measured 29 October 2026 on original installed GNOME Calculator, opened with `orbit_open` on the
+displayed workspace 3 (workspace presentation was refused while the owner had focus on the other output),
+handed off over a private broker and socket started from this checkout. No shared broker was restarted and
+the owner's windows were not touched. The window this run launched was closed afterwards.
+
+What changed. `orbit_act` accepts `actions` (up to 16 move, click, scroll, text or key actions on one
+window, in order) and `capture` (a screenshot taken after the window stops changing). Each action passes
+the same policy, lease and guarded target checks as a lone action; all are judged before the first input
+is delivered. The first failure stops the list. Later actions report `not-attempted`, and a lost reply
+reports `uncertain` and is never resent. One receipt is returned per action. The capture takes a digest of
+the window before the first input, then polls until the frame differs from it and holds still for 200 ms,
+bounded by `capture.timeoutMs` (default 1500). Two identical frames alone are not accepted, because a slow
+redraw leaves two identical old frames. The result reports `settled`, `changed`, `captures` and `waitedMs`;
+`changed: false` after a 300 ms grace means nothing visibly happened, which is normal for a move. A replay
+of the same `requestId` returns the receipts with the frame marked expired and re-executes nothing. The
+separate `orbit_observe` path is unchanged.
+
+The scenario: clear with Escape, type `12345+6789`, press Return, and get a frame showing the result. 15
+runs of each flow, alternating, `experiments/settled-capture-measure.ts` for timing and
+`experiments/settled-capture-analyze.py` for the verdict. A frame counts as stale when more than 0.2
+percent of its 8 pixel blocks differ from an observe taken 900 ms later (the blinking caret changes about
+0.03 percent). Times are the broker round trips only, with no model thinking time.
+
+| Flow | Tool calls | Stale frames | Median ms | p95 ms |
+| --- | --- | --- | --- | --- |
+| text, key, observe, plus a second observe when stale | 4 (3 when fresh) | 15 of 15 | 172 | 223 |
+| one `orbit_act` with `actions` and `capture` | 1 | 0 of 15 | 507 | 548 |
+
+The batched call waited a median 332 ms and took a median 5 captures to settle; none was unsettled and
+none reported `changed: false`. So the batched call costs more wall time inside Orbit, about 335 ms, and
+removes three of four tool calls, each of which is a model round trip that this measurement does not
+include. The saving is the model turns and the second observe; it is not a faster capture. In this
+scenario the first capture after Return was stale every time, as in the earlier run above.
+
+Limits. An earlier run with a 100 ms quiet period and a cruder staleness check (exact frame equality
+against later frames) was inconsistent, 2 to 3 of 15 flagged and once 12 of 15, because a blinking caret
+changes the bytes of an otherwise finished frame. That check was replaced, so those runs are not
+comparable and are not reported. One application, one workload, one machine; an application that animates
+continuously never settles and returns after `timeoutMs` with `settled: false`. A change smaller than the
+caret blink after the first visible change can be missed.

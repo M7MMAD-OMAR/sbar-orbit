@@ -4,8 +4,8 @@ import { z } from "zod";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
-import { renderObservation } from "./observation-output";
-import { orbitActionSchema } from "./mcp";
+import { renderAct, renderObservation } from "./observation-output";
+import { orbitActionSchema, orbitBatchShape } from "./mcp";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
@@ -27,6 +27,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
       if (method === "session.observe") {
         return renderObservation(result);
       }
+      if (method === "session.act" && result && typeof result === "object" && "receipts" in result) return renderAct(result);
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result)
           ? { structuredContent: result as Record<string, unknown> } : {}) };
@@ -47,7 +48,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
     { ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
   server.registerTool("orbit_act", {
     description: "Act on this acknowledged original native application. Verify actual application acceptance after redraw. No launch or private profile actions exist. Reuse requestId after uncertain delivery.",
-    inputSchema: { requestId: id, action: orbitActionSchema },
+    inputSchema: { requestId: id, action: orbitActionSchema.optional(), ...orbitBatchShape },
   }, params => invoke("session.act", params));
   for (const operation of ["pause", "resume", "stop", "journal"] as const) {
     server.registerTool(`orbit_${operation}`, {

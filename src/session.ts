@@ -36,6 +36,19 @@ interface Session {
 }
 const capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "observe", "pause", "resume", "stop"];
 
+const maxBatch = 16;
+// The input actions that may share one call. Window metadata, state and closing stay single actions.
+const batchable = ["click", "text", "key", "move", "scroll"];
+// A lost or failed commit may have reached the application, so these are never retried and the agent
+// is told to inspect before sending more.
+const uncertain = ["TIMEOUT", "DEADLINE_EXCEEDED", "BACKEND_ERROR", "NATIVE_FAILED"];
+function expireCapture(result: unknown) {
+  const body = record(result);
+  if (!body.capture) return result;
+  const { image: _image, ...frame } = record(body.capture);
+  return { ...body, capture: { ...frame, expired: true } };
+}
+
 export class Sessions {
   private updateLease?: { token: string; expires: number };
   private sessions = new Map<string, Session>();
@@ -147,6 +160,7 @@ export class Sessions {
     const session = this.get(input.sessionId);
     this.ensureOpen(session);
     const requestId = text(input.requestId, "requestId");
+    if (input.actions !== undefined || input.capture !== undefined) return this.batch(session, input, requestId);
     const action = session.backend.parseAction(input.action);
     const fingerprint = JSON.stringify(action);
     const existing = session.requests.get(requestId);
@@ -162,6 +176,10 @@ export class Sessions {
     return result;
   }
   private decided(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): Promise<unknown> {
+    return this.enqueue(session, this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId));
+  }
+  /** Decide and journal now; the returned work runs the action later, in the session's queue. */
+  private admit(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): () => Promise<unknown> {
     const record = (decision: ReturnType<typeof decide>, decidedBy?: string, after?: SessionPolicy) => {
       void this.record(session, journalEntry({
         at: new Date().toISOString(), requestId,
@@ -198,11 +216,11 @@ export class Sessions {
       // A supervised session stops and waits for the person. An autonomous one never reaches here
       // with anything but an allow, which is what lets it finish a task without them.
       if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
-      return this.enqueue(session, () => this.track(session, "agent", action.type, () => this.guarded(session, action)));
+      return () => this.track(session, "agent", action.type, () => this.guarded(session, action));
     }
     // Accepted advisor work belongs to the same queue that pause drains. Otherwise a late allow
     // could apply input after pause has acknowledged that no agent work remains.
-    return this.enqueue(session, async () => {
+    return async () => {
       const pending = journalEntry({
         sequence: session.journal.length + 1, sessionId: session.id, actor: "agent",
         actionType: action.type, decision, url: destination,
@@ -215,7 +233,105 @@ export class Sessions {
       if (answer.decision.outcome === "deny") return refuse(answer.decision, answer.decidedBy);
       record(answer.decision, answer.decidedBy);
       return this.track(session, "agent", action.type, () => this.guarded(session, action));
-    });
+    };
+  }
+  /**
+   * Several input actions in one call, in order, with one settled capture at the end.
+   *
+   * Every action is judged by the same policy, lease and guarded target path as a lone action. The
+   * whole list is checked before any input is delivered, and again at its own turn, because a policy
+   * can narrow in between. The first failure stops the list; actions after it are reported as not
+   * attempted, never retried, and a lost reply is reported as uncertain rather than replayed.
+   */
+  private batch(session: Session, input: Record<string, unknown>, requestId: string): Promise<unknown> {
+    if ((input.action === undefined) === (input.actions === undefined))
+      throw new OrbitError("INVALID_REQUEST", "Give exactly one of action or actions");
+    const raw = input.actions === undefined ? [input.action] : input.actions;
+    if (!Array.isArray(raw) || raw.length < 1 || raw.length > maxBatch)
+      throw new OrbitError("INVALID_REQUEST", `actions must hold 1 to ${maxBatch} native actions`);
+    const actions = raw.map(value => session.backend.parseAction(value));
+    for (const action of actions) {
+      if (!batchable.includes(action.type)) throw new OrbitError("INVALID_REQUEST", `${String(action.type).slice(0, 40)} cannot be batched or captured; send it alone`);
+      if (action.appId !== actions[0]!.appId || action.windowId !== actions[0]!.windowId)
+        throw new OrbitError("INVALID_REQUEST", "A batch acts on one window");
+    }
+    let capture: { timeoutMs: number } | undefined;
+    if (input.capture !== undefined) {
+      const options = record(input.capture);
+      if (Object.keys(options).some(key => key !== "timeoutMs") ||
+          (options.timeoutMs !== undefined && (typeof options.timeoutMs !== "number" || !Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 3000)))
+        throw new OrbitError("INVALID_REQUEST", "capture accepts only timeoutMs, an integer from 100 to 3000");
+      capture = { timeoutMs: options.timeoutMs ?? 1500 };
+    }
+    const fingerprint = JSON.stringify({ actions, capture });
+    const existing = session.requests.get(requestId);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Request ID already used with different arguments");
+      return existing.result;
+    }
+    if (session.state !== "running") throw new OrbitError("PAUSED", "Session is paused or pausing");
+    if (session.requests.size >= 10000) throw new OrbitError("LIMIT_REACHED", "Session action limit reached");
+    for (const action of actions) {
+      const decision = decide(session.policy, action.type);
+      if (decision.outcome === "consult") throw new OrbitError("INVALID_REQUEST", "This action needs an advisor decision; send it alone");
+      if (decision.outcome !== "allow") this.admit(session, action, undefined, undefined, false, undefined, requestId);
+    }
+    const full = this.enqueue(session, () => this.runBatch(session, actions, capture, requestId));
+    // The replay keeps receipts and frame metadata, never pixels: ten thousand cached frames would be
+    // a leak, and a replay must not re-execute anything to get one back.
+    const kept = full.then(result => expireCapture(result));
+    kept.catch(() => {});
+    session.requests.set(requestId, { fingerprint, result: kept });
+    return full;
+  }
+  private async runBatch(session: Session, actions: { type: string; [key: string]: unknown }[], capture: { timeoutMs: number } | undefined, requestId: string) {
+    const target = { appId: String(actions[0]!.appId), windowId: String(actions[0]!.windowId) };
+    const observing = capture === undefined ? undefined : decide(session.policy, "observe");
+    let since: string | undefined;
+    if (observing?.outcome === "allow") {
+      // Before the first input, so a frame that differs from it can only be the result of the batch.
+      try { since = await session.backend.baseline(target); } catch { since = undefined; }
+    }
+    const receipts: Record<string, unknown>[] = [];
+    let stopped: string | undefined;
+    for (const [index, action] of actions.entries()) {
+      const base = { index, type: action.type };
+      if (stopped === undefined && (session.state as State) !== "running") stopped = "PAUSED";
+      if (stopped !== undefined) { receipts.push({ ...base, status: "not-attempted", reason: stopped }); continue; }
+      try {
+        const inputLength = "text" in action ? String(action.text ?? "").length : undefined;
+        const result = await this.admit(session, action, undefined, undefined, false, inputLength, requestId)();
+        receipts.push({ ...base, status: "ok", result });
+      } catch (error) {
+        this.ensureOpen(session);
+        const code = error instanceof OrbitError ? error.code : error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : "BACKEND_ERROR";
+        const message = error instanceof OrbitError ? error.message : "Native action failed";
+        const status = code.startsWith("POLICY_") ? "refused" : uncertain.includes(code) ? "uncertain" : "failed";
+        receipts.push({ ...base, status, error: { code, message } });
+        stopped = status === "uncertain" ? "PRIOR_UNCERTAIN" : "PRIOR_FAILED";
+      }
+    }
+    const completed = receipts.filter(receipt => receipt.status === "ok").length;
+    const result: Record<string, unknown> = { ok: completed === actions.length, completed, receipts };
+    if (capture !== undefined) {
+      if (observing?.outcome !== "allow") result.captureError = { code: "POLICY_DENIED", message: "Observation is not allowed for this session" };
+      else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = { code: "NOT_ATTEMPTED", message: "No action ran, so there is nothing new to capture" };
+      else {
+        try {
+          result.capture = await session.backend.observe(target, "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs });
+          this.taintedBy(session, "observe");
+          void this.record(session, journalEntry({
+            at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
+            actor: "agent", actionType: "observe", decision: { outcome: "allow" },
+          }));
+        } catch (error) {
+          this.ensureOpen(session);
+          result.captureError = { code: error instanceof OrbitError ? error.code : "BACKEND_ERROR",
+            message: error instanceof OrbitError ? error.message : "Capture failed; observe separately" };
+        }
+      }
+    }
+    return result;
   }
   private taintedBy(session: Session, actionType: string) {
     if (["observe", "windows", "state"].includes(actionType)) session.tainted = true;

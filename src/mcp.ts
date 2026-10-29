@@ -4,7 +4,7 @@ import { z } from "zod";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
-import { renderObservation } from "./observation-output";
+import { renderAct, renderObservation } from "./observation-output";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
@@ -28,6 +28,20 @@ export const orbitActionSchema = z.union([
 
 ]);
 
+const nativeBatchAction = z.union([
+  z.object({ type: z.literal("move"), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate }).strict(),
+  z.object({ type: z.literal("click"), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate,
+    button: z.enum(["left", "middle", "right"]).optional() }).strict(),
+  z.object({ type: z.literal("scroll"), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate,
+    dy: z.number().int().min(-1000).max(1000).refine(value => value !== 0) }).strict(),
+  z.object({ type: z.literal("text"), ...nativeTarget, text: z.string().min(1).max(16000) }).strict(),
+  z.object({ type: z.literal("key"), ...nativeTarget, key: z.string().regex(/^[A-Za-z0-9_+.-]{1,80}$/) }).strict(),
+]);
+export const orbitBatchShape = {
+  actions: z.array(nativeBatchAction).min(1).max(16).optional().describe("Instead of action: up to 16 move, click, scroll, text or key actions on ONE window, run in order. Each passes the same lease, policy and target checks as a single action. The first failure stops the list and later actions report not-attempted; uncertain means delivery may have happened, so inspect and never resend it. Returns one receipt per action."),
+  capture: z.object({ timeoutMs: z.number().int().min(100).max(3000).optional() }).strict().optional().describe("Also return a screenshot taken after the window stops changing (bounded by timeoutMs, default 1500). capture.settle says whether it settled and whether the frame differs from the one before the actions; changed false means nothing visibly happened. Replaces a separate orbit_observe. A replay of the same requestId returns receipts and no image."),
+};
+
 export function createMcpServer(socket: string) {
   const usage = new ConversationUsage();
   const server = new McpServer({ name: "sbar-orbit", version }, {
@@ -40,6 +54,7 @@ export function createMcpServer(socket: string) {
       if (method === "session.observe") {
         return renderObservation(result);
       }
+      if (method === "session.act" && result && typeof result === "object" && "receipts" in result) return renderAct(result);
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result as Record<string, unknown> } : {}) };
     } catch (error) {
@@ -108,8 +123,8 @@ export function createMcpServer(socket: string) {
     backend: "native", handoff: { workspace, ...(address === undefined ? {} : { address }), ...(stableId === undefined ? {} : { stableId }) }, ...options,
   }));
   server.registerTool("orbit_act", {
-    description: "Act on acknowledged native application/window handles after explicit handoff. Supports window metadata, visible agent cursor, move, click, scroll, text, key, state and close-window. close-window requests normal closure of that exact window; verify disappearance and handle unsaved prompts. Legacy close-application hands control back and does not close a borrowed application. No launch, private desktop, DOM or browser automation actions exist. An acknowledgement proves delivery, not application acceptance. Observe after the application redraws and verify the result. Retry uncertain delivery with the same requestId.",
-    inputSchema: { sessionId: id, requestId: id, action: orbitActionSchema },
+    description: "Act on acknowledged native application/window handles after explicit handoff. Supports window metadata, visible agent cursor, move, click, scroll, text, key, state and close-window. close-window requests normal closure of that exact window; verify disappearance and handle unsaved prompts. Legacy close-application hands control back and does not close a borrowed application. No launch, private desktop, DOM or browser automation actions exist. An acknowledgement proves delivery, not application acceptance. Observe after the application redraws and verify the result. Retry uncertain delivery with the same requestId. To save round trips, pass actions (several input actions in one call) and/or capture (a settled screenshot after the last one) instead of a separate orbit_observe.",
+    inputSchema: { sessionId: id, requestId: id, action: orbitActionSchema.optional(), ...orbitBatchShape },
   }, params => invoke("session.act", params));
   const descriptions = {
     pause: "Pause one Orbit session so the person can use the original application. Stops new agent actions and waits for accepted work to drain before acknowledging.",
