@@ -35,3 +35,24 @@ caller-supplied arbitrary argv is outside the registration API. Opening leaves t
 Input and capture require an explicit native handoff and the matching prepared
 plugin. The historical incident record is not a permanent policy switch.
 See [CLI](cli.md) and [the contract](desktop-only.md).
+
+## Windows
+
+Use `install.cmd --json` from the checkout, or `install.cmd --dry-run --json` first.
+It runs the same `scripts/install.ts` as `./install.sh`, inside the shared job object
+budget. It installs no service: a Chromium family browser cannot run in session 0, so
+autostart on Windows is a per user logon task (`sbar-orbit autostart`). The installer,
+discovery and service contracts run on Windows. Native opening, input and capture are
+not implemented there; see [the Windows plan](windows-compatibility-plan.md).
+
+## Installer reference
+
+Every step the installer reports is one of `prerequisites`, `dependencies`, `native`,
+`launcher`, `service`, `connector`, `verify`, `hosts`. Each failure carries a remedy
+with `needsElevation` and `agentMayRun`, plus a portable `packages` field; commands
+are built for dnf, apt, pacman, zypper and apk. Remedies the prerequisite check
+emits: `system-tool-systemctl`, `system-tool-systemd-run`, `system-tool-nice`,
+`system-tool-python3`, `no-systemd-user-session`, `dependencies-missing`,
+`native-compositor-unavailable`. Remedies only the installer produces:
+`prefix-not-on-path`, `no-lingering`, `broker-did-not-start`, `broker-silent`.
+A passing check is a prerequisite report, not a measurement of application control.
