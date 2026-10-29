@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from .host import HostError, UnsupportedText, deadline_timeout
+from .host import GONE_TARGET, HostError, TargetClosed, UnsupportedText, deadline_timeout
 
 _PRODUCER = uuid.uuid4().hex
 _SEQUENCE = itertools.count(1)
@@ -65,6 +65,8 @@ def prepared_input(request, exchange, deadline):
             try:
                 value = json.loads(response, object_pairs_hook=unique_fields)
             except (ValueError, TypeError) as error:
+                if response.strip() in GONE_TARGET:
+                    raise TargetClosed("The target window closed or was replaced") from error
                 raise HostError(response or "Invalid keyboard preparation reply") from error
             if (not isinstance(value, dict) or set(value) != {"schema", "status", "token", "serial"}
                     or type(value["schema"]) is not int or value["schema"] != 1

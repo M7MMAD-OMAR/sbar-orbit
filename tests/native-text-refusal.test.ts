@@ -10,4 +10,6 @@ import { join } from "node:path";
   expect(worker).toContain('"TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)');
   const session = await Bun.file(join(import.meta.dir, "../src/session.ts")).text();
   expect(session).not.toMatch(/const uncertain = \[[^\]]*TEXT_UNSUPPORTED/);
+  expect(session).not.toMatch(/const uncertain = \[[^\]]*TARGET_CLOSED/);
+  expect(worker).toContain('"TARGET_CLOSED" if isinstance(error, TargetClosed)');
 }, 30000);

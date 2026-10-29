@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
-from src.native.host import read_plan, UnsupportedText
+from src.native.host import read_plan, TargetClosed, UnsupportedText
 from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
 from src.native.plugin_compatibility import NativeCompatibilityError
 from src.native.host import verify_host
@@ -101,6 +101,7 @@ def main(directory, control_directory, plan_path, session_type=None):
                     except BaseException as error:
                         traceback.print_exception(error, file=sys.stderr)
                         code = ("TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
+                                else "TARGET_CLOSED" if isinstance(error, TargetClosed)
                                 else "OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
                                 else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
                                 else "OWNER_BUSY" if isinstance(error, ApplicationOwnerBusy)

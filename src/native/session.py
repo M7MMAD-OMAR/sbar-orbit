@@ -15,7 +15,8 @@ import uuid
 
 from . import a11y
 from .budget import require_budget
-from .host import verify_host
+from .host import TargetClosed, UnsupportedText, verify_host
+from .paste import paste_text
 from .transport import NativeTransport, action_response
 
 
@@ -140,7 +141,7 @@ class NativeSession:
         if target is None or target["key"][0] != app_id:
             raise SessionError("Window does not belong to the requested native application")
         if not any(window["windowId"] == window_id for window in self._owned_windows(app_id)):
-            raise SessionError("Native window identity is no longer live")
+            raise TargetClosed("The target window closed or was replaced")
         return target
 
     @classmethod
@@ -342,7 +343,12 @@ class NativeSession:
                 command, arguments = "ghost-key", address + " " + action["key"]
             else:
                 command, arguments = "ghost-" + kind, address
-            response = self.transport._perform(command + " " + arguments)
+            try:
+                response = self.transport._perform(command + " " + arguments)
+            except UnsupportedText:
+                if kind != "text":
+                    raise
+                response = paste_text(self.plan, action["text"], lambda: self.transport._perform("ghost-key " + address + " ctrl+v"))
             if kind in ("cursor", "move", "click", "scroll"):
                 target["pointer"] = {"x": action["x"], "y": action["y"]}
             return {"response": json.loads(response) if kind == "state" else response}

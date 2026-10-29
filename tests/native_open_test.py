@@ -33,6 +33,7 @@ class OpenTests(unittest.TestCase):
         self.commands = []
         self.launched = False
         self.activation = False
+        self.cursor = [100, 100]
         self.pid = os.getpid()
         self.workspace = 4
         self.layout = [960, 640]
@@ -53,6 +54,8 @@ class OpenTests(unittest.TestCase):
                                 "floating": self.floating, "size": self.layout, "at": [(1920 - self.layout[0]) / 2, (1080 - self.layout[1]) / 2]}] if self.launched else [])
         if command == "j/activewindow":
             return "{}"
+        if command == "j/cursorpos":
+            return json.dumps({"x": self.cursor[0], "y": self.cursor[1]})
         if command == "j/workspaces":
             return json.dumps([{"id": 4, "monitor": "test-monitor"}])
         if command == "j/monitors":
@@ -229,16 +232,19 @@ class OpenTests(unittest.TestCase):
         self.assertNotIn("cursor.move", placed)
 
     def test_new_active_launch_bound_candidate_is_returned_without_placement(self):
+        # The owner moved the pointer after the request: the focus is real owner input, so no placement.
         self.control.configure(mode="full")
         original = self.exchange
         def exchange(command):
             if command == "j/activewindow" and self.launched:
+                self.cursor = [400, 300]
                 return json.dumps(json.loads(original("j/clients"))[0])
             return original(command)
         self.session.transport._exchange = exchange
         for proof in ("launch-ancestry", "activation-token", "launch-scope"):
             with self.subTest(proof=proof):
                 self.launched = False
+                self.cursor = [100, 100]
                 self.commands.clear()
                 self.activation = proof == "activation-token"
                 with patch("src.native.owner_open.belongs_to", return_value=proof == "launch-ancestry"), \
@@ -250,6 +256,64 @@ class OpenTests(unittest.TestCase):
                 self.assertEqual(result["identityEvidence"], proof)
                 self.assertEqual(result["candidateReason"], "owner-input")
                 self.assertFalse(any(command.startswith("eval local w=") for command in self.commands))
+
+    def test_unreadable_pointer_keeps_the_conservative_owner_input_default(self):
+        self.control.configure(mode="full")
+        original = self.exchange
+        def exchange(command):
+            if command == "j/cursorpos":
+                raise TimeoutError("busy compositor")
+            if command == "j/activewindow" and self.launched:
+                return json.dumps(json.loads(original("j/clients"))[0])
+            return original(command)
+        self.session.transport._exchange = exchange
+        with patch("src.native.owner_open.belongs_to", return_value=False), \
+                patch("src.native.owner_open.OriginalLaunchScope.contains", return_value=True):
+            result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+        self.assertEqual(result["candidateReason"], "owner-input")
+        self.assertFalse(any(command.startswith("eval local w=") for command in self.commands))
+
+    def test_forwarded_window_focused_by_mapping_alone_is_placed(self):
+        # Focus with no owner pointer movement since the request is map time focus, as a
+        # forwarded single instance browser window takes it. The window is still placed.
+        self.control.configure(mode="full")
+        self.workspace = 3
+        original = self.exchange
+        def exchange(command):
+            if command == "j/activewindow" and self.launched:
+                return json.dumps(json.loads(original("j/clients"))[0])
+            return original(command)
+        self.session.transport._exchange = exchange
+        with patch("src.native.owner_open.belongs_to", return_value=False), \
+                patch("src.native.owner_open.OriginalLaunchScope.contains", return_value=True), \
+                patch("src.native.owner_open.time.sleep"):
+            result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+        placed = [command for command in self.commands if command.startswith("eval local w=")]
+        self.assertEqual(len(placed), 1)
+        self.assertNotIn("Opening target is receiving owner input", placed[0])
+        self.assertIn("stable_id==", placed[0])
+        self.assertTrue(result["opened"])
+
+    def test_pointer_movement_after_map_focus_placement_is_uncertain(self):
+        self.control.configure(mode="full")
+        self.workspace = 3
+        original = self.exchange
+        placed = False
+        def exchange(command):
+            nonlocal placed
+            if command.startswith("eval local w="):
+                placed = True
+            if placed and command == "j/cursorpos":
+                return json.dumps({"x": 900, "y": 500})
+            if command == "j/activewindow" and self.launched:
+                return json.dumps(json.loads(original("j/clients"))[0])
+            return original(command)
+        self.session.transport._exchange = exchange
+        with patch("src.native.owner_open.belongs_to", return_value=False), \
+                patch("src.native.owner_open.OriginalLaunchScope.contains", return_value=True), \
+                patch("src.native.owner_open.time.sleep"):
+            with self.assertRaisesRegex(OpeningDeliveryUncertain, "placement"):
+                open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
 
     def test_owner_focus_after_post_map_placement_is_uncertain_not_unmodified(self):
         self.control.configure(mode="full")

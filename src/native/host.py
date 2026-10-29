@@ -17,6 +17,13 @@ class HostError(RuntimeError):
     pass
 
 
+class TargetClosed(HostError):
+    """The target window is gone or was replaced, so nothing was delivered to it."""
+
+
+GONE_TARGET = ("no such window", "refused: native window stable identity changed", "window has no live surface client")
+
+
 class UnsupportedText(HostError):
     """The plugin refused text before sending any key: a character has no key in the seat keymap."""
 

@@ -136,6 +136,7 @@ export class NativeWorker {
         else {
           const code = typeof failure?.code === "string" ? failure.code : "BACKEND_ERROR";
           const publicMessages: Record<string, string> = {
+            TARGET_CLOSED: "The target window closed or was replaced, so nothing was delivered. Inspect native candidates for the current window before sending more.",
             TEXT_UNSUPPORTED: "Nothing was typed: the text has a character with no key in the seat keyboard layout. Send the characters the active layouts can type, or paste through the shared clipboard.",
             SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",
             OPENING_UNCERTAIN: "Application launch was attempted and delivery is uncertain. Inspect native candidates and reuse the same requestId; do not relaunch blindly.",

@@ -72,6 +72,28 @@ def candidate_result(window, value, evidence, *, existing=False, reason=None):
         "handoff": "Inspect this candidate before selecting an exact handoff. Orbit applied no post-map placement and leaves ownership unchanged. Application activation and initial geometry may already have changed."}
 
 
+# A window that maps from a launch takes seat focus by itself. Treat that as map time focus, and
+# place it, only while the compositor shows no owner pointer movement since the request and the
+# window was first seen moments ago. A keyboard has no compositor record, so the grace is bounded.
+MAP_FOCUS_GRACE = 0.5
+POINTER_MOVED = 2
+
+
+def cursor_position(session):
+    """The compositor pointer position, or None when it cannot be read (then no map time claim)."""
+    try:
+        value = json.loads(session.transport._exchange("j/cursorpos"))
+        return float(value["x"]), float(value["y"])
+    except (TimeoutError, ValueError, KeyError, TypeError, SessionError):
+        return None
+
+
+def owner_pointer_moved(before, after):
+    if before is None or after is None:
+        return True
+    return abs(before[0] - after[0]) >= POINTER_MOVED or abs(before[1] - after[1]) >= POINTER_MOVED
+
+
 def open_application(session, value):
     require_budget()
     value = validate_open(value)
@@ -93,6 +115,7 @@ def open_application(session, value):
             fitted = placement(value["workspace"], value["window"], workspaces, monitors)
             clients = json.loads(session.transport._exchange("j/clients"))
             baseline = {(window["address"], window.get("stableId")) for window in clients}
+            baseline_cursor = cursor_position(session)
             with spec.open("x") as stream:
                 os.chmod(spec, 0o600)
                 json.dump({"argv": value["argv"], "scope": unit, "activationToken": token, "receipt": str(receipt), "expires": time.time() + 15, **({"cwd": value["cwd"]} if "cwd" in value else {})}, stream)
@@ -110,6 +133,8 @@ def open_application(session, value):
             bus_client = existing
             next_bus_lookup = 0
             positioned = set()
+            map_focus_placed = set()
+            map_first_seen = {}
             candidate_first_seen = {}
             # Cold original applications can need more than thirty seconds to map.
             deadline = time.monotonic() + 60
@@ -173,15 +198,24 @@ def open_application(session, value):
                             # windows. Process identity is not a launch correlation.
                             return candidate_result(window, value, "registered-dbus-client")
                         identity = (window["address"], window["stableId"])
-                        if (current_focus.get("address") == window["address"]
-                                and current_focus.get("stableId") == window["stableId"]
-                                and current_focus.get("pid") == window["pid"]):
+                        first_seen = map_first_seen.setdefault(identity, time.perf_counter())
+                        focused = (current_focus.get("address") == window["address"]
+                                   and current_focus.get("stableId") == window["stableId"]
+                                   and current_focus.get("pid") == window["pid"])
+                        map_focus = (focused and identity not in positioned
+                                     and time.perf_counter() - first_seen <= MAP_FOCUS_GRACE
+                                     and not owner_pointer_moved(baseline_cursor, cursor_position(session)))
+                        if focused and identity in map_focus_placed and not owner_pointer_moved(baseline_cursor, cursor_position(session)):
+                            focused = False
+                        if focused and not map_focus:
                             if identity in positioned:
                                 raise OpeningDeliveryUncertain("Opening delivery is uncertain: owner input reached the candidate after post-map placement. Inspect its current state without relaunching or refocusing")
                             return candidate_result(window, value, evidence[window["address"]], reason="owner-input")
                         if evidence[window["address"]] != "launch-ancestry" and identity not in positioned:
-                            place_new_window(session.transport, window, value["workspace"], fitted)
+                            place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
                             positioned.add(identity)
+                            if map_focus:
+                                map_focus_placed.add(identity)
                             time.sleep(0.05)
                             continue
                         if window.get("workspace", {}).get("id") != value["workspace"]:

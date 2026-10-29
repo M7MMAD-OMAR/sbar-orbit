@@ -11,7 +11,7 @@ import socket
 import time
 import threading
 
-from .host import HostError, metadata, peer, verify_host, deadline_timeout
+from .host import GONE_TARGET, HostError, TargetClosed, metadata, peer, verify_host, deadline_timeout
 from .keyboard import KEYBOARD_ACTIONS, input_acknowledged, prepared_input
 from .budget import require_budget
 
@@ -50,6 +50,8 @@ def action_response(command, response):
             if isinstance(state, dict) and all(isinstance(state.get(key), bool)
                                               for key in ("suspended", "render_unfocused")):
                 return response
+    if response in GONE_TARGET:
+        raise TargetClosed("The target window closed or was replaced")
     raise HostError(response or "Empty native plugin response")
 
 

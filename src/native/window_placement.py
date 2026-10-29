@@ -4,7 +4,7 @@ import json
 from .session import SessionError
 
 
-def place_new_window(transport, window, workspace, fitted):
+def place_new_window(transport, window, workspace, fitted, allow_active=False):
     # Existing activation servers do not inherit exec rules. Apply
     # placement only to this newly mapped, attributed window, atomically
     # checking compositor stable ID and PID before any dispatch.
@@ -16,8 +16,10 @@ def place_new_window(transport, window, workspace, fitted):
                   "move({window=" + selector + ",workspace=" + json.dumps(str(workspace)) + ",follow=false})",
                   "resize({window=" + selector + ",x=" + str(fitted["width"]) + ",y=" + str(fitted["height"]) + ",relative=false})",
                   "center({window=" + selector + "})"]
-    guard += ("local a=hl.get_active_window(); assert(not (a and a.address==w.address "
-              + "and a.stable_id==w.stable_id), 'Opening target is receiving owner input'); ")
+    # allow_active is only for a window that took focus by mapping, with no owner pointer movement.
+    if not allow_active:
+        guard += ("local a=hl.get_active_window(); assert(not (a and a.address==w.address "
+                  + "and a.stable_id==w.stable_id), 'Opening target is receiving owner input'); ")
     reply = transport._exchange("eval " + guard + "; ".join("hl.dispatch(hl.dsp.window." + operation + ")" for operation in operations))
     if reply.strip() != "ok":
         raise SessionError("New application window placement was not acknowledged")
