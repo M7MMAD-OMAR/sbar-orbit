@@ -4,6 +4,7 @@ import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
 import { observationOptions, saveObservation } from "./observation-output";
 import { writeCliOutput } from "./cli-output";
+import { configureCaller } from "./caller";
 
 /**
  * The action document for `act`, from an argument, a file, or standard input.
@@ -81,6 +82,15 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
 
 // The fourth word means whatever the verb needs: an account name to create with, a restore point to
 // return to. Named for its position rather than for one of its meanings.
+//
+// Two flags are taken out first so they never shift a positional word. --owner presents the owner
+// credential file next to the broker socket: it is for the person at their own terminal, and an agent
+// shelling out does not pass it, so the broker keeps seeing that agent as itself. --mine limits
+// `session stop` to the sessions this caller owns.
+const owner = process.argv.includes("--owner") || process.env.ORBIT_OWNER === "1";
+const mine = process.argv.includes("--mine");
+for (const flag of ["--owner", "--mine"]) while (process.argv.includes(flag)) process.argv.splice(process.argv.indexOf(flag), 1);
+configureCaller({ kind: "cli", owner });
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
@@ -123,11 +133,21 @@ try {
     // Lists native application leases, or releases one whose Orbit worker is gone. A lease that a
     // broker session still holds, even one that is closing, is never released from here.
     const { nativeLeases } = await import("./native-prepare");
-    const { readStatus, socketFromEnvironment } = await import("./status");
+    const { socketFromEnvironment } = await import("./status");
     let live: string[] = [];
     try {
-      const status = await readStatus(socketFromEnvironment()) as { sessions?: { state?: string; handoff?: { appId?: string } }[] };
-      live = (status.sessions ?? []).filter(session => session.state !== "closed").flatMap(session => session.handoff?.appId ? [session.handoff.appId] : []);
+      // The lease ids alone, which every caller may read: a redacted session list would hide the
+      // leases of other agents' sessions and let this command release one that is still held.
+      try {
+        const reply = await call(socketFromEnvironment(), "session.live-leases") as { leases?: string[] };
+        live = reply.leases ?? [];
+      } catch (error) {
+        // A broker started before this method existed answers with the full list, which it never redacts.
+        if (!(error instanceof OrbitError && error.code === "UNSUPPORTED")) throw error;
+        const { readStatus } = await import("./status");
+        const status = await readStatus(socketFromEnvironment()) as { sessions?: { state?: string; handoff?: { appId?: string } }[] };
+        live = (status.sessions ?? []).filter(session => session.state !== "closed").flatMap(session => session.handoff?.appId ? [session.handoff.appId] : []);
+      }
     } catch { /* no broker running means no live session holds a lease */ }
     console.log(JSON.stringify(await nativeLeases(verb, arg, live)));
   } else if (command === "native-settings") {
@@ -279,16 +299,18 @@ try {
     else if (command === "session" && verb === "handoff") {
       if (fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use session handoff JSON|@FILE|-");
       const selected = (await import("./errors")).record(await actionDocument(arg));
-      const { policy, ...handoff } = selected;
+      const { policy, wait, ...handoff } = selected;
       method = "session.create";
-      params = { backend: "native", handoff, ...(policy === undefined ? {} : { policy }),
+      params = { backend: "native", handoff, ...(policy === undefined ? {} : { policy }), ...(wait === undefined ? {} : { wait }),
         agentName: process.env.ORBIT_AGENT_NAME, taskName: process.env.ORBIT_TASK_NAME };
     }
     else if (command === "preview") throw new OrbitError("UNSUPPORTED", "Browser and private desktop viewers were removed");
     else if (command === "account" && verb === "save") throw new OrbitError("UNSUPPORTED", "Saved browser accounts are retired. Orbit is desktop-only.");
     else if (command === "session" && ["stop", "pause", "resume", "observe", "list", "journal"].includes(verb ?? "")) {
+      if (mine && verb !== "stop") throw new OrbitError("INVALID_REQUEST", "--mine applies to session stop only");
+      if (mine && arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use session stop --mine, or session stop ID, not both");
       method = observation?.mode === "metadata" ? "session.presence" : `session.${verb}`;
-      params = { sessionId: arg };
+      params = mine ? { scope: "mine" } : { sessionId: arg };
     } else if (command === "act") {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };

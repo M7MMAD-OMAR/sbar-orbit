@@ -12,6 +12,8 @@ sbar-orbit native-open '{"workspace":2,"applicationId":"org.gnome.Calculator.des
 sbar-orbit native-open @/absolute/path/open.json
 sbar-orbit native-candidates 2
 sbar-orbit session list
+sbar-orbit session stop --mine
+sbar-orbit session list --owner
 ```
 
 Use an exact discovered registration ID. Opening keeps the normal owner profile,
@@ -108,6 +110,16 @@ Existing application handoff is experimental. With the compatible plugin loaded,
 observe, journal and stop act only on acknowledged native targets. Stop returns
 a handed-off application without closing it. Never claim these operations work
 on the owner compositor from unit fixtures alone.
+
+Several agents can share one broker. Each caller is identified (see
+[several agents on one broker](agent-interface.md#several-agents-on-one-broker)); set
+`ORBIT_CONVERSATION_ID` so the CLI and the adapter of one conversation are one caller.
+`session list` shows your sessions in full and other agents' as summaries without ids.
+`session stop --mine` stops exactly your own sessions and prints what it stopped; `session stop ID`
+on someone else's session is refused with `SESSION_NOT_OWNED`. `--owner` (or `ORBIT_OWNER=1`)
+presents the owner credential file `SOCKET.owner` (mode 0600) and is for the person at their own
+terminal: it lists and acts on every session. Agents do not pass it. `session handoff` accepts
+`"wait": true` or seconds to queue for a busy application.
 
 Installation uses `./install.sh --dry-run --json` and `./install.sh --json`.
 The removed private runtime cannot be installed with `--native`. Staging or

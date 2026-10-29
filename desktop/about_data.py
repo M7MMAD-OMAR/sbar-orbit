@@ -162,7 +162,7 @@ def session_rows(listing):
 
 def open_sessions(run, root=ROOT):
     """None when the broker did not answer."""
-    listing = orbit_json(run, ["session", "list"], 20, root)
+    listing = orbit_json(run, ["session", "list", "--owner"], 20, root)
     return None if listing is None else session_rows(listing)
 
 

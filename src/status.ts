@@ -48,6 +48,8 @@ export async function readStatus(socket: string): Promise<Status> {
   const list = await call(socket, "session.list") as SessionStatus[];
   const open = list.filter(session => !["closed", "closing"].includes(session.state));
   const sessions = await Promise.all(open.map(async session => {
+    // Another agent's session arrives as a summary with no id, so there is no presence to read.
+    if (!session.sessionId) return session;
     try {
       const presence = await call(socket, "session.presence", { sessionId: session.sessionId }) as Partial<SessionStatus>;
       return { ...session, title: presence.title, location: presence.location, tabs: presence.tabs, pointer: presence.pointer ?? null };

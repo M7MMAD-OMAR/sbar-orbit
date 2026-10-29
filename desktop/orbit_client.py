@@ -28,9 +28,25 @@ class UnixConnection(http.client.HTTPConnection):
         self.sock.connect(self.path)
 
 
-def request_once(connection, method, params):
-    connection.request("POST", "/rpc", body=json.dumps({"method": method, "params": params or {}}),
-                       headers={"Content-Type": "application/json"})
+def owner_credential(path):
+    """The person's credential next to the broker socket, read only while it is private to this user.
+    The mark shows every agent's sessions, so it presents it like the panel does (`panel_broker`)."""
+    try:
+        info = os.stat(path + ".owner")
+        if info.st_mode & 0o077 or info.st_uid != os.getuid():
+            return None
+        with open(path + ".owner", encoding="utf-8") as handle:
+            token = handle.read().strip()
+        return token if len(token) == 64 and all(c in "0123456789abcdef" for c in token) else None
+    except OSError:
+        return None
+
+
+def request_once(connection, method, params, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Orbit-Owner"] = token
+    connection.request("POST", "/rpc", body=json.dumps({"method": method, "params": params or {}}), headers=headers)
     payload = json.loads(connection.getresponse().read(1 << 20))
     if not payload.get("ok"):
         raise RuntimeError(payload.get("error", {}).get("message", "Broker request failed"))
@@ -41,7 +57,7 @@ def rpc(path, method, params=None):
     """One off, for a caller that has no loop. A loop should use BrokerClient instead."""
     connection = UnixConnection(path)
     try:
-        return request_once(connection, method, params)
+        return request_once(connection, method, params, owner_credential(path))
     finally:
         connection.close()
 
@@ -69,7 +85,7 @@ class BrokerClient:
         if self.connection is None:
             self.connection = UnixConnection(self.path)
             self.connection.connect()
-        return request_once(self.connection, method, params)
+        return request_once(self.connection, method, params, owner_credential(self.path))
 
     def close(self):
         if self.connection is not None:

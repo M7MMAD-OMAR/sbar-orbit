@@ -35,9 +35,27 @@ class BrokerError(RuntimeError):
         self.code = code
 
 
-def request_once(connection, method, params):
+def owner_credential(path):
+    """The credential the broker writes next to its socket, which makes this process the person rather
+    than an agent: the full session list and the right to stop or pause any session. Read only while
+    the file is private to this user, so a copy left world readable is not presented."""
+    try:
+        info = os.stat(path + ".owner")
+        if info.st_mode & 0o077 or info.st_uid != os.getuid():
+            return None
+        with open(path + ".owner", encoding="utf-8") as handle:
+            token = handle.read().strip()
+        return token if len(token) == 64 and all(c in "0123456789abcdef" for c in token) else None
+    except OSError:
+        return None
+
+
+def request_once(connection, method, params, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Orbit-Owner"] = token
     connection.request("POST", "/rpc", body=json.dumps({"method": method, "params": params or {}}),
-                       headers={"Content-Type": "application/json"})
+                       headers=headers)
     payload = json.loads(connection.getresponse().read(1 << 20))
     if not payload.get("ok"):
         failure = payload.get("error") or {}
@@ -50,7 +68,7 @@ def rpc(path, method, params=None, timeout=3):
     thread: pause waits for the session's action queue and can outlast any timeout worth blocking on."""
     connection = UnixConnection(path, timeout)
     try:
-        return request_once(connection, method, params)
+        return request_once(connection, method, params, owner_credential(path))
     finally:
         connection.close()
 
@@ -70,7 +88,8 @@ class BrokerClient:
                 if self.connection is None:
                     self.connection = UnixConnection(self.path)
                     self.connection.connect()
-                return request_once(self.connection, method, params)
+                # Read each time: a restarted broker writes a new credential.
+                return request_once(self.connection, method, params, owner_credential(self.path))
             except RuntimeError:
                 raise
             except Exception:

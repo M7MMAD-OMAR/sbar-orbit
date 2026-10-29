@@ -86,3 +86,53 @@ Inspect active sessions before arranging an explicit handoff. Do not stop anothe
 task or relaunch after uncertainty to work around that conflict. `OWNER_BUSY`
 instead describes physical owner input. Use [current acceptance](acceptance.md)
 for measured behavior; old incident and external-agent reports are dated evidence.
+
+## Several agents on one broker
+
+Design: [multi-agent sessions plan](multi-agent-sessions-plan.md). Evidence:
+[multi-agent proof](multi-agent-sessions-proof.md). The contract is cooperative control by one
+user, not a sandbox; this stops accidents between agents and makes every conflict explainable.
+
+**Who is calling.** Each request carries a claim the broker checks: the adapter's process id and
+start time (read back from `/proc`, same user), and `ORBIT_CONVERSATION_ID` when the host sets it.
+The caller id is the conversation id, or else the adapter process. The label is the host plus four
+hex digits, for example `Claude (a3f9)`; `ORBIT_CALLER_LABEL` sets the host part. A request with no
+valid claim is the shared unidentified agent, never the owner. This is a verified claim, not kernel
+peer credentials, because Bun's Unix server does not expose them. Give the adapter and any CLI the
+same `ORBIT_CONVERSATION_ID` so they are one caller; a session adapter
+(`src/session-mcp.ts`) must run with its creator's conversation id.
+
+**Whose session.** `session.create` records the owner from the connection. `orbit_act`,
+`orbit_pause`, `orbit_resume`, `orbit_stop`, `orbit_observe`, `orbit_journal`, `orbit_narrow`,
+close-window, close-application and the mouse actions on a session you do not own are refused with
+`SESSION_NOT_OWNED`, naming the owner label, its task, state and idle time. The person (panel, or
+the CLI with `--owner`) can act on any session.
+
+**What each caller sees.** `orbit_status` returns your sessions in full and every other agent's as a
+summary (`redacted: true`: label, task, application, workspace, state, idle seconds) with no id.
+
+**Stopping your own.** `orbit_stop` with `scope: "mine"` stops every session you own and returns
+exactly the list it stopped, `{ scope, owner, stopped: [...], failed: [...] }`.
+
+**No orphans.** When an adapter process disappears its sessions pause within a poll (500 ms), and stop
+after a grace period (60 s; `ORBIT_SESSION_GRACE_SECONDS`, or `orbit.session.graceSeconds` in
+`settings.json` in the connector config directory). Applications stay open, and stopping hands the
+plugin lease back. If the same caller returns inside the grace period its sessions stay, paused, until
+it resumes them. A session stuck in `closing` for 60 s (`ORBIT_SESSION_CLOSE_DEADLINE_MS`) is forced
+closed in the broker and its plugin lease is released through the `native-leases release` repair
+path, which refuses leases other sessions still hold. Sessions made from the CLI have no adapter to
+watch and stay until stopped.
+
+**Busy applications.** `APPLICATION_BUSY` names the holder: label, task, state, idle time, and whether
+its adapter is alive or gone. `orbit_handoff` takes `wait` (`true` is 30 s, or 1 to 40 seconds): the
+caller keeps a place in a first-come queue for that application, and the answer says the position.
+A caller that did not ask to wait still respects those already waiting.
+
+**Workspaces.** `orbit_open` without `workspace` picks a free numbered workspace from the agent pool
+(20 to 99, `ORBIT_WORKSPACE_POOL=A-B`): never one another agent's session or window uses, never one a
+monitor shows, and the same one again for the same agent. The result carries `workspace` and
+`allocated: true`. A dead agent's workspaces free up.
+
+Not covered yet: windows an agent opened but has not handed off are tracked for workspace choice
+only, so another agent may still hand off to them; a CLI without `ORBIT_CONVERSATION_ID` is a new
+caller each call.

@@ -138,3 +138,40 @@ print(json.dumps({case: bool(viewer_link_is_local(case)) for case in cases}))
   expect(result[""]).toBe(false);
   expect(result["not a url"]).toBe(false);
 });
+
+test("the panel presents the owner credential next to the socket, and only while it is private", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orbit-owner-credential-"));
+  try {
+    const result = await python(`
+import json, os
+from panel_broker import owner_credential, request_once
+
+path = os.path.join(os.environ["DIR"], "broker.sock")
+token = "ab" * 32
+open(path + ".owner", "w").write(token + "\\n")
+os.chmod(path + ".owner", 0o600)
+found = owner_credential(path)
+os.chmod(path + ".owner", 0o644)
+loose = owner_credential(path)
+os.chmod(path + ".owner", 0o600)
+open(path + ".owner", "w").write("not a token\\n")
+junk = owner_credential(path)
+missing = owner_credential(os.path.join(os.environ["DIR"], "other.sock"))
+
+class Connection:
+    def request(self, verb, target, body=None, headers=None):
+        self.headers = headers
+    def getresponse(self):
+        class Reply:
+            def read(self, size):
+                return b'{"ok": true, "result": 1}'
+        return Reply()
+with_token, without = Connection(), Connection()
+request_once(with_token, "session.list", None, token)
+request_once(without, "session.list", None)
+print(json.dumps({"found": found == token, "loose": loose, "junk": junk, "missing": missing,
+                  "sent": with_token.headers.get("X-Orbit-Owner") == token, "not_sent": "X-Orbit-Owner" not in without.headers}))
+`, { DIR: directory });
+    expect(result).toEqual({ found: true, loose: null, junk: null, missing: null, sent: true, not_sent: true });
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

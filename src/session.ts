@@ -12,6 +12,9 @@ import { decide, nativeApplicationPolicy, journalEntry, narrow, parseActionClass
 import { consultAdvisor } from "./advisor";
 import { Diagnostics } from "./diagnostics";
 import { autostartPaths } from "./autostart";
+import { internalCaller, type Caller } from "./caller";
+import { CallerRegistry } from "./caller-registry";
+import { WaitQueue, allocateWorkspace, busyMessage, duration, graceSeconds, parseWait, workspacePool, type Holder } from "./arbitration";
 
 async function installedUnitDrift() {
   try {
@@ -30,6 +33,10 @@ interface Session {
   activity?: { type: string; actor: string; state: string; sequence: number };
   createdAt: number; lastActivityAt: number;
   id: string; state: State; backend: NativeBackend; kind: "native"; lease: string;
+  ownerId: string; ownerLabel: string; ownerRole: Caller["role"];
+  /** Set while the owning adapter is gone: when it went, and the timer that will stop the session. */
+  orphan?: { at: number; timer?: ReturnType<typeof setTimeout> };
+  forcedClosed?: boolean;
   tail: Promise<unknown>; paused?: Promise<unknown>; closing?: Promise<unknown>; releasing?: Promise<void>;
   requests: Map<string, { fingerprint: string; result: Promise<unknown> }>;
   policy: SessionPolicy; journal: JournalEntry[]; journalPath: string; tainted: boolean;
@@ -52,6 +59,24 @@ function expireCapture(result: unknown) {
   return { ...body, capture: { ...frame, expired: true } };
 }
 
+/** Seams for the lifecycle and arbitration timing; production uses the defaults. */
+export interface SessionOptions {
+  /** Seconds before a disconnected adapter's sessions are stopped. Default: the setting, then 60. */
+  graceSeconds?: () => number;
+  /** How long a session may sit in closing before the broker forces it closed. */
+  closeDeadlineMs?: number;
+  pollMs?: number;
+  alive?: (pid: number, start?: string) => boolean;
+  /** Hands a plugin lease back after a forced close. Default: the owner repair path `native-leases release`. */
+  releaseLease?: (leaseId: string, live: string[]) => Promise<unknown>;
+  workspacePool?: [number, number];
+}
+
+async function releasePluginLease(leaseId: string, live: string[]) {
+  const { nativeLeases } = await import("./native-prepare");
+  return nativeLeases("release", leaseId, live);
+}
+
 export class Sessions {
   private updateLease?: { token: string; expires: number };
   private sessions = new Map<string, Session>();
@@ -62,7 +87,17 @@ export class Sessions {
   private nativePresentations = new Map<string, { fingerprint: string; result?: Promise<unknown> }>();
   private shuttingDown = false;
   private readonly releaseIdentity = brokerIdentity().catch(() => null);
-  constructor(private root: string, _accountRoot?: string, readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot()) {}
+  readonly callers: CallerRegistry;
+  private waitQueue = new WaitQueue();
+  private waiters = new Set<() => void>();
+  /** Workspaces agents were given or opened windows on, so another agent is not sent to the same one. */
+  private opened: { callerId: string; label: string; workspace: number; at: number }[] = [];
+  private allocations = new Map<string, number>();
+  constructor(private root: string, _accountRoot?: string, readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot(), private options: SessionOptions = {}) {
+    this.callers = new CallerRegistry({ pollMs: options.pollMs, alive: options.alive,
+      onGone: id => this.adapterGone(id), onBack: id => this.adapterBack(id) });
+    this.callers.start();
+  }
   private get(id: unknown): Session {
     const session = this.sessions.get(text(id, "sessionId"));
     if (!session) throw new OrbitError("SESSION_NOT_FOUND", "Unknown session");
@@ -76,9 +111,55 @@ export class Sessions {
       agentName: session.agentName, taskName: session.taskName, conversationName: session.conversationName,
       projectName: session.projectName, activity: session.activity, createdAt: session.createdAt,
       lastActivityAt: session.lastActivityAt, capabilities: session.backend.capabilities,
-      surface: session.backend.surface, policy: session.policy, handoff: session.backend.handoff };
+      surface: session.backend.surface, policy: session.policy, handoff: session.backend.handoff,
+      ownerId: session.ownerId, ownerLabel: session.ownerLabel, ownerRole: session.ownerRole,
+      ownerState: session.orphan ? "disconnected" : "connected",
+      ...(session.orphan ? { stopsAt: session.orphan.at + this.graceMs(session) } : {}) };
   }
-  create(input: Record<string, unknown>): Promise<unknown> {
+  private graceMs(_session: Session) { return (this.options.graceSeconds ?? (() => graceSeconds()))() * 1000; }
+  private idleSeconds(session: Session) { return Math.max(0, (Date.now() - session.lastActivityAt) / 1000); }
+  private application(session: Session) {
+    const handoff = session.backend.handoff;
+    return handoff?.windows.find(window => window.windowId === handoff.selectedWindowId)?.title ?? "application";
+  }
+  /** Whether the adapter that owns a session is still there: undefined when nothing watches it. */
+  private ownerAlive(session: Session): boolean | undefined {
+    if (session.ownerRole === "owner") return true;
+    return this.callers.isAlive(session.ownerId);
+  }
+  private holderOf(session: Session): Holder {
+    return { label: session.ownerLabel, task: session.taskName, idleSeconds: this.idleSeconds(session),
+      alive: this.ownerAlive(session), state: session.state };
+  }
+  /** Who holds a lease an open was refused for, by the plugin's lease id when it named one. */
+  private holderFor(handoff: { workspace: number }, detail?: string): Holder | undefined {
+    const open = [...this.sessions.values()].filter(session => session.state !== "closed");
+    const lease = detail && /lease ([0-9a-f]{32})/.exec(detail)?.[1];
+    const byLease = lease ? open.find(session => session.backend.handoff?.appId === lease) : undefined;
+    if (byLease) return this.holderOf(byLease);
+    if (lease) return undefined;
+    const onWorkspace = open.filter(session => session.backend.handoff?.workspace === handoff.workspace);
+    return onWorkspace.length === 1 ? this.holderOf(onWorkspace[0]!) : undefined;
+  }
+  /** What another agent may know about a session: enough to explain a conflict, nothing it could act with. */
+  private summary(session: Session) {
+    return { redacted: true, label: session.ownerLabel, taskName: session.taskName, application: this.application(session),
+      workspace: session.backend.handoff?.workspace, state: session.state, idleSeconds: Math.round(this.idleSeconds(session)),
+      ownerState: session.orphan ? "disconnected" : "connected" };
+  }
+  /** The owner role sees everything; an agent sees its own in full and the rest as summaries. */
+  private list(caller: Caller) {
+    return [...this.sessions.values()].map(session =>
+      caller.role === "owner" || session.ownerId === caller.id ? this.info(session) : this.summary(session));
+  }
+  private authorize(session: Session, caller: Caller, verb: string) {
+    if (caller.role === "owner" || session.ownerId === caller.id) return;
+    const where = session.orphan ? ", its adapter is gone" : this.ownerAlive(session) === false ? ", its adapter is gone" : "";
+    throw new OrbitError("SESSION_NOT_OWNED",
+      `This session belongs to ${session.ownerLabel} (task "${session.taskName}", ${session.state}${where}, idle ${duration(this.idleSeconds(session))}), not to you, so it cannot be ${verb} from here. ` +
+      `Stop only your own sessions with orbit_stop and scope "mine"; the person can stop any session from the panel.`);
+  }
+  create(input: Record<string, unknown>, caller: Caller = internalCaller): Promise<unknown> {
     if (this.updateLease && this.updateLease.expires > Date.now())
       return Promise.reject(new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly"));
     if (this.shuttingDown) return Promise.reject(new OrbitError("SESSION_CLOSED", "Broker is stopping"));
@@ -86,19 +167,20 @@ export class Sessions {
       await requireUpdateAdmission(this.updateDirectory);
       if (this.updateLease && this.updateLease.expires > Date.now())
         throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
-      return this.createOwned(input);
+      return this.createOwned(input, caller);
     })();
     this.creating.add(operation);
     operation.then(() => this.creating.delete(operation), () => this.creating.delete(operation));
     return operation;
   }
-  private async createOwned(input: Record<string, unknown>) {
+  private async createOwned(input: Record<string, unknown>, caller: Caller) {
     if ((input.backend ?? "native") !== "native" || input.handoff === undefined)
       throw new OrbitError("UNSUPPORTED", "Private desktop sessions were removed. Use native.open for an original application or an explicit native application handoff.");
-    const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff"]);
+    const allowed = new Set(["backend", "agentName", "taskName", "conversationName", "projectName", "policy", "profileKey", "handoff", "wait"]);
     if (Object.keys(input).some(key => !allowed.has(key)))
       throw new OrbitError("UNSUPPORTED", "Private profiles, viewports and browser session options were removed");
     const handoff = parseHandoff(input.handoff);
+    const waitSeconds = parseWait(input.wait);
     if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured native application control");
     if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Native session limit reached");
     const label = (value: unknown, fallback: string) => {
@@ -110,13 +192,38 @@ export class Sessions {
     const suppliedPolicy = input.policy === undefined ? {} : record(input.policy);
     const policy = parsePolicy({ ...nativeApplicationPolicy, ...suppliedPolicy, origins: suppliedPolicy.origins === undefined ? "any" : suppliedPolicy.origins });
     if (policy.origins !== "any") throw new OrbitError("UNSUPPORTED", "Native origin enforcement is unavailable");
-    const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
-    if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Application lease is already held");
     const agentName = label(input.agentName, "SbarOrbit"), taskName = label(input.taskName, "Native application");
     const conversationName = input.conversationName === undefined ? undefined : label(input.conversationName, "");
     const projectName = input.projectName === undefined ? undefined : label(input.projectName, "");
+    const key = `${handoff.workspace}:${handoff.address ?? handoff.stableId ?? "*"}`;
+    const deadline = Date.now() + waitSeconds * 1000;
+    for (;;) {
+      // Somebody who asked first keeps their place, whether or not the application is free right now.
+      const ahead = this.waitQueue.ahead(key, caller.id);
+      let busy: OrbitError | undefined;
+      if (ahead === 0) {
+        try {
+          const info = await this.claim(input, handoff, { agentName, taskName, conversationName, projectName, policy }, caller);
+          this.waitQueue.leave(key, caller.id);
+          return info;
+        } catch (error) {
+          if (!(error instanceof OrbitError && error.code === "APPLICATION_BUSY")) { this.waitQueue.leave(key, caller.id); throw error; }
+          busy = error;
+        }
+      }
+      const queue = waitSeconds ? this.waitQueue.enter(key, caller.id) : undefined;
+      const waiting = queue ?? (ahead ? { position: ahead + 1, waiting: ahead + 1 } : undefined);
+      const detail = /Application client is already leased by lease .*$/.exec(busy?.message ?? "")?.[0];
+      if (Date.now() >= deadline) throw new OrbitError("APPLICATION_BUSY", busyMessage(this.holderFor(handoff, detail), waiting, detail));
+      await this.waitForRelease(Math.min(2000, deadline - Date.now()));
+    }
+  }
+  private async claim(input: Record<string, unknown>, handoff: ReturnType<typeof parseHandoff>,
+      names: { agentName: string; taskName: string; conversationName?: string; projectName?: string; policy: SessionPolicy }, caller: Caller) {
+    const lease = input.profileKey === undefined ? crypto.randomUUID() : text(input.profileKey, "profileKey");
+    if (this.leases.has(lease)) throw new OrbitError("PROFILE_BUSY", "Application lease is already held");
     this.leases.add(lease);
-    const options = this.native;
+    const options = this.native!;
     const start = this.creationTail.then(async () => {
       await requireUpdateAdmission(this.updateDirectory);
       if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
@@ -129,11 +236,14 @@ export class Sessions {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
       const id = crypto.randomUUID(), now = Date.now();
       const session: Session = { id, state: "running", backend, kind: "native", lease,
-        agentName, taskName, conversationName, projectName, createdAt: now, lastActivityAt: now,
-        tail: Promise.resolve(), requests: new Map(), policy, journal: [], tainted: false,
+        ...names, createdAt: now, lastActivityAt: now,
+        ownerId: caller.id, ownerLabel: caller.label, ownerRole: caller.role,
+        tail: Promise.resolve(), requests: new Map(), journal: [], tainted: false,
         journalPath: join(this.root, id + ".jsonl") };
       this.sessions.set(id, session);
       backend.onClose(() => { void this.stop(session).catch(() => {}); });
+      void this.record(session, journalEntry({ at: new Date().toISOString(), sequence: 1, sessionId: id, actor: "agent",
+        actionType: "session.create", decision: { outcome: "allow" }, decidedBy: `owner:${caller.label}` }));
       return this.info(session);
     } catch (error) {
       this.leases.delete(lease);
@@ -141,6 +251,44 @@ export class Sessions {
       throw error;
     }
   }
+  private noteOpened(caller: Caller, workspace: number) {
+    if (!this.opened.some(entry => entry.callerId === caller.id && entry.workspace === workspace))
+      this.opened.push({ callerId: caller.id, label: caller.label, workspace, at: Date.now() });
+  }
+  /**
+   * A free numbered workspace for this caller: never one another agent's session or window uses, never
+   * one a monitor shows. The same request identity gets the same answer, so a retry cannot spread an
+   * agent's windows over several workspaces.
+   */
+  private async allocateWorkspace(requestId: string, caller: Caller) {
+    const known = this.allocations.get(requestId);
+    if (known !== undefined) return known;
+    const monitors = record(await NativeBackend.monitors(this.native!));
+    const shown = new Set<number>();
+    for (const monitor of Array.isArray(monitors.monitors) ? monitors.monitors : [])
+      if (typeof record(monitor).workspace === "number") shown.add(record(monitor).workspace as number);
+    const used = new Set<number>(), own: number[] = [];
+    const take = (ownerId: string, workspace: number | undefined) => {
+      if (workspace === undefined) return;
+      if (ownerId === caller.id) own.push(workspace); else used.add(workspace);
+    };
+    for (const session of this.sessions.values()) if (session.state !== "closed") take(session.ownerId, session.backend.handoff?.workspace);
+    this.opened = this.opened.filter(entry => Date.now() - entry.at < 6 * 3600_000 && this.callers.isAlive(entry.callerId) !== false);
+    for (const entry of this.opened) take(entry.callerId, entry.workspace);
+    const workspace = allocateWorkspace({ pool: this.options.workspacePool ?? workspacePool(), own, used, shown });
+    if (this.allocations.size >= 1024) this.allocations.delete(this.allocations.keys().next().value as string);
+    this.allocations.set(requestId, workspace);
+    this.noteOpened(caller, workspace);
+    return workspace;
+  }
+  private waitForRelease(ms: number) {
+    return new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); this.waiters.delete(done); resolve(); };
+      const timer = setTimeout(done, ms);
+      this.waiters.add(done);
+    });
+  }
+  private wake() { for (const done of [...this.waiters]) done(); }
   private record(session: Session, entry: JournalEntry) {
     session.journal.push(entry);
     if (session.journal.length > 10000) session.journal.splice(0, session.journal.length - 10000);
@@ -361,28 +509,99 @@ export class Sessions {
   async stop(session: Session) {
     if (session.closing) return session.closing;
     if (session.state === "closed") return this.info(session);
+    if (session.orphan?.timer) clearTimeout(session.orphan.timer);
     session.state = "closing";
-    session.closing = (async () => {
+    const closing = (async () => {
       await session.backend.close();
       await session.tail;
+      if (session.forcedClosed) return this.info(session);
       this.leases.delete(session.lease);
       session.state = "closed";
       session.lastActivityAt = Date.now();
+      this.wake();
       return this.info(session);
     })();
-    const closing = session.closing;
-    void closing.catch(() => { if (session.closing === closing) session.closing = undefined; });
-    return closing;
+    // A close that hangs must not hold the application, the lease and every other agent's refusal.
+    // Past the deadline the broker lets go on its own and hands the plugin lease back.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const forced = new Promise<unknown>(resolve => {
+      timer = setTimeout(() => resolve(this.forceClose(session)), this.options.closeDeadlineMs ?? Number(process.env.ORBIT_SESSION_CLOSE_DEADLINE_MS ?? 60_000));
+      timer.unref?.();
+    });
+    const settled = Promise.race([closing, forced]);
+    void closing.then(() => clearTimeout(timer), () => clearTimeout(timer));
+    session.closing = settled;
+    void settled.catch(() => { if (session.closing === settled) session.closing = undefined; });
+    return settled;
   }
-  async dispatch(value: unknown): Promise<unknown> {
+  private async forceClose(session: Session) {
+    if (session.state === "closed") return this.info(session);
+    session.forcedClosed = true;
+    session.state = "closed";
+    session.lastActivityAt = Date.now();
+    this.leases.delete(session.lease);
+    const leaseId = session.backend.handoff?.appId;
+    const note = (outcome: string) => this.record(session, journalEntry({ at: new Date().toISOString(),
+      sequence: session.journal.length + 1, sessionId: session.id, actor: "person", actionType: "session.forced-close",
+      decision: { outcome: "allow" }, decidedBy: outcome }));
+    let outcome = "no plugin lease";
+    if (leaseId) {
+      // Computed after this session left the open set, so the repair path never sees it as live.
+      const live = [...this.sessions.values()].filter(other => other.state !== "closed").flatMap(other => other.backend.handoff?.appId ? [other.backend.handoff.appId] : []);
+      try { await (this.options.releaseLease ?? releasePluginLease)(leaseId, live); outcome = "plugin lease released"; }
+      catch (error) { outcome = `plugin lease release failed: ${error instanceof Error ? error.message.slice(0, 120) : "unknown"}`; }
+    }
+    void note(outcome);
+    this.wake();
+    return this.info(session);
+  }
+  /** Pause, shared by the pause request and by an adapter that disappeared. */
+  private pause(session: Session) {
+    if (!session.paused) {
+      session.state = "pausing";
+      session.paused = session.tail.then(async () => {
+        this.ensureOpen(session);
+        if (session.backend instanceof NativeBackend) await session.backend.pauseLease();
+        this.ensureOpen(session);
+        session.state = "paused"; return this.info(session);
+      }).catch(error => { session.paused = undefined; throw error; });
+    }
+    return session.paused;
+  }
+  /**
+   * An adapter went away: its sessions pause at once, and stop after the grace period unless the
+   * same caller returns. Applications stay open; stopping hands the lease back and closes nothing.
+   */
+  private adapterGone(id: string) {
+    for (const session of this.sessions.values()) {
+      if (session.ownerId !== id || ["closing", "closed"].includes(session.state) || session.orphan) continue;
+      session.orphan = { at: Date.now() };
+      const delay = this.graceMs(session);
+      session.orphan.timer = setTimeout(() => { void this.stop(session).catch(() => {}); }, delay);
+      session.orphan.timer.unref?.();
+      void this.record(session, journalEntry({ at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
+        actor: "person", actionType: "session.owner-gone", decision: { outcome: "allow" }, decidedBy: `${session.ownerLabel}; stops in ${Math.round(delay / 1000)} s` }));
+      void this.pause(session).catch(() => {});
+    }
+  }
+  /** The same caller came back inside the grace period: its sessions stay paused until it resumes them. */
+  private adapterBack(id: string) {
+    for (const session of this.sessions.values()) {
+      if (session.ownerId !== id || !session.orphan) continue;
+      if (session.orphan.timer) clearTimeout(session.orphan.timer);
+      session.orphan = undefined;
+    }
+  }
+  async dispatch(value: unknown, caller: Caller = internalCaller): Promise<unknown> {
+    this.callers.touch(caller);
     if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.report") return this.diagnostics.report();
     if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.status") return this.diagnostics.status();
     const request = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
     const params = request.params && typeof request.params === "object" ? request.params as Record<string, unknown> : {};
     const session = typeof params.sessionId === "string" ? this.sessions.get(params.sessionId) : undefined;
-    return this.diagnostics.run({ ...request, params: { ...params, backend: session?.kind ?? params.backend } }, () => this.dispatchRequest(value));
+    return this.diagnostics.run({ ...request, params: { ...params, backend: session?.kind ?? params.backend } }, () => this.dispatchRequest(value, caller));
   }
-  private async dispatchRequest(value: unknown): Promise<unknown> {
+  private async dispatchRequest(value: unknown, caller: Caller): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
     if (request.method === "applications.list") {
@@ -411,7 +630,12 @@ export class Sessions {
       backends: this.native ? ["native"] : [], sessionMode: "native-only", capabilities,
       sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeDesktopMachine(),
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
-    if (request.method === "session.create") return this.create(params);
+    if (request.method === "session.create") return this.create(params, caller);
+    // Goodbye from an adapter that is exiting: its sessions pause now instead of at the next poll.
+    if (request.method === "caller.detach") { this.callers.detach(caller); return { detached: caller.kind === "adapter" }; }
+    // Lease ids only, for the repair command that must never release a lease a session still holds.
+    if (request.method === "session.live-leases")
+      return { leases: [...this.sessions.values()].filter(session => session.state !== "closed").flatMap(session => session.backend.handoff?.appId ? [session.backend.handoff.appId] : []) };
     if (request.method === "native.open") {
       await requireUpdateAdmission(this.updateDirectory);
       if (this.updateLease && this.updateLease.expires > Date.now())
@@ -422,8 +646,10 @@ export class Sessions {
       if (requestId.length > 128) throw new OrbitError("INVALID_REQUEST", "Opening request identity is too long");
       if (Object.keys(params).some(key => !["requestId", "workspace", "applicationId", "window"].includes(key)))
         throw new OrbitError("INVALID_REQUEST", "Unknown native opening field");
-      const opening = parseNativeOpen({ workspace: params.workspace, applicationId: params.applicationId, ...(params.window === undefined ? {} : { window: params.window }) });
-      const fingerprint = JSON.stringify(opening);
+      // No workspace means the broker picks a free one for this caller, and keeps that pick for this request identity.
+      const auto = params.workspace === undefined;
+      const opening = parseNativeOpen({ workspace: auto ? 1 : params.workspace, applicationId: params.applicationId, ...(params.window === undefined ? {} : { window: params.window }) });
+      const fingerprint = JSON.stringify(auto ? { ...opening, workspace: "auto" } : opening);
       const previous = this.nativeOpens.get(requestId);
       if (previous) {
         if (previous.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Opening request identity conflicts");
@@ -436,7 +662,10 @@ export class Sessions {
         if (this.updateLease && this.updateLease.expires > Date.now())
           throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
-        return NativeBackend.openApplication(options, opening);
+        const target = auto ? { ...opening, workspace: await this.allocateWorkspace(requestId, caller) } : opening;
+        const opened = await NativeBackend.openApplication(options, target);
+        this.noteOpened(caller, target.workspace);
+        return auto && opened && typeof opened === "object" && !Array.isArray(opened) ? { ...opened, workspace: target.workspace, allocated: true } : opened;
       });
       this.creationTail = result.catch(() => {});
       this.nativeOpens.set(requestId, { fingerprint, result });
@@ -505,8 +734,11 @@ export class Sessions {
       void result.then(() => this.creating.delete(result), () => this.creating.delete(result));
       return result;
     }
-    if (request.method === "session.list") return [...this.sessions.values()].map(s => this.info(s));
-    if (request.method === "session.act") return this.act(params);
+    if (request.method === "session.list") return this.list(caller);
+    if (request.method === "session.act") {
+      this.authorize(this.get(params.sessionId), caller, "acted on");
+      return this.act(params);
+    }
     /*
      * Removing a finished session from the list, which is the only thing a person can still do to
      * one. It drops the entry and nothing else: the journal file stays where it is, because that
@@ -517,6 +749,7 @@ export class Sessions {
     if (request.method === "session.forget") {
       const id = text(params.sessionId, "sessionId");
       const known = this.sessions.get(id);
+      if (known) this.authorize(known, caller, "removed from the list");
       if (known && known.state !== "closed") throw new OrbitError("SESSION_OPEN", "End the session before removing it from the list");
       if (known) {
         // A backend exit marks it closed before asynchronous resource release finishes.
@@ -527,7 +760,11 @@ export class Sessions {
       return { sessionId: id, forgotten: known !== undefined };
     }
     if (!["session.pause", "session.resume", "session.stop", "session.observe", "session.presence", "session.control", "session.journal", "session.narrow"].includes(String(request.method))) throw new OrbitError("UNSUPPORTED", "Unknown method");
+    if (request.method === "session.stop" && params.scope !== undefined) return this.stopMine(params, caller);
     const session = this.get(params.sessionId);
+    this.authorize(session, caller, { "session.pause": "paused", "session.resume": "resumed", "session.stop": "stopped",
+      "session.observe": "observed", "session.presence": "observed", "session.control": "controlled", "session.journal": "read",
+      "session.narrow": "narrowed" }[String(request.method)] ?? "used");
     // What the session did, for a person reading afterwards rather than approving in advance.
     if (request.method === "session.journal") return { sessionId: session.id, policy: session.policy,
       entries: session.journal, path: session.journalPath, tainted: session.tainted };
@@ -563,18 +800,7 @@ export class Sessions {
       if (session.state !== "paused") throw new OrbitError("NOT_PAUSED", "Pause and wait for acknowledgement before manual input");
       return this.enqueue(session, () => this.track(session, "human", String(record(params.input).type), () => session.backend.control(params.input)));
     }
-    if (request.method === "session.pause") {
-      if (!session.paused) {
-        session.state = "pausing";
-        session.paused = session.tail.then(async () => {
-          this.ensureOpen(session);
-          if (session.backend instanceof NativeBackend) await session.backend.pauseLease();
-          this.ensureOpen(session);
-          session.state = "paused"; return this.info(session);
-        }).catch(error => { session.paused = undefined; throw error; });
-      }
-      return session.paused;
-    }
+    if (request.method === "session.pause") return this.pause(session);
     if (request.method === "session.resume") {
       if (session.state === "pausing") throw new OrbitError("PAUSED", "Wait for pause acknowledgement before resuming");
       if (session.backend instanceof NativeBackend) await session.backend.resumeLease();
@@ -602,7 +828,20 @@ export class Sessions {
     this.taintedBy(session, "observe");
     return frame;
   }
+  /** Stops exactly the caller's own sessions and lists them, so a permission check and a reader can see nothing else was touched. */
+  private async stopMine(params: Record<string, unknown>, caller: Caller) {
+    if (params.scope !== "mine" || params.sessionId !== undefined)
+      throw new OrbitError("INVALID_REQUEST", 'orbit_stop takes either a sessionId or scope "mine"');
+    const mine = [...this.sessions.values()].filter(session => session.ownerId === caller.id && session.state !== "closed");
+    const results = await Promise.allSettled(mine.map(session => this.stop(session)));
+    return { scope: "mine", owner: caller.label,
+      stopped: mine.flatMap((session, index) => results[index]?.status === "fulfilled"
+        ? [{ sessionId: session.id, taskName: session.taskName, application: this.application(session), workspace: session.backend.handoff?.workspace }] : []),
+      failed: mine.flatMap((session, index) => results[index]?.status === "rejected" ? [{ sessionId: session.id, taskName: session.taskName }] : []) };
+  }
   async close() {
+    this.callers.stop();
+    for (const session of this.sessions.values()) if (session.orphan?.timer) clearTimeout(session.orphan.timer);
     this.shuttingDown = true;
     await Promise.allSettled([...this.creating]);
     const results = await Promise.allSettled([...this.sessions.values()].map(session => this.stop(session)));

@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { call } from "./ipc";
+import { configureCaller, type ClientIdentity } from "./caller";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
 import { renderAct, renderObservation } from "./observation-output";
@@ -13,7 +14,7 @@ import { version } from "../package.json";
 const id = z.string().min(1).max(16384);
 
 /** A tool surface fixed to one already created Orbit session. */
-export function createSessionMcpServer(socket: string, sessionId: string) {
+export function createSessionMcpServer(socket: string, sessionId: string, identity?: ClientIdentity) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId))
     throw new OrbitError("INVALID_REQUEST", "A session adapter needs an Orbit session ID");
   const usage = new ConversationUsage();
@@ -23,7 +24,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
   const invoke = async (method: string, params: Record<string, unknown> = {}): Promise<CallToolResult> => {
     try {
       await usage.assertEnabled();
-      const result = await call(socket, method, { ...params, sessionId });
+      const result = await call(socket, method, { ...params, sessionId }, undefined, identity);
       if (method === "session.observe") {
         return renderObservation(result);
       }
@@ -74,9 +75,10 @@ if (import.meta.main) {
   let socket;
   try { socket = process.env.ORBIT_SOCKET || serviceSocketPath(); }
   catch { console.error("ORBIT_SOCKET is required, or a runtime directory the managed broker's socket can live in"); process.exit(1); }
+  configureCaller({ kind: "adapter" });
   const server = createSessionMcpServer(socket, sessionId);
   await server.connect(new StdioServerTransport());
-  const stop = async () => { await server.close(); process.exit(0); };
+  const stop = async () => { try { await call(socket, "caller.detach"); } catch { /* the broker's poll covers a missed goodbye */ } await server.close(); process.exit(0); };
   process.on("SIGINT", stop); process.on("SIGTERM", stop);
   process.stdin.on("end", stop);
 }

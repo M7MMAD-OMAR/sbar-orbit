@@ -10,8 +10,11 @@ import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storag
 import { claimSocket } from "./service";
 import { Diagnostics, diagnosticRoot } from "./diagnostics";
 import type { NativeOptions } from "./native-worker";
+import { callerHeader, clientIdentity, createOwnerCredential, identityHeaders, ownerHeader, ownerTokenMatches,
+  removeOwnerCredential, resolveCaller, internalCaller, type ClientIdentity, type Caller, type ProcessProbe, realProbe } from "./caller";
+import type { SessionOptions } from "./session";
 
-export async function startBroker(options: { accountRoot?: string; socketPath?: string; native?: NativeOptions } = {}) {
+export async function startBroker(options: { accountRoot?: string; socketPath?: string; native?: NativeOptions; session?: SessionOptions; probe?: ProcessProbe } = {}) {
   await requireResourceBudget();
   // A managed broker binds one fixed path so host configuration survives restarts. Every other
   // broker keeps a private directory, so tests and experiments cannot collide with each other.
@@ -26,7 +29,8 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     socket = join(privateRoot, "broker.sock");
   }
   const workspace = await createWorkspaceDirectory("broker");
-  const sessions = new DesktopSessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native);
+  const sessions = new DesktopSessions(workspace, options.accountRoot, new Diagnostics(options.socketPath ? diagnosticRoot() : join(workspace, "diagnostics")), options.native, undefined, options.session);
+  let ownerToken: string | undefined;
   const server = Bun.serve({
     unix: socket, maxRequestBodySize: 65536,
     async fetch(request) {
@@ -37,7 +41,12 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
         if (body?.method === "native.open") this.timeout(request, 90);
         if (body?.method === "settings.list" || body?.method === "settings.write")
           return Response.json({ ok: true, result: await settingsRequest(body) });
-        return Response.json({ ok: true, result: await sessions.dispatch(body) });
+        // Who is asking is read from what the broker can check, never from the request body. The
+        // owner role needs the credential file next to the socket; a request without a valid claim
+        // is the unidentified agent, never the owner.
+        const caller: Caller = ownerTokenMatches(request.headers.get(ownerHeader), ownerToken) ? { ...internalCaller, id: "owner", label: "the person", kind: "cli" }
+          : resolveCaller(request.headers.get(callerHeader), options.probe ?? realProbe);
+        return Response.json({ ok: true, result: await sessions.dispatch(body, caller) });
       }
       catch (error) {
         const code = error instanceof OrbitError ? error.code : error instanceof SyntaxError ? "INVALID_REQUEST" : "BACKEND_ERROR";
@@ -56,23 +65,25 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
   });
   await chmod(socket, 0o600);
   await restrictSocketToOwner(socket);
+  ownerToken = await createOwnerCredential(socket);
   // Recorded once the socket answers, since answering is what marks the workspace as owned.
   await markWorkspaceOwner(workspace, socket);
   return { socket, sessions, async close() {
-    server.stop(true); await sessions.close();
+    server.stop(true); await removeOwnerCredential(socket);
+    await sessions.close();
     await sessions.diagnostics.flush();
     await rm(workspace, { recursive: true, force: true }).catch(() => {});
     if (privateRoot) await rm(privateRoot, { recursive: true, force: true }).catch(() => {});
   } };
 }
-async function cancellableCall(socket: string, method: string, params: unknown, signal: AbortSignal): Promise<unknown> {
+async function cancellableCall(socket: string, method: string, params: unknown, signal: AbortSignal, identity: ClientIdentity): Promise<unknown> {
   const { request } = await import("node:http");
   const combined = AbortSignal.any([signal, AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000)]);
   combined.throwIfAborted();
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ method, params });
     const child = request({ socketPath: socket, path: "/rpc", method: "POST", headers: {
-      "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body),
+      "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...identityHeaders(identity),
     } }, response => {
       const chunks: Buffer[] = [];
       let bytes = 0;
@@ -103,11 +114,13 @@ async function cancellableCall(socket: string, method: string, params: unknown, 
   });
 }
 
-export async function call(socket: string, method: string, params: unknown = {}, signal?: AbortSignal): Promise<unknown> {
+/** `identity` overrides who the call claims to be; the adapters and tests use it, everything else is this process. */
+export async function call(socket: string, method: string, params: unknown = {}, signal?: AbortSignal, identity?: ClientIdentity): Promise<unknown> {
+  const who = clientIdentity(socket, identity);
   // Bun 1.3.14's Unix fetch did not cancel an admitted request in the native view check.
-  if (signal) return cancellableCall(socket, method, params, signal);
+  if (signal) return cancellableCall(socket, method, params, signal, who);
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
-    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ method, params }),
+    headers: { "Content-Type": "application/json", ...identityHeaders(who) }, body: JSON.stringify({ method, params }),
     signal: AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000) });
   const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string } };
   if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
