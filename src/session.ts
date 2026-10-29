@@ -471,11 +471,13 @@ export class Sessions {
       }));
       throw new OrbitError("POLICY_DENIED", decision.reason);
     }
-    if (Object.keys(params).some(key => !["sessionId", "appId", "windowId"].includes(key)))
+    if (Object.keys(params).some(key => !["sessionId", "appId", "windowId", "format"].includes(key)))
       throw new OrbitError("INVALID_REQUEST", "Unknown native observation fields");
+    if (params.format !== undefined && !["image", "text", "both"].includes(String(params.format)))
+      throw new OrbitError("INVALID_REQUEST", "Observation format must be image, text or both");
     const selected = params.appId === undefined && params.windowId === undefined ? undefined
       : { appId: params.appId, windowId: params.windowId };
-    const frame = await session.backend.observe(selected);
+    const frame = await session.backend.observe(selected, params.format as "image" | "text" | "both" | undefined);
     this.taintedBy(session, "observe");
     return frame;
   }

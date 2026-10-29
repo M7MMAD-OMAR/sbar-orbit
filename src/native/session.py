@@ -13,6 +13,7 @@ import subprocess
 import time
 import uuid
 
+from . import a11y
 from .budget import require_budget
 from .host import verify_host
 from .transport import NativeTransport, action_response
@@ -116,6 +117,14 @@ class NativeSession:
 
 
 
+    def _tree(self, target):
+        """Accessibility tree of one window, or the reason there is none."""
+        clients = json.loads(self.transport._exchange("j/clients"))
+        identity = a11y.window_identity(clients, target["address"], target["key"][1]) if isinstance(clients, list) else None
+        if identity is None:
+            return {"status": "unavailable", "reason": "window process is unknown"}
+        return a11y.read_tree(identity[0], identity[1], self.plan["runtime"])
+
     def _check_target(self, address):
         action_response("ghost-target-check", self.transport._exchange("ghost-target-check " + address))
 
@@ -138,7 +147,7 @@ class NativeSession:
     def parse(value):
         if not isinstance(value, dict) or not isinstance(value.get("type"), str):
             raise SessionError("Native action must be an object with a type")
-        fields = {"windows": {"appId"}, "observe": {"appId", "windowId"},
+        fields = {"windows": {"appId"}, "observe": {"appId", "windowId", "format"},
                   "close-window": {"appId", "windowId"}, "state": {"appId", "windowId"},
                   "cursor": {"appId", "windowId", "x", "y"}, "move": {"appId", "windowId", "x", "y"},
                   "click": {"appId", "windowId", "x", "y", "button"},
@@ -154,6 +163,8 @@ class NativeSession:
         for field in ("x", "y"):
             if field in fields[kind]:
                 coordinate(result.get(field))
+        if kind == "observe" and result.setdefault("format", "image") not in a11y.FORMATS:
+            raise SessionError("Unknown observation format")
         if kind == "click":
             result.setdefault("button", "left")
             if result["button"] not in ("left", "middle", "right"):
@@ -206,6 +217,18 @@ class NativeSession:
                 self._ensure_pointer(target, address)
             if kind == "observe":
                 verify_host(self.plan)
+                tree = None
+                if action["format"] != "image":
+                    tree = self._tree(target)
+                    if action["format"] == "text" and tree["status"] == "ok":
+                        # Text only: no pixels are captured. The surface size is the compositor's.
+                        captured = int(time.time() * 1000)
+                        width, height = target["size"]
+                        return {"mimeType": "text/x-orbit-a11y", "capturedAt": captured,
+                                "width": width, "height": height, "surfaceWidth": width, "surfaceHeight": height,
+                                "cursorVariant": (int(target["address"], 16) >> 4) & 1,
+                                "appId": app_id, "windowId": action["windowId"],
+                                "pointer": copy.deepcopy(target["pointer"]), "tree": tree}
                 environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
@@ -232,6 +255,9 @@ class NativeSession:
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],
                          "cursorVariant": (int(target["address"], 16) >> 4) & 1,
                          "appId": app_id, "windowId": action["windowId"], "pointer": copy.deepcopy(target["pointer"])}
+                if tree is not None:
+                    # Fallback or both: the tree status says which, including why no tree came back.
+                    frame["tree"] = tree
                 return {key: value for key, value in frame.items() if key != "image"} | {
                     "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest()}
             if kind == "close-window":

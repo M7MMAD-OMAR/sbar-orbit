@@ -190,3 +190,50 @@ requires a matching build, compositor ABI verification and an idle activation
 boundary. Do not replace a loaded plugin or restart a shared broker while another
 task has active work. Keep source verification, installed bytes and live native
 application acceptance as separate reported facts.
+
+## Text observation from the accessibility tree (Linux)
+
+`orbit_observe` takes `format`: `image` (default, unchanged), `text` or `both`. `text` returns a compact
+tree of visible nodes (role, name, states, `box` as `[x, y, width, height]` in the window local space the
+click actions use, and the first 120 characters of editable text) and no screenshot. If the application
+exposes no usable tree, the same call returns the screenshot plus `tree: {status: "unavailable", reason}`,
+so the caller never has to retry. The tree is read through AT-SPI in a separate short lived process
+(`src/native/a11y_dump.py`, 1.5 s walk deadline, 5 s process deadline, at most 300 nodes and 16000 bytes,
+cut on a node boundary). The same read policy gate as image observation applies, so `orbit_narrow` scoping
+holds. Every string is application controlled: it is flattened to one line, stripped of control
+characters, length bounded, and delivered in its own block headed `UNTRUSTED APPLICATION DATA`, never in
+the metadata block and never in a tool description or instruction.
+
+Measured 29 October 2026 on this Fedora Hyprland machine, windows on workspace 4 (scale 1.5), from
+`scripts/a11y-measure.py` (20 runs for Calculator, 10 for the others). Image is the PNG the worker
+already returns (base64 adds a third); wall time includes the grim capture or the tree process start.
+
+| Application | Image bytes | Image median | Text bytes | Text median | Nodes |
+| --- | --- | --- | --- | --- | --- |
+| GNOME Calculator (GTK4) | 46436 | 54 ms | 2300 | 199 ms | 37 |
+| GNOME Text Editor (GTK4) | 42946 | 71 ms | 1317 | 180 ms | 18 |
+| Dolphin (Qt6) | 103385 | 80 ms | 6516 | 201 ms | 97 |
+
+So text is 18 to 35 times smaller but about 3 times slower to produce locally (a Python start plus the
+D-Bus walk). The saving is in what the model has to read and in token cost, not in capture time. Whether
+that halves the observe-to-action time depends on the model, and this was not measured end to end.
+
+Whether a box center lands on the right control, checked by cropping a screenshot at the returned center
+(no input was sent):
+
+- Dolphin: the Trash tab center fell on the tab label. Correct.
+- GTK4 Calculator: the Backspace button center was exact, but the number pad boxes were shifted by about
+  12 logical pixels right and down (the `7` and `=` boxes), so the center landed inside the button but off
+  center. A control smaller than about 24 pixels in that region could be missed. GTK4 reports some extents
+  with a container margin, and Orbit does not correct it.
+
+Limits, stated plainly:
+
+- A live click through the native plugin at a returned center was not run: handoff returned
+  `NATIVE_INCOMPATIBLE` because another task had edited the plugin source and the loaded plugin was stale.
+- Chromium and Electron apps (Chrome, Chromium, Claude Desktop, VS Code on this machine) expose an empty
+  stub tree until an assistive technology enables accessibility, so they fall back to the screenshot.
+  Orbit does not change the owner's accessibility settings or relaunch the browser to force it.
+- A window whose compositor title matches none of the application's accessible windows, with several
+  windows open, is refused rather than guessed, and falls back to the screenshot.
+- Windows (UI Automation) and macOS (AX) are not implemented and not measured.

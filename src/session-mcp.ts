@@ -4,7 +4,7 @@ import { z } from "zod";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
-import { splitFrame } from "./observation-output";
+import { renderObservation } from "./observation-output";
 import { orbitActionSchema } from "./mcp";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -25,9 +25,7 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
       await usage.assertEnabled();
       const result = await call(socket, method, { ...params, sessionId });
       if (method === "session.observe") {
-        const { image, metadata } = splitFrame(result);
-        return { content: [{ type: "image", data: image, mimeType: metadata.mimeType },
-          { type: "text", text: JSON.stringify(metadata) }], structuredContent: metadata };
+        return renderObservation(result);
       }
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result)
@@ -43,9 +41,10 @@ export function createSessionMcpServer(socket: string, sessionId: string) {
   server.registerTool("orbit_observe", {
     description: "Observe this session only. Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state. Metadata mode avoids image capture.",
     inputSchema: { mode: z.enum(["image", "metadata"]).default("image"),
+      format: z.enum(["image", "text", "both"]).default("image").describe("image returns a screenshot. text returns a compact accessibility tree (role, name, states, box in click coordinates) and no screenshot, falling back to the screenshot when the application exposes no tree. both returns the two. Ignored when mode is metadata."),
       appId: z.string().regex(/^[a-f0-9]{32}$/).optional(), windowId: z.string().regex(/^[a-f0-9]{32}$/).optional() },
-  }, ({ mode, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
-    { ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
+  }, ({ mode, format, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
+    { ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
   server.registerTool("orbit_act", {
     description: "Act on this acknowledged original native application. Verify actual application acceptance after redraw. No launch or private profile actions exist. Reuse requestId after uncertain delivery.",
     inputSchema: { requestId: id, action: orbitActionSchema },

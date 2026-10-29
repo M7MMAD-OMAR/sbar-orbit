@@ -355,13 +355,16 @@ export class NativeBackend {
         appId: window.appId, windowId: window.windowId })), sampled: "acknowledged metadata" };
   }
 
-  async observe(value?: unknown) {
+  async observe(value?: unknown, format: "image" | "text" | "both" = "image") {
     const selected = value === undefined ? this.selected : target(record(value));
     if (!selected || !this.applications.has(selected.appId))
       throw new OrbitError("INVALID_REQUEST", "Observe requires an explicit owned native target");
-    const frame = record(await this.worker.request("act", { type: "observe", ...selected }));
-    if (frame.appId !== selected.appId || frame.windowId !== selected.windowId || frame.mimeType !== "image/png"
-        || typeof frame.image !== "string" || typeof frame.width !== "number" || typeof frame.height !== "number")
+    const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }) }));
+    // A text frame carries the accessibility tree and no pixels; every other frame is an image.
+    const textOnly = frame.mimeType === "text/x-orbit-a11y" && format === "text" && frame.image === undefined;
+    if (frame.appId !== selected.appId || frame.windowId !== selected.windowId
+        || (!textOnly && (frame.mimeType !== "image/png" || typeof frame.image !== "string"))
+        || typeof frame.width !== "number" || typeof frame.height !== "number")
       throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target frame");
     await this.act({ type: "windows", appId: selected.appId });
     this.selected = selected;

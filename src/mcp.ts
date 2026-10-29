@@ -4,7 +4,7 @@ import { z } from "zod";
 import { call } from "./ipc";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
-import { splitFrame } from "./observation-output";
+import { renderObservation } from "./observation-output";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
@@ -38,9 +38,7 @@ export function createMcpServer(socket: string) {
       await usage.assertEnabled();
       const result = await call(socket, method, params);
       if (method === "session.observe") {
-        const { image, metadata } = splitFrame(result);
-        return { content: [{ type: "image", data: image, mimeType: metadata.mimeType },
-          { type: "text", text: JSON.stringify(metadata) }], structuredContent: metadata };
+        return renderObservation(result);
       }
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result as Record<string, unknown> } : {}) };
@@ -66,9 +64,10 @@ export function createMcpServer(socket: string) {
   server.registerTool("orbit_observe", {
     description: "Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state and does not sample the desktop. Observe an owned session. image (default) returns a native image block plus dimensions, capture time, title, tabs/windows and pointer metadata. metadata returns presence only without screenshot capture, for cheaper tab/window checks. Metadata does not describe page content or prove visual correctness.",
     inputSchema: { sessionId: id, mode: z.enum(["image", "metadata"]).default("image"),
+      format: z.enum(["image", "text", "both"]).default("image").describe("image returns a screenshot. text returns a compact accessibility tree (role, name, states, box in click coordinates) and no screenshot, falling back to the screenshot when the application exposes no tree. both returns the two. Ignored when mode is metadata."),
       appId: nativeId.optional(), windowId: nativeId.optional() },
-  }, ({ sessionId, mode, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
-    { sessionId, ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
+  }, ({ sessionId, mode, format, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
+    { sessionId, ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
   server.registerTool("orbit_status", { description: "List every open Orbit session, its backend, state, current activity and surface size.", inputSchema: {} }, () => invoke("session.list"));
   server.registerTool("orbit_applications", {
     description: "Discover application paths from OS registrations and current-user metadata. availability distinguishes verified host paths from unresolved namespace-visible running paths. Linux includes running executable and supported explicit profile paths; macOS inspects application bundles and Windows inspects App Paths. Returns evidence sources and ambiguity instead of inventing an active or stable version. Does not start apps, capture the owner's display, read account credentials or grant control. Call before native.open. Original browser and terminal registrations are accepted. Private desktop sessions are absent. Other platform adapters and accounts require their own measured support.",
