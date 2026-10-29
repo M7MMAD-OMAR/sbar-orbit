@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from "node:fs";
 import { lstat, readdir, readFile, readlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { systemArgv } from "./platform";
 
 const rootKey = "ORBIT_TEST_INSTALLED_STARTUP_ROOT", bindingKey = "ORBIT_TEST_INSTALLED_STARTUP_BINDING";
 const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -330,7 +331,7 @@ async function runtimeInventory(directory: string, root: string) {
 }
 // Metadata commands only, never execute the browser. Timeout and output bounds are owned.
 async function metadata(argv: string[]) {
-  const child = Bun.spawn(argv, { stdout: "pipe", stderr: "ignore", timeout: 10000 });
+  const child = Bun.spawn(systemArgv(argv), { stdout: "pipe", stderr: "ignore", timeout: 10000 });
   let text = "", exceeded = false;
   for await (const chunk of child.stdout) {
     if (Buffer.byteLength(text) + chunk.byteLength > 1048576) { exceeded = true; child.kill(); break; }

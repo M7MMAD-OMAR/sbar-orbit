@@ -1,10 +1,11 @@
+import { systemArgv } from "./platform";
 export type CommandResult = { ok: boolean; output: string; stopUnconfirmed?: boolean };
 export type CommandRunner = (argv: string[], timeoutMs?: number) => Promise<CommandResult>;
 
 /** Bounds both process completion and inherited output pipes. */
 export const boundedCommand: CommandRunner = async (argv, timeoutMs = 40_000) => {
   try {
-    const child = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(systemArgv(argv), { stdout: "pipe", stderr: "pipe" });
     let timedOut = false;
     const readers = [child.stdout.getReader(), child.stderr.getReader()];
     const drain = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {

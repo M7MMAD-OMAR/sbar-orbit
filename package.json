@@ -56,7 +56,7 @@
   ],
   "scripts": {
     "verify": "bun --smol run scripts/verify-desktop.ts",
-    "verify:platform-contracts": "bun run verify tests/application-discovery.test.ts tests/application-discovery-native.test.ts tests/macos-service-simulation.test.ts tests/service-paths.test.ts tests/preflight.test.ts",
+    "verify:platform-contracts": "bun run verify tests/application-discovery.test.ts tests/application-discovery-native.test.ts tests/macos-service-simulation.test.ts tests/service-paths.test.ts tests/preflight.test.ts tests/windows-system-tools.test.ts",
     "typecheck": "bun node_modules/typescript/bin/tsc",
     "orbit": "bun run src/cli.ts",
     "serve": "bun run scripts/limited.ts bun run src/cli.ts serve",
