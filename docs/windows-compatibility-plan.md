@@ -188,7 +188,7 @@ These runs launch no desktop application. The workflow is `.github/workflows/pla
 | [40873113067](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40873113067) | Every test file on its own, before the Windows fixes | Windows: 15 red files, 31 failed tests; macOS 14 red files, 24 failed |
 | [40874360118](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40874360118) | agent-contract, packaging, windows-autostart after the tar fix | Windows autostart still red: `whoami.exe` resolved to a GNU build |
 | [40874684125](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40874684125) | Every test file, after the System32 fixes | Windows: 11 red files, 16 failed of 441 passed; macOS 13 red files, 21 failed of 450 passed; Ubuntu 32 red files, 91 failed |
-| [40875301293](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40875301293) | Broker smoke and launcher status, plus the new system tool test | see the section below |
+| [40875609730](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40875609730) | Broker smoke, launcher help, system tool test, on all three runners | Green. On `windows-latest` a private broker bound a socket under `%TEMP%`, answered `doctor` with `platform` win32, and `bin/sbar-orbit.cmd help` printed "Windows adapter not implemented". The same `doctor` reply still lists `backend` native and the full capability list on win32, which confirms the defect in section 1. |
 
 Fixed from these runs: GNU tar from Git for Windows read `C:\` as a host (`tarExecutable` in `src/platform.ts`);
 GNU `whoami` rejected `/user`, which broke the logon task SID (`systemArgv`, applied in
