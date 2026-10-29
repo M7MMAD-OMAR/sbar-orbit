@@ -93,6 +93,56 @@ class DumpTests(unittest.TestCase):
         solo = Node("application", "", children=[Node("frame", "Only")])
         self.assertEqual(a11y_dump.pick_frame(solo, "Different", fake_atspi()).name, "Only")
 
+    def test_a_margin_container_counted_twice_is_reanchored_and_carried_to_children(self):
+        # GTK4 shape: the grid margin of 12 appears on two nested wrappers of identical size, so every raw
+        # box below is 12 right and down of where the control is drawn.
+        button = Node("push button", "7", (154, 452, 132, 44), actions=1)
+        inner = Node("panel", "", (154, 404, 676, 236), children=[button])
+        outer = Node("panel", "", (142, 392, 676, 236), children=[Node("panel", "", (154, 404, 676, 236), children=[button])])
+        outer.children[0].children = [inner]
+        inner.children = [button]
+        root = Node("frame", "App", (0, 0, 960, 640), children=[Node("panel", "", (130, 380, 700, 260), children=[outer])])
+        nodes, stats = self.walk(root)
+        self.assertEqual(nodes[1]["box"], [142, 440, 132, 44])
+        self.assertEqual(stats["recalibrated"], 1)
+
+    def test_boxes_that_already_fit_their_parent_are_never_moved(self):
+        root = Node("frame", "App", (0, 0, 400, 300), children=[
+            Node("panel", "", (20, 20, 200, 100), children=[Node("push button", "A", (30, 30, 50, 20))])])
+        nodes, stats = self.walk(root)
+        self.assertEqual(nodes[1]["box"], [30, 30, 50, 20])
+        self.assertEqual(stats["recalibrated"], 0)
+
+    def test_clipped_content_in_a_scroll_container_keeps_its_reported_position(self):
+        row = Node("push button", "Row", (10, 90, 150, 30))
+        scroller = Node("scroll pane", "", (0, 0, 160, 100), children=[Node("panel", "", (0, 0, 160, 100), children=[row])])
+        nodes, stats = self.walk(Node("frame", "App", (0, 0, 400, 300), children=[scroller]))
+        self.assertEqual(nodes[1]["box"], [10, 90, 150, 30])
+        self.assertEqual(stats["recalibrated"], 0)
+
+    def test_web_content_in_device_pixels_is_scaled_to_window_pixels(self):
+        link = Node("link", "Docs", (150, 300, 90, 30), actions=1)
+        document = Node("document web", "Page", (0, 150, 1440, 810), children=[link])
+        chrome = Node("push button", "Back", (0, 40, 30, 30), actions=1)
+        nodes, stats = self.walk(Node("frame", "Browser", (0, 0, 960, 640), children=[chrome, document]))
+        by_name = {n.get("name"): n for n in nodes}
+        self.assertEqual(by_name["Back"]["box"], [0, 40, 30, 30])
+        self.assertEqual(by_name["Docs"]["box"], [100, 200, 60, 20])
+        self.assertEqual(stats["deviceScale"], 1.5)
+
+    def test_a_document_that_is_not_the_window_scaled_is_left_alone(self):
+        document = Node("document web", "Page", (0, 100, 1000, 300), children=[Node("link", "Docs", (10, 120, 50, 20))])
+        nodes, stats = self.walk(Node("frame", "Browser", (0, 0, 960, 640), children=[document]))
+        self.assertEqual(nodes[2]["box"], [10, 120, 50, 20])
+        self.assertIsNone(stats.get("deviceScale"))
+
+    def test_object_replacement_characters_and_bare_bullets_add_nothing(self):
+        document = Node("document web", "Page", (0, 0, 100, 100), text="\ufffc\ufffc\ufffc", children=[
+            Node("static", "\u2022", (0, 0, 5, 5)), Node("link", "Go", (10, 10, 30, 10))])
+        nodes, _ = self.walk(Node("frame", "App", (0, 0, 200, 200), children=[document]))
+        self.assertEqual([n["role"] for n in nodes], ["frame", "document web", "link"])
+        self.assertNotIn("text", nodes[1])
+
 
 class WorkerHelperTests(unittest.TestCase):
     def test_window_identity_needs_matching_address_and_stable_id(self):

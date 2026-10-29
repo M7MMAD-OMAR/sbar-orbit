@@ -234,19 +234,90 @@ opened with `orbit_open`, handed off, and observed with `format: text` through t
 with `session.act`. The window showed `7+3` and the result `10` in a screenshot, so all four clicks landed on
 the intended control. The same session measured, over the broker (JSON payload, 10 runs): image 56826 bytes,
 median 87 ms; text 2936 bytes, median 203 ms. The boxes were again about 13 logical pixels right and down of
-the visible button centers, and every click still fell inside its button. No coordinate correction was added,
-because the offset is a toolkit reporting artifact that differs by container (Backspace and the Qt apps had
+the visible button centers, and every click still fell inside its button. No coordinate correction was added at that time,
+(superseded by "Box accuracy and web content" below) because the offset is a toolkit reporting artifact that differs by container (Backspace and the Qt apps had
 none) and a blanket shift would break those. The window was closed with `close-window` and the session
 stopped.
 
 Limits, stated plainly:
 
 - Chromium and Electron apps (Chrome, Chromium, Claude Desktop, VS Code on this machine) expose an empty
-  stub tree until an assistive technology enables accessibility, so they fall back to the screenshot.
-  Orbit does not change the owner's accessibility settings or relaunch the browser to force it.
+  stub tree until accessibility is enabled inside that browser process, so they fall back to the
+  screenshot. Orbit does not change the owner's accessibility settings or relaunch the browser to force it.
+  See "Browsers and Electron" below for what was measured.
 - A window whose compositor title matches none of the application's accessible windows, with several
   windows open, is refused rather than guessed, and falls back to the screenshot.
 - Windows (UI Automation) and macOS (AX) are not implemented and not measured.
+
+## Box accuracy and web content (29 October 2026)
+
+Root cause of the roughly 13 logical pixel shift on GTK4. GTK4 (4.22.5, `gtk/gtkwidget.c`
+`gtk_widget_accessible_get_bounds` and `gtk/a11y/gtkatspiutils.c`) computes each node's bounds against its
+widget parent, and `get_extents(WINDOW)` then sums those bounds along the accessible parent chain. Where the
+accessible chain repeats or skips a wrapper widget, the sum is wrong. On the Calculator key grid a margin
+container of 12 pixels appears on two nested wrappers of identical size, so every key below it is 12 pixels
+right and down. `get_accessible_at_point` cannot detect this, because it recurses through the same
+bounds and agrees with itself (checked: it returned the shifted label for its own shifted center).
+
+Fix, in `src/native/a11y_dump.py` (`anchor`). A child whose size fits inside its accessible parent but
+whose offset pushes it outside is re anchored to the nearest ancestor frame that holds it, and every
+ancestor's correction is carried down to its children. Nothing else is moved, content below a scrolling
+container is never moved (it is legitimately clipped), and the dump reports `recalibrated`, the count of
+re anchored nodes. Applied to Dolphin (Qt6) and GNOME Text Editor it changed nothing (`recalibrated` 0).
+
+Measured with live clicks through the broker on workspace 4 (scale 1.5). Calculator: the `=` key, orange
+and 132 by 92, was clicked at its returned center (752, 582); the key in the screenshot has its center at
+(751.7, 581.7), an error of 0.3 pixels (it was 12 before). `7`, `+`, `3`, `=` produced `7+3` and `10`.
+Dolphin: the `Music` place was clicked at its returned center and opened Music (center error under 1 pixel;
+the file list rows are Qt boxes that were already exact). Text Editor (the existing window on workspace
+5, input limited to one click on the main menu button): not exact. Residual, measured and not fixed: GTK4
+and libadwaita header bar buttons are reported about 7 to 8 pixels left and 6 up of where they are drawn,
+in both Calculator and Text Editor, at scales 1.5 and 1.33 alike. No ancestor frame is repeated or skipped
+there, so the tree itself holds no signal to correct it, and a constant would break other layouts. The center
+still falls inside the 34 pixel header button (the drawn circle is about 23 pixels), so a click lands. A
+pixel based check against the capture would be the next step.
+
+## Browsers and Electron
+
+What works without touching the owner's settings. Gecko (Firefox, Thunderbird) already publishes a full
+tree when the session accessibility bus is active (this machine: 892 nodes for the owner's Thunderbird;
+a fresh Firefox profile returned its dialog tree with exact logical boxes). Firefox page content was not
+measured: a new profile opens a first run dialog that accepts Terms of Use, which was not clicked.
+
+Chromium family (Chrome 156 measured). Listening on the bus does not turn it on. Tried and found
+ineffective on a fresh Chrome process with its own temporary profile: the bus already reported `IsEnabled`
+and `ScreenReaderEnabled` true; toggling both properties false and back; registering an AT-SPI event
+listener; `ACCESSIBILITY_ENABLED=1` at launch. Only two things enabled the tree: the launch flag
+`--force-renderer-accessibility`, and the in browser switches on `chrome://accessibility` ("Native
+accessibility API support" and "Web accessibility", memory only, reset when the browser process exits).
+Neither fits an automatic mechanism: the flag needs a new browser process, and the page switches change
+every window of the owner's running process (accessibility slows page loads) and need a UI flow. Orbit
+therefore does not enable it by itself. An agent that was asked to use a browser through Orbit may open
+`chrome://accessibility` in a window it opened and tick the two boxes, knowing that this affects that
+whole browser process until it exits. The enabled windows were closed afterwards.
+
+With the tree on (fixture page served from localhost: form, links, a select, a checkbox, a modal dialog and
+a 200 row scrolling list, Chrome window 960 by 640 at scale 1.5):
+
+- The tree holds the browser chrome (tabs, back, reload, address bar entry with its text, bookmark), then
+  the page: document, headings, paragraph text, links, text fields with their text, combo box, checkbox
+  with `checked`, buttons, list items. Rows clipped out of the scroller are not showing and are left out,
+  so the 200 row list costs about 10 lines; scrolling changes them. An open modal dialog leaves only the
+  dialog content plus the browser chrome (19 nodes).
+- Web content boxes arrive in device pixels while the browser chrome is in logical pixels (the document
+  was 1440 wide in a 960 wide window). `device_scale` detects a `document web` whose far corner is the
+  window's far corner times a factor above 1, and divides the subtree by it. After that, clicks at the
+  returned centers worked: a text field, a 13 pixel checkbox, the submit button (page showed `Submitted
+  Orbit Red`) and the dialog button, and a scroll over the list moved it.
+- Payload and time, 15 runs, same window (image is the grim PNG the worker returns): form page 3471
+  bytes of text, median 150 ms, 51 nodes, against 95484 bytes and 66 ms for the image; modal state 1468
+  bytes and 107 ms against 100380 bytes. Text is 27 to 68 times smaller and 1.6 to 2.3 times slower to
+  produce.
+- Also in the dump: object replacement characters and bullets are dropped, and a `static` text repeating
+  the previous node adds no line.
+
+Not measured: Electron apps with the tree on (the Claude and Hermes windows were stubs and were not
+changed), Wayland fractional scales other than 1.5 for web content.
 
 ## Settled capture and action batching
 
