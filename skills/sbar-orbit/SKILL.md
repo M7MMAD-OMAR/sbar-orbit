@@ -5,6 +5,15 @@ description: Control original installed desktop applications on a visible number
 
 # Sbar Orbit
 
+## The loop, in five lines
+
+1. `orbit_applications`, then `orbit_open` (omit `workspace`; Orbit picks a free one).
+2. `orbit_handoff` on the new window, then `orbit_act` with `actions` and `capture` to act and see the result in one call.
+3. Verify by what the screen or `orbit_observe format:"text"` shows, not by an ok reply.
+4. Finish: `orbit_act close-window` for windows you opened, then `orbit_stop` with `scope: "mine"`. Every session you open must be stopped, and a file chooser or dialog is the same session, not a new one.
+5. Never open a second session for the same application; reuse yours.
+
+
 Use the [current contract](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/desktop-only.md)
 and [acceptance index](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/acceptance.md)
 for operational guidance. Dated incident, compliance and experiment reports are

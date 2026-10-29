@@ -173,6 +173,14 @@ export class Sessions {
     operation.then(() => this.creating.delete(operation), () => this.creating.delete(operation));
     return operation;
   }
+  /** Closed sessions are history, not load: keep the newest 16 for review and drop the rest so they never fill the table. */
+  private async pruneClosed() {
+    const closed = [...this.sessions.values()].filter(session => session.state === "closed").sort((a, b) => a.lastActivityAt - b.lastActivityAt);
+    for (const session of closed.slice(0, Math.max(0, closed.length - 16))) {
+      await session.releasing;
+      this.sessions.delete(session.id);
+    }
+  }
   private async createOwned(input: Record<string, unknown>, caller: Caller) {
     if ((input.backend ?? "native") !== "native" || input.handoff === undefined)
       throw new OrbitError("UNSUPPORTED", "Private desktop sessions were removed. Use native.open for an original application or an explicit native application handoff.");
@@ -182,7 +190,10 @@ export class Sessions {
     const handoff = parseHandoff(input.handoff);
     const waitSeconds = parseWait(input.wait);
     if (!this.native) throw new OrbitError("UNSUPPORTED", "The owner has not configured native application control");
-    if (this.sessions.size + this.creating.size >= 32) throw new OrbitError("LIMIT_REACHED", "Native session limit reached");
+    await this.pruneClosed();
+    const live = [...this.sessions.values()].filter(session => session.state !== "closed").length;
+    if (live + this.creating.size >= 32)
+      throw new OrbitError("LIMIT_REACHED", `Native session limit reached: ${live} sessions are open. Stop the ones you opened (orbit_stop with scope "mine") before opening more`);
     const label = (value: unknown, fallback: string) => {
       if (value === undefined) return fallback;
       if (typeof value !== "string" || !value.trim() || value.length > 80 || /[\x00-\x1f\x7f]/.test(value))
