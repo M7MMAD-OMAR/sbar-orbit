@@ -1,5 +1,7 @@
 """Cooperative native session routing through owned applications and windows."""
 import base64
+import collections
+import concurrent.futures
 import copy
 import hashlib
 import json
@@ -12,10 +14,11 @@ import struct
 import subprocess
 import time
 import uuid
+import zlib
 
 from . import a11y
 from .budget import require_budget
-from .host import TargetClosed, UnsupportedText, verify_host
+from .host import HostError, TargetClosed, UnsupportedText, verify_host
 from .paste import paste_text
 from .transport import NativeTransport, action_response
 
@@ -56,8 +59,54 @@ def coordinate(value):
     return value
 
 
-def bounded_capture(argv, environment, diagnostics):
-    """Retain one bounded PNG and private stderr, with bounded reap attempts."""
+def raster_header(data):
+    """Width, height and the offset of the pixels of a binary 8 bit PPM, strictly."""
+    match = re.match(rb"P6\n([0-9]{1,5}) ([0-9]{1,5})\n255\n", bytes(data[:32]))
+    if match is None:
+        raise SessionError("Native window capture did not return a PPM raster")
+    width, height = int(match[1]), int(match[2])
+    if not 1 <= width <= 16384 or not 1 <= height <= 16384 or len(data) != match.end() + width * height * 3:
+        raise SessionError("Native window capture has invalid dimensions")
+    return width, height, match.end()
+
+
+def cropped_png(raster, left, top, width, height):
+    """A PNG of one rectangle of a PPM raster, from the standard library only."""
+    full, _, offset = raster_header(raster)
+    if not (0 <= left and 0 <= top and 1 <= width and 1 <= height and left + width <= full
+            and top + height <= (len(raster) - offset) // (full * 3)):
+        raise SessionError("Capture crop lies outside the frame")
+    stride = full * 3
+    rows = b"".join(b"\0" + raster[offset + y * stride + left * 3:offset + y * stride + (left + width) * 3]
+                    for y in range(top, top + height))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 1)) + chunk(b"IEND", b""))
+
+
+def visible_crop(image_size, surface_size, geometry):
+    """Pixel rectangle of the window geometry inside a capture that starts at the surface origin.
+
+    Input coordinates are mapped into the geometry, so the image must start there too, or every point
+    read off it lands by the client side margin away from where a click goes. The capture is only as
+    large as the window, so the margin at the far edges is not in it; the crop is the part of the
+    geometry the capture holds. None when the geometry starts at the origin and nothing needs cropping.
+    """
+    (width, height), (goal_w, goal_h), (gx, gy, gw, gh) = image_size, surface_size, geometry
+    if gx == 0 and gy == 0:
+        return None
+    scale_x, scale_y = width / goal_w, height / goal_h
+    left, top = round(gx * scale_x), round(gy * scale_y)
+    crop_w, crop_h = min(round(gw * scale_x), width - left), min(round(gh * scale_y), height - top)
+    if gx < 0 or gy < 0 or crop_w < 1 or crop_h < 1:
+        raise SessionError("Window geometry lies outside the captured frame")
+    return left, top, crop_w, crop_h
+
+
+def bounded_capture(argv, environment, diagnostics, raster=False):
+    """Retain one bounded PNG (or PPM raster) and private stderr, with bounded reap attempts."""
     child = subprocess.Popen(argv, env=environment, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     data, stderr, errors = bytearray(), bytearray(), []
@@ -80,14 +129,17 @@ def bounded_capture(argv, environment, diagnostics):
                         ready.unregister(key.fileobj)
                         continue
                     key.data.extend(chunk)
-                    if len(data) > 16 * 1024 * 1024 or len(stderr) > 65536:
+                    if len(data) > (64 if raster else 16) * 1024 * 1024 or len(stderr) > 65536:
                         raise SessionError("Native window capture output is too large")
         child.wait(timeout=max(0.01, deadline - time.monotonic()))
         if child.returncode != 0:
             raise SessionError("Native window capture failed")
-        if len(data) < 24 or data[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
+        if raster:
+            width, height = raster_header(data)[:2]
+        elif len(data) < 24 or data[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
             raise SessionError("Native window capture did not return PNG")
-        width, height = struct.unpack(">II", data[16:24])
+        else:
+            width, height = struct.unpack(">II", data[16:24])
         if not 1 <= width <= 16384 or not 1 <= height <= 16384:
             raise SessionError("Native window capture has invalid dimensions")
         result = bytes(data), width, height
@@ -111,6 +163,21 @@ def bounded_capture(argv, environment, diagnostics):
     if errors:
         raise BaseExceptionGroup("Native capture or cleanup failed", errors)
     return result
+
+
+TUNES = {
+    "classic": {"sleep": 0.02},
+    "nosleep": {"sleep": 0},
+    "q100": {"sleep": 0, "quiet": 0.1},
+    "q60": {"sleep": 0, "quiet": 0.06},
+    "pipe2": {"depth": 2, "stagger": 0.02},
+    "pipe3": {"depth": 3, "stagger": 0.015},
+    "pipe2q100": {"depth": 2, "stagger": 0.02, "quiet": 0.1},
+    "pipe3q100": {"depth": 3, "stagger": 0.015, "quiet": 0.1},
+    "pipe3q60": {"depth": 3, "stagger": 0.015, "quiet": 0.06},
+}
+for _tune in TUNES.values():
+    _tune.setdefault("depth", 1)
 
 
 class NativeSession:
@@ -157,7 +224,7 @@ class NativeSession:
                   "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
-        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly"}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "variant"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -203,6 +270,8 @@ class NativeSession:
         for name, low, high in (("timeoutMs", 100, 3000), ("quietMs", 20, 1000), ("graceMs", 0, 2000)):
             if name in result and (type(result[name]) is not int or not low <= result[name] <= high):
                 raise SessionError(f"{name} must be an integer from {low} to {high}")
+        if "variant" in result and result["variant"] not in TUNES:
+            raise SessionError("Unknown settle variant")
         if "timeoutMs" in result:
             result.setdefault("quietMs", 200)
             result.setdefault("graceMs", 300)
@@ -210,7 +279,7 @@ class NativeSession:
             raise SessionError("Settle options require timeoutMs")
 
     @staticmethod
-    def _settle(capture, first, action):
+    def _settle(capture, first, action, pipeline=None):
         """Re-capture until the window stops changing, bounded by timeoutMs.
 
         Two identical frames are not enough: a slow redraw leaves two identical OLD frames. With a
@@ -218,27 +287,48 @@ class NativeSession:
         that never leaves the baseline is returned after graceMs with changed false, which is what a
         move or a click on nothing really looks like. Every outcome is reported, never assumed.
         """
+        tune = TUNES[action.get("variant", "classic")]
         since, started = action.get("since"), time.monotonic()
-        limit, quiet, grace = action["timeoutMs"] / 1000, action["quietMs"] / 1000, action["graceMs"] / 1000
+        limit, grace = action["timeoutMs"] / 1000, action["graceMs"] / 1000
+        quiet = tune.get("quiet", action["quietMs"] / 1000)
+        depth = tune["depth"] if pipeline else 1
         current, captures = first, 1
         digest = hashlib.sha256(current[0]).hexdigest()
         stable_since = time.monotonic()
-        while True:
-            now = time.monotonic()
-            changed = None if since is None else digest != since
-            if changed is False:
-                ready = now - started >= grace
-            else:
-                ready = now - stable_since >= quiet
-            if ready or now - started >= limit:
-                return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
-                                   "waitedMs": int((now - started) * 1000)})
-            time.sleep(0.02)
-            current = capture()
-            captures += 1
-            latest = hashlib.sha256(current[0]).hexdigest()
-            if latest != digest:
-                digest, stable_since = latest, time.monotonic()
+        inflight, launched = collections.deque(), 0.0
+        pool = concurrent.futures.ThreadPoolExecutor(depth) if depth > 1 else None
+        try:
+            while True:
+                now = time.monotonic()
+                changed = None if since is None else digest != since
+                if changed is False:
+                    ready = now - started >= grace
+                else:
+                    ready = now - stable_since >= quiet
+                if ready or now - started >= limit:
+                    return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
+                                       "waitedMs": int((now - started) * 1000)})
+                if pool is None:
+                    time.sleep(tune["sleep"])
+                    current = capture()
+                else:
+                    while len(inflight) < depth and time.monotonic() - launched >= tune["stagger"]:
+                        inflight.append(pipeline[0](pool))
+                        launched = time.monotonic()
+                    wait = max(0.001, launched + tune["stagger"] - time.monotonic()) if len(inflight) < depth else None
+                    if not concurrent.futures.wait([inflight[0][0]], timeout=wait).done:
+                        continue
+                    frame = pipeline[1](inflight.popleft())
+                    if frame is None:
+                        continue  # the window resized under that capture; it proves nothing
+                    current = frame
+                captures += 1
+                latest = hashlib.sha256(current[0]).hexdigest()
+                if latest != digest:
+                    digest, stable_since = latest, time.monotonic()
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=False)
 
     def _ensure_pointer(self, target, address):
         """Visible render-only presence, with no pointer or keyboard input."""
@@ -251,6 +341,19 @@ class NativeSession:
         self.transport._perform(f"ghost-cursor {address} {point['x']} {point['y']}")
         target["pointer"] = point
         return target["pointer"]
+
+    def _geometry(self, address):
+        """The window geometry rectangle inside its surface, or None when the compositor does not say."""
+        try:
+            geometry = json.loads(self.transport._perform("ghost-state " + address)).get("geometry")
+        except TargetClosed:
+            raise
+        except (HostError, ValueError):
+            return None  # not an XDG toplevel, or no readable state: capture it uncropped, as before
+        if (not isinstance(geometry, list) or len(geometry) != 4
+                or any(type(value) not in (int, float) for value in geometry) or geometry[2] <= 0 or geometry[3] <= 0):
+            return None
+        return tuple(geometry)
 
     def _await_drag(self, address):
         """The compositor times a click and runs a drag on its own loop; return once it is done."""
@@ -297,20 +400,47 @@ class NativeSession:
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
 
+                def begin(pool=None):
+                    """Everything before the pixels leave the compositor; with a pool, grim runs on a thread."""
+                    self._ensure_pointer(target, address)
+                    captured = int(time.time() * 1000)
+                    surface_size = tuple(target["size"])
+                    self._check_target(address)
+                    log = self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log")
+                    geometry = self._geometry(address)
+                    # A window with a client side margin is cropped, so it needs raw pixels to cut from.
+                    margin = geometry is not None and (geometry[0] != 0 or geometry[1] != 0)
+                    arguments = (["/usr/bin/grim"] + (["-t", "ppm"] if margin else []) + ["-T", target["key"][1], "-"],
+                                 environment, log, margin)
+                    if pool is None:
+                        return bounded_capture(*arguments), captured, surface_size, geometry
+                    return pool.submit(bounded_capture, *arguments), captured, surface_size, geometry
+
+                def finish(handle):
+                    """Verify the target after the pixels; None when the window resized under this capture."""
+                    pixels, captured, surface_size, geometry = handle
+                    if isinstance(pixels, concurrent.futures.Future):
+                        pixels = pixels.result()
+                    image, width, height = pixels
+                    verify_host(self.plan)
+                    self._target(app_id, action["windowId"])
+                    self._check_target(address)
+                    if tuple(target["size"]) != surface_size:
+                        return None
+                    crop = visible_crop((width, height), surface_size, geometry) if geometry is not None else None
+                    if crop is not None:
+                        # Image pixel (x, y) is now input coordinate (x, y) divided by the scale, as on any window.
+                        image = cropped_png(image, *crop)
+                        scale = width / surface_size[0]
+                        width, height = crop[2], crop[3]
+                        surface_size = (round(width / scale, 3), round(height / scale, 3))
+                    return image, width, height, captured, surface_size
+
                 def capture():
                     for attempt in range(3):
-                        self._ensure_pointer(target, address)
-                        captured = int(time.time() * 1000)
-                        surface_size = tuple(target["size"])
-                        self._check_target(address)
-                        image, width, height = bounded_capture(
-                            ["/usr/bin/grim", "-T", target["key"][1], "-"], environment,
-                            self._app(app_id).profile / ("capture-" + uuid.uuid4().hex + ".log"))
-                        verify_host(self.plan)
-                        self._target(app_id, action["windowId"])
-                        self._check_target(address)
-                        if tuple(target["size"]) == surface_size:
-                            return image, width, height, captured, surface_size
+                        frame = finish(begin())
+                        if frame is not None:
+                            return frame
                         if attempt == 2:
                             raise SessionError("Native target keeps resizing; wait before observing again")
                         # Capture is read-only. Keep the exact lifetime-bound target
@@ -325,7 +455,7 @@ class NativeSession:
                 settle = None
                 if "timeoutMs" in action:
                     image, width, height, captured, surface_size, settle = self._settle(
-                        capture, (image, width, height, captured, surface_size), action)
+                        capture, (image, width, height, captured, surface_size), action, (begin, finish))
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],

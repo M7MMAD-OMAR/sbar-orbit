@@ -7,6 +7,6 @@ test.skipIf(process.platform !== "linux")("settled capture waits for a changed f
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output: stdout + stderr }).toMatchObject({ code: 0 });
-  expect(stderr).toContain("Ran 5 tests");
+  expect(stderr).toContain("Ran 13 tests");
   expect(stderr).toContain("OK");
 }, 10_000);

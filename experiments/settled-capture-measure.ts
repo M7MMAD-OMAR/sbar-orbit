@@ -10,27 +10,63 @@ import { nativeOptionsFromEnv } from "../src/native-worker";
  *     ORBIT_MEASURE_RUNS=15 \
  *     bun run scripts/limited.ts bun experiments/settled-capture-measure.ts
  *
- * Separate: text, key, observe (a fourth call when the first frame was stale). Batched: one act with
- * capture. Frames and timings are written to ORBIT_MEASURE_OUT; settled-capture-analyze.py judges each
- * frame against an observe taken 900 ms later, outside the timing.
+ * ORBIT_MEASURE_VARIANTS is a comma list; the runs rotate through it, so every variant sees the same
+ * machine load. "separate" is text, key, observe (a fourth call when the first frame was stale). Any other
+ * name is one act with capture and that settle variant. ORBIT_MEASURE_SCENARIO is calculator (default),
+ * editor, dolphin or browser. Frames and timings are written to ORBIT_MEASURE_OUT;
+ * settled-capture-analyze.py judges each frame against an observe taken 900 ms later, outside the timing.
  */
-const workspace = Number(process.env.ORBIT_MEASURE_WORKSPACE), monitor = process.env.ORBIT_MEASURE_MONITOR;
+const workspace = Number(process.env.ORBIT_MEASURE_WORKSPACE);
+let monitor = process.env.ORBIT_MEASURE_MONITOR;
 const application = process.env.ORBIT_MEASURE_APPLICATION;
 const runs = Number(process.env.ORBIT_MEASURE_RUNS ?? 15);
+const variants = (process.env.ORBIT_MEASURE_VARIANTS ?? "separate,classic").split(",");
+const scenarioName = process.env.ORBIT_MEASURE_SCENARIO ?? "calculator";
+// A local fixture for the browser scenario: typed text is echoed large, Enter paints a list after 80 ms and
+// fades a panel in over 250 ms, Escape clears it. Served from localhost only.
+const fixture = scenarioName === "browser" ? Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(`<!doctype html><meta charset=utf-8><title>settle fixture</title>
+<style>body{font:28px sans-serif;margin:24px}input{font:28px sans-serif;width:90%}#echo{font-size:54px;min-height:70px}
+#panel{margin-top:16px;padding:12px;background:#fff;transition:background 250ms}#panel.on{background:#bfe3ff}li{font-size:20px}</style>
+<input id=i autofocus autocomplete=off><div id=echo></div><div id=panel><ul id=list></ul></div>
+<script>const i=document.getElementById("i"),e=document.getElementById("echo"),l=document.getElementById("list"),p=document.getElementById("panel");
+i.oninput=()=>{e.textContent=i.value};
+i.onkeydown=k=>{if(k.key==="Enter")setTimeout(()=>{l.innerHTML=Array.from({length:14},(_,n)=>"<li>row "+n+" "+i.value+"</li>").join("");p.className="on"},80);
+if(k.key==="Escape"){i.value="";e.textContent="";l.innerHTML="";p.className=""}};</script>`, { headers: { "content-type": "text/html" } }) }) : undefined;
+const dolphinPaths = ["/usr/share", "/usr/lib64", "/etc", "/usr/bin"];
+type Act = (action: object) => Promise<any>;
+type Scenario = { reset: (act: Act) => Promise<void>; actions: (run: number) => object[] };
+const scenarios: Record<string, Scenario> = {
+  calculator: { reset: async act => { await act({ type: "key", key: "Escape" }); }, actions: () => [{ type: "text", text: "12345+6789" }, { type: "key", key: "Return" }] },
+  editor: { reset: async act => { await act({ type: "key", key: "ctrl+a" }); await act({ type: "key", key: "BackSpace" }); },
+    actions: () => [{ type: "text", text: "The quick brown fox jumps over the lazy dog" }] },
+  dolphin: { reset: async () => {}, actions: run => [{ type: "key", key: "ctrl+l" }, { type: "text", text: dolphinPaths[run % dolphinPaths.length]! }, { type: "key", key: "Return" }] },
+  // A real read-only page, scrolled down and up; the window is browsed, never logged in.
+  site: { reset: async () => {}, actions: run => [{ type: "scroll", x: 400, y: 400, dy: run % 2 === 0 ? 12 : -12 }] },
+  browser: { reset: async act => { await act({ type: "key", key: "Escape" }); }, actions: () => [{ type: "text", text: "orbit settle" }, { type: "key", key: "Return" }] },
+};
+const scenario = scenarios[scenarioName];
+if (!scenario) throw new Error("Unknown ORBIT_MEASURE_SCENARIO " + scenarioName);
 if (!workspace || !monitor) throw new Error("Set ORBIT_MEASURE_WORKSPACE and ORBIT_MEASURE_MONITOR");
 const broker = await startBroker({ native: nativeOptionsFromEnv() });
 const rpc = (method: string, params: unknown = {}) => call(broker.socket, method, params) as Promise<any>;
 // The owner's focus decides when an output is unfocused. Retry the same request identity until it is.
 async function present(workspace: number) {
-  const requestId = crypto.randomUUID();
+  let requestId = crypto.randomUUID(), asked = monitor;
   for (let attempt = 0; attempt < 90; attempt++) {
+    // The owner moves between outputs; ORBIT_MEASURE_MONITOR=auto takes whichever is not focused right now.
+    if (process.env.ORBIT_MEASURE_MONITOR === "auto")
+      monitor = (await rpc("native.monitors")).monitors.find((entry: { focused: boolean }) => !entry.focused)?.name ?? monitor;
+    // A refusal is remembered per request; a different output is a different request.
+    if (monitor !== asked) { requestId = crypto.randomUUID(); asked = monitor; }
     try { return await rpc("native.present", { requestId, workspace, monitor }); }
-    catch (error) { if ((error as { code?: string }).code !== "PRESENTATION_NOT_READY") throw error; await Bun.sleep(2000); }
+    catch (error) { if ((error as { code?: string }).code !== "PRESENTATION_NOT_READY") throw error; if (attempt % 10 === 0) console.error("present refused:", monitor, (error as Error).message); await Bun.sleep(2000); }
   }
   throw new Error("The output stayed focused; try again when the owner is elsewhere");
 }
 let sessionId: string | undefined, target: { appId: string; windowId: string } | undefined;
-const previous = (await rpc("native.monitors")).monitors.find((entry: { name: string }) => entry.name === monitor)?.workspace as number | undefined;
+const monitorsNow = (await rpc("native.monitors")).monitors as { name: string; workspace: number; focused: boolean }[];
+if (monitor === "auto") monitor = monitorsNow.find(entry => !entry.focused)?.name;
+const previous = monitorsNow.map(entry => ({ monitor: entry.name, workspace: entry.workspace }));
 try {
   // A workspace that is already displayed needs no presentation; the owner's focus may forbid one.
   if (process.env.ORBIT_MEASURE_PRESENT !== "0") await present(workspace);
@@ -50,23 +86,29 @@ try {
   const goal = target;
   const act = (action: object) => rpc("session.act", { sessionId, requestId: crypto.randomUUID(), action: { ...goal, ...action } });
   const observe = () => rpc("session.observe", { sessionId, ...goal });
-  const settle = async () => { await act({ type: "key", key: "Escape" }); await Bun.sleep(250); };
+  const settle = async () => { await scenario.reset(act); await Bun.sleep(250); };
   await Bun.sleep(1500); // a new window is still resizing for a moment after it opens
+  const address = fixture ? `http://localhost:${fixture.port}/` : scenarioName === "site" ? process.env.ORBIT_MEASURE_URL : undefined;
+  if (address) {
+    for (const step of [{ type: "key", key: "ctrl+l" }, { type: "text", text: address }, { type: "key", key: "Return" }]) await act(step);
+    await Bun.sleep(scenarioName === "site" ? 8000 : 3000);
+  }
   const out = process.env.ORBIT_MEASURE_OUT;
   if (!out) throw new Error("Set ORBIT_MEASURE_OUT to an empty directory for frames and timings");
+  // Window geometry next to the frame size: image pixels and input coordinates must share one origin.
+  await Bun.write(`${out}/state.json`, JSON.stringify({ state: await act({ type: "state" }), first: (({ image: _image, ...rest }) => rest)(await observe()) }));
   const rows: object[] = [];
-  for (let run = 0; run < runs * 2; run++) {
+  for (let run = 0; run < runs * variants.length; run++) {
     await settle();
-    const mode = run % 2 === 0 ? "separate" : "batched";
+    const mode = variants[run % variants.length]!;
     const started = performance.now();
     let frame: { image: string }, calls: number, settleReport: unknown = null;
     if (mode === "separate") {
-      await act({ type: "text", text: "12345+6789" });
-      await act({ type: "key", key: "Return" });
-      frame = await observe(); calls = 3;
+      for (const action of scenario.actions(run)) await act(action);
+      frame = await observe(); calls = scenario.actions(run).length + 1;
     } else {
       const result = await rpc("session.act", { sessionId, requestId: crypto.randomUUID(),
-        actions: [{ type: "text", ...goal, text: "12345+6789" }, { type: "key", ...goal, key: "Return" }], capture: {} });
+        actions: scenario.actions(run).map(action => ({ ...action, ...goal })), capture: { variant: mode } });
       if (!result.ok) throw new Error("Batch failed: " + JSON.stringify(result.receipts));
       frame = result.capture; calls = 1; settleReport = result.capture.settle;
     }
@@ -90,6 +132,11 @@ try {
   // Only a window this run opened is closed; an application that was already there is left alone.
   if (sessionId && application && target) await rpc("session.act", { sessionId, requestId: crypto.randomUUID(), action: { type: "close-window", ...target } }).catch(() => {});
   if (sessionId) await rpc("session.stop", { sessionId }).catch(() => {});
-  if (previous !== undefined && process.env.ORBIT_MEASURE_PRESENT !== "0") await present(previous).catch(() => {});
+  // Every output goes back to the workspace it showed, whichever one this run presented on.
+  if (process.env.ORBIT_MEASURE_PRESENT !== "0") for (const before of previous) {
+    process.env.ORBIT_MEASURE_MONITOR = monitor = before.monitor;
+    await present(before.workspace).catch(() => {});
+  }
+  fixture?.stop(true);
   process.exit(process.exitCode ?? 0);
 }

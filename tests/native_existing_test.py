@@ -71,6 +71,8 @@ class Compositor:
             return "ok"
         if request.startswith("ghost-target-check "):
             return "ok"
+        if request.startswith("ghost-state "):
+            return json.dumps({"suspended": False, "render_unfocused": True, "geometry": [0, 0, 1, 1], "motion_active": False, "motion_ms": 0})
         if request.startswith("ghost-keyboard-prepare "):
             return json.dumps({"schema": 1, "status": "ready", "token": request.split()[2], "serial": 9})
         if request.startswith("ghost-keyboard-cancel "):

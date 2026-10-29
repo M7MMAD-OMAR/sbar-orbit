@@ -367,7 +367,7 @@ export class NativeBackend {
     return reply.sha256;
   }
 
-  async observe(value?: unknown, format: "image" | "text" | "both" = "image", settle?: { since?: string; timeoutMs: number }) {
+  async observe(value?: unknown, format: "image" | "text" | "both" = "image", settle?: { since?: string; timeoutMs: number; variant?: string }) {
     const selected = value === undefined ? this.selected : target(record(value));
     if (!selected || !this.applications.has(selected.appId))
       throw new OrbitError("INVALID_REQUEST", "Observe requires an explicit owned native target");

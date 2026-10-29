@@ -258,13 +258,13 @@ export class Sessions {
       if (action.appId !== actions[0]!.appId || action.windowId !== actions[0]!.windowId)
         throw new OrbitError("INVALID_REQUEST", "A batch acts on one window");
     }
-    let capture: { timeoutMs: number } | undefined;
+    let capture: { timeoutMs: number; variant?: string } | undefined;
     if (input.capture !== undefined) {
       const options = record(input.capture);
-      if (Object.keys(options).some(key => key !== "timeoutMs") ||
+      if (Object.keys(options).some(key => key !== "timeoutMs" && key !== "variant") ||
           (options.timeoutMs !== undefined && (typeof options.timeoutMs !== "number" || !Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 3000)))
         throw new OrbitError("INVALID_REQUEST", "capture accepts only timeoutMs, an integer from 100 to 3000");
-      capture = { timeoutMs: options.timeoutMs ?? 1500 };
+      capture = { timeoutMs: options.timeoutMs ?? 1500, ...(typeof options.variant === "string" ? { variant: options.variant } : {}) };
     }
     const fingerprint = JSON.stringify({ actions, capture });
     const existing = session.requests.get(requestId);
@@ -287,7 +287,7 @@ export class Sessions {
     session.requests.set(requestId, { fingerprint, result: kept });
     return full;
   }
-  private async runBatch(session: Session, actions: { type: string; [key: string]: unknown }[], capture: { timeoutMs: number } | undefined, requestId: string) {
+  private async runBatch(session: Session, actions: { type: string; [key: string]: unknown }[], capture: { timeoutMs: number; variant?: string } | undefined, requestId: string) {
     const target = { appId: String(actions[0]!.appId), windowId: String(actions[0]!.windowId) };
     const observing = capture === undefined ? undefined : decide(session.policy, "observe");
     let since: string | undefined;
@@ -322,7 +322,7 @@ export class Sessions {
       else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = { code: "NOT_ATTEMPTED", message: "No action ran, so there is nothing new to capture" };
       else {
         try {
-          result.capture = await session.backend.observe(target, "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs });
+          result.capture = await session.backend.observe(target, "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs, ...(capture.variant === undefined ? {} : { variant: capture.variant }) });
           this.taintedBy(session, "observe");
           void this.record(session, journalEntry({
             at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,
