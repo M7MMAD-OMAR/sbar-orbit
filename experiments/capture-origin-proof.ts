@@ -16,9 +16,25 @@ const page = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Respon
 const broker = await startBroker({ native: nativeOptionsFromEnv() });
 const rpc = (method: string, params: unknown = {}) => call(broker.socket, method, params) as Promise<any>;
 let sessionId: string | undefined, target: { appId: string; windowId: string } | undefined;
+type Monitor = { name: string; workspace: number; focused: boolean };
+const before = (await rpc("native.monitors")).monitors as Monitor[];
+// Show the workspace on whichever output the owner is not using right now; a new window there is not in their way.
+async function present() {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const quiet = ((await rpc("native.monitors")).monitors as Monitor[]).find(entry => !entry.focused);
+    if (!quiet) throw new Error("Every output is focused");
+    try { return await rpc("native.present", { requestId: crypto.randomUUID(), workspace, monitor: quiet.name }); }
+    catch (error) { if ((error as { code?: string }).code !== "PRESENTATION_NOT_READY") throw error; await Bun.sleep(1000); }
+  }
+  throw new Error("No output stayed unfocused long enough to present the workspace");
+}
 try {
-  const opened = await rpc("native.open", { requestId: crypto.randomUUID(), workspace, applicationId: application });
-  const launched = opened.opened === true ? opened : opened.candidate;
+  if (process.env.ORBIT_PROOF_PRESENT !== "0") await present();
+  // A window this run launched whose open came back uncertain can be named exactly, never guessed.
+  const named = process.env.ORBIT_PROOF_ADDRESS && process.env.ORBIT_PROOF_STABLE
+    ? { address: process.env.ORBIT_PROOF_ADDRESS, stableId: process.env.ORBIT_PROOF_STABLE } : undefined;
+  const opened = named ? undefined : await rpc("native.open", { requestId: crypto.randomUUID(), workspace, applicationId: application });
+  const launched = named ?? (opened.opened === true ? opened : opened.candidate);
   if (!launched) throw new Error("Application did not open as a new window: " + JSON.stringify(opened));
   const session = await rpc("session.create", { backend: "native", taskName: "Capture origin proof", handoff: { workspace, address: launched.address, stableId: launched.stableId } });
   sessionId = session.sessionId;
@@ -31,15 +47,15 @@ try {
   await Bun.sleep(4000);
   for (const step of [{ type: "key", key: "ctrl+l" }, { type: "text", text: `http://localhost:${page.port}/` }, { type: "key", key: "Return" }]) await act(step);
   await Bun.sleep(4000);
-  const before = await observe();
-  const { image: _image, ...meta } = before;
-  await Bun.write(`${out}/before.png`, Buffer.from(before.image, "base64"));
+  const shot = await observe();
+  const { image: _image, ...meta } = shot;
+  await Bun.write(`${out}/before.png`, Buffer.from(shot.image, "base64"));
   await Bun.write(`${out}/before.json`, JSON.stringify({ state: await act({ type: "state" }), frame: meta }));
   console.log("Saved before.png; write click.json with the image pixel to click");
   // A fresh handle each time: a Bun file object remembers that it did not exist.
   while (!(await Bun.file(`${out}/click.json`).exists())) await Bun.sleep(500);
   const pixel = await Bun.file(`${out}/click.json`).json() as { x: number; y: number };
-  const scale = before.width / before.surfaceWidth;
+  const scale = shot.width / shot.surfaceWidth;
   const at = { x: Math.round(pixel.x / scale), y: Math.round(pixel.y / scale) };
   const result = await act({ type: "click", ...at });
   await Bun.sleep(600);
@@ -53,6 +69,11 @@ try {
 } finally {
   if (sessionId && target) await rpc("session.act", { sessionId, requestId: crypto.randomUUID(), action: { type: "close-window", ...target } }).catch(() => {});
   if (sessionId) await rpc("session.stop", { sessionId }).catch(() => {});
+  for (const entry of before) {
+    const now = ((await rpc("native.monitors").catch(() => ({ monitors: [] }))).monitors as Monitor[]).find(other => other.name === entry.name);
+    if (now && now.workspace !== entry.workspace && !now.focused)
+      await rpc("native.present", { requestId: crypto.randomUUID(), workspace: entry.workspace, monitor: entry.name }).catch(() => {});
+  }
   page.stop(true);
   process.exit(process.exitCode ?? 0);
 }

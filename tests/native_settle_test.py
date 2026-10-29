@@ -2,6 +2,7 @@
 import hashlib
 from pathlib import Path
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,6 +23,7 @@ def feed(frames):
     state = {"n": 0}
 
     def capture():
+        time.sleep(0.005)  # a real capture is never instant, and the loop no longer pauses between frames
         frame = frames[min(state["n"], len(frames) - 1)]
         state["n"] += 1
         return frame, 1, 1, 0, (1, 1)
@@ -49,7 +51,7 @@ class SettleTests(unittest.TestCase):
         self.assertLess(settle["waitedMs"], 400)
 
     def test_a_frame_that_keeps_changing_stops_at_the_bound(self):
-        capture, _ = feed([bytes([n]) for n in range(200)])
+        capture, _ = feed([n.to_bytes(2, "big") for n in range(2000)])
         *_, settle = NativeSession._settle(capture, capture(), options(since=digest(b"x")))
         self.assertEqual((settle["settled"], settle["changed"]), (False, True))
         self.assertLess(settle["waitedMs"], 900)

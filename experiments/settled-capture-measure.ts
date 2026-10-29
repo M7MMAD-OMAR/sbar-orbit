@@ -12,7 +12,7 @@ import { nativeOptionsFromEnv } from "../src/native-worker";
  *
  * ORBIT_MEASURE_VARIANTS is a comma list; the runs rotate through it, so every variant sees the same
  * machine load. "separate" is text, key, observe (a fourth call when the first frame was stale). Any other
- * name is one act with capture and that settle variant. ORBIT_MEASURE_SCENARIO is calculator (default),
+ * name is one act with capture and quiet period, q100 for quietMs 100. ORBIT_MEASURE_SCENARIO is calculator (default),
  * editor, dolphin or browser. Frames and timings are written to ORBIT_MEASURE_OUT;
  * settled-capture-analyze.py judges each frame against an observe taken 900 ms later, outside the timing.
  */
@@ -108,7 +108,7 @@ try {
       frame = await observe(); calls = scenario.actions(run).length + 1;
     } else {
       const result = await rpc("session.act", { sessionId, requestId: crypto.randomUUID(),
-        actions: scenario.actions(run).map(action => ({ ...action, ...goal })), capture: { variant: mode } });
+        actions: scenario.actions(run).map(action => ({ ...action, ...goal })), capture: { quietMs: Number(mode.replace(/^q/, "")) } });
       if (!result.ok) throw new Error("Batch failed: " + JSON.stringify(result.receipts));
       frame = result.capture; calls = 1; settleReport = result.capture.settle;
     }

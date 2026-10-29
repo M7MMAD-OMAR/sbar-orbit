@@ -1,7 +1,5 @@
 """Cooperative native session routing through owned applications and windows."""
 import base64
-import collections
-import concurrent.futures
 import copy
 import hashlib
 import json
@@ -165,21 +163,6 @@ def bounded_capture(argv, environment, diagnostics, raster=False):
     return result
 
 
-TUNES = {
-    "classic": {"sleep": 0.02},
-    "nosleep": {"sleep": 0},
-    "q100": {"sleep": 0, "quiet": 0.1},
-    "q60": {"sleep": 0, "quiet": 0.06},
-    "pipe2": {"depth": 2, "stagger": 0.02},
-    "pipe3": {"depth": 3, "stagger": 0.015},
-    "pipe2q100": {"depth": 2, "stagger": 0.02, "quiet": 0.1},
-    "pipe3q100": {"depth": 3, "stagger": 0.015, "quiet": 0.1},
-    "pipe3q60": {"depth": 3, "stagger": 0.015, "quiet": 0.06},
-}
-for _tune in TUNES.values():
-    _tune.setdefault("depth", 1)
-
-
 class NativeSession:
     """A fixed host and controller, with no agent-facing settings mutation."""
 
@@ -224,7 +207,7 @@ class NativeSession:
                   "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
-        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "variant"}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -270,65 +253,43 @@ class NativeSession:
         for name, low, high in (("timeoutMs", 100, 3000), ("quietMs", 20, 1000), ("graceMs", 0, 2000)):
             if name in result and (type(result[name]) is not int or not low <= result[name] <= high):
                 raise SessionError(f"{name} must be an integer from {low} to {high}")
-        if "variant" in result and result["variant"] not in TUNES:
-            raise SessionError("Unknown settle variant")
         if "timeoutMs" in result:
-            result.setdefault("quietMs", 200)
+            result.setdefault("quietMs", 100)
             result.setdefault("graceMs", 300)
         elif "since" in result or "quietMs" in result or "graceMs" in result:
             raise SessionError("Settle options require timeoutMs")
 
     @staticmethod
-    def _settle(capture, first, action, pipeline=None):
+    def _settle(capture, first, action):
         """Re-capture until the window stops changing, bounded by timeoutMs.
 
         Two identical frames are not enough: a slow redraw leaves two identical OLD frames. With a
         baseline digest the frame must first differ from it and then hold still for quietMs. A frame
         that never leaves the baseline is returned after graceMs with changed false, which is what a
         move or a click on nothing really looks like. Every outcome is reported, never assumed.
+        Frames are taken back to back: a capture itself takes 25 to 70 ms, so a pause between them
+        only delays the answer.
         """
-        tune = TUNES[action.get("variant", "classic")]
         since, started = action.get("since"), time.monotonic()
-        limit, grace = action["timeoutMs"] / 1000, action["graceMs"] / 1000
-        quiet = tune.get("quiet", action["quietMs"] / 1000)
-        depth = tune["depth"] if pipeline else 1
+        limit, quiet, grace = action["timeoutMs"] / 1000, action["quietMs"] / 1000, action["graceMs"] / 1000
         current, captures = first, 1
         digest = hashlib.sha256(current[0]).hexdigest()
         stable_since = time.monotonic()
-        inflight, launched = collections.deque(), 0.0
-        pool = concurrent.futures.ThreadPoolExecutor(depth) if depth > 1 else None
-        try:
-            while True:
-                now = time.monotonic()
-                changed = None if since is None else digest != since
-                if changed is False:
-                    ready = now - started >= grace
-                else:
-                    ready = now - stable_since >= quiet
-                if ready or now - started >= limit:
-                    return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
-                                       "waitedMs": int((now - started) * 1000)})
-                if pool is None:
-                    time.sleep(tune["sleep"])
-                    current = capture()
-                else:
-                    while len(inflight) < depth and time.monotonic() - launched >= tune["stagger"]:
-                        inflight.append(pipeline[0](pool))
-                        launched = time.monotonic()
-                    wait = max(0.001, launched + tune["stagger"] - time.monotonic()) if len(inflight) < depth else None
-                    if not concurrent.futures.wait([inflight[0][0]], timeout=wait).done:
-                        continue
-                    frame = pipeline[1](inflight.popleft())
-                    if frame is None:
-                        continue  # the window resized under that capture; it proves nothing
-                    current = frame
-                captures += 1
-                latest = hashlib.sha256(current[0]).hexdigest()
-                if latest != digest:
-                    digest, stable_since = latest, time.monotonic()
-        finally:
-            if pool is not None:
-                pool.shutdown(wait=False)
+        while True:
+            now = time.monotonic()
+            changed = None if since is None else digest != since
+            if changed is False:
+                ready = now - started >= grace
+            else:
+                ready = now - stable_since >= quiet
+            if ready or now - started >= limit:
+                return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
+                                   "waitedMs": int((now - started) * 1000)})
+            current = capture()
+            captures += 1
+            latest = hashlib.sha256(current[0]).hexdigest()
+            if latest != digest:
+                digest, stable_since = latest, time.monotonic()
 
     def _ensure_pointer(self, target, address):
         """Visible render-only presence, with no pointer or keyboard input."""
@@ -400,8 +361,8 @@ class NativeSession:
                                "XDG_RUNTIME_DIR": self.plan["runtime"],
                                "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
 
-                def begin(pool=None):
-                    """Everything before the pixels leave the compositor; with a pool, grim runs on a thread."""
+                def begin():
+                    """Everything before the pixels leave the compositor, then the capture itself."""
                     self._ensure_pointer(target, address)
                     captured = int(time.time() * 1000)
                     surface_size = tuple(target["size"])
@@ -412,15 +373,11 @@ class NativeSession:
                     margin = geometry is not None and (geometry[0] != 0 or geometry[1] != 0)
                     arguments = (["/usr/bin/grim"] + (["-t", "ppm"] if margin else []) + ["-T", target["key"][1], "-"],
                                  environment, log, margin)
-                    if pool is None:
-                        return bounded_capture(*arguments), captured, surface_size, geometry
-                    return pool.submit(bounded_capture, *arguments), captured, surface_size, geometry
+                    return bounded_capture(*arguments), captured, surface_size, geometry
 
                 def finish(handle):
                     """Verify the target after the pixels; None when the window resized under this capture."""
                     pixels, captured, surface_size, geometry = handle
-                    if isinstance(pixels, concurrent.futures.Future):
-                        pixels = pixels.result()
                     image, width, height = pixels
                     verify_host(self.plan)
                     self._target(app_id, action["windowId"])
@@ -455,7 +412,7 @@ class NativeSession:
                 settle = None
                 if "timeoutMs" in action:
                     image, width, height, captured, surface_size, settle = self._settle(
-                        capture, (image, width, height, captured, surface_size), action, (begin, finish))
+                        capture, (image, width, height, captured, surface_size), action)
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],

@@ -381,7 +381,7 @@ window, in order) and `capture` (a screenshot taken after the window stops chang
 the same policy, lease and guarded target checks as a lone action; all are judged before the first input
 is delivered. The first failure stops the list. Later actions report `not-attempted`, and a lost reply
 reports `uncertain` and is never resent. One receipt is returned per action. The capture takes a digest of
-the window before the first input, then polls until the frame differs from it and holds still for 200 ms,
+the window before the first input, then polls until the frame differs from it and holds still for `capture.quietMs` (100 ms since the latency round below; 200 ms in the measurements above),
 bounded by `capture.timeoutMs` (default 1500). Two identical frames alone are not accepted, because a slow
 redraw leaves two identical old frames. The result reports `settled`, `changed`, `captures` and `waitedMs`;
 `changed: false` after a 300 ms grace means nothing visibly happened, which is normal for a move. A replay
@@ -411,3 +411,74 @@ changes the bytes of an otherwise finished frame. That check was replaced, so th
 comparable and are not reported. One application, one workload, one machine; an application that animates
 continuously never settles and returns after `timeoutMs` with `settled: false`. A change smaller than the
 caret blink after the first visible change can be missed.
+
+### Latency round, 29 October 2026 (browsers, Text Editor)
+
+Goal: cut the wait without returning stale or half drawn frames. Calculator was dropped at the owner's
+request; the numbers above stay as history. Method as above (frame judged against an observe 900 ms later,
+stale when more than 0.2 percent of 8 pixel blocks differ, plus a strict count of more than 12 blocks),
+variants rotated run by run, a private broker from this checkout, the original installed application on the
+workspace the unfocused output already showed. The window this run opened was closed afterwards. The tooling
+is `experiments/settled-capture-measure.ts` (ORBIT_MEASURE_SCENARIO, ORBIT_MEASURE_VARIANTS) and
+`experiments/settled-capture-analyze.py`. In the tables, classic is the previous loop (20 ms pause between
+captures, quiet 200 ms), qN is no pause and quiet N ms, pipe3 is three captures in flight 15 ms apart.
+
+| App and page | Variant | Runs | Stale | Unsettled | Median ms | p95 ms | Waited ms | Captures |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Chromium, local fixture | classic | 15 | 0 | 0 | 1074 | 2517 | 852 | 11 |
+| Chromium, local fixture | q100 | 15 | 0 | 0 | 769 | 4301 | 491 | 8 |
+| Chromium, local fixture | q60 | 15 | 7 | 0 | 573 | 5600 | 267 | 5 |
+| Chromium, local fixture | pipe3 with q100 | 15 | 2 | 0 | 707 | 2759 | 496 | 14 |
+| Chromium, final code | q200 | 15 | 0 | 1 | 1006 | 3094 | 770 | 11 |
+| Chromium, final code | q100 (new default) | 15 | 0 | 0 | 678 | 3937 | 486 | 9 |
+| Text Editor | classic | 8 | 0 | 0 | 432 | 1062 | 265 | 5 |
+| Text Editor | q100 | 8 | 0 | 0 | 261 | 1248 | 118 | 3.5 |
+| Text Editor | pipe3 | 8 | 0 | 0 | 426 | 1463 | 240 | 8 |
+| Text Editor | pipe3 with q100 | 8 | 0 | 0 | 262 | 854 | 116 | 4 |
+
+The fixture paints a list 80 ms after Enter and fades a panel in over 250 ms, so it is a hard case for a short
+quiet period. Stale is 0 on both counts in every kept row. With 8 or 15 runs the p95 is the slowest run or
+two; the slow runs of 1 to 4 s are in every variant and in the Text Editor case the wait itself was 260 ms of
+a 1062 ms run, so they come from outside the settle loop and are not explained here.
+
+Kept: no pause between captures and a default quiet period of 100 ms (`capture.quietMs`, 20 to 1000, raise it
+for a page that repaints after a pause). Median 1006 to 678 ms on Chromium (about 33 percent) and 432 to 261 ms
+on Text Editor (about 40 percent). Stale frames stayed 0, including for the two identical old frames rule,
+which is unchanged: the frame must differ from the baseline first.
+
+Not kept, measured. Pipelined captures (three in flight at once): no gain
+alone (426 against 432 ms), and with q100 two stale frames of 15 on Chromium that the plain q100 did not
+have, so the code was removed. A 60 ms quiet period (what a shorter quiet after a large change would be):
+7 of 15 stale on Chromium; adaptive quiet (idea b) is therefore unsafe on this fixture and was not built.
+A capture costs 25 to 70 ms by itself (grim on a 1 pixel region still takes 62 ms, so pixel count is not the
+cost), which is why polling faster than the capture time buys nothing and the 20 ms pause only added delay.
+
+Not done, with the reason. (c) Compositor damage events: the ghost cursor plugin only calls damage for its own
+rendering and exposes no frame or damage event; a wlr or ext screencopy client with damage needs a native
+Wayland client that Python does not have here, so this was not tried. (e) A region of interest: `orbit_narrow`
+narrows permissions, not a region, so there is no such option; since capture time does not depend on size it
+would only help windows that never settle. (d) The time outside the wait, call minus waited, was about
+145 ms (Text Editor q100: 261 minus 118) for the baseline capture, input delivery and the IPC. The baseline
+must be taken before the first input for the stale rule to hold, so only its 25 to 70 ms could overlap and
+that was not attempted. Dolphin: the run failed on Return in the location bar with a native uncertain error
+before any timing, and Firefox, Chrome and VS Code were not measured because Firefox was leased by another
+session (APPLICATION_BUSY) and the owner was working in the others. The reduced scope is therefore Chromium
+and Text Editor on one machine, 8 to 15 runs.
+
+### Capture origin: image pixels and input coordinates (29 October 2026)
+
+Firefox draws client side margins: `state` reports window 960x640, surface 1008x688, geometry [24, 21, 960, 640].
+The plugin maps input into the geometry, while the capture started at the surface origin, so a point read off an
+image landed 24 by 21 pixels from where the same coordinates clicked. A window whose geometry is not at 0, 0
+is now captured as a raster, cropped to the geometry (scaled for the output scale) and re-encoded as PNG; the
+cropped width and height are what `width`, `height`, `surfaceWidth` and `surfaceHeight` report, so the scale
+stays exact. A window at 0, 0 (Chromium) takes the old path unchanged, and a window with no readable state is
+captured uncropped. The capture only holds the window sized area, so the margin at the right and bottom edge is
+not in it: the visible part is the geometry minus that strip (936 by 618.75 of 960 by 640 on this window).
+Measured live on Firefox: the uncropped capture was 1280x853 and showed the margin; the cropped one was
+1248x825 with surfaceWidth 936 and began at the browser chrome. Tests with a fake geometry offset, a fractional
+scale, an out of range geometry and unreadable state are in `tests/native_settle_test.py`.
+
+Not proven: the click on the 43 by 19 pixel "hover" link read straight off the capture. Firefox was leased by
+another session when the proof ran, so `experiments/capture-origin-proof.ts` stopped at APPLICATION_BUSY.
+The next run should use that script.

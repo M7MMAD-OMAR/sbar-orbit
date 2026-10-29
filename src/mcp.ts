@@ -43,7 +43,7 @@ const nativeBatchAction = z.union([
 ]);
 export const orbitBatchShape = {
   actions: z.array(nativeBatchAction).min(1).max(16).optional().describe("Instead of action: up to 16 move, click, scroll, text or key actions on ONE window, run in order. Each passes the same lease, policy and target checks as a single action. The first failure stops the list and later actions report not-attempted; uncertain means delivery may have happened, so inspect and never resend it. Returns one receipt per action."),
-  capture: z.object({ timeoutMs: z.number().int().min(100).max(3000).optional() }).strict().optional().describe("Also return a screenshot taken after the window stops changing (bounded by timeoutMs, default 1500). capture.settle says whether it settled and whether the frame differs from the one before the actions; changed false means nothing visibly happened. Replaces a separate orbit_observe. A replay of the same requestId returns receipts and no image."),
+  capture: z.object({ timeoutMs: z.number().int().min(100).max(3000).optional(), quietMs: z.number().int().min(20).max(1000).optional() }).strict().optional().describe("Also return a screenshot taken after the window stops changing (bounded by timeoutMs, default 1500; it must hold still for quietMs, default 100, raise it for pages that repaint after a pause). capture.settle says whether it settled and whether the frame differs from the one before the actions; changed false means nothing visibly happened. Replaces a separate orbit_observe. A replay of the same requestId returns receipts and no image."),
 };
 
 export function createMcpServer(socket: string) {
