@@ -6,13 +6,15 @@ import re
 import time
 import uuid
 
-from .host import HostError, deadline_timeout
+from .host import HostError, UnsupportedText, deadline_timeout
 
 _PRODUCER = uuid.uuid4().hex
 _SEQUENCE = itertools.count(1)
 _SEQUENCE_LOCK = threading.Lock()
 
 KEYBOARD_ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex"})
+# The plugin builds every stroke before it sends the first one, so this refusal means nothing was typed.
+UNTYPEABLE = re.compile(r"no key for U\+[0-9A-F]{4,6} in the seat keymap")
 TARGET = re.compile(r"0x[0-9a-f]{1,16}@[0-9a-f]{1,16}@(?:lease-[0-9a-fA-F]{32}|orbit-native-[0-9a-f]{32}\.scope)")
 
 
@@ -78,6 +80,8 @@ def prepared_input(request, exchange, deadline):
         deadline_timeout(deadline)
         response = exchange(f"{commit_command} {handle} {token} {payload}", deadline)
         acknowledged = input_acknowledged(command, response)
+        if command != "ghost-key" and UNTYPEABLE.fullmatch(response.strip()):
+            raise UnsupportedText("Text contains a character with no key in the seat keyboard layout")
         return response
     finally:
         # Cancellation targets only this token and never sends input. It also

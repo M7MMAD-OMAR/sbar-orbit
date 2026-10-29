@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orbit web flows fixture</title>
+<style>
+body{font:16px sans-serif;margin:0;color:#111}
+header{position:sticky;top:0;background:#223;color:#fff;padding:10px 16px;z-index:5;display:flex;gap:16px;align-items:center}
+header a{color:#9cf}
+main{padding:16px;max-width:760px}
+section{margin:0 0 32px;padding:12px;border:1px solid #ccc}
+label{display:block;margin:6px 0}
+input[type=text],textarea,select{font:inherit;padding:4px;min-width:260px}
+button{font:inherit;padding:6px 12px}
+.menu{position:relative;display:inline-block}
+.menu .items{display:none;position:absolute;top:100%;left:0;background:#eee;border:1px solid #888;min-width:160px}
+.menu:hover .items{display:block}
+.menu .items a{display:block;padding:6px 10px;color:#111;cursor:pointer}
+#list{height:200px;overflow:auto;border:1px solid #888}
+#list div{padding:6px;border-bottom:1px solid #ddd}
+.drag{display:inline-block;width:90px;height:50px;background:#fc6;text-align:center;line-height:50px;cursor:grab}
+#drop{display:inline-block;width:160px;height:80px;border:2px dashed #666;vertical-align:top;margin-left:30px;text-align:center;line-height:80px}
+dialog{padding:20px;border:2px solid #223}
+#spacer{height:1400px;background:linear-gradient(#fff,#cde)}
+iframe{width:100%;height:90px;border:1px solid #888}
+</style></head><body>
+<header><strong>Fixture</strong><a href="#form">form</a><a href="#hover">hover</a><a href="#scroll">list</a><a href="#target">target</a><span id="status">status: idle</span></header>
+<main>
+<section id="form"><h2>Form</h2>
+<form id="f" onsubmit="event.preventDefault();document.getElementById('submitted').textContent='submitted: '+JSON.stringify(Object.fromEntries(new FormData(this)));">
+<label>Name <input type="text" id="name" name="name" autocomplete="off"></label>
+<label>Notes <textarea id="notes" name="notes" rows="3"></textarea></label>
+<label>Colour <select id="colour" name="colour"><option value="">choose</option><option>red</option><option>green</option><option>blue</option></select></label>
+<label><input type="checkbox" id="agree" name="agree"> Agree</label>
+<label><input type="radio" name="size" value="s"> Small</label>
+<label><input type="radio" name="size" value="l"> Large</label>
+<button type="submit" id="submit">Submit local form</button>
+<p id="submitted">not submitted</p></form></section>
+<section id="modal-section"><h2>Modal</h2>
+<button id="open-modal">Open dialog</button><span id="modal-state"> closed</span>
+<dialog id="dlg"><p>Modal dialog body</p><button id="close-modal">Close dialog</button></dialog></section>
+<section id="hover"><h2>Hover</h2>
+<div class="menu"><button id="menu-btn">Menu</button><div class="items"><a id="item-a" onclick="document.getElementById('menu-out').textContent='picked A'">Item A</a><a id="item-b" onclick="document.getElementById('menu-out').textContent='picked B'">Item B</a></div></div>
+<span id="menu-out">no pick</span>
+<p><span id="tip" title="Tooltip text for the fixture">Hover for a tooltip</span></p></section>
+<section id="scroll"><h2>Infinite list</h2><div id="list"></div><p id="list-count">0 rows</p></section>
+<section id="dnd"><h2>Drag and drop</h2>
+<span class="drag" id="drag" draggable="true">drag me</span><span id="drop">drop here</span></section>
+<section id="file"><h2>File input</h2><input type="file" id="file-input"></section>
+<section id="frame-section"><h2>Iframe</h2><iframe src="/frame" id="frame" title="frame"></iframe></section>
+<section id="lazy"><h2>Lazy content</h2><div id="lazy-box">waiting for scroll</div></section>
+<div id="spacer"></div>
+<section id="target"><h2>Scroll target</h2><button id="target-btn" onclick="document.getElementById('target-out').textContent='target reached and clicked'">Target button</button><p id="target-out">target idle</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+$('open-modal').onclick=()=>{$('dlg').showModal();$('modal-state').textContent=' open'};
+$('close-modal').onclick=()=>{$('dlg').close();$('modal-state').textContent=' closed'};
+$('dlg').addEventListener('close',()=>{$('modal-state').textContent=' closed'});
+let n=0;const list=$('list');
+function more(){for(let i=0;i<20;i++){const d=document.createElement('div');d.textContent='Row '+(++n);list.appendChild(d)}$('list-count').textContent=n+' rows'}
+more();list.addEventListener('scroll',()=>{if(list.scrollTop+list.clientHeight>=list.scrollHeight-20)more()});
+$('drag').addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain','x'));
+$('drop').addEventListener('dragover',e=>e.preventDefault());
+$('drop').addEventListener('drop',e=>{e.preventDefault();$('drop').textContent='dropped'});
+let lazy=false;new IntersectionObserver(es=>{if(es[0].isIntersecting&&!lazy){lazy=true;$('lazy-box').textContent='loading';fetch('/lazy-content').then(r=>r.text()).then(t=>$('lazy-box').innerHTML=t)}}).observe($('lazy-box'));
+$('file-input').addEventListener('change',()=>{$('status').textContent='status: file chosen'});
+$('file-input').addEventListener('cancel',()=>{$('status').textContent='status: file cancelled'});
+</script></body></html>

@@ -17,6 +17,10 @@ class HostError(RuntimeError):
     pass
 
 
+class UnsupportedText(HostError):
+    """The plugin refused text before sending any key: a character has no key in the seat keymap."""
+
+
 def component(value):
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", value) or value in (".", ".."):
         raise HostError("Invalid compositor endpoint component")
