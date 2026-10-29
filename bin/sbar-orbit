@@ -197,7 +197,7 @@ HELP
     export ORBIT_LAUNCHER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
     exec "$orbit_bun" run "$orbit_root/src/$orbit_entry.ts" "$@"
     ;;
-  native-settings|native-prepare|native-plugin|native-refresh)
+  native-settings|native-prepare|native-plugin|native-refresh|native-leases)
     [ "$orbit_uname" = "Linux" ] || orbit_refuse_desktop "$1"
     exec "$orbit_bun" run "$orbit_root/scripts/limited.ts" "$orbit_bun" run "$orbit_root/src/cli.ts" "$@"
     ;;
