@@ -336,6 +336,39 @@ a 200 row scrolling list, Chrome window 960 by 640 at scale 1.5):
 Not measured: Electron apps with the tree on (the Claude and Hermes windows were stubs and were not
 changed), Wayland fractional scales other than 1.5 for web content.
 
+## Window frame origin and the chrome://accessibility route (29 October 2026)
+
+Coordinate space. Gecko (and any toolkit with client side margins) reports WINDOW extents in surface
+space: a Firefox window with `geometry [24, 21, 960, 640]` in a 1008 by 688 surface returns its frame at
+`[24, 21, 960, 640]` and every control 24 and 21 pixels further right and down than where `click`
+lands, because the plugin maps click coordinates into the geometry. The dump now rebases every box to the
+top left of the window frame (`origin` in the result is the subtracted offset, null when the frame is at
+0, 0). Live, on the web flows fixture in the owner's Firefox, workspace 4, scale 1.5 (new window, closed
+afterwards): the nav link `hover` (43 by 34) came back as `[141, 83, 43, 34]`, was clicked at its center
+(162, 100) and navigated to `#hover` at once; before the change that box was `[165, 104, ...]` and a click at its
+center landed 24 and 21 pixels off. Chromium frames and GTK4 frames (Text Editor, Nautilus, File Roller)
+report origin 0, so nothing changed for them; no GTK window with client side shadows was available (no
+GTK3 app installed), so that case is covered by the fake geometry test only.
+The screenshot of such a window still starts at the surface origin until the capture crop is fixed by the
+settle work; text boxes already match click space.
+
+chrome://accessibility end to end, in a Chrome process I started with its own temporary profile (the
+owner's running Chrome was not touched), a window on workspace 6, scale 1.33. The window was opened on
+`https://en.wikipedia.org/wiki/Linux` without any flag, so the tree was a stub (`accessible window has no
+visible content`). In a second tab `chrome://accessibility` was opened and the checkboxes "Native
+accessibility API support" and "Web accessibility" were ticked by clicking their centers, then the
+first tab was selected again. The page showed "Active assistive technology: Uninitialized"
+before. Afterwards the text observation was a full tree, device scale detected as 1.333:
+
+| | Bytes | Median (15 runs) | Notes |
+| --- | --- | --- | --- |
+| Screenshot (grim PNG) | 259042 | 50 ms | |
+| Text observation | 9715 | 178 ms | 134 nodes, not truncated |
+
+So text is 27 times smaller and 3.6 times slower to produce. The small link `Unix` (33 by 19 logical
+pixels, fractional scale) was clicked at its returned center and the page navigated to Unix. The window
+and its process were closed afterwards, which resets the switches.
+
 ## Settled capture and action batching
 
 Measured 29 October 2026 on original installed GNOME Calculator, opened with `orbit_open` on the

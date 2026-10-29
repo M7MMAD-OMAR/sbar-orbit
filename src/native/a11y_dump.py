@@ -154,6 +154,7 @@ def read_text(node, Atspi):
 def walk(frame, Atspi, max_nodes, deadline):
     """Depth first, document order, with every bound enforced on the way in."""
     nodes, stats = [], {"visited": 0, "truncated": None, "recalibrated": 0}
+    origin = [0, 0]
     stack = [(frame, 0, (), False, 1.0)]
     while stack:
         if time.monotonic() > deadline:
@@ -180,6 +181,12 @@ def walk(frame, Atspi, max_nodes, deadline):
             stats["deviceScale"] = unit if unit != 1.0 else stats.get("deviceScale")
         if raw is not None:
             raw = scaled(raw, unit)
+            if depth == 0:
+                # Some toolkits (Gecko, GTK with client side shadows) report window extents in surface space,
+                # so the frame itself sits at the margin. Clicks are mapped from the window frame, not the surface.
+                origin = [raw[0], raw[1]]
+                stats["origin"] = origin if origin != [0, 0] else None
+            raw = [raw[0] - origin[0], raw[1] - origin[1], raw[2], raw[3]]
             box, moved = anchor(raw, chain, scrolling)
             stats["recalibrated"] += moved
             chain = chain + ((raw, box),)
@@ -291,7 +298,7 @@ def main(argv):
         return {"status": "unavailable", "reason": "accessible window has no visible content"}
     return {"status": "ok", "toolkit": clean(app.get_toolkit_name() or "", 24), "nodes": nodes,
             "visited": stats["visited"], "truncated": stats["truncated"],
-            "recalibrated": stats["recalibrated"], "deviceScale": stats.get("deviceScale"),
+            "recalibrated": stats["recalibrated"], "origin": stats.get("origin"), "deviceScale": stats.get("deviceScale"),
             "ms": int((time.monotonic() - started) * 1000)}
 
 

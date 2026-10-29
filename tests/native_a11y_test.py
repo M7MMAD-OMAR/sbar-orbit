@@ -144,6 +144,21 @@ class DumpTests(unittest.TestCase):
         self.assertNotIn("text", nodes[1])
 
 
+    def test_extents_in_surface_space_are_rebased_to_the_window_frame(self):
+        # Gecko and client side shadow windows report the frame at the margin (24, 21) of the surface, while
+        # clicks are mapped from the window frame, so every box must lose that origin.
+        link = Node("link", "hover", (165, 104, 43, 34), actions=1)
+        nodes, stats = self.walk(Node("frame", "Firefox", (24, 21, 960, 640), children=[link]))
+        self.assertEqual(nodes[0]["box"], [0, 0, 960, 640])
+        self.assertEqual(nodes[1]["box"], [141, 83, 43, 34])
+        self.assertEqual(stats["origin"], [24, 21])
+
+    def test_a_frame_at_the_origin_changes_nothing(self):
+        nodes, stats = self.walk(Node("frame", "App", (0, 0, 400, 300), children=[Node("push button", "A", (30, 30, 50, 20))]))
+        self.assertEqual(nodes[1]["box"], [30, 30, 50, 20])
+        self.assertIsNone(stats["origin"])
+
+
 class WorkerHelperTests(unittest.TestCase):
     def test_window_identity_needs_matching_address_and_stable_id(self):
         clients = [{"address": "0x1", "stableId": "a", "pid": 42, "title": "T"}, {"address": "0x2", "stableId": "b", "pid": 7, "title": "U"}]
