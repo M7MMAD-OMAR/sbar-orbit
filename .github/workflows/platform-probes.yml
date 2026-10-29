@@ -1,0 +1,37 @@
+name: Platform probes
+
+# Manual only. Runs every TypeScript unit test file on its own on Windows and macOS runners and
+# records one line per file, so a platform regression names the file instead of hiding in one
+# red number. This is a source and service contract run: it controls no desktop application and
+# certifies no native control on either platform.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  per-file-tests:
+    name: Unit tests per file (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Run each test file separately
+        shell: bash
+        run: bun run scripts/platform-test-report.ts "${{ matrix.os }}"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-tests-${{ matrix.os }}
+          path: output/platform-tests/
