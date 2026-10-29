@@ -41,13 +41,18 @@ GROUP_TERMS = {
 }
 
 
-def setting(key, group, label, default, kind, description, terms, choices=None, bounds=None, stored=True):
+def setting(key, group, label, default, kind, description, terms, choices=None, bounds=None, stored=True, applies="now"):
     """One setting. `stored` is false for the ones that are not ours to store: whether Orbit starts with
     the desktop is systemd's answer and an autostart entry's, and keeping a copy of it here would be a
-    second opinion about a thing that already has one."""
+    second opinion about a thing that already has one.
+
+    `applies` says when a change reaches the thing it changes: "now" for what the running panel reloads
+    from the file, "handoff" for what the worker reads once when it takes a window (the glow settings,
+    per docs/desktop-guide.md). A page that draws the setting says which, instead of a switch that
+    appears to do nothing."""
     return {"key": key, "group": group, "label": label, "default": default, "kind": kind,
             "description": description, "terms": tuple(terms), "choices": choices, "bounds": bounds,
-            "stored": stored}
+            "stored": stored, "applies": applies}
 
 
 # The Arabic of every word this file owns, keyed by the English it translates. It lives here rather
@@ -147,18 +152,20 @@ SCHEMA = (
     setting("frame", "Working glow", "Glow the screen edges while working", True, "switch",
             "A soft glow inside the edges of the screen while an agent is working, with no border and nothing to click through.",
             ["glow", "frame", "edge", "border", "halo", "light", "working", "signal", "aura",
-             "توهج", "إضاءة", "إطار", "حواف", "هالة", "أثناء العمل"]),
+             "توهج", "إضاءة", "إطار", "حواف", "هالة", "أثناء العمل"],
+            applies="handoff"),
     setting("framePulse", "Working glow", "Breathe while working", True, "switch",
             "The glow rises and falls while work is in flight. Separable from the glow itself, because motion is the part that costs.",
             ["pulse", "breathe", "animate", "animation", "blink", "motion", "throb", "fade",
-             "نبض", "تنفس", "حركة", "وميض", "تلاشي"]),
+             "نبض", "تنفس", "حركة", "وميض", "تلاشي"],
+            applies="handoff"),
     setting("frameColor", "Working glow", "Glow colour", "#255fce", "accent_color",
             "Orbit's blue by default, the colour the agent pointer is drawn in. The word accent follows the desktop theme instead, light and dark, and any colour here overrides both.",
             ["accent", "theme", "colour", "color", "blue", "glow", "match", "desktop", "matugen",
              "لون", "أزرق", "تمييز", "ثيم", "سمة", "توهج", "سطح المكتب"],
             # The word this colour also accepts, said here rather than known only by `coerce`: a reader
             # that draws the control cannot offer a value the schema never mentions.
-            choices=("accent",)),
+            choices=("accent",), applies="handoff"),
     setting("motion", "Motion and blending", "Liquid motion", True, "switch",
             "The card is pulled out of the capsule rather than appearing. Turning it off removes the animation, not the card.",
             ["motion", "animation", "liquid", "morph", "smooth", "still", "performance", "cost",
@@ -339,6 +346,7 @@ def wording(entry):
     """What a setting is called, in both languages. A reader that draws these picks one; a reader that
     prints them at a terminal uses the English and never sees the rest."""
     return {"key": entry["key"], "group": entry["group"], "label": entry["label"], "description": entry["description"],
+            "applies": entry["applies"],
             "arabic": {field: ARABIC[entry[field]] for field in ("group", "label", "description") if entry[field] in ARABIC}}
 
 
