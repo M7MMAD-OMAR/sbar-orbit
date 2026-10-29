@@ -227,10 +227,20 @@ Whether a box center lands on the right control, checked by cropping a screensho
   center. A control smaller than about 24 pixels in that region could be missed. GTK4 reports some extents
   with a container margin, and Orbit does not correct it.
 
+Live click check, 29 October 2026, through the loaded plugin on workspace 4 (workspace 8 was not displayed on
+any monitor, and presenting it would have replaced the owner's workspace 1 output). GNOME Calculator was
+opened with `orbit_open`, handed off, and observed with `format: text` through the broker
+(`session.observe`). The centers of the returned boxes for `7`, `+`, `3` and `=` were clicked in that order
+with `session.act`. The window showed `7+3` and the result `10` in a screenshot, so all four clicks landed on
+the intended control. The same session measured, over the broker (JSON payload, 10 runs): image 56826 bytes,
+median 87 ms; text 2936 bytes, median 203 ms. The boxes were again about 13 logical pixels right and down of
+the visible button centers, and every click still fell inside its button. No coordinate correction was added,
+because the offset is a toolkit reporting artifact that differs by container (Backspace and the Qt apps had
+none) and a blanket shift would break those. The window was closed with `close-window` and the session
+stopped.
+
 Limits, stated plainly:
 
-- A live click through the native plugin at a returned center was not run: handoff returned
-  `NATIVE_INCOMPATIBLE` because another task had edited the plugin source and the loaded plugin was stale.
 - Chromium and Electron apps (Chrome, Chromium, Claude Desktop, VS Code on this machine) expose an empty
   stub tree until an assistive technology enables accessibility, so they fall back to the screenshot.
   Orbit does not change the owner's accessibility settings or relaunch the browser to force it.
