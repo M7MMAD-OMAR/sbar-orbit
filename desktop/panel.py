@@ -185,6 +185,8 @@ BASE_CSS = b"""
 """
 # The pages the panel can show besides the list. Each lives in a module of its own, imported only when
 # asked for, so a missing or broken page costs its footer entry and nothing else.
+# How tall the area for About and Settings is at least, in pixels.
+PAGE_HEIGHT = 520
 PAGES = {"about": ("panel_about", "build_about_page"), "settings": ("panel_settings", "build_settings_page")}
 
 
@@ -270,6 +272,7 @@ class Panel(Gtk.Application):
         self.stopping = False
         # Session controls. Held here rather than on widgets, so the list can be updated in place
         # without losing which Stop is awaiting its answer or which action is in flight.
+        self.language = language()
         self.closed = []
         self.busy = set()
         self.notes = {}
@@ -1035,6 +1038,10 @@ class Panel(Gtk.Application):
         # the height of its narrowest wrapping, which is taller than it will be.
         width = max(content.get_width(), content.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
         wanted = content.measure(Gtk.Orientation.VERTICAL, width)[1]
+        if name == "page":
+            # A page from another module scrolls inside itself and so measures only its floor; give it
+            # a working area of its own instead of the floor.
+            wanted = max(wanted, PAGE_HEIGHT)
         scroller.set_min_content_height(min(560, wanted))
         if self.measured.get(name) != wanted:
             self.measured[name] = wanted
