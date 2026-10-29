@@ -77,7 +77,7 @@ CSS = b"""
 @define-color orbit_set_fg @window_fg_color;
 .orbit-settings { color: @window_fg_color; }
 .orbit-set-group { font-weight: 700; font-size: 105%; padding-top: 14px; padding-bottom: 2px; }
-.orbit-set-row { padding: 9px 12px; border-radius: 14px; background: alpha(@window_fg_color, 0.045); margin-bottom: 4px; }
+.orbit-set-row { padding: 8px 10px; border-radius: 14px; background: alpha(@window_fg_color, 0.045); margin-bottom: 4px; }
 .orbit-set-label { font-weight: 600; }
 .orbit-set-desc { opacity: 0.66; font-size: 88%; }
 .orbit-set-chip { font-size: 78%; font-weight: 600; padding: 1px 8px; border-radius: 8px; }
@@ -86,7 +86,8 @@ CSS = b"""
 .orbit-set-error { color: #d33; font-size: 88%; font-weight: 600; }
 .orbit-set-note { opacity: 0.7; font-size: 88%; }
 .orbit-set-value { font-feature-settings: "tnum"; min-width: 44px; opacity: 0.8; }
-.orbit-set-reset { padding: 1px 10px; border-radius: 999px; font-size: 88%; }
+.orbit-set-seg button { padding: 4px 4px; min-width: 0; font-size: 92%; }
+.orbit-set-reset { padding: 1px 8px; border-radius: 999px; font-size: 88%; }
 .orbit-set-swatch { min-width: 38px; }
 .orbit-set-preview { border-radius: 14px; background: alpha(#000000, 0.35); }
 .orbit-set-foot { padding: 8px 4px; }
@@ -192,7 +193,9 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
 
     def label(content, *classes, wrap=True):
         widget = Gtk.Label(label=content, xalign=0.0, wrap=wrap, hexpand=False)
-        widget.set_halign(Gtk.Align.START)
+        # Text that wraps takes the full width it is given. Left to its natural width a wrapped label
+        # breaks well short of the row's edge. Badges and one line labels keep their own size.
+        widget.set_halign(Gtk.Align.FILL if wrap and "orbit-set-chip" not in classes else Gtk.Align.START)
         for name in classes:
             widget.add_css_class(name)
         return widget
@@ -202,7 +205,7 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
             super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             self.add_css_class("orbit-settings")
             for side in ("start", "end", "top", "bottom"):
-                getattr(self, "set_margin_" + side)(12)
+                getattr(self, "set_margin_" + side)(8)
             self.set_direction(Gtk.TextDirection.RTL if lang == "ar" else Gtk.TextDirection.LTR)
             self.path = target
             self.language = lang
@@ -263,21 +266,24 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
             scroller.set_child(body)
             self.append(scroller)
 
-            foot = Gtk.Box(spacing=8)
+            foot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             foot.add_css_class("orbit-set-foot")
-            foot.append(label(text(lang, "path") + ":", "orbit-set-note"))
-            where = label(self.path, "orbit-set-path")
-            where.set_selectable(True)
-            where.set_hexpand(True)
-            where.set_wrap(True)
-            where.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-            foot.append(where)
-            self.status = label("", "orbit-set-note")
-            foot.append(self.status)
+            head = Gtk.Box(spacing=8)
+            title = label(text(lang, "path"), "orbit-set-note")
+            title.set_hexpand(True)
+            head.append(title)
+            self.status = label("", "orbit-set-note", wrap=False)
+            head.append(self.status)
             copy = Gtk.Button(label=text(lang, "copy"))
             copy.add_css_class("orbit-set-reset")
             copy.connect("clicked", self._copy)
-            foot.append(copy)
+            head.append(copy)
+            foot.append(head)
+            where = label(self.path, "orbit-set-path")
+            where.set_selectable(True)
+            where.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            where.set_direction(Gtk.TextDirection.LTR)
+            foot.append(where)
             self.append(foot)
 
             self._load_autostart()
@@ -302,28 +308,34 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
         def _row(self, entry):
             key, kind = entry["key"], entry["kind"]
             _group, name, description = wording(entry, lang)
-            box = Gtk.Box(spacing=12)
+            # Text on top at the row's full width, the control under it. A control beside the text takes
+            # whatever width it asks for and leaves the words a column a few characters wide, which at
+            # the panel's width is every row.
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             box.add_css_class("orbit-set-row")
-            text_side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-            text_side.append(label(name, "orbit-set-label"))
-            text_side.append(label(description, "orbit-set-desc"))
+            box.append(label(name, "orbit-set-label"))
+            box.append(label(description, "orbit-set-desc"))
             chip = label(applies_text(entry, lang), "orbit-set-chip", "handoff" if entry["applies"] == "handoff" else "now")
             chip.set_tooltip_text(text(lang, "lease") if entry["applies"] == "handoff" else "")
-            text_side.append(chip)
+            box.append(chip)
             error = label("", "orbit-set-error")
             error.set_visible(False)
-            text_side.append(error)
-            box.append(text_side)
-            control_side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, valign=Gtk.Align.CENTER)
-            reset = Gtk.Button(label=text(lang, "reset"), halign=Gtk.Align.END)
+            box.append(error)
+            reset = Gtk.Button(label=text(lang, "reset"), valign=Gtk.Align.START)
             reset.add_css_class("orbit-set-reset")
             reset.connect("clicked", lambda _b: self._reset(key))
             row = {"entry": entry, "box": box, "error": error, "reset": reset, "set": lambda value: None}
             control = getattr(self, "_control_" + kind)(entry, row)
-            control.set_halign(Gtk.Align.END)
-            control_side.append(control)
-            control_side.append(reset)
-            box.append(control_side)
+            control.set_halign(Gtk.Align.FILL)
+            control.set_hexpand(True)
+            # A control as wide as four buttons or four swatches leaves no room beside it for Reset at the
+            # panel's width, so its Reset sits on the line below, at the end. Narrow controls share a line.
+            stacked = kind in ("choice", "colors")
+            under = Gtk.Box(orientation=Gtk.Orientation.VERTICAL if stacked else Gtk.Orientation.HORIZONTAL, spacing=6 if stacked else 8)
+            under.append(control)
+            reset.set_halign(Gtk.Align.END if stacked else Gtk.Align.FILL)
+            under.append(reset)
+            box.append(under)
             return row
 
         def _control_switch(self, entry, row):
@@ -336,16 +348,19 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
             else:
                 switch.connect("notify::active", lambda s, _p: None if self._busy else self._commit(key, s.get_active(), row))
             row["set"] = lambda value: switch.set_active(bool(value))
-            return switch
+            holder = Gtk.Box()
+            holder.append(switch)
+            return holder
 
         def _control_choice(self, entry, row):
             key = entry["key"]
-            box = Gtk.Box()
+            box = Gtk.Box(homogeneous=True)
             box.add_css_class("linked")
+            box.add_css_class("orbit-set-seg")
             buttons = {}
             first = None
             for choice in entry["choices"]:
-                button = Gtk.ToggleButton(label=choice_name(choice, lang))
+                button = Gtk.ToggleButton(label=choice_name(choice, lang), hexpand=True)
                 if first is None:
                     first = button
                 else:
@@ -364,9 +379,9 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
             key, (low, high) = entry["key"], entry["bounds"]
             fraction = entry["kind"] == "fraction"
             scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, low, high, 0.01 if fraction else 1)
-            scale.set_size_request(170, -1)
+            scale.set_hexpand(True)
             scale.set_draw_value(False)
-            readout = label("", "orbit-set-value")
+            readout = label("", "orbit-set-value", wrap=False)
             readout.set_xalign(1.0)
 
             def show_value(number):
@@ -450,7 +465,9 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
             key = entry["key"]
             column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             follow = Gtk.Box(spacing=8)
-            follow.append(label(text(lang, "accent"), "orbit-set-note", wrap=False))
+            followed = label(text(lang, "accent"), "orbit-set-note")
+            followed.set_hexpand(True)
+            follow.append(followed)
             switch = Gtk.Switch(valign=Gtk.Align.CENTER)
             follow.append(switch)
             colour = Gtk.Box(spacing=8)
@@ -675,7 +692,8 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
 
         def _preview(self):
             area = Gtk.DrawingArea()
-            area.set_content_height(150)
+            area.set_content_height(120)
+            area.set_content_width(1)
             area.set_hexpand(True)
             area.add_css_class("orbit-set-preview")
             area.set_draw_func(self._draw_preview)
@@ -765,10 +783,11 @@ def build_settings_page(app=None, path=None, language=None, autostart=None):
                     cr.move_to(x + (w - ink[0]) / 2, y + (h - ink[1]) / 2)
                     PangoCairo.show_layout(cr, digit)
             # The four state colours, so a colour edit is judged against the others.
-            lx = sx + sw / 2 - 160
+            step = sw / 4
+            lx = sx
             for index, name in enumerate(orbit_settings.STATE_KEYS):
                 colour = rgb(colours[name])
-                px = lx + index * 84 + 8
+                px = lx + index * step + 8
                 cr.set_source_rgba(colour.red, colour.green, colour.blue, 1)
                 cr.arc(px, sy + sh - 14, 5, 0, 2 * math.pi)
                 cr.fill()
