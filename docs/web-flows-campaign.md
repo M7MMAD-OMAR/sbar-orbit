@@ -107,13 +107,89 @@ Orbit sent; the owner may have switched workspaces. The surface size in each cap
 is authoritative, so recompute coordinates from `surfaceWidth` and `surfaceHeight`
 after every capture.
 
+**F9 (second round). Firefox does not activate links or the file Browse button.** Five link
+clicks failed in Firefox (three header anchors in the fixture, two Wikipedia body links,
+one of them after a separate move call), and the file input Browse click opened no dialog.
+Buttons, text fields, the form submit button and the modal button in the same Firefox window
+click correctly, and the same links work in Chromium. The press and release reach the page
+for some targets but not for link activation. Suspects: press and release in one millisecond
+with no frame between them, or the pointer leave sent right after the release. Owned by the
+plugin (reported to the natural-cursor session). Not fixed.
+
+**F10 (second round). Text after a click into a Firefox iframe is lost.** In one batch (click
+the iframe field, type, Tab, Return) the field stayed empty and the space in the text scrolled the
+iframe. The same text typed in a separate call afterwards landed. Cause: focus moves into the
+out of process iframe a moment after the click, and keys sent immediately reach the old focus.
+Mitigation shipped: a batch now waits 200 ms between a click and a following text or key
+action (`src/session.ts`). The value is not yet measured live because the broker needs a
+restart to load it.
+
+**F11 (second round). Premature settle.** Captures reported `settled: true` while the page
+was not ready: Firefox showed the previous page after a Return that was loading Wikipedia
+(`waitedMs` 1433), the first capture after a hover move in Chromium missed the menu that the
+next capture showed, and Firefox list scrolling was mid animation. Settle code is owned by
+another session.
+
 **Not failures:** page scroll ticks are 120 px and my scroll past the list was my
 aim; Firefox shows a first run profiles modal over the owner's profile that blocks
 typing until dismissed with its close button; capture images of Firefox include 24
 logical pixels of client decoration offset, and clicks map correctly through it
 (verified by the form fill).
 
-## Fix made
+## Second round (after the plugin with hover and drag was loaded)
+
+Chromium and Firefox again, new windows on workspace 7, plugin source c8337d16, workers on
+the new Python code. The broker was not restarted by me, so `session.ts` and `native-worker.ts`
+changes were not live.
+
+| Check | Chromium | Firefox |
+| --- | --- | --- |
+| Forwarded launch placement (F1) | pass: `opened:true`, activation-token, floating 1200 by 800 on workspace 7 | n/a (separate process, launch-ancestry, already passed) |
+| Text with Arabic, e-acute, euro, emoji in a field, newline in a textarea, submitted (F5) | pass, submitted JSON exact (`"name":"مرحبا café €5 😀"`, `"notes":"ligne un é\nligne deux €"`), receipts `ok paste 15 characters` and `ok paste 23 characters` | pass, same exact values |
+| Hover menu opens and an item can be picked | pass: menu appeared after the second move, `picked A` after move and click | pass: menu appeared after two moves |
+| Menu closes when the pointer leaves | pass | not run |
+| Tooltip | no tooltip in the window capture 300 ms and 4 s after the move; native tooltips are separate popup surfaces | not run |
+| Drag and drop | not run: the host session's `orbit_act` schema has no `drag` action yet (`Invalid input at action`) | not run |
+| Infinite list wheel | passed in round one | list reached row 16 of 20 after three scrolls of 5, then loaded more, count not read back |
+| Page scroll to file input, iframe, lazy content | passed in round one | pass: lazy content "arrived", iframe visible |
+| Iframe field, type, Tab, Return | passed in round one | fail in one batch, pass with separate calls (F10) |
+| Header anchor and body link clicks | pass | fail (F9) |
+| File input Browse opened | pass in round one | fail: no dialog (F9) |
+| Wikipedia open | pass | pass, first capture stale (F11) |
+| MDN open | pass on retry | pass, 27 captures, `settled:false` |
+| BBC front page | loaded | loaded, no cookie banner appeared in 3 s |
+| ctrl+w closes only the new window | pass | pass |
+
+The clipboard held other content before the F5 runs; nothing in the fixture reads it back, and
+the unit tests and a real `wl-copy` round trip with 21 characters of mixed text confirmed
+the previous text is restored.
+
+## Fixes made
+
+**F1 (`src/native/owner_open.py`, `src/native/window_placement.py`).** A launch-bound window
+that holds seat focus is now placed when focus came from mapping: no owner pointer movement
+since the request (compositor `j/cursorpos` before and after) and the window first seen
+within 0.5 s. Pointer movement, an unreadable pointer, or a window that held focus longer keep
+the old refusal (`owner-input`, no placement). A keyboard has no compositor record, so the
+keyboard half is bounded by time, not recorded. After such a placement, later pointer movement
+reports uncertain delivery. Tests: `tests/native_open_test.py` (33 tests, four new).
+
+**F4 (`src/native/host.py`, `transport.py`, `keyboard.py`, `session.py`, `session_worker.py`,
+`src/native-worker.ts`).** `no such window`, a changed stable identity or a missing surface now
+raises `TargetClosed`, reported as `TARGET_CLOSED` with an actionable message and status `failed`.
+The previous generic `NATIVE_FAILED` was treated as uncertain. Tests:
+`tests/native_text_refusal_test.py`.
+
+**F5 (`src/native/paste.py`, `session.py`).** Text refused for lack of a key is pasted through
+the shared clipboard (ctrl+v), then the previous clipboard text is restored, also when the
+paste key fails. A non text clipboard is never replaced. The text field check the lead asked for
+is not implemented: no tree in `a11y.py` reports the focused element, so the paste goes to the
+focused element exactly as typing does. Tests: `tests/native_paste_test.py`.
+
+**F10 mitigation (`src/session.ts`).** 200 ms wait between a click and a following text or key
+in a batch. Tests: `tests/session-click-focus.test.ts`.
+
+## First fix made
 
 `src/native/keyboard.py`, `src/native/host.py`, `src/native/session_worker.py`,
 `src/native-worker.ts`: a text commit that the plugin refuses with `no key for
@@ -130,14 +206,18 @@ clipboard.
 
 ## Remaining failures, plainly
 
-1. Chromium forwarded launch lands on the owner's workspace unplaced (F1).
-2. Hover menus and tooltips cannot be driven (F2).
-3. Drag and drop cannot be driven (F3).
-4. Capture after a vanished target gives an opaque error (F4).
-5. Text outside the seat layouts cannot be typed (F5), now reported clearly.
-6. Rare lost handoff reply and lost final Return after a loading navigation (F6, F7).
-7. Not run: Firefox infinite list, anchors, file dialog, iframe, lazy content, MDN and
-   BBC; clicking the sticky-page target button was not verified in Chromium.
+1. Fixed and verified live: F1 (Chromium forwarded launch) and F5 (untypeable text via clipboard).
+2. Fixed in code, not yet live (broker restart needed): F4 error message, F10 click to key wait.
+3. Hover works in both browsers; tooltips do not show in the window capture; tooltip popups are
+   separate surfaces.
+4. Drag and drop is untested from a website: the host MCP session predates the `drag` schema.
+   Natural-cursor reports HTML5 drag and drop as unsupported.
+5. Firefox does not activate links or the file Browse button (F9), plugin side.
+6. Premature settle on loading pages and after hover (F11), settle side.
+7. Rare lost handoff reply and a lost final Return after a loading navigation (F6, F7).
+8. The text field condition for paste is not enforced (see F5 above).
+9. Not verified: clicking the sticky page target button in Chromium, the Firefox infinite list
+   count, cookie banners (none appeared).
 
 ## F2 and F3 fixed: persistent hover, press, hold, release and drag (29 October 2026)
 

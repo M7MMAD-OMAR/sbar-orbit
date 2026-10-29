@@ -39,6 +39,9 @@ const capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "k
 const maxBatch = 16;
 // The input actions that may share one call. Window metadata, state and closing stay single actions.
 const batchable = ["click", "text", "key", "move", "scroll"];
+// A click that moves keyboard focus into another process (a Firefox iframe) takes a moment to land.
+// Keys sent in the same breath reach the old focus, so keyboard input right after a click waits briefly.
+const clickFocusSettleMs = 200;
 // A lost or failed commit may have reached the application, so these are never retried and the agent
 // is told to inspect before sending more.
 const uncertain = ["TIMEOUT", "DEADLINE_EXCEEDED", "BACKEND_ERROR", "NATIVE_FAILED"];
@@ -299,6 +302,7 @@ export class Sessions {
       if (stopped === undefined && (session.state as State) !== "running") stopped = "PAUSED";
       if (stopped !== undefined) { receipts.push({ ...base, status: "not-attempted", reason: stopped }); continue; }
       try {
+        if (actions[index - 1]?.type === "click" && (action.type === "text" || action.type === "key")) await new Promise(resolve => setTimeout(resolve, clickFocusSettleMs));
         const inputLength = "text" in action ? String(action.text ?? "").length : undefined;
         const result = await this.admit(session, action, undefined, undefined, false, inputLength, requestId)();
         receipts.push({ ...base, status: "ok", result });
