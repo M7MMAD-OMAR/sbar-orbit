@@ -279,3 +279,33 @@ Not fixed, and why:
 - The new plugin is built and verified but not loaded into the owner's compositor yet:
   six leases were active. Load it with `native-plugin unload`, then `native-refresh
   --plugin-manifest` when no lease is active.
+
+### Live rerun on the owner compositor (29 October 2026, plugin source sha256 `8063744c`)
+
+Real Firefox and Chromium windows opened as new windows on workspace 7 (not shown by
+any monitor), driven through `sbar-orbit act` with `session observe` frames, then closed
+with `ctrl+w` and the sessions stopped. Fixture served by `bun run experiments/web-flows/server.ts`.
+The plugin also times a click now: motion, 45 ms, press, 60 ms, release (commit 88c0b49).
+
+| Check | Chromium | Firefox |
+| --- | --- | --- |
+| Link click navigates (`#hover`) | pass, status bubble shows the URL | pass at corrected coordinates, see below |
+| Hover menu opens after `move` | pass | pass |
+| Tooltip | not in the capture (popup surface) | not in the capture (popup surface) |
+| Text selection by `drag` | pass (drag started on the open menu, picked Item A) | pass, "Hover for a tooltip" selected |
+| HTML5 drag and drop | not delivered, see above | not run, same protocol limit |
+
+**Root cause of F-links on Firefox: capture and input disagree about the window origin.**
+Firefox draws client-side margins. `state` for that window reported `window` 960x640,
+`surface` 1008x688, `geometry` [24, 21, 960, 640]. The plugin maps `x`, `y` into the
+geometry (it adds 24 and 21), and `observe` returns a 960x640 image whose top-left is
+the surface origin, so everything in the image is 24 by 21 logical pixels away from
+where the same coordinates land. Fields and buttons are large enough to tolerate that;
+a 43 by 19 pixel link is not. The first four clicks on the "hover" link, including a
+manual `mouse-down`, 0.3 s wait, `mouse-up`, did nothing. The same click at
+(163, 100) instead of (187, 121) navigated at once. The click timing was not the cause.
+Chromium has no margin (geometry [0, 0, w, h]), so it never showed this.
+The fix belongs in `observe`, which must crop to the geometry rectangle (or the input
+mapping must treat coordinates as surface pixels). Both are owned by other sessions, so
+neither was changed here. Until then, on a window whose `state` geometry is not at 0, 0,
+subtract the geometry offset from coordinates read off an image.
