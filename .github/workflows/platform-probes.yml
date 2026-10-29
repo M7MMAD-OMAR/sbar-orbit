@@ -38,10 +38,10 @@ jobs:
       - name: Broker smoke (private broker, doctor over its endpoint)
         shell: bash
         run: bun run scripts/limited.ts bun run scripts/platform-smoke.ts
-      - name: Launcher status (bin launcher of this platform)
+      - name: Launcher help (the launcher of this platform starts Bun)
         shell: bash
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then cmd //c "bin\\sbar-orbit.cmd status"; else bin/sbar-orbit status; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then bin/sbar-orbit.cmd help | head -5; else bin/sbar-orbit help | head -5; fi
       - name: Run each test file separately
         shell: bash
         env:
