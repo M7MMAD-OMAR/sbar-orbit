@@ -2,6 +2,27 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.4.0 (29 October 2026)
+
+Faster agent loops, more of the web, several agents at once, and a panel that controls sessions again.
+
+`orbit_act` accepts `actions` batches and a settled `capture`; captures are cropped to the window
+geometry so image points are click points; `orbit_observe` accepts `format` of image, text or both with an
+accessibility tree and a screenshot fallback. Hover persists, and `mouse-down`, `mouse-up` and `drag`
+exist; the agent cursor moves on curved paths with idle drift. Untypeable text is pasted through the
+shared clipboard or refused definitely, and forwarded browser windows are placed on the requested
+workspace.
+
+Sessions record their creating connection: calls on another agent's session return `SESSION_NOT_OWNED`,
+a disconnect pauses then stops its sessions after a grace period, `orbit_stop` takes `scope: "mine"`,
+`APPLICATION_BUSY` names the holder, dead owner leases are reaped, and `sbar-orbit native-leases` lists and
+releases them. The panel has session controls, a detail view, About with managed updates, and Settings.
+
+Windows and macOS still have no native control adapter; three Windows specific defects in the shared
+layers are fixed. HTML5 drag and drop and popup surfaces in captures remain unsupported.
+
+[Release notes](docs/release-0.4.0.md).
+
 ## 0.3.3 (27 October 2026)
 
 Documentation maintenance release. Active discovery and acceptance guides no

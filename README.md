@@ -1,6 +1,6 @@
 # Orbit
 
-[Latest release: 0.3.3](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/latest)
+[Latest release: 0.4.0](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/latest)
 | [Release notes](docs/release-0.3.3.md) | [Changelog](CHANGELOG.md)
 
 Open original installed native Linux applications on a numbered Hyprland workspace.
