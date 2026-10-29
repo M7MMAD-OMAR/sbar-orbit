@@ -309,3 +309,31 @@ The fix belongs in `observe`, which must crop to the geometry rectangle (or the 
 mapping must treat coordinates as surface pixels). Both are owned by other sessions, so
 neither was changed here. Until then, on a window whose `state` geometry is not at 0, 0,
 subtract the geometry offset from coordinates read off an image.
+
+## Capture crop proof (29 October 2026, 5:50 PM)
+
+Request: prove that image pixels and input coordinates share one origin after be59f25 and 13090bb.
+The Python worker is spawned per session, so those commits were live for new sessions; the broker
+started at 3:15 PM was not restarted (it still ran the older TypeScript), because the owner's
+"Publish first Manhaj Threads post" session was in `closing`. New windows on workspace 8, which
+no monitor showed (monitors showed 6 and 5), fixture served on `127.0.0.1:8765`.
+
+| App | `state` geometry and surface | Capture size | Click read off the image | Result |
+| --- | --- | --- | --- | --- |
+| Chromium (scale 1.5) | window 1200x800, surface 1200x800, geometry [0,0,1200,800] | 1800x1200 = geometry times 1.5 | "hover" link at image (287,167), clicked at 287/1.5, 167/1.5 = (191,111) | URL became `localhost:8765/#hover`, page scrolled to the Hover section, settle `waitedMs` 118 |
+| GTK Text Editor (scale 1.5, client side decorations but no shadow margin under Hyprland) | window 960x640, surface 960x640, geometry [0,0,960,640] | 1440x960 = geometry times 1.5 | the three dots menu button at image (1345,34), clicked at (890,22) | the button showed its pressed highlight; its popover is a separate surface and is not in the capture |
+| Firefox | not run | not run | not run | blocked, see below |
+
+Chromium also opened with the owner's pinned tabs; only my fixture tab was closed with `ctrl+w`.
+
+**Firefox blocked by an orphan lease.** `orbit_handoff` on a new Firefox window on workspace 8
+returned `APPLICATION_BUSY` three times over several minutes, while handoff of Text Editor and
+Chromium on the same workspace succeeded, so capacity was not the limit. The broker lists no
+running session on Firefox (all are `closed`), there is no `handoff.json` anywhere, and no worker
+process runs. The plugin (source sha 8063744c, loaded after the earlier reload) therefore still
+holds a lease for the Firefox client that no broker session knows. A stale lease is only erased
+when its Wayland client dies or its lease id is reaped; the id is not recoverable from the broker.
+Repeated `orbit_stop` on the closed Firefox sessions changed nothing. The earlier campaign hit the
+same `APPLICATION_BUSY` on Firefox. Likely cause: a session that closed after its target window was
+gone, or a proof script run with its own in process broker (`experiments/capture-origin-proof.ts`),
+left its claim behind. The Firefox click proof has to wait until that lease is cleared.

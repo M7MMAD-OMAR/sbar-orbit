@@ -482,3 +482,11 @@ scale, an out of range geometry and unreadable state are in `tests/native_settle
 Not proven: the click on the 43 by 19 pixel "hover" link read straight off the capture. Firefox was leased by
 another session when the proof ran, so `experiments/capture-origin-proof.ts` stopped at APPLICATION_BUSY.
 The next run should use that script.
+
+Capture crop, live proof (29 October 2026, 5:50 PM). Chromium and Text Editor were measured on new windows on
+workspace 8: the capture size equals the `state` geometry times the output scale (1800x1200 for 1200x800,
+1440x960 for 960x640, both at 1.5), and a click at a point read straight off the image landed on the target
+(Chromium "hover" link, URL became `#hover`; Text Editor menu button highlighted). Firefox is still not proven:
+`orbit_handoff` returns APPLICATION_BUSY for the Firefox client although the broker lists no running session and
+no handoff record exists, so the plugin holds an orphan lease (see docs/web-flows-campaign.md). The click proof
+on Firefox needs that lease cleared first.
