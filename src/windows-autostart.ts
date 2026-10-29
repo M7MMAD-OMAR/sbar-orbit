@@ -171,7 +171,7 @@ async function schtasks(...args: string[]) {
 export async function currentUserSid(): Promise<string> {
   const result = await boundedCommand(["whoami.exe", "/user", "/fo", "csv", "/nh"], 5_000);
   const output = result.output;
-  if (!result.ok) throw new OrbitError("UNSUPPORTED", "Could not read this account's SID");
+  if (!result.ok) throw new OrbitError("UNSUPPORTED", `Could not read this account's SID: ${output.slice(0, 200)}`);
   const sid = /(S-1-[0-9-]+)/.exec(output)?.[1];
   if (!sid) throw new OrbitError("UNSUPPORTED", `Could not read this account's SID from: ${output.slice(0, 200)}`);
   return sid;

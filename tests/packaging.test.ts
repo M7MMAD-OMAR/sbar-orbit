@@ -1,3 +1,4 @@
+import { tarExecutable } from "../src/platform";
 import { expect, test } from "bun:test";
 import { needsCommand, needsGitCheckout, symlinkCapable } from "./platform-support";
 import { bareLineFeeds } from "../scripts/package-endings";
@@ -72,7 +73,7 @@ needsCommand("git", "the fixture creates its own Git index to select package inp
       await symlink(join(fixture, "absent-private-key"), join(source, "src/secret.key"));
     }
     const archive = await registryPackage(destination, source);
-    const shipped = (await run(["tar", "tzf", archive], fixture)).split(/\r?\n/).filter(Boolean);
+    const shipped = (await run([tarExecutable(), "tzf", archive], fixture)).split(/\r?\n/).filter(Boolean);
     expect(shipped).not.toContain("package/src/untracked.ts");
     expect(shipped).not.toContain("package/docs/untracked.md");
     expect(shipped).not.toContain("package/private.txt");
@@ -80,11 +81,11 @@ needsCommand("git", "the fixture creates its own Git index to select package inp
       expect(shipped).not.toContain(`package/${path}`);
     expect(shipped).toContain("package/src/.env.example");
     for (const path of ["src/tracked.ts", "docs/tracked.md", "bun.lock", "bin/orbit", "bin/orbit.cmd", "install.cmd"])
-      expect(await run(["tar", "xOf", archive, `package/${path}`], fixture))
+      expect(await run([tarExecutable(), "xOf", archive, `package/${path}`], fixture))
         .toBe(await Bun.file(join(source, path)).text());
     const unpacked = join(fixture, "unpacked");
     await mkdir(unpacked);
-    await run(["tar", "xzpf", archive, "-C", unpacked], fixture);
+    await run([tarExecutable(), "xzpf", archive, "-C", unpacked], fixture);
     // Windows has no POSIX executable permission bits; the shell entry point still ships there.
     if (process.platform !== "win32")
       expect((await stat(join(unpacked, "package/bin/orbit"))).mode & 0o111).toBe(0o111);
@@ -136,7 +137,7 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     const packed = (await readdir(destination)).filter(entry => entry.endsWith(".tgz"));
     expect(packed.length).toBe(1);
     const archive = join(destination, packed[0]!);
-    const shipped = (await run(["tar", "tzf", archive], destination)).split(/\r?\n/)
+    const shipped = (await run([tarExecutable(), "tzf", archive], destination)).split(/\r?\n/)
       .filter(Boolean).map(entry => entry.replace(/^package\//, "")).filter(entry => entry && !entry.endsWith("/"));
     const tracked = new Set((await run(["git", "ls-files", "-z"], project)).split("\0").filter(Boolean));
 
@@ -150,7 +151,7 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
     // The lockfile is what `--reinstall-deps` resolves against, so a package without it cannot honour
     // a flag its own help prints.
     expect(shipped).toContain("bun.lock");
-    expect(await run(["tar", "xOf", archive, "package/bun.lock"], destination))
+    expect(await run([tarExecutable(), "xOf", archive, "package/bun.lock"], destination))
       .toBe(await Bun.file(join(project, "bun.lock")).text());
     // Every advertised platform needs its actual installation entry point in
     // the downloadable package, not merely in the development checkout.
