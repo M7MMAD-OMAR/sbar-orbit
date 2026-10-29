@@ -24,7 +24,8 @@ int main(int argc, char** argv) {
     const Vec from{std::atof(argv[2]), std::atof(argv[3])}, to{std::atof(argv[4]), std::atof(argv[5])};
     const bool drift = argv[6][0] == '1';
     const double horizon = std::atof(argv[7]);
-    const Move m = plan(from, to, seed, 10.0, drift);
+    const bool overshoot = argc < 9 || argv[8][0] != '0';
+    const Move m = plan(from, to, seed, 10.0, drift, overshoot);
     std::printf("total %.9f\\n", m.total());
     for (double t = 9.0; t <= 10.0 + horizon; t += 0.004) {
         const Vec p = position(m, t);
@@ -56,8 +57,8 @@ beforeAll(async () => {
 }, 120_000);
 
 type Run = { total: number; samples: { t: number; x: number; y: number }[]; end: [number, number]; cancel: number[] };
-function run(seed: number, from: [number, number], to: [number, number], drift = true, horizon = 6): Run {
-  const out = Bun.spawnSync([binary, String(seed), ...from.map(String), ...to.map(String), drift ? "1" : "0", String(horizon)]);
+function run(seed: number, from: [number, number], to: [number, number], drift = true, horizon = 6, overshoot = true): Run {
+  const out = Bun.spawnSync([binary, String(seed), ...from.map(String), ...to.map(String), drift ? "1" : "0", String(horizon), overshoot ? "1" : "0"]);
   const lines = out.stdout.toString().trim().split("\n");
   const total = Number(lines[0]!.split(" ")[1]);
   const samples = lines.slice(1).filter((l) => /^-?[0-9]/.test(l)).map((l) => {
@@ -156,5 +157,13 @@ test("the next action cancels drift and starts exactly where the cursor is drawn
     const r = run(seed, [100, 100], [400, 250]);
     expect(r.cancel[2]).toBe(r.cancel[0]!);
     expect(r.cancel[3]).toBe(r.cancel[1]!);
+  }
+});
+
+test("a held button never overshoots: the path stays on this side of the target and ends exactly on it", () => {
+  for (const seed of seeds) {
+    const r = run(seed, [100, 300], [900, 300], false, 6, false);
+    expect(Math.max(...r.samples.map((s) => s.x))).toBeLessThanOrEqual(900 + 0.001);
+    expect(r.end[0]).toBeCloseTo(900, 9);
   }
 });

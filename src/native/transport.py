@@ -16,7 +16,7 @@ from .keyboard import KEYBOARD_ACTIONS, input_acknowledged, prepared_input
 from .budget import require_budget
 
 
-ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", "ghost-move", "ghost-target-check",
+ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", "ghost-move", "ghost-mouse-down", "ghost-mouse-up", "ghost-drag", "ghost-target-check",
                      "ghost-window-close", "ghost-scroll", "ghost-cursor", "ghost-release", "ghost-state"})
 
 

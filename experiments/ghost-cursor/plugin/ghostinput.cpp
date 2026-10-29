@@ -9,6 +9,12 @@
 //   ghost-click <address> <x> <y> [button]       press and release at surface-local x,y
 //   ghost-move  <address> <x> <y>                pointer enter and motion only
 //   ghost-scroll <address> <x> <y> <dy>         vertical scroll in steps of 15 units
+//   ghost-mouse-down <address> <x> <y> [button]  press and hold; moves while held follow the drawn path
+//   ghost-mouse-up   <address> <x> <y> [button]  travel to the point, then release
+//   ghost-drag <address> x1 y1 x2 y2 [button]    press, curved move, release; ghost-state reports motion_active
+// Every pointer command keeps the synthetic pointer on the surface (hover) until the next
+// action, ghost-release, owner input or a timeout (15 s hover, 30 s with a button held).
+// A held button is released on all of those ends and on handback and unload.
 //   ghost-cursor <address> <x> <y>             render the agent cursor without input
 //   ghost-hide-cursor <address>                remove that window's cursor
 #include <chrono>
@@ -48,6 +54,7 @@
 #include <map>
 #include <cmath>
 #define protected public
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #undef protected
 #include <hyprland/src/render/pass/TexPassElement.hpp>
@@ -301,7 +308,7 @@ inline double travelSeconds(double distance) {
 
 // A fresh Move from the cursor's displayed position, so a new action begins
 // exactly where the previous motion or drift left the drawing.
-inline Move plan(Vec from, Vec to, uint64_t seed, double start, bool allowDrift) {
+inline Move plan(Vec from, Vec to, uint64_t seed, double start, bool allowDrift, bool allowOvershoot = true) {
     Rng rng(seed);
     Move m;
     m.from = from; m.to = to; m.start = start; m.drift = allowDrift;
@@ -312,7 +319,7 @@ inline Move plan(Vec from, Vec to, uint64_t seed, double start, bool allowDrift)
         const double sign = rng.unit() < 0.5 ? -1 : 1;
         double bow = distance * rng.range(0.04, 0.12) * sign;
         bow = bow > kBowMax ? kBowMax : bow < -kBowMax ? -kBowMax : bow;
-        m.overshoot = distance >= kOvershootFrom;
+        m.overshoot = allowOvershoot && distance >= kOvershootFrom;
         double reach = 0;
         if (m.overshoot) {
             reach = distance * 0.025 * rng.range(0.5, 1.0);
@@ -395,6 +402,16 @@ class CAgentKeyboard : public IKeyboard {
 };
 static SP<CAgentKeyboard> agentKeyboard;
 static std::map<CWLPointerResource*, WP<CWLPointerResource>> scrollPointers;
+// Every synthetic pointer an agent keeps on a client surface is in scrollPointers and
+// has one hold here: when it expires and which buttons the agent still holds down.
+struct SPointerHold {
+    std::set<uint32_t> buttons;
+    std::chrono::steady_clock::time_point expires{};
+};
+static std::map<CWLPointerResource*, SPointerHold> pointerHolds;
+static SP<CEventLoopTimer> holdTimer;
+constexpr auto hoverHold = std::chrono::seconds(15), buttonHold = std::chrono::seconds(30);
+static void armHoldTimer();
 static std::map<CWLKeyboardResource*, WP<CWLKeyboardResource>> agentKeyboards;
 static void cancelKeyboardClient(wl_client* client);
 static void retireKeyboardClient(wl_client* client);
@@ -793,6 +810,14 @@ static uint32_t nowMs();
 // The seat keeps its own focus while an agent drives the same client, so ending
 // agent input must give the client back exactly what the seat last told it.
 static void returnClientPointer(const SP<CWLPointerResource>& pointer, wl_client* client) {
+    // A button the agent holds is always released before the client gets its pointer back.
+    if (const auto held = pointerHolds.find(pointer.get()); held != pointerHolds.end()) {
+        for (const uint32_t button : held->second.buttons) {
+            pointer->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+            pointer->sendFrame();
+        }
+        pointerHolds.erase(held);
+    }
     const auto focus = g_pSeatManager->m_state.pointerFocus.lock();
     if (focus && focus->client() == client) {
         // sendEnter is a no-op on the surface the pointer already occupies, so put
@@ -1058,8 +1083,16 @@ static void noteOwnerInput(wl_client* client, bool keyboard) {
     const bool wasActive = ownerInputActive(*lease);
     lease->ownerInputUntil = std::chrono::steady_clock::now() + ownerIdleResume;
     cancelKeyboardClient(client);
-    if (keyboard) restoreAgentKeyboards(client);
-    else restoreAgentPointers(client);
+    if (keyboard) {
+        restoreAgentKeyboards(client);
+        // Owner typing ends an agent drag too: release held buttons, keep hover.
+        auto seat = g_pSeatManager->seatResourceForClient(client);
+        if (seat)
+            for (const auto& weak : seat->m_pointers)
+                if (auto pointer = weak.lock())
+                    if (auto hold = pointerHolds.find(pointer.get()); hold != pointerHolds.end() && !hold->second.buttons.empty())
+                        returnClientPointer(pointer, client), scrollPointers.erase(pointer.get());
+    } else restoreAgentPointers(client);
     if (wasActive) return;
     for (const auto& [stable, retained] : lease->windows)
         if (auto window = retained.window.lock())
@@ -1975,6 +2008,162 @@ static std::optional<Vector2D> surfaceInputPoint(Vector2D goal, Vector2D surface
     return local;
 }
 
+// BEGIN pointer-hold
+static double motionClock() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static void armHoldTimer() {
+    if (!holdTimer) return;
+    std::optional<std::chrono::steady_clock::time_point> next;
+    for (const auto& [pointer, hold] : pointerHolds)
+        if (!next || hold.expires < *next) next = hold.expires;
+    if (!next) { holdTimer->updateTimeout(std::nullopt); return; }
+    const auto wait = std::max(std::chrono::steady_clock::duration(std::chrono::milliseconds(1)),
+                               *next - std::chrono::steady_clock::now());
+    holdTimer->updateTimeout(wait);
+    g_pEventLoopManager->scheduleRecalc();
+}
+
+// Hover and held buttons last a bounded time after the last pointer action. At expiry the
+// client gets its pointer back and any held button is released first.
+static void sweepPointerHolds() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = scrollPointers.begin(); it != scrollPointers.end();) {
+        auto pointer = it->second.lock();
+        const auto hold = pointerHolds.find(it->first);
+        if (pointer && hold != pointerHolds.end() && hold->second.expires > now) { ++it; continue; }
+        if (pointer && pointer->m_owner) returnClientPointer(pointer, pointer->m_owner->client());
+        pointerHolds.erase(it->first);
+        it = scrollPointers.erase(it);
+    }
+    armHoldTimer();
+}
+
+static bool buttonsHeld(const SP<CWLSeatResource>& seat) {
+    for (const auto& weak : seat->m_pointers)
+        if (auto pointer = weak.lock())
+            if (const auto hold = pointerHolds.find(pointer.get()); hold != pointerHolds.end() && !hold->second.buttons.empty())
+                return true;
+    return false;
+}
+
+// Pointer motion along the drawn path while a button is held, so the application sees
+// a real drag and not one jump. Ticks run on the compositor loop, never on a caller.
+struct SPointerPump {
+    PHLWINDOWREF window;
+    WP<CWLSurfaceResource> surface;
+    WP<CWLSeatResource> seat;
+    bool approach = false;
+    cursor_motion::Vec dragFrom, dragTo;
+    uint64_t seed = 0;
+    std::function<void(bool)> done;
+};
+static std::map<std::string, SPointerPump> pumps;
+static SP<CEventLoopTimer> pumpTimer;
+static void armPumpTimer() {
+    if (!pumpTimer || pumps.empty()) return;
+    pumpTimer->updateTimeout(std::chrono::milliseconds(8));
+    g_pEventLoopManager->scheduleRecalc();
+}
+
+// Returns false when no held pointer is left, which means the hold ended and the pump is void.
+static bool pumpSend(SPointerPump& pump, cursor_motion::Vec point) {
+    auto window = pump.window.lock();
+    auto surface = pump.surface.lock();
+    auto seat = pump.seat.lock();
+    if (!window || !surface || !seat) return false;
+    const auto xdg = window->m_xdgSurface.lock();
+    const auto local = surfaceInputPoint(window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL), surface->m_current.size,
+        xdg ? xdg->m_current.geometry : CBox{}, Vector2D{point.x, point.y});
+    bool sent = false;
+    for (const auto& weak : seat->m_pointers) {
+        auto pointer = weak.lock();
+        if (!pointer || !scrollPointers.contains(pointer.get())) continue;
+        sent = true;
+        if (!local) continue;
+        pointer->sendMotion(nowMs(), *local);
+        pointer->sendFrame();
+        if (auto hold = pointerHolds.find(pointer.get()); hold != pointerHolds.end() && !hold->second.buttons.empty())
+            hold->second.expires = std::chrono::steady_clock::now() + buttonHold;
+    }
+    return sent;
+}
+
+static void pumpTick() {
+    const double now = motionClock();
+    for (auto it = pumps.begin(); it != pumps.end();) {
+        auto cursor = cursors.find(it->first);
+        if (cursor == cursors.end()) { it = pumps.erase(it); continue; }
+        auto& pump = it->second;
+        auto& motion = cursor->second.motion;
+        if (pump.approach) {
+            if (cursor_motion::traveling(motion, now)) { ++it; continue; }
+            motion = cursor_motion::plan(pump.dragFrom, pump.dragTo, pump.seed, now, false, false);
+            pump.approach = false;
+        }
+        const bool finished = !cursor_motion::traveling(motion, now);
+        const auto point = finished ? motion.to : cursor_motion::position(motion, now);
+        if (!pumpSend(pump, point)) { it = pumps.erase(it); continue; }
+        if (finished) {
+            auto done = std::move(pump.done);
+            it = pumps.erase(it);
+            if (done) done(false);
+        } else ++it;
+    }
+    armPumpTimer();
+}
+
+// Finish a pump at once: motion to its final point, then its completion action.
+static void flushPump(const std::string& address) {
+    const auto it = pumps.find(address);
+    if (it == pumps.end()) return;
+    auto pump = std::move(it->second);
+    pumps.erase(it);
+    const auto cursor = cursors.find(address);
+    const auto end = pump.approach ? pump.dragTo : (cursor != cursors.end() ? cursor->second.motion.to : pump.dragTo);
+    if (pumpSend(pump, end) && pump.done) pump.done(true);
+}
+
+static double pumpRemainingSeconds(const std::string& address) {
+    const auto it = pumps.find(address);
+    const auto cursor = cursors.find(address);
+    if (it == pumps.end() || cursor == cursors.end()) return 0;
+    const double now = motionClock(), left = std::max(0.0, cursor->second.motion.start + cursor->second.motion.total() - now);
+    if (!it->second.approach) return left;
+    const double dx = it->second.dragTo.x - it->second.dragFrom.x, dy = it->second.dragTo.y - it->second.dragFrom.y;
+    return left + cursor_motion::travelSeconds(std::hypot(dx, dy));
+}
+
+// Release one agent button on the client's pointers and put the drawing back to a
+// resting, drifting cursor. Safe to call when the hold is already gone.
+static void releaseAgentButton(const WP<CWLSeatResource>& weakSeat, uint32_t button, const std::string& address, bool drift) {
+    if (auto seat = weakSeat.lock()) {
+        for (const auto& weak : seat->m_pointers) {
+            auto pointer = weak.lock();
+            if (!pointer) continue;
+            auto hold = pointerHolds.find(pointer.get());
+            if (hold == pointerHolds.end() || !hold->second.buttons.erase(button)) continue;
+            pointer->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+            pointer->sendFrame();
+            hold->second.expires = std::chrono::steady_clock::now() + hoverHold;
+        }
+        armHoldTimer();
+    }
+    if (drift)
+        if (auto cursor = cursors.find(address); cursor != cursors.end() && !cursor_motion::traveling(cursor->second.motion, motionClock())) {
+            const auto at = cursor->second.motion.to;
+            cursor->second.motion = cursor_motion::plan(at, at, cursorSequence * 0x9e3779b97f4a7c15ULL + 1, motionClock(), true);
+        }
+}
+
+static uint32_t buttonCode(double extra) {
+    return extra == 2 ? 0x111 /* BTN_RIGHT */ : extra == 3 ? 0x112 /* BTN_MIDDLE */ : 0x110 /* BTN_LEFT */;
+}
+
+// kind: 0 move, 1 click, 2 scroll, 3 cursor only, 4 button down, 5 button up.
+// The synthetic pointer stays on the target surface after every input kind, so hover
+// works, until the next action, ghost-release, owner input or the hold timeout.
 static std::string pointerCmd(std::string req, int kind) {
     std::istringstream in(req);
     std::string        cmd, address;
@@ -1993,16 +2182,32 @@ static std::string pointerCmd(std::string req, int kind) {
         return "refused: coordinates outside target window";
     if (kind == 2 && (extra == 0 || std::abs(extra) > 10000 || std::trunc(extra) != extra))
         return "refused: scroll steps must be a nonzero integer within 10000";
+    const uint32_t button = buttonCode(extra);
+    // A held button is per client. Check before anything is drawn or sent.
+    bool holding = false, thisHeld = false;
+    for (const auto& pw : t.seat->m_pointers)
+        if (auto p = pw.lock())
+            if (const auto hold = pointerHolds.find(p.get()); hold != pointerHolds.end() && !hold->second.buttons.empty()) {
+                holding = true;
+                thisHeld = thisHeld || hold->second.buttons.contains(button);
+            }
+    if (kind == 4 && thisHeld) return "refused: that button is already held";
+    if (kind == 5 && !thisHeld) return "refused: that button is not held";
+    flushPump(address);
     // One pointer per actor client. Retire stale pointers from sibling windows.
     for (auto it = cursors.begin(); it != cursors.end();) {
         auto window = it->second.window.lock();
         auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
         if (it->first != address && resource && resource->client() == t.surface->client()) {
             g_pHyprRenderer->damageMonitor(window->m_monitor.lock());
+            pumps.erase(it->first);
             it = cursors.erase(it);
         } else ++it;
     }
     auto& cursor = cursors[address];
+    // While a button is held there is no drift and no overshoot, so the application never
+    // sees the pointer beyond where the agent aimed.
+    const bool heldAfter = kind == 4 || (holding && kind != 5);
     {
         const auto stamp = std::chrono::steady_clock::now();
         const double now = std::chrono::duration<double>(stamp.time_since_epoch()).count();
@@ -2012,7 +2217,8 @@ static std::string pointerCmd(std::string req, int kind) {
         const auto shown = known ? cursor_motion::position(cursor.motion, now)
                                  : cursor_motion::Vec{point.x, point.y};
         const uint64_t seed = static_cast<uint64_t>(stamp.time_since_epoch().count()) ^ (cursorSequence * 0x9e3779b97f4a7c15ULL);
-        cursor.motion = cursor_motion::plan(shown, {point.x, point.y}, seed, now, !cursor.held);
+        cursor.motion = cursor_motion::plan(shown, {point.x, point.y}, seed, now, !heldAfter, !(holding || heldAfter));
+        cursor.held = heldAfter;
         cursor.window = t.window; cursor.local = point; cursor.sequence = ++cursorSequence;
         if (kind == 1) {
             cursor.clickLocal = point;
@@ -2023,6 +2229,22 @@ static std::string pointerCmd(std::string req, int kind) {
     g_pHyprRenderer->damageMonitor(t.window->m_monitor.lock());
     if (kind == 3)
         return "ok";
+    // With a button held a move, and a release, travel along the drawn path.
+    const bool animated = holding && (kind == 0 || kind == 5) && cursor.motion.total() > 0;
+    if (animated) {
+        SPointerPump pump;
+        pump.window = t.window; pump.surface = t.surface; pump.seat = t.seat;
+        if (kind == 5) {
+            const WP<CWLSeatResource> seat = t.seat;
+            pump.done = [seat, button, address](bool) { releaseAgentButton(seat, button, address, true); };
+        }
+        pumps[address] = std::move(pump);
+        if (!pumpTimer) {
+            pumpTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { pumpTick(); }, nullptr);
+            g_pEventLoopManager->addTimer(pumpTimer);
+        }
+        armPumpTimer();
+    }
     int sent = 0;
     for (auto const& pw : t.seat->m_pointers) {
         auto p = pw.lock();
@@ -2030,14 +2252,23 @@ static std::string pointerCmd(std::string req, int kind) {
             continue;
         ++sent;
         p->sendEnter(t.surface, *local);
-        p->sendMotion(nowMs(), *local);
-        p->sendFrame();
+        if (!animated) {
+            p->sendMotion(nowMs(), *local);
+            p->sendFrame();
+        }
         if (kind == 1) {
-            const uint32_t button = extra == 2 ? 0x111 /* BTN_RIGHT */ : extra == 3 ? 0x112 /* BTN_MIDDLE */ : 0x110 /* BTN_LEFT */;
             p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_PRESSED);
             p->sendFrame();
             p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
             p->sendFrame();
+        } else if (kind == 4) {
+            p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_PRESSED);
+            p->sendFrame();
+            pointerHolds[p.get()].buttons.insert(button);
+        } else if (kind == 5 && !animated) {
+            p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+            p->sendFrame();
+            pointerHolds[p.get()].buttons.erase(button);
         } else if (kind == 2) {
             p->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
             if (p->version() >= 8) {
@@ -2049,17 +2280,88 @@ static std::string pointerCmd(std::string req, int kind) {
             }
             p->sendFrame();
         }
-        if (kind == 2) {
-            // Qt can defer a wheel frame. Keep only this client's synthetic
-            // pointer focus until a later pointer action or explicit release.
-            scrollPointers[p.get()] = p;
-        } else {
-            returnClientPointer(p, t.surface->client());
-            scrollPointers.erase(p.get());
-        }
+        // Keep this client's synthetic pointer on the surface (hover, a Qt wheel frame,
+        // a held button) until a later pointer action, ghost-release, owner input or timeout.
+        scrollPointers[p.get()] = p;
+        auto& hold = pointerHolds[p.get()];
+        hold.expires = std::chrono::steady_clock::now() + (hold.buttons.empty() ? hoverHold : buttonHold);
     }
     std::erase_if(scrollPointers, [](const auto& entry) { return !entry.second.lock(); });
+    armHoldTimer();
     return sent ? "ok" : "target has no pointer resource";
+}
+
+// ghost-drag <address> x1 y1 x2 y2 [button]: press at the first point, move along a curved
+// path with no overshoot, release at the second point. The command returns at once; the
+// motion and the release run on the compositor loop and ghost-state reports motion_active.
+static std::string dragCmd(std::string req) {
+    std::istringstream in(req);
+    std::string        cmd, address;
+    double             x1 = 0, y1 = 0, x2 = 0, y2 = 0, extra = 0;
+    if (!(in >> cmd >> address >> x1 >> y1 >> x2 >> y2))
+        return "expected window address and two x y points";
+    in >> extra;
+    auto t = resolve(address);
+    if (!t.error.empty())
+        return t.error;
+    const auto xdg = t.window->m_xdgSurface.lock();
+    const auto goal = t.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+    const auto start = surfaceInputPoint(goal, t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, {x1, y1});
+    const auto end = surfaceInputPoint(goal, t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, {x2, y2});
+    if (!std::isfinite(extra) || !start || !end)
+        return "refused: coordinates outside target window";
+    if (buttonsHeld(t.seat))
+        return "refused: a button is already held";
+    flushPump(address);
+    for (auto it = cursors.begin(); it != cursors.end();) {
+        auto window = it->second.window.lock();
+        auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
+        if (it->first != address && resource && resource->client() == t.surface->client()) {
+            g_pHyprRenderer->damageMonitor(window->m_monitor.lock());
+            pumps.erase(it->first);
+            it = cursors.erase(it);
+        } else ++it;
+    }
+    auto& cursor = cursors[address];
+    const auto stamp = std::chrono::steady_clock::now();
+    const double now = std::chrono::duration<double>(stamp.time_since_epoch()).count();
+    const auto shown = cursor.sequence != 0 ? cursor_motion::position(cursor.motion, now) : cursor_motion::Vec{x1, y1};
+    const uint64_t seed = static_cast<uint64_t>(stamp.time_since_epoch().count()) ^ (cursorSequence * 0x9e3779b97f4a7c15ULL);
+    cursor.motion = cursor_motion::plan(shown, {x1, y1}, seed, now, false, false);
+    cursor.held = true;
+    cursor.window = t.window; cursor.local = {x2, y2}; cursor.sequence = ++cursorSequence;
+    g_pHyprRenderer->damageMonitor(t.window->m_monitor.lock());
+    const uint32_t button = buttonCode(extra);
+    int sent = 0;
+    for (auto const& pw : t.seat->m_pointers) {
+        auto p = pw.lock();
+        if (!p) continue;
+        ++sent;
+        p->sendEnter(t.surface, *start);
+        p->sendMotion(nowMs(), *start);
+        p->sendFrame();
+        p->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_PRESSED);
+        p->sendFrame();
+        scrollPointers[p.get()] = p;
+        auto& hold = pointerHolds[p.get()];
+        hold.buttons.insert(button);
+        hold.expires = std::chrono::steady_clock::now() + buttonHold;
+    }
+    if (!sent) return "target has no pointer resource";
+    SPointerPump pump;
+    pump.window = t.window; pump.surface = t.surface; pump.seat = t.seat;
+    pump.approach = true;
+    pump.dragFrom = {x1, y1}; pump.dragTo = {x2, y2}; pump.seed = seed + 7;
+    const WP<CWLSeatResource> seat = t.seat;
+    pump.done = [seat, button, address](bool) { releaseAgentButton(seat, button, address, true); };
+    pumps[address] = std::move(pump);
+    if (!pumpTimer) {
+        pumpTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { pumpTick(); }, nullptr);
+        g_pEventLoopManager->addTimer(pumpTimer);
+    }
+    armPumpTimer();
+    armHoldTimer();
+    return "ok";
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -2340,10 +2642,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         const auto geometry = xdg->m_current.geometry;
         const auto goal = target.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
         const auto surface = target.surface->m_current.size;
-        return std::format("{{\"suspended\":{},\"render_unfocused\":{},\"window\":[{},{}],\"surface\":[{},{}],\"geometry\":[{},{},{},{}]}}",
+        return std::format("{{\"suspended\":{},\"render_unfocused\":{},\"window\":[{},{}],\"surface\":[{},{}],\"geometry\":[{},{},{},{}],\"motion_active\":{},\"motion_ms\":{}}}",
             suspended ? "true" : "false",
             target.window->m_ruleApplicator->renderUnfocused().valueOrDefault() ? "true" : "false",
-            goal.x, goal.y, surface.x, surface.y, geometry.x, geometry.y, geometry.w, geometry.h);
+            goal.x, goal.y, surface.x, surface.y, geometry.x, geometry.y, geometry.w, geometry.h,
+            pumps.contains(address) ? "true" : "false", static_cast<int>(pumpRemainingSeconds(address) * 1000));
     }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-prepare", false, cmdKeyboardPreparation});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-cancel", false, cmdKeyboardPreparation});
@@ -2353,7 +2656,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-texthex", false, cmdType});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-key", false, cmdKey});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-click", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 1); }});
+    holdTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { sweepPointerHolds(); }, nullptr);
+    g_pEventLoopManager->addTimer(holdTimer);
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-move", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 0); }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-down", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 4); }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-up", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 5); }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-drag", false, [](eHyprCtlOutputFormat, std::string r) { return dragCmd(r); }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-scroll", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 2); }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-release", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
@@ -2438,14 +2746,26 @@ APICALL EXPORT void PLUGIN_EXIT() {
     }
     for (const auto& [key, weak] : scrollPointers) {
         auto pointer = weak.lock();
+        if (!pointer) continue;
+        if (const auto held = pointerHolds.find(pointer.get()); held != pointerHolds.end())
+            for (const uint32_t button : held->second.buttons) {
+                pointer->sendButton(nowMs(), button, WL_POINTER_BUTTON_STATE_RELEASED);
+                pointer->sendFrame();
+            }
         auto focus = g_pSeatManager->m_state.pointerFocus.lock();
-        if (!pointer || !pointer->m_owner ||
+        if (!pointer->m_owner ||
             (focus && focus->client() == pointer->m_owner->client()))
             continue;
         pointer->sendLeave();
         pointer->sendFrame();
     }
     scrollPointers.clear();
+    pointerHolds.clear();
+    if (holdTimer) g_pEventLoopManager->removeTimer(holdTimer);
+    holdTimer.reset();
+    if (pumpTimer) g_pEventLoopManager->removeTimer(pumpTimer);
+    pumpTimer.reset();
+    pumps.clear();
     for (const auto& [key, weak] : agentKeyboards) {
         auto keyboard = weak.lock();
         auto focus = g_pSeatManager->m_state.keyboardFocus.lock();

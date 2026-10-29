@@ -152,6 +152,9 @@ class NativeSession:
                   "close-window": {"appId", "windowId"}, "state": {"appId", "windowId"},
                   "cursor": {"appId", "windowId", "x", "y"}, "move": {"appId", "windowId", "x", "y"},
                   "click": {"appId", "windowId", "x", "y", "button"},
+                  "mouse-down": {"appId", "windowId", "x", "y", "button"},
+                  "mouse-up": {"appId", "windowId", "x", "y", "button"},
+                  "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
         fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly"}
@@ -162,14 +165,14 @@ class NativeSession:
         identifier(result.get("appId"))
         if kind != "windows":
             identifier(result.get("windowId"))
-        for field in ("x", "y"):
+        for field in ("x", "y", "toX", "toY"):
             if field in fields[kind]:
                 coordinate(result.get(field))
         if kind == "observe" and result.setdefault("format", "image") not in a11y.FORMATS:
             raise SessionError("Unknown observation format")
         if kind == "observe":
             cls._settle_options(result)
-        if kind == "click":
+        if kind in ("click", "mouse-down", "mouse-up", "drag"):
             result.setdefault("button", "left")
             if result["button"] not in ("left", "middle", "right"):
                 raise SessionError("Unknown native pointer button")
@@ -248,6 +251,16 @@ class NativeSession:
         self.transport._perform(f"ghost-cursor {address} {point['x']} {point['y']}")
         target["pointer"] = point
         return target["pointer"]
+
+    def _await_drag(self, address):
+        """The compositor runs a drag on its own loop; return once it released the button."""
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            state = json.loads(self.transport._perform("ghost-state " + address))
+            if not state.get("motion_active"):
+                return
+            time.sleep(min(max(state.get("motion_ms", 0), 10), 100) / 1000)
+        raise SessionError("Native drag did not finish; the button is released by the compositor timeout")
 
     def execute(self, value):
         require_budget()
@@ -328,11 +341,15 @@ class NativeSession:
             if kind == "close-window":
                 self.transport._perform("ghost-window-close " + address)
                 return {"closeRequested": True}
-            if kind in ("cursor", "move", "click", "scroll"):
+            if kind in ("cursor", "move", "click", "scroll", "mouse-down", "mouse-up", "drag"):
                 if action["x"] >= target["size"][0] or action["y"] >= target["size"][1]:
                     raise SessionError("Native coordinates lie outside the target surface")
                 arguments = f"{address} {action['x']} {action['y']}"
-                if kind == "click":
+                if kind == "drag":
+                    if action["toX"] >= target["size"][0] or action["toY"] >= target["size"][1]:
+                        raise SessionError("Native coordinates lie outside the target surface")
+                    arguments += f" {action['toX']} {action['toY']}"
+                if kind in ("click", "mouse-down", "mouse-up", "drag"):
                     arguments += " " + str({"left": 1, "right": 2, "middle": 3}[action["button"]])
                 elif kind == "scroll":
                     arguments += " " + str(action["dy"])
@@ -349,8 +366,11 @@ class NativeSession:
                 if kind != "text":
                     raise
                 response = paste_text(self.plan, action["text"], lambda: self.transport._perform("ghost-key " + address + " ctrl+v"))
-            if kind in ("cursor", "move", "click", "scroll"):
-                target["pointer"] = {"x": action["x"], "y": action["y"]}
+            if kind == "drag":
+                self._await_drag(address)
+            if kind in ("cursor", "move", "click", "scroll", "mouse-down", "mouse-up", "drag"):
+                target["pointer"] = ({"x": action["toX"], "y": action["toY"]} if kind == "drag"
+                                     else {"x": action["x"], "y": action["y"]})
             return {"response": json.loads(response) if kind == "state" else response}
 
         result = self.control.execute(request, operation)

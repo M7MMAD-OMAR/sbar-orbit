@@ -65,7 +65,7 @@ function target(value: Record<string, unknown>): Target {
 /** The compositor is fixed at broker startup. All application targets are worker-owned handles. */
 export class NativeBackend {
   readonly visible = true;
-  readonly capabilities = ["windows", "cursor", "move", "click", "scroll", "text", "key", "state", "observe", "close-window", "close-application", "pause", "resume", "stop"];
+  readonly capabilities = ["windows", "cursor", "move", "click", "scroll", "mouse-down", "mouse-up", "drag", "text", "key", "state", "observe", "close-window", "close-application", "pause", "resume", "stop"];
   private applications = new Set<string>();
   private windows = new Map<string, Window>();
   private selected?: Target;
@@ -294,6 +294,8 @@ export class NativeBackend {
       windows: ["appId"], "close-application": ["appId"],
       cursor: ["appId", "windowId", "x", "y"], move: ["appId", "windowId", "x", "y"],
       click: ["appId", "windowId", "x", "y", "button"], scroll: ["appId", "windowId", "x", "y", "dy"],
+      "mouse-down": ["appId", "windowId", "x", "y", "button"], "mouse-up": ["appId", "windowId", "x", "y", "button"],
+      drag: ["appId", "windowId", "x", "y", "toX", "toY", "button"],
       text: ["appId", "windowId", "text"], key: ["appId", "windowId", "key"],
       "close-window": ["appId", "windowId"], state: ["appId", "windowId"],
     };
@@ -334,9 +336,10 @@ export class NativeBackend {
       return result;
     }
     this.selected = target(action);
-    if (["cursor", "move", "click", "scroll"].includes(action.type)) {
+    if (["cursor", "move", "click", "scroll", "mouse-down", "mouse-up", "drag"].includes(action.type)) {
       const scale = this.scales.get(this.selected.windowId) ?? { x: 1, y: 1 };
-      this.pointer = { x: Number(action.x) * scale.x, y: Number(action.y) * scale.y };
+      const end = action.type === "drag" ? { x: Number(action.toX), y: Number(action.toY) } : { x: Number(action.x), y: Number(action.y) };
+      this.pointer = { x: end.x * scale.x, y: end.y * scale.y };
     }
     return result;
   }

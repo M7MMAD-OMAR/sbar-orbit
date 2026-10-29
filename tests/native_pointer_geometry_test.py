@@ -11,7 +11,7 @@ class PointerGeometryTests(unittest.TestCase):
     def test_input_uses_xdg_geometry_and_window_coordinates(self):
         source=Path(os.environ.get("ORBIT_POINTER_SOURCE",str(Path(__file__).resolve().parents[1]/"experiments/ghost-cursor/plugin/ghostinput.cpp"))).read_text()
         if "static std::optional<Vector2D> surfaceInputPoint(" in source:
-            start=source.index("static std::optional<Vector2D> surfaceInputPoint(");end=source.index("\nstatic std::string pointerCmd(",start);operation=source[start:end]
+            start=source.index("static std::optional<Vector2D> surfaceInputPoint(");end=source.index("\n// BEGIN pointer-hold",start);operation=source[start:end]
         else:
             body=source[source.index("static std::string pointerCmd("):]
             assignment=re.search(r"const Vector2D local\{x, y\};",body).group()

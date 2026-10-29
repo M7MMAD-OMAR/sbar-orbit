@@ -29,7 +29,7 @@ struct wl_array { int unused; };
 static void wl_array_init(wl_array*) {}
 static void wl_array_release(wl_array*) {}
 enum wl_keyboard_key_state { WL_KEYBOARD_KEY_STATE_PRESSED = 1 };
-enum wl_pointer_button_state { WL_POINTER_BUTTON_STATE_PRESSED = 1 };
+enum wl_pointer_button_state { WL_POINTER_BUTTON_STATE_RELEASED = 0, WL_POINTER_BUTTON_STATE_PRESSED = 1 };
 enum wl_pointer_axis { WL_POINTER_AXIS_VERTICAL_SCROLL };
 enum wl_pointer_axis_source { WL_POINTER_AXIS_SOURCE_WHEEL };
 enum wl_pointer_axis_relative_direction { WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL };
@@ -45,7 +45,7 @@ struct CWLKeyboardResource {
     void sendKeymap(SP<Keymap>) { ++keymaps; }
     void sendEnter(SP<CWLSurfaceResource> surface, wl_array*) { ++keyEnters; m_currentSurface = surface; }
 };
-static int pointerMotions = 0;
+static int pointerMotions = 0, buttonReleases = 0;
 static uint32_t nowMs() { return 7; }
 struct CWLPointerResource {
     Vector2D lastEnter, lastMotion;
@@ -58,6 +58,7 @@ struct CWLPointerResource {
     }
     void sendMotion(uint32_t, const Vector2D& local) { ++pointerMotions; lastMotion = local; }
     void sendFrame() { ++frames; }
+    void sendButton(uint32_t, uint32_t, wl_pointer_button_state state) { if (state == WL_POINTER_BUTTON_STATE_RELEASED) ++buttonReleases; }
 };
 struct CWLSeatResource {
     wl_client* owner;
@@ -94,6 +95,11 @@ struct SApplicationLease {
 static std::map<std::string, std::unique_ptr<SApplicationLease>> applicationLeases;
 static std::map<CWLKeyboardResource*, WP<CWLKeyboardResource>> agentKeyboards;
 static std::map<CWLPointerResource*, WP<CWLPointerResource>> scrollPointers;
+struct SPointerHold {
+    std::set<uint32_t> buttons;
+    std::chrono::steady_clock::time_point expires{};
+};
+static std::map<CWLPointerResource*, SPointerHold> pointerHolds;
 static SApplicationLease* applicationLeaseForClient(wl_client* client) {
     for (auto& [id, lease] : applicationLeases) if (lease->client == client) return lease.get();
     return nullptr;
@@ -132,7 +138,7 @@ struct World {
         g_pSeatManager->m_keyboard.value = g_pSeatManager->keyboardKeymap;
         g_pSeatManager->seats[&leased] = leasedSeat;
         g_pSeatManager->seats[&other] = otherSeat;
-        applicationLeases.clear(); agentKeyboards.clear(); scrollPointers.clear(); pointerMotions = 0;
+        applicationLeases.clear(); agentKeyboards.clear(); scrollPointers.clear(); pointerHolds.clear(); pointerMotions = 0; buttonReleases = 0;
         auto value = std::make_unique<SApplicationLease>();
         value->client = &leased;
         lease = value.get();
@@ -238,6 +244,38 @@ int main() {
         returnClientPointer(w.pointer, &w.leased);
         returnClientKeyboard(w.keyboard, &w.leased);
         CHECK(pointerLeaves == 1 && pointerEnters == 0 && keyLeaves == 1);
+    }
+    {   // A held agent button is released before the client gets its pointer back.
+        World w;
+        w.focusOwner(w.leasedSurface, w.leasedSeat);
+        scrollPointers[w.pointer.get()] = w.pointer;
+        pointerHolds[w.pointer.get()].buttons.insert(0x110);
+        returnClientPointer(w.pointer, &w.leased);
+        CHECK(buttonReleases == 1 && pointerHolds.empty());
+    }
+    {   // Owner pointer input ends the hold with the release, owner typing releases the button too.
+        World w;
+        w.focusOwner(w.leasedSurface, w.leasedSeat);
+        scrollPointers[w.pointer.get()] = w.pointer;
+        pointerHolds[w.pointer.get()].buttons.insert(0x110);
+        ownerPointerButton(g_pSeatManager.get(), 1, 0x110, WL_POINTER_BUTTON_STATE_PRESSED);
+        CHECK(buttonReleases == 1 && pointerHolds.empty() && !scrollPointers.contains(w.pointer.get()));
+    }
+    {
+        World w;
+        w.focusOwner(w.leasedSurface, w.leasedSeat);
+        scrollPointers[w.pointer.get()] = w.pointer;
+        pointerHolds[w.pointer.get()].buttons.insert(0x110);
+        ownerKeyboardKey(g_pSeatManager.get(), 1, 30, WL_KEYBOARD_KEY_STATE_PRESSED);
+        CHECK(buttonReleases == 1 && pointerHolds.empty() && !scrollPointers.contains(w.pointer.get()));
+    }
+    {   // A hover with no button held is not touched by owner typing.
+        World w;
+        w.focusOwner(w.leasedSurface, w.leasedSeat);
+        scrollPointers[w.pointer.get()] = w.pointer;
+        pointerHolds[w.pointer.get()];
+        ownerKeyboardKey(g_pSeatManager.get(), 1, 30, WL_KEYBOARD_KEY_STATE_PRESSED);
+        CHECK(buttonReleases == 0 && scrollPointers.contains(w.pointer.get()));
     }
     return failed ? 1 : 0;
 }

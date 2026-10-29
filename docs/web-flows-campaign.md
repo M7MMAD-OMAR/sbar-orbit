@@ -138,3 +138,64 @@ clipboard.
 6. Rare lost handoff reply and lost final Return after a loading navigation (F6, F7).
 7. Not run: Firefox infinite list, anchors, file dialog, iframe, lazy content, MDN and
    BBC; clicking the sticky-page target button was not verified in Chromium.
+
+## F2 and F3 fixed: persistent hover, press, hold, release and drag (29 October 2026)
+
+Tested plugin build: source sha256 `f11203c0f74487f901fe42c0bf9c8800a0a00265c5d248080a729e5f00c3f911`
+(`ghostinput.cpp`; the committed source adds one marker comment, sha256 `c8337d16d03832fa9ab3700bba474088711f87973d2ecdeddd3322b1ea92e90a`). Run in a private nested Hyprland 0.56.2 (headless output, its own
+plugin load, its own broker in full mode, its own XDG directories), never on the owner's
+compositor, because six other leases were active there and loading a plugin ends them.
+Windows were opened in that nested compositor: Chromium with a throwaway profile, a
+GTK4 probe that logs every pointer event, and Text Editor. The owner's physical pointer
+is not part of that compositor.
+
+What changed:
+
+- **Hover persists.** Every pointer command (`move`, `click`, `scroll`, and the new
+  ones) now keeps the synthetic pointer on the target surface. It ends at the next
+  pointer action, `ghost-release`, owner button, wheel or key input, handback or stop,
+  plugin unload, or a timeout of 15 s with no button held. Nothing moves the owner's
+  physical pointer or keyboard focus.
+- **New actions** `mouse-down`, `mouse-up` (both `x`, `y`, optional `button`) and `drag`
+  (`x`, `y`, `toX`, `toY`, optional `button`). They pass the same lease, guard and policy
+  checks as `click` and classify as `write`. A second `mouse-down` of a held button is
+  refused; `mouse-up` of a button that is not held is refused.
+- **Held moves are real motion.** While a button is held, a `move`, a `mouse-up` and a
+  `drag` send pointer motion to the application every 8 ms along the same curved path
+  the cursor is drawn on, with no overshoot and no idle drift. `mouse-up` releases at the
+  exact target point. `drag` presses at the first point, travels, and releases at the
+  second; `ghost-state` reports `motion_active` and the session waits for it.
+- **A held button is always released.** On the next owner button, wheel or key input, on
+  handback and session stop, on `ghost-release`, on plugin unload, and after 30 s since
+  the last motion.
+
+Measured (Chromium, GTK probe, Text Editor; times from the probe's own event log and
+from 30 fps recordings of the nested output):
+
+| Check | Result |
+| --- | --- |
+| Hover menu after `move` (Chromium) | opens and stays open; Item A and Item B visible |
+| Tooltip after `move` (Chromium) | "Tooltip text for the fixture" shown 3.5 s after the move |
+| Hover then idle | leave event exactly 15.000 s after the last action |
+| `mouse-down` twice | second refused, first stays held |
+| `mouse-up` at a new point | about 38 motion events 8 ms apart, last at the exact target, release in the same millisecond |
+| `mouse-down` then no action | release and leave exactly 30.000 s later |
+| `mouse-down` then session stop | release and leave 0.6 s later, before the handback finished |
+| Text selection by `mouse-down`, `move`, `mouse-up` (Chromium) | "Drag and drop" heading selected |
+| `drag` across two lines (Text Editor) | selection grows frame by frame, ends at the exact target (270.8, 114.3 px for target 271, 115) |
+| Drawn drag path | approach about 0.37 s, drag about 0.33 s for 238 px |
+
+Not fixed, and why:
+
+- **HTML5 drag and drop does not work.** On the fixture the "drop here" box stayed
+  "drop here" after a `drag` that ended on it. Wayland drag and drop is started by the
+  client with `wl_data_device.start_drag` and then driven by the compositor from the
+  seat pointer. Synthetic `wl_pointer` events do not drive it, and driving it would
+  mean moving the seat pointer, which is the owner's physical pointer. Pointer-event
+  drags (text selection, sliders, canvas, most sortable lists) work.
+- **Firefox was not run.** A fresh Firefox profile opens a Terms of Use and data
+  collection consent page that blocks the content. Accepting it is the owner's call;
+  the plugin path is the same `wl_pointer` events Chromium and the GTK probe received.
+- The new plugin is built and verified but not loaded into the owner's compositor yet:
+  six leases were active. Load it with `native-plugin unload`, then `native-refresh
+  --plugin-manifest` when no lease is active.

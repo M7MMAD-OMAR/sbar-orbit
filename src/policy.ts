@@ -49,7 +49,7 @@ const classOfAction: Record<string, ActionClass> = {
   // the owner's chosen policy, not OS permissions or automatic process cleanup.
   fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
   pointer: "write", window: "write", launch: "write", "launch-installed": "write", "launch-app": "write", desktop: "write", "move-window": "write",
-  cursor: "write", move: "write", "close-application": "write",
+  cursor: "write", move: "write", "mouse-down": "write", "mouse-up": "write", drag: "write", "close-application": "write",
   // Normal window closure can discard unsaved application content.
   "close-window": "irreversible",
   // Leaves the workspace for the filesystem, so stopping the session does not take it back.
