@@ -15,8 +15,8 @@ import sys
 class UnixConnection(http.client.HTTPConnection):
     """HTTP over the broker's Unix socket, which is how every Orbit client reaches it."""
 
-    def __init__(self, path):
-        super().__init__("localhost", timeout=3)
+    def __init__(self, path, timeout=3):
+        super().__init__("localhost", timeout=timeout)
         self.path = path
 
     def connect(self):
@@ -25,18 +25,30 @@ class UnixConnection(http.client.HTTPConnection):
         self.sock.connect(self.path)
 
 
+class BrokerError(RuntimeError):
+    """The broker answered and said no. The code is what lets the panel tell a refusal that is only
+    information (SESSION_OPEN: end the session first) from one that is a fault, and it subclasses
+    RuntimeError so the poll loop's reconnect logic, which re-raises those, is untouched."""
+
+    def __init__(self, message, code=""):
+        super().__init__(message)
+        self.code = code
+
+
 def request_once(connection, method, params):
     connection.request("POST", "/rpc", body=json.dumps({"method": method, "params": params or {}}),
                        headers={"Content-Type": "application/json"})
     payload = json.loads(connection.getresponse().read(1 << 20))
     if not payload.get("ok"):
-        raise RuntimeError(payload.get("error", {}).get("message", "Broker request failed"))
+        failure = payload.get("error") or {}
+        raise BrokerError(failure.get("message", "Broker request failed"), failure.get("code", ""))
     return payload["result"]
 
 
-def rpc(path, method, params=None):
-    """One off, for the main thread. The poll loop uses BrokerClient instead."""
-    connection = UnixConnection(path)
+def rpc(path, method, params=None, timeout=3):
+    """One off connection. The poll loop uses BrokerClient instead. Never call this from the GTK main
+    thread: pause waits for the session's action queue and can outlast any timeout worth blocking on."""
+    connection = UnixConnection(path, timeout)
     try:
         return request_once(connection, method, params)
     finally:
@@ -84,19 +96,76 @@ def broker_socket():
     return os.path.join(runtime, "sbar-orbit", "broker.sock")
 
 
-def read_status(client, with_presence=True):
-    """The session list, and presence only when something is going to read it. The collapsed mark
-    takes its colour from the list alone, so presence is one call per session that nobody sees."""
-    sessions = [s for s in client.call("session.list") if isinstance(s, dict) and s.get("state") not in ("closed", "closing")]
-    for session in sessions:
+def read_sessions(client, with_presence=True):
+    """Open sessions, and separately the ones that are over. A closed session is not something the mark
+    counts, but it stays listed so the person can read how it ended and remove it. Presence is asked of
+    open sessions only: the broker answers SESSION_CLOSED to a closed one, which would be an error per
+    poll for as long as the card stays."""
+    listed = [s for s in client.call("session.list") if isinstance(s, dict) and isinstance(s.get("sessionId"), str)]
+    sessions = [s for s in listed if s.get("state") not in ("closed", "closing")]
+    ended = [s for s in listed if s.get("state") in ("closed", "closing")]
+    for session in listed:
         session["presence"] = None
-        if with_presence:
+    if with_presence:
+        for session in sessions:
             try:
                 presence = client.call("session.presence", {"sessionId": session["sessionId"]})
                 session["presence"] = presence if isinstance(presence, dict) else None
             except Exception:
                 pass
-    return sessions
+    return sessions, ended
+
+
+def read_status(client, with_presence=True):
+    """The open session list, and presence only when something is going to read it. The collapsed mark
+    takes its colour from the list alone, so presence is one call per session that nobody sees."""
+    return read_sessions(client, with_presence)[0]
+
+
+# The controls. Each takes its own connection with room to wait: a pause is acknowledged only after the
+# session's queued action finishes, which is longer than the poll connection's three seconds. They run
+# on a worker thread the panel starts, never on the GTK thread.
+ACTION_TIMEOUT = 30
+
+
+def session_action(path, verb, session_id):
+    if verb not in ("pause", "resume", "stop", "forget"):
+        raise ValueError(f"unknown session action {verb}")
+    return rpc(path, f"session.{verb}", {"sessionId": session_id}, ACTION_TIMEOUT)
+
+
+def journal_rows(payload, limit=12):
+    """The newest actions first, reduced to what the detail view shows: when, what, and how it ended.
+    A denial carries the broker's reason; an allowed action carries nothing more, by design."""
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    rows = []
+    for entry in reversed([e for e in (entries or []) if isinstance(e, dict)]):
+        if len(rows) >= limit:
+            break
+        rows.append({"at": entry.get("at"), "sequence": entry.get("sequence"), "actor": entry.get("actor", ""),
+                     "action": str(entry.get("actionType", "")), "outcome": str(entry.get("outcome", "")),
+                     "reason": str(entry.get("reason", ""))})
+    return rows
+
+
+def read_journal(client, session_id, limit=12):
+    """Works for a closed session too: the broker answers the journal before it checks the session is open."""
+    return journal_rows(client.call("session.journal", {"sessionId": session_id}), limit)
+
+
+# What a pasted report may carry. Window titles, task text, agent names and the journal's path are the
+# owner's own content and a personal path, which docs/diagnostics.md says a public report omits.
+def build_report(doctor, session, rows):
+    outcomes = {}
+    for row in rows:
+        key = f"{row['action']}:{row['outcome']}"
+        outcomes[key] = outcomes.get(key, 0) + 1
+    handoff = session.get("handoff") or {}
+    facts = {"state": session.get("state"), "activity": (session.get("activity") or {}).get("state"),
+             "workspace": handoff.get("workspace"), "handoffScope": handoff.get("scope"),
+             "clipboard": handoff.get("clipboard"), "windows": len(handoff.get("windows") or []),
+             "recentActions": outcomes}
+    return json.dumps({**(doctor or {}), "session": facts}, indent=2, ensure_ascii=False)
 
 
 def viewer_link_is_local(url):
@@ -210,6 +279,7 @@ def session_shape(sessions):
     live pointer position or an activity counter from rebuilding the cards under the person's hand."""
     return {s["sessionId"]: (s.get("agentName", "Agent"), s.get("taskName", ""), s.get("state", ""),
                              (s.get("activity") or {}).get("state", ""), (s.get("activity") or {}).get("type", ""),
-                             (s.get("presence") or {}).get("title", ""), len((s.get("presence") or {}).get("tabs") or []))
+                             (s.get("presence") or {}).get("title", ""), len((s.get("presence") or {}).get("tabs") or []),
+                             (s.get("handoff") or {}).get("workspace"))
             for s in sessions if isinstance(s.get("sessionId"), str)}
 

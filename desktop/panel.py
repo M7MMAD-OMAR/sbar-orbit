@@ -28,6 +28,8 @@ process and runs outside Orbit's shared budget on purpose.
 
 Run with /usr/bin/python3: the system interpreter has the GTK bindings, a virtualenv usually does not.
 """
+import importlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -74,7 +76,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Gtk4LayerShell as LayerShell  # noqa: E402
 try:  # The unix helpers moved out of GLib; the old names still work and warn on every call.
     from gi.repository import GLibUnix  # noqa: E402
 except ImportError:
@@ -82,10 +84,13 @@ except ImportError:
 import cairo  # noqa: E402
 import math  # noqa: E402
 
-from panel_broker import (BrokerClient, broker_socket, claim_the_mark, command_socket_path, launcher_json,
-                           notify, read_status, rpc, session_shape)  # noqa: E402
+from panel_broker import (BrokerClient, BrokerError, broker_socket, build_report, claim_the_mark, command_socket_path,
+                           launcher_json, notify, read_journal, read_sessions, rpc, session_action,
+                           session_shape)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
+from panel_sessions import SESSIONS_CSS, DetailPage, SessionList  # noqa: E402
+from panel_text import language, text  # noqa: E402
 
 # The preload was for this process only; nothing it launches should inherit it.
 os.environ.pop("LD_PRELOAD", None)
@@ -175,13 +180,12 @@ BASE_CSS = b"""
 .orbit-bar, .orbit-dot { border-radius: 999px; }
 .orbit-glyph.blink, .orbit-bar.blink, .orbit-dot.blink, .orbit-count.blink { animation: orbit-blink 380ms ease-in-out 2; }
 .orbit-count { border-radius: 999px; font-weight: 700; padding: 0 7px; color: white; }
-.orbit-card { padding: 8px 10px; border-radius: 14px; }
-.orbit-card:hover { background: alpha(@window_fg_color, 0.09); }
 .orbit-title { font-weight: 600; }
 .orbit-dim { opacity: 0.65; font-size: 90%; }
-.orbit-chip { font-size: 80%; font-weight: 600; padding: 1px 7px; border-radius: 8px; }
-.orbit-foot button { padding: 2px 10px; border-radius: 999px; font-size: 90%; }
 """
+# The pages the panel can show besides the list. Each lives in a module of its own, imported only when
+# asked for, so a missing or broken page costs its footer entry and nothing else.
+PAGES = {"about": ("panel_about", "build_about_page"), "settings": ("panel_settings", "build_settings_page")}
 
 
 def dynamic_css(settings):
@@ -264,11 +268,26 @@ class Panel(Gtk.Application):
         self.along = 0
         self.extent = -1
         self.stopping = False
+        # Session controls. Held here rather than on widgets, so the list can be updated in place
+        # without losing which Stop is awaiting its answer or which action is in flight.
+        self.closed = []
+        self.busy = set()
+        self.notes = {}
+        self.confirming = None
+        self.detail_id = None
+        self.page_name = None
+        self.journal = []
+        self.measured = {}
         self.wake = threading.Event()
         self.presence_due = 0.0
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
+        # Right to left is the whole text direction of the card; the docked mark and its shell stay
+        # left to right, because their order is geometry (which side of the capsule the card opens on)
+        # and not reading order.
+        if language() == "ar":
+            Gtk.Widget.set_default_direction(Gtk.TextDirection.RTL)
         # Off the desktop, inside a private display for instance, there is no portal to say the colour
         # scheme; follow the same variable the session's applications follow. It is set before any
         # window exists, so the theme's colour scheme media queries see it.
@@ -306,7 +325,7 @@ class Panel(Gtk.Application):
 
         self.display = window.get_display()
         self.install_css(self.display, FALLBACK_CSS, Gtk.STYLE_PROVIDER_PRIORITY_FALLBACK)
-        self.install_css(self.display, BASE_CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.install_css(self.display, BASE_CSS + SESSIONS_CSS, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         self.dynamic_provider = self.install_css(self.display, dynamic_css(self.settings), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1)
         self.surface_provider = self.install_css(self.display, surface_css(self.settings), Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)
 
@@ -315,9 +334,11 @@ class Panel(Gtk.Application):
         self.publish_monitors()
 
         self.shell = Liquid(self)
+        self.shell.set_direction(Gtk.TextDirection.LTR)
         self.shell.add_css_class("orbit-shell")
         self.shell.set_halign(Gtk.Align.CENTER)
         self.mark = Gtk.Box()
+        self.mark.set_direction(Gtk.TextDirection.LTR)
         self.mark.set_halign(Gtk.Align.CENTER)
         self.mark.set_valign(Gtk.Align.CENTER)
         self.mark.update_property([Gtk.AccessibleProperty.LABEL], ["Sbar Orbit sessions"])
@@ -338,14 +359,27 @@ class Panel(Gtk.Application):
         # Room for a name and a window title. Without a floor the cards squeeze to the width of the
         # capsule and every line reads as three words and an ellipsis. The floor belongs to the rows
         # rather than to the card, so the card's own padding is added to it instead of eaten out of it.
-        self.details = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        self.details.set_size_request(280, -1)
-        self.scroller = Gtk.ScrolledWindow()
-        self.scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scroller.set_propagate_natural_height(True)
-        self.scroller.set_max_content_height(420)
-        self.scroller.set_child(self.details)
-        self.plate.append(self.scroller)
+        self.cards = SessionList(self)
+        self.cards.set_size_request(280, -1)
+        self.detail = DetailPage(self)
+        self.page_slot = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.scrollers = {}
+        self.stack = Gtk.Stack()
+        self.stack.set_hhomogeneous(False)
+        self.stack.set_vhomogeneous(False)
+        # Reduced motion: the person's own setting, and the desktop's.
+        animated = bool(self.settings["motion"]) and Gtk.Settings.get_default().get_property("gtk-enable-animations")
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE if animated else Gtk.StackTransitionType.NONE)
+        self.stack.set_transition_duration(140)
+        for name, content in (("list", self.cards), ("detail", self.detail), ("page", self.page_slot)):
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.set_propagate_natural_height(True)
+            scroller.set_max_content_height(560)
+            scroller.set_child(content)
+            self.scrollers[name] = (scroller, content)
+            self.stack.add_named(scroller, name)
+        self.plate.append(self.stack)
         self.plate.append(self.footer())
 
         self.shell.append(self.mark)
@@ -370,6 +404,10 @@ class Panel(Gtk.Application):
         menu.connect("pressed", lambda *_: self.open_settings())
         self.shell.add_controller(menu)
 
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self.key_pressed)
+        window.add_controller(keys)
+
         window.set_child(self.shell)
         self.anchor(window)
         window.present()
@@ -385,12 +423,37 @@ class Panel(Gtk.Application):
         return provider
 
     def footer(self):
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        """The hint, and one entry for each page that exists. A page is a module that may not have
+        landed yet, so its entry appears only when the module can be found."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         row.add_css_class("orbit-foot")
-        settings = Gtk.Label(label="Configure with sbar-orbit config")
-        settings.set_selectable(True)
-        row.append(settings)
+        hint = Gtk.Label(label=text("config-hint"))
+        hint.set_selectable(True)
+        hint.set_hexpand(True)
+        hint.set_xalign(0.0)
+        hint.add_css_class("orbit-dim")
+        row.append(hint)
+        self.footer_buttons = {}
+        for name in PAGES:
+            button = Gtk.Button(label=text(name))
+            button.add_css_class("flat")
+            button.update_property([Gtk.AccessibleProperty.LABEL], [text(name)])
+            button.connect("clicked", lambda _b, n=name: self.open_page(n))
+            self.footer_buttons[name] = button
+            row.append(button)
+        self.refresh_footer()
         return row
+
+    @staticmethod
+    def page_available(name):
+        try:
+            return importlib.util.find_spec(PAGES[name][0]) is not None
+        except (ImportError, ValueError):
+            return False
+
+    def refresh_footer(self):
+        for name, button in self.footer_buttons.items():
+            button.set_visible(self.page_available(name))
 
     def monitor_for(self, window):
         """The chosen monitor by index or connector name, else the largest one: the person's main
@@ -796,12 +859,19 @@ class Panel(Gtk.Application):
         every second, a third of everything the panel spent."""
         while not self.stopping:
             want_presence = self.expanded or GLib.get_monotonic_time() / 1e6 >= self.presence_due
+            ended, journal = [], None
             try:
-                sessions = read_status(self.client, want_presence)
+                sessions, ended = read_sessions(self.client, want_presence)
                 reachable = True
+                wanted = self.detail_id
+                if wanted is not None:
+                    try:
+                        journal = (wanted, read_journal(self.client, wanted))
+                    except BrokerError:
+                        journal = (wanted, [])
             except Exception:
                 self.client.close()
-                sessions, reachable = [], False
+                sessions, ended, reachable = [], [], False
             if want_presence:
                 self.presence_due = GLib.get_monotonic_time() / 1e6 + PRESENCE_WHILE_COLLAPSED_S
             elif sessions:
@@ -809,19 +879,25 @@ class Panel(Gtk.Application):
                 carried = {s.get("sessionId"): s.get("presence") for s in self.sessions}
                 for session in sessions:
                     session["presence"] = carried.get(session.get("sessionId"))
-            GLib.idle_add(self.apply_status, sessions, reachable)
+            GLib.idle_add(self.apply_status, sessions, reachable, ended, journal)
             self.wake.wait(self.interval())
             self.wake.clear()
         self.client.close()
 
-    def apply_status(self, sessions, reachable):
-        self.sessions, self.reachable = sessions, reachable
+    def apply_status(self, sessions, reachable, ended=(), journal=None):
+        self.sessions, self.reachable, self.closed = sessions, reachable, list(ended)
+        if journal is not None and journal[0] == self.detail_id:
+            self.journal = journal[1]
         shape = (session_shape(sessions), reachable)
         try:
             if shape != self.last_shape:
                 self.last_shape = shape
                 self.render()
                 self.announce()
+            elif self.expanded:
+                # The mark did not change, but a card may have: a new time, a title, a journal row.
+                # The views compare before they touch a widget, so this is a few string comparisons.
+                self.refresh_views()
         except Exception as error:
             print(f"panel: could not render status: {error}", file=sys.stderr)
         return False
@@ -921,63 +997,51 @@ class Panel(Gtk.Application):
         if self.expanded:
             self.fill_cards()
 
-    def fill_cards(self):
-        """One card per session, built when the list is about to be shown. Building them on every poll
-        behind a hidden box was a screenful of widgets a second that nobody ever saw, and rebuilding
-        them under the pointer took the highlight off the card the person was about to click."""
-        child = self.details.get_first_child()
-        while child is not None:
-            following = child.get_next_sibling()
-            self.details.remove(child)
-            child = following
-        if not self.sessions:
-            self.details.append(label("Orbit is not running" if not self.reachable else "No agent is working", "orbit-dim"))
-        for session in self.sessions:
-            self.details.append(self.card(session))
-        self.cards_stale = False
-        # A scrolling view asks for almost no height of its own, so the card would be laid out at its
-        # minimum and the last row would be cut in half. The rows are measured and made the floor,
-        # up to the ceiling where scrolling takes over.
-        wanted = self.details.measure(Gtk.Orientation.VERTICAL, -1)[1]
-        self.scroller.set_min_content_height(min(420, wanted))
-        # A row appearing or leaving changes how long the surface is, and the margin that places the
-        # mark along its edge is measured from that length. Without this the mark drifts when a
-        # session starts while the cards are open, and jumps back when they close.
-        GLib.idle_add(self.settle)
+    def everyone(self):
+        return self.sessions + self.closed
 
-    def card(self, session):
-        presence = session.get("presence") or {}
-        activity = session.get("activity") or {}
-        button = Gtk.Button()
-        button.add_css_class("orbit-card")
-        button.add_css_class("flat")
-        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        name = label(session.get("agentName", "Agent"), "orbit-title")
-        name.set_hexpand(True)
-        head.append(name)
-        state = session.get("state", "")
-        working = activity.get("state") == "working"
-        chip = Gtk.Label(label="working" if working else state)
-        chip.add_css_class("orbit-chip")
-        chip.add_css_class("working" if working else ("paused" if state == "paused" else "idle"))
-        head.append(chip)
-        column.append(head)
-        column.append(label(session.get("taskName", "")))
-        tabs = presence.get("tabs") or []
-        active = next((t for t in tabs if isinstance(t, dict) and t.get("active")), None)
-        kind = "windows" if session.get("backend") == "fedora" else "tabs"
-        parts = [presence.get("title") or session.get("backend", "")]
-        if tabs:
-            parts.append(f"{active.get('tab', '?') if active else '?'} of {len(tabs)} {kind}")
-        if activity:
-            parts.append(activity.get("type", ""))
-        # Isolated so a window title in Arabic and a count in English keep their own direction.
-        column.append(label("  ·  ".join(f"⁨{p}⁩" for p in parts if p), "orbit-dim"))
-        button.set_child(column)
-        button.update_property([Gtk.AccessibleProperty.LABEL], [f"{session.get('agentName', 'Agent')}: {session.get('taskName', '')}"])
-        button.connect("clicked", lambda *_: self.watch_sessions(session.get("sessionId")))
-        return button
+    def fill_cards(self):
+        """Bring the visible views up to date, in place. Widgets are created when a session first
+        appears and destroyed when it leaves, and nothing is rebuilt in between: rebuilding a screenful of
+        widgets a second under the pointer took the highlight off the card the person was about to click,
+        and would have taken a keyboard focus and a Stop question with it."""
+        self.refresh_views()
+        self.cards_stale = False
+
+    def refresh_views(self):
+        everyone = self.everyone()
+        known = {s["sessionId"] for s in everyone}
+        for session_id in [i for i in self.notes if i not in known]:
+            del self.notes[session_id]
+        if self.confirming is not None and self.confirming not in known:
+            self.confirming = None
+        self.cards.update(everyone, self.reachable)
+        if self.detail_id is not None:
+            current = next((s for s in everyone if s["sessionId"] == self.detail_id), None)
+            if current is None:
+                self.show_list()
+            else:
+                self.detail.update(current)
+                self.detail.set_rows(self.journal)
+        self.fit()
+
+    def fit(self):
+        """A scrolling view asks for almost no height of its own, so the card would be laid out at its
+        minimum and the last row would be cut in half. The rows are measured and made the floor, up to
+        the ceiling where scrolling takes over."""
+        name = self.stack.get_visible_child_name() or "list"
+        scroller, content = self.scrollers[name]
+        # At the width the page is really laid out at: measured without one, a wrapping label reports
+        # the height of its narrowest wrapping, which is taller than it will be.
+        width = max(content.get_width(), content.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
+        wanted = content.measure(Gtk.Orientation.VERTICAL, width)[1]
+        scroller.set_min_content_height(min(560, wanted))
+        if self.measured.get(name) != wanted:
+            self.measured[name] = wanted
+            # A row appearing or leaving changes how long the surface is, and the margin that places the
+            # mark along its edge is measured from that length. Without this the mark drifts when a
+            # session starts while the cards are open, and jumps back when they close.
+            GLib.idle_add(self.settle)
 
     def sync_frame(self, force=False):
         working = any((s.get("activity") or {}).get("state") == "working" for s in self.sessions)
@@ -1017,6 +1081,10 @@ class Panel(Gtk.Application):
 
     def finish_close(self):
         self.close_source = None
+        # A question, a detail view or a page is something the person is in the middle of; it closes
+        # on Escape or Back, not because the pointer wandered off while they read.
+        if self.pinned():
+            return False
         # The pointer is read again rather than trusted: a surface that resizes under the pointer can
         # swallow the crossing event that would have closed this.
         if self.hover is not None and self.hover.get_property("contains-pointer"):
@@ -1033,6 +1101,9 @@ class Panel(Gtk.Application):
         if expanded == self.expanded and not (expanded and self.cards_stale):
             return
         self.expanded = expanded
+        if not expanded:
+            self.confirming = None
+            self.show_list(reopen=False)
         if expanded:
             self.fill_cards()
             # Ask for presence at once, so the cards do not open showing a ten second old title.
@@ -1047,16 +1118,160 @@ class Panel(Gtk.Application):
 
     # --- Actions ---------------------------------------------------------------------------------
 
+    def pinned(self):
+        return self.confirming is not None or self.detail_id is not None or self.page_name is not None
+
     def open_viewer(self, view=None):
-        """Keep session inspection in the native panel."""
+        """Show the native session list."""
         if view == "settings":
             self.open_settings()
             return
         self.set_expanded(True)
+        self.show_list()
 
     def watch_sessions(self, session_id):
-        """Keep native application status in the panel, with no substitute desktop viewer."""
+        """Selecting a session opens its detail."""
         self.set_expanded(True)
+        if session_id:
+            self.show_detail(session_id)
+
+    def show_detail(self, session_id):
+        session = next((s for s in self.everyone() if s["sessionId"] == session_id), None)
+        if session is None:
+            return
+        self.confirming = None
+        self.page_name = None
+        self.detail_id = session_id
+        self.journal = []
+        self.detail.open(session_id)
+        self.detail.update(session)
+        self.detail.set_rows(self.journal)
+        self.stack.set_visible_child_name("detail")
+        self.fit()
+        # Ask for the journal now rather than at the next tick.
+        self.wake.set()
+        GLib.idle_add(self.detail.back.grab_focus)
+
+    def show_list(self, reopen=True):
+        had = self.detail_id is not None or self.page_name is not None
+        self.detail_id = None
+        self.page_name = None
+        self.journal = []
+        self.stack.set_visible_child_name("list")
+        if self.expanded:
+            self.fit()
+        if had and reopen and self.hover is not None:
+            # The question and the pages held the panel open; with them gone the pointer decides again.
+            self.hover_changed(self.hover.get_property("contains-pointer"))
+
+    def key_pressed(self, _controller, keyval, _code, _state):
+        if keyval != Gdk.KEY_Escape or not self.expanded:
+            return False
+        if self.confirming is not None:
+            self.ask_stop(None)
+        elif self.detail_id is not None or self.page_name is not None:
+            self.show_list()
+        else:
+            self.set_expanded(False)
+        return True
+
+    def ask_stop(self, session_id):
+        """Stopping asks once, in place. The text on the question says what stopping does."""
+        self.confirming = session_id
+        self.refresh_views()
+        if session_id is None and self.hover is not None:
+            self.hover_changed(self.hover.get_property("contains-pointer"))
+
+    def act(self, verb, session_id):
+        """Pause, resume, stop or remove one session. On a worker thread of its own: a pause is
+        acknowledged only after the session's queued action finishes, and the GTK thread does not wait
+        for the broker. The poll is woken when it ends, so the card shows the new state at once."""
+        if session_id in self.busy:
+            return
+        self.busy.add(session_id)
+        self.notes.pop(session_id, None)
+        self.confirming = None
+        self.refresh_views()
+
+        def work():
+            note = None
+            try:
+                session_action(self.path, verb, session_id)
+            except BrokerError as error:
+                # A refusal such as SESSION_OPEN is information about the session, not a fault.
+                key = f"err-{error.code}"
+                note = text(key) if text(key) != key else str(error)
+            except Exception as error:
+                print(f"panel: {verb} failed ({error})", file=sys.stderr)
+                note = text("unknown-error")
+            GLib.idle_add(self.action_done, session_id, note)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def action_done(self, session_id, note):
+        self.busy.discard(session_id)
+        if note:
+            self.notes[session_id] = note
+        self.wake.set()
+        self.refresh_views()
+        return False
+
+    def copy_report(self, session_id):
+        """The doctor report with a few facts about this session, on the clipboard. The report is built
+        by the launcher, which is the one place that knows what a public report may carry, and the
+        session facts added here leave out window titles, task text, names and the journal's path."""
+        session = next((s for s in self.everyone() if s["sessionId"] == session_id), None)
+        if session is None:
+            return
+        self.detail.status.set_label(text("copying"))
+        self.detail.copy.set_sensitive(False)
+        rows = list(self.journal)
+
+        def work():
+            GLib.idle_add(self.report_ready, launcher_json(["doctor", "--report"]), session, rows)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def report_ready(self, doctor, session, rows):
+        self.detail.copy.set_sensitive(True)
+        if not isinstance(doctor, dict):
+            self.detail.status.set_label(text("copy-failed"))
+            return False
+        value = GObject.Value(str, build_report(doctor, session, rows))
+        self.window.get_clipboard().set_content(Gdk.ContentProvider.new_for_value(value))
+        self.detail.status.set_label(text("copied"))
+        return False
+
+    def open_page(self, name):
+        """A page from another module, built when asked for and shown in place of the list."""
+        module_name, builder = PAGES[name]
+        try:
+            page = getattr(importlib.import_module(module_name), builder)(self)
+        except Exception as error:
+            print(f"panel: the {name} page is unavailable ({error})", file=sys.stderr)
+            self.refresh_footer()
+            return False
+        self.set_expanded(True)
+        child = self.page_slot.get_first_child()
+        while child is not None:
+            following = child.get_next_sibling()
+            self.page_slot.remove(child)
+            child = following
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        back = Gtk.Button(label=text("back"))
+        back.add_css_class("flat")
+        back.connect("clicked", lambda *_: self.show_list())
+        bar.append(back)
+        bar.append(label(text(name), "orbit-page-title"))
+        self.page_slot.append(bar)
+        self.page_slot.append(page)
+        self.detail_id = None
+        self.confirming = None
+        self.page_name = name
+        self.stack.set_visible_child_name("page")
+        self.fit()
+        GLib.idle_add(back.grab_focus)
+        return True
 
     def listen_for_commands(self):
         """Do what another invocation asked for, rather than letting it start a second mark."""
@@ -1148,8 +1363,10 @@ class Panel(Gtk.Application):
         return False
 
     def open_settings(self):
-        """Show the native panel and its configuration command."""
+        """The settings page when it exists, otherwise the panel with its configuration command."""
         self.set_expanded(True)
+        if self.page_available("settings"):
+            self.open_page("settings")
 
 
 def main():
