@@ -1,6 +1,7 @@
 import { activateLocal } from "../src/local-install";
 import { releaseFixture } from "./managed-release-fixture";
 import { test, expect } from "bun:test";
+import { tarExecutable } from "../src/platform";
 import { mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { fixtureRoot } from "./platform-support";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ async function packFixture(root: string, version: string) {
   const tree = join(root, `fixture-${version}`, "package");
   await releaseFixture(tree, version, false);
   const archive = join(root, `${version}.tgz`);
-  const packed = Bun.spawn(["tar", "czf", archive, "-C", join(root, `fixture-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
+  const packed = Bun.spawn([tarExecutable(), "czf", archive, "-C", join(root, `fixture-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
   if (await packed.exited !== 0) throw new Error("could not pack the fixture");
   return archive;
 }
@@ -448,7 +449,7 @@ test("an archive without this platform's launcher is refused rather than prepare
     await writeFile(join(tree, foreign), "placeholder\n");
     await writeFile(join(tree, "package.json"), JSON.stringify({ name: "sbar-orbit", version }));
     const archive = join(root, `${version}-wrong.tgz`);
-    const packed = Bun.spawn(["tar", "czf", archive, "-C", join(root, `wrong-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
+    const packed = Bun.spawn([tarExecutable(), "czf", archive, "-C", join(root, `wrong-${version}`), "package"], { stdout: "pipe", stderr: "pipe" });
     expect(await packed.exited).toBe(0);
 
     const bytes = await Bun.file(archive).arrayBuffer();

@@ -7,6 +7,15 @@ name: Platform probes
 
 on:
   workflow_dispatch:
+    inputs:
+      filter:
+        description: Regular expression selecting test file names (empty runs all)
+        required: false
+        default: ""
+      systems:
+        description: JSON array of runner labels
+        required: false
+        default: '["windows-latest","macos-latest","ubuntu-24.04"]'
 
 permissions:
   contents: read
@@ -17,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-24.04]
+        os: ${{ fromJSON(inputs.systems || '["windows-latest","macos-latest","ubuntu-24.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -28,7 +37,16 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - name: Run each test file separately
         shell: bash
+        env:
+          ORBIT_TEST_FILTER: ${{ inputs.filter }}
         run: bun run scripts/platform-test-report.ts "${{ matrix.os }}"
+      - name: Windows account probes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          whoami.exe /user /fo csv /nh; "exit=$LASTEXITCODE"
+          bun -e "const r=Bun.spawnSync(['whoami.exe','/user','/fo','csv','/nh']); console.log(r.exitCode, r.stdout.toString(), r.stderr.toString())"
+          tar --version; (Get-Command tar).Source; "$env:SystemRoot\System32\tar.exe --version"
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4

@@ -2,6 +2,7 @@ import { cp, link, lstat, mkdir, open, readdir, readFile, readlink, realpath, re
 import { homedir } from "node:os";
 import { dirname, join, sep, resolve } from "node:path";
 import { call } from "./ipc";
+import { tarExecutable } from "./platform";
 import { withUpdateLock } from "./update-lock";
 import { serviceSocketPath } from "./service";
 import { managedLifecycle, type ManagedLifecycle } from "./managed-lifecycle";
@@ -553,7 +554,7 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
     await Bun.write(archive, bytes);
     // Unpacked with the system tar, which keeps symlinks as symlinks: a library copy that rewrites them
     // into absolute paths is how the shared runtime broke once already.
-    const unpack = Bun.spawn(["tar", "xzf", archive, "-C", staging, "--strip-components=1"], { stdout: "pipe", stderr: "pipe" });
+    const unpack = Bun.spawn([tarExecutable(), "xzf", archive, "-C", staging, "--strip-components=1"], { stdout: "pipe", stderr: "pipe" });
     const problem = (await new Response(unpack.stderr).text()).trim();
     if (await unpack.exited !== 0) return { prepared: false, reason: problem.split("\n").at(-1)?.slice(0, 200) || "the archive could not be unpacked" };
     await rm(archive, { force: true });

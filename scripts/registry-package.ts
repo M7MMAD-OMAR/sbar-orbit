@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { isPublicSourcePath } from "./public-paths";
+import { tarExecutable } from "../src/platform";
 
 /** Produce the installable registry artifact, including its frozen dependency lock. */
 export async function registryPackage(destination: string, source = resolve(import.meta.dir, "..")) {
@@ -49,12 +50,12 @@ export async function registryPackage(destination: string, source = resolve(impo
     if (archives.length !== 1 || !name) throw new Error("Expected exactly one registry archive");
     const unpacked = join(staging, "unpacked");
     await mkdir(unpacked);
-    await run(["tar", "xzpf", join(staging, name), "-C", unpacked]);
+    await run([tarExecutable(), "xzpf", join(staging, name), "-C", unpacked]);
     // Bun 1.4.2 excludes root lockfiles unconditionally, even explicit files entries.
     // Retain Bun's package selection, then add the source lock required by install.
     await copyFile(join(checkout, "bun.lock"), join(unpacked, "package", "bun.lock"));
     const complete = join(staging, "complete.tgz");
-    await run(["tar", "czf", complete, "-C", unpacked, "package"]);
+    await run([tarExecutable(), "czf", complete, "-C", unpacked, "package"]);
     await mkdir(destination, { recursive: true });
     const output = join(destination, name);
     // A completed artifact must not replace another release without an explicit cleanup.
