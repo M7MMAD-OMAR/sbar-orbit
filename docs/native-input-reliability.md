@@ -277,6 +277,23 @@ there, so the tree itself holds no signal to correct it, and a constant would br
 still falls inside the 34 pixel header button (the drawn circle is about 23 pixels), so a click lands. A
 pixel based check against the capture would be the next step.
 
+Owner update, same day: Calculator is not a target app. Re measured on apps the owner uses, screenshots
+compared with the returned box centers, workspace 4, scale 1.5:
+
+| App | Control clicked | Center error (logical px) |
+| --- | --- | --- |
+| Chrome 156 page content (device pixel scaling) | checkbox 13 by 14, submit button | 0.3 and 0.7 |
+| Dolphin (Qt6) | Music place | under 1 |
+| Nautilus (GTK4) sidebar | Music item | 0.3 in x, 6 in y (inside the 40 pixel item, the click landed) |
+| Nautilus (GTK4) file grid | not clicked | cells about 18 right and 24 down of where drawn, from the screenshot |
+| Text Editor (GTK4) header | main menu button | about 6 and 6, landed on the button |
+
+The GTK4 structure fix removes the repeated wrapper case only. The remaining GTK4 errors (header bar
+about 7 right and 6 down, Nautilus sidebar 6 down, Nautilus grid cells larger) have no repeated or skipped
+ancestor in the tree, so they are not recoverable from the tree alone; they are reported, not corrected.
+Clicks on controls larger than twice the error still land. Small GTK4 controls near the edge can miss, and a
+pixel check against the capture is the open next step.
+
 ## Browsers and Electron
 
 What works without touching the owner's settings. Gecko (Firefox, Thunderbird) already publishes a full
