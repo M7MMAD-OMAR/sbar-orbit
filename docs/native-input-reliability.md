@@ -490,3 +490,9 @@ workspace 8: the capture size equals the `state` geometry times the output scale
 `orbit_handoff` returns APPLICATION_BUSY for the Firefox client although the broker lists no running session and
 no handoff record exists, so the plugin holds an orphan lease (see docs/web-flows-campaign.md). The click proof
 on Firefox needs that lease cleared first.
+
+Firefox crop proof, completed (29 October 2026, 6:27 PM). After the orphan lease was released and the plugin reloaded,
+a new Firefox window (geometry [24,21,1200,800], surface 1248 by 848, scale 1.3333) gave a 1568 by 1039 capture; the
+"hover" link read at image (217,148) and clicked at (162.75,111) navigated to `#hover`. The capture is the geometry
+minus the margin strip (1176 by 779.25 logical), so its size is not the geometry on Firefox; the last 24 columns and 21
+rows of the page cannot be read off an image.

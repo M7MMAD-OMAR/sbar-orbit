@@ -322,11 +322,22 @@ no monitor showed (monitors showed 6 and 5), fixture served on `127.0.0.1:8765`.
 | --- | --- | --- | --- | --- |
 | Chromium (scale 1.5) | window 1200x800, surface 1200x800, geometry [0,0,1200,800] | 1800x1200 = geometry times 1.5 | "hover" link at image (287,167), clicked at 287/1.5, 167/1.5 = (191,111) | URL became `localhost:8765/#hover`, page scrolled to the Hover section, settle `waitedMs` 118 |
 | GTK Text Editor (scale 1.5, client side decorations but no shadow margin under Hyprland) | window 960x640, surface 960x640, geometry [0,0,960,640] | 1440x960 = geometry times 1.5 | the three dots menu button at image (1345,34), clicked at (890,22) | the button showed its pressed highlight; its popover is a separate surface and is not in the capture |
-| Firefox | not run | not run | not run | blocked, see below |
+| Firefox (scale 1.333) | window 1200x800, surface 1248x848, geometry [24,21,1200,800] | 1568x1039, `surfaceWidth` 1176, `surfaceHeight` 779.25 | "hover" link at image (217,148), clicked at 217/1.3333, 148/1.3333 = (162.75,111), no offset added | URL became `localhost:8765/#hover`, page scrolled to Hover; the drawn cursor sat on the same image pixel (`presence.pointer` 217,148) |
 
 Chromium also opened with the owner's pinned tabs; only my fixture tab was closed with `ctrl+w`.
 
-**Firefox blocked by an orphan lease.** `orbit_handoff` on a new Firefox window on workspace 8
+Firefox, second run (after the orphan lease 57626cfe was released with `sbar-orbit native-leases
+release` and the plugin was reloaded to sha 95932fb8): the click proof passed as the table shows.
+The capture is the geometry minus its margin strip, not the geometry: 1176 by 779.25 logical of
+1200 by 800, because the compositor's toplevel capture is window sized from the surface origin and the
+crop removes the 24 by 21 left and top margin. Pixels in the last 24 columns and 21 rows of the page
+cannot be read off the image, though input there is valid. Capture size therefore does not equal the
+`state` geometry on Firefox (it does on Chromium and Text Editor, whose geometry starts at 0, 0); this
+limit is in the compositor capture, not something the crop can repair. The window opened on the
+owner's workspace first because the owner's pointer was moving (the F1 conservative path) and was
+moved to workspace 8 with the same placement call Orbit uses.
+
+**Firefox was blocked by an orphan lease (earlier run, resolved).** `orbit_handoff` on a new Firefox window on workspace 8
 returned `APPLICATION_BUSY` three times over several minutes, while handoff of Text Editor and
 Chromium on the same workspace succeeded, so capacity was not the limit. The broker lists no
 running session on Firefox (all are `closed`), there is no `handoff.json` anywhere, and no worker
