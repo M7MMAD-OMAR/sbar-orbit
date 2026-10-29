@@ -36,6 +36,38 @@ export async function refreshNative(pluginManifest?: string, ifConfigured = fals
   return reply;
 }
 
+/**
+ * Owner command: list native application leases, or release one whose worker is gone.
+ * `live` holds the leases of broker sessions that are not closed; those are never released.
+ */
+export async function nativeLeases(verb: string | undefined, id: string | undefined, live: string[] = [], root = nativeStateRoot()) {
+  if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native leases require Linux and Hyprland");
+  if (verb !== undefined && verb !== "list" && verb !== "release") throw new OrbitError("INVALID_REQUEST", "Use native-leases [list] | native-leases release LEASE_ID");
+  if (verb === "release" && !(id && /^[0-9a-f]{32}$/.test(id))) throw new OrbitError("INVALID_REQUEST", "Use native-leases release LEASE_ID");
+  await requireResourceBudget();
+  const { code, reply } = await runOwnerCommand("leases.py", [join(root, "current", "host.json"), join(root, "control"), verb ?? "list",
+    ...(verb === "release" && id ? [id] : []), ...live.flatMap(lease => ["--live-lease", lease])]);
+  if (code !== 0) {
+    const detail = typeof reply === "object" && reply !== null && "error" in reply && typeof reply.error === "object" && reply.error !== null
+      && "message" in reply.error && typeof reply.error.message === "string" ? reply.error.message : "Native lease command failed";
+    throw new OrbitError("CONFIG_REQUIRED", detail);
+  }
+  return reply;
+}
+
+/**
+ * After a native worker has exited, whatever way it ended, hand back the lease its worker directory
+ * still records. A worker killed during its own cleanup would otherwise leave the compositor holding
+ * the application. Best effort by design: the compositor also reaps leases whose owner is gone.
+ */
+export async function reapWorkerLease(workerDirectory: string, planPath: string, controlDirectory: string,
+    run: typeof runOwnerCommand = runOwnerCommand) {
+  // A clean close removes the handoff record, so most closes need no command at all.
+  if (!await Bun.file(join(workerDirectory, "handoff.json")).exists()) return undefined;
+  const { code, reply } = await run("leases.py", [planPath, controlDirectory, "reap-worker", workerDirectory]);
+  return code === 0 ? reply : undefined;
+}
+
 /** Fixed owner entry, without an agent RPC counterpart. */
 export async function nativePlugin(operation: string | undefined, directory: string | undefined) {
   if (!["status", "load", "unload", "resume"].includes(operation ?? "") || !directory || !isAbsolute(directory))
@@ -107,7 +139,7 @@ function validAdmission(value: unknown): value is Record<string, unknown> {
   return info.ready === (info.admission_paused && info.live_roots === 0 && info.scopes_empty && !info.legacy_enrollment);
 }
 
-async function runOwnerCommand(entry: string, words: string[]) {
+export async function runOwnerCommand(entry: string, words: string[]) {
   const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native", entry), ...words], {
     stdout: "pipe", stderr: "pipe", timeout: 20000,
   });

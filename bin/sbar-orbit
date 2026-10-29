@@ -91,6 +91,7 @@ Sbar Orbit, desktop application control for your AI agent
   sbar-orbit native-settings     Open protected/full native controls and the action log
   sbar-orbit native-prepare DIR  Prepare native owner configuration without activation
   sbar-orbit native-refresh      Renew the compositor binding after Hyprland restarted, keeping your mode
+  sbar-orbit native-leases       List native application leases; "release ID" frees one whose worker is gone
   sbar-orbit native-plugin status|load|unload|resume DIR
                                 Inspect or load the fixed prepared native plugin
   sbar-orbit config list         Every setting, its value and its default

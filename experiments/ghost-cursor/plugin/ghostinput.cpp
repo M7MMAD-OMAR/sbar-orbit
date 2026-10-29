@@ -80,6 +80,7 @@
 #include <hyprland/src/animation/WorkspaceAnimationController.hpp>
 #include <cstring>
 #include <fstream>
+#include <filesystem>
 #include <sys/syscall.h>
 #include <poll.h>
 #include <unistd.h>
@@ -412,6 +413,8 @@ static std::map<CWLPointerResource*, SPointerHold> pointerHolds;
 static SP<CEventLoopTimer> holdTimer;
 constexpr auto hoverHold = std::chrono::seconds(15), buttonHold = std::chrono::seconds(30);
 static void armHoldTimer();
+static SP<CEventLoopTimer> leaseReapTimer;
+static void reapDeadOwnerLeases();
 static std::map<CWLKeyboardResource*, WP<CWLKeyboardResource>> agentKeyboards;
 static void cancelKeyboardClient(wl_client* client);
 static void retireKeyboardClient(wl_client* client);
@@ -458,6 +461,50 @@ struct SLeasedWindow {
     std::optional<bool> originalFloating, originalCenter;
     std::optional<Math::SExpressionVec2> originalSize;
 };
+// BEGIN lease-owner
+// The Orbit worker that claimed a lease names itself as pid:starttime. A lease whose
+// worker is gone can never be handed back by that worker, so the plugin reaps it.
+namespace lease_owner {
+struct Owner { long pid = 0; unsigned long long start = 0; };
+
+// Parse "pid:starttime"; both decimal, pid positive.
+inline bool parse(const std::string& token, Owner& out) {
+    const auto colon = token.find(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= token.size() || token.size() > 40) return false;
+    for (size_t i = 0; i < token.size(); ++i)
+        if (i != colon && (token[i] < '0' || token[i] > '9')) return false;
+    out.pid = std::strtol(token.substr(0, colon).c_str(), nullptr, 10);
+    out.start = std::strtoull(token.substr(colon + 1).c_str(), nullptr, 10);
+    return out.pid > 0;
+}
+
+// Field 22 of /proc/<pid>/stat, counted after the last ')' because the command name may hold anything.
+inline bool startTicks(const std::string& stat, unsigned long long& ticks) {
+    const auto close = stat.rfind(')');
+    if (close == std::string::npos) return false;
+    std::istringstream rest(stat.substr(close + 1));
+    std::string field;
+    for (int index = 3; index <= 22; ++index) {
+        if (!(rest >> field)) return false;
+        if (index == 22) { ticks = std::strtoull(field.c_str(), nullptr, 10); return true; }
+    }
+    return false;
+}
+
+// Dead only when the process is definitely gone or the pid now belongs to another process.
+// An unreadable /proc entry is treated as alive, so nothing is reaped on a doubt.
+inline bool alive(const Owner& owner, const std::string& procRoot = "/proc") {
+    std::ifstream stream(procRoot + "/" + std::to_string(owner.pid) + "/stat");
+    if (!stream) return std::filesystem::exists(procRoot + "/" + std::to_string(owner.pid));
+    std::string line;
+    std::getline(stream, line);
+    unsigned long long ticks = 0;
+    if (!startTicks(line, ticks)) return true;
+    return ticks == owner.start;
+}
+}  // namespace lease_owner
+// END lease-owner
+
 struct SApplicationLease {
     wl_client* client = nullptr;
     wl_listener destroy{};
@@ -477,6 +524,8 @@ struct SApplicationLease {
     std::string homeWorkspaceRule;
     std::optional<Math::SExpressionVec2> newWindowSize;
     std::string id;
+    lease_owner::Owner owner;
+    std::chrono::steady_clock::time_point claimedAt = std::chrono::steady_clock::now();
 };
 static std::map<std::string, std::unique_ptr<SApplicationLease>> applicationLeases;
 static std::set<std::string> retiredApplicationLeases;
@@ -899,6 +948,21 @@ static void handbackApplication(const std::string& id) {
     applicationLeases.erase(found);
 }
 
+// A lease whose claiming worker is gone is handed back, so a killed worker cannot leave an
+// application unusable. Leases that never named an owner are left alone.
+static void reapDeadOwnerLeases() {
+    std::vector<std::string> dead;
+    for (const auto& [id, lease] : applicationLeases)
+        if (lease->owner.pid > 0 && !lease_owner::alive(lease->owner)) dead.push_back(id);
+    for (const auto& id : dead) {
+        try { handbackApplication(id); }
+        catch (const std::exception& error) {
+            if (const auto held = applicationLeases.find(id); held != applicationLeases.end())
+                recordApplicationFailure(held->second->client, error.what());
+        }
+    }
+}
+
 static void clearApplicationCursors(std::string_view id) {
     for (auto cursor = cursors.begin(); cursor != cursors.end();) {
         const auto& target = cursor->first;
@@ -953,7 +1017,7 @@ static std::string applicationInfo(const std::string& id) {
         lease.paused ? "paused" : "active", ownerInputActive(lease) ? "true" : "false", id, lease.windowBound ? "selected-dialog-family" : "client-windows", excludedWindows,
         windows, applicationJsonString(lease.failure.data()), applicationJsonString(lease.claimFailure.data()));
 }
-static std::string claimApplication(const std::string& address, const std::string& stable, const std::string& id) {
+static std::string claimApplication(const std::string& address, const std::string& stable, const std::string& id, const std::string& ownerToken = "") {
     if (admissionPaused)
         throw std::runtime_error("native admission is paused");
     if (!std::regex_match(address, std::regex{"0x[0-9a-f]{1,16}"}) ||
@@ -976,11 +1040,19 @@ static std::string claimApplication(const std::string& address, const std::strin
     clientHasDataControlDevice(PROTO::primarySelection, client);
     if (g_pSeatManager->m_seatGrab || PROTO::data->dndActive())
         throw std::runtime_error("handoff is unsupported during a grab or drag");
-    if (applicationLeaseForClient(client) || applicationLeases.size() >= 16 || retiredApplicationLeases.size() >= 1024)
+    if (auto holder = applicationLeaseForClient(client)) {
+        // The refusal names the holder so a caller can tell a live task from an orphan.
+        const bool known = holder->owner.pid > 0;
+        throw std::runtime_error(std::format("application lease already exists or lease bound reached lease={} owner_pid={} owner_alive={}",
+            holder->id, holder->owner.pid, known ? (lease_owner::alive(holder->owner) ? "yes" : "no") : "unknown"));
+    }
+    if (applicationLeases.size() >= 16 || retiredApplicationLeases.size() >= 1024)
         throw std::runtime_error("application lease already exists or lease bound reached");
     auto retained = std::make_unique<SApplicationLease>();
     retained->client = client;
     retained->id = id;
+    if (!ownerToken.empty() && !lease_owner::parse(ownerToken, retained->owner))
+        throw std::runtime_error("invalid lease owner token");
     const auto parent = selected->parent();
     const auto parentResource = parent ? parent->resource() : SP<CWLSurfaceResource>{};
     retained->windowBound = parentResource && parentResource->client() != client;
@@ -2464,10 +2536,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-claim", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
-            std::string command, address, stable, id, extra;
-            if (!(input >> command >> address >> stable >> id) || (input >> extra))
+            std::string command, address, stable, id, owner, extra;
+            if (!(input >> command >> address >> stable >> id) || ((input >> owner) && (input >> extra)))
                 return std::string{"refused: exact selected window address and stable identity required"};
-            try { return claimApplication(address, stable, id); }
+            try { return claimApplication(address, stable, id, owner); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
 
@@ -2477,6 +2549,24 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (!(input >> command >> id) || (input >> extra)) return std::string{"refused: application lease identity required"};
             try { return applicationInfo(id); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
+        }});
+    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-list", false,
+        [](eHyprCtlOutputFormat, std::string) {
+            std::string out{"{\"schema\":1,\"leases\":["};
+            bool first = true;
+            const auto now = std::chrono::steady_clock::now();
+            for (const auto& [id, lease] : applicationLeases) {
+                if (!first) out += ',';
+                first = false;
+                pid_t clientPid = 0;
+                if (lease->client) wl_client_get_credentials(lease->client, &clientPid, nullptr, nullptr);
+                const bool known = lease->owner.pid > 0;
+                out += std::format("{{\"lease_id\":\"{}\",\"paused\":{},\"windows\":{},\"client_pid\":{},\"owner_pid\":{},\"owner_start\":{},\"owner_alive\":{},\"age_seconds\":{}}}",
+                    id, lease->paused ? "true" : "false", lease->windows.size(), static_cast<long>(clientPid), lease->owner.pid, lease->owner.start,
+                    known ? (lease_owner::alive(lease->owner) ? "\"yes\"" : "\"no\"") : "\"unknown\"",
+                    std::chrono::duration_cast<std::chrono::seconds>(now - lease->claimedAt).count());
+            }
+            return out + "]}";
         }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-reap", false,
         [](eHyprCtlOutputFormat, std::string request) {
@@ -2711,6 +2801,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-click", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 1); }});
     holdTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { sweepPointerHolds(); }, nullptr);
     g_pEventLoopManager->addTimer(holdTimer);
+    leaseReapTimer = makeShared<CEventLoopTimer>(std::chrono::seconds(5), [](SP<CEventLoopTimer> self, void*) {
+        reapDeadOwnerLeases();
+        self->updateTimeout(std::chrono::seconds(5));
+        g_pEventLoopManager->scheduleRecalc();
+    }, nullptr);
+    g_pEventLoopManager->addTimer(leaseReapTimer);
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-move", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 0); }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-down", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 4); }});
     HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-up", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 5); }});
@@ -2816,6 +2912,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
     pointerHolds.clear();
     if (holdTimer) g_pEventLoopManager->removeTimer(holdTimer);
     holdTimer.reset();
+    if (leaseReapTimer) g_pEventLoopManager->removeTimer(leaseReapTimer);
+    leaseReapTimer.reset();
     if (pumpTimer) g_pEventLoopManager->removeTimer(pumpTimer);
     pumpTimer.reset();
     pumps.clear();

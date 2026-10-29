@@ -84,7 +84,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
-  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh") await usage.assertEnabled();
+  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh" && command !== "native-leases") await usage.assertEnabled();
   if (command === "usage") {
     if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");
     if (!["on", "off", "status"].includes(verb ?? "") || fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use usage on|off|status [ID]");
@@ -119,6 +119,17 @@ try {
       throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");
     const { nativePlugin } = await import("./native-prepare");
     console.log(JSON.stringify(await nativePlugin(verb, arg)));
+  } else if (command === "native-leases") {
+    // Lists native application leases, or releases one whose Orbit worker is gone. A lease that a
+    // broker session still holds, even one that is closing, is never released from here.
+    const { nativeLeases } = await import("./native-prepare");
+    const { readStatus, socketFromEnvironment } = await import("./status");
+    let live: string[] = [];
+    try {
+      const status = await readStatus(socketFromEnvironment()) as { sessions?: { state?: string; handoff?: { appId?: string } }[] };
+      live = (status.sessions ?? []).filter(session => session.state !== "closed").flatMap(session => session.handoff?.appId ? [session.handoff.appId] : []);
+    } catch { /* no broker running means no live session holds a lease */ }
+    console.log(JSON.stringify(await nativeLeases(verb, arg, live)));
   } else if (command === "native-settings") {
     if (verb !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-settings without action or configuration arguments");
     const { openNativeSettings } = await import("./native-settings");

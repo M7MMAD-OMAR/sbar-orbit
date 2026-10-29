@@ -14,8 +14,22 @@ from .application import private_directory
 from .plugin_compatibility import require_native_plugin
 from .indicator_style import apply_indicator_style
 from .budget import require_budget
+from .leases import owner_token
 from .session import NativeSession, SessionError, ApplicationControlEnded, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
 from .transport import NativeTransport, action_response
+
+
+def lease_conflict_message(raw):
+    """Name the lease holder, and say whether its worker is alive, when the plugin reports it."""
+    held = re.search(r"lease=([0-9a-f]{32}) owner_pid=(\d+) owner_alive=(yes|no|unknown)", raw)
+    if not held:
+        return "Application client is already leased or native lease capacity is reached"
+    lease, pid, alive = held.groups()
+    state = {"yes": "its worker is alive", "no": "its worker is gone, so it is an orphan",
+             "unknown": "its worker is not recorded"}[alive]
+    advice = ("; the compositor releases it shortly, or run sbar-orbit native-leases release " + lease
+              if alive == "no" else "")
+    return f"Application client is already leased by lease {lease} (worker pid {pid}); {state}{advice}"
 
 
 class ExistingApplicationSession(NativeSession):
@@ -167,7 +181,10 @@ class ExistingApplicationSession(NativeSession):
             pending = self.directory / "handoff.json"
             with pending.open("x", encoding="utf-8") as stream:
                 os.chmod(pending, 0o600)
-                json.dump({"lease_id": lease_id, "selection": selection}, stream)
+                token = owner_token()
+                pid, _, start = token.partition(":")
+                json.dump({"lease_id": lease_id, "selection": selection,
+                           **({"pid": int(pid), "start": int(start)} if token else {})}, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
             request = "native-handoff " + json.dumps({"workspace": selection["workspace"],
@@ -175,7 +192,7 @@ class ExistingApplicationSession(NativeSession):
 
             def operation():
                 apply_indicator_style(self.transport)
-                command = f"ghost-application-claim {selected['address']} {selected['stableId']} {lease_id}"
+                command = f"ghost-application-claim {selected['address']} {selected['stableId']} {lease_id}" + (" " + owner_token()).rstrip()
                 raw = self.transport._exchange(command)
                 busy = "refused: application client is receiving owner input"
                 give_up = time.monotonic() + self.owner_wait_seconds
@@ -184,8 +201,8 @@ class ExistingApplicationSession(NativeSession):
                     raw = self.transport._exchange(command)
                 if raw.strip() == busy:
                     raise ApplicationOwnerBusy("Application client is receiving owner keyboard or pointer input; handoff preserves owner focus")
-                if raw.strip() == "refused: application lease already exists or lease bound reached":
-                    raise ApplicationLeaseConflict("Application client is already leased or native lease capacity is reached")
+                if raw.strip().startswith("refused: application lease already exists or lease bound reached"):
+                    raise ApplicationLeaseConflict(lease_conflict_message(raw.strip()))
                 if raw.startswith("refused:"):
                     raise SessionError("Application handoff " + raw[:300])
                 reply = json.loads(raw)

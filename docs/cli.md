@@ -75,7 +75,19 @@ exact action approval, or full mode using standing owner authorization. Native
 control needs a prepared, loaded plugin matching current source and compositor ABI.
 A historical acceptance file is not a runtime permission switch.
 
+Native application leases belong to one Orbit worker process. If that worker is killed
+before it hands the application back, the compositor plugin would keep the lease and refuse
+every later handoff of that application. Three layers prevent and repair that: a closing
+session always hands its lease back after its worker ends, however it ended; the plugin
+reaps a lease whose claiming worker (pid and start time) no longer exists, within about
+five seconds; and `sbar-orbit native-leases` lists leases and `native-leases release ID`
+frees one by hand. Release refuses a lease whose worker is alive, whose broker session is not
+closed, or that the compositor no longer holds. A refused handoff names the holder, and says
+whether its worker is alive.
+
 ```sh
+sbar-orbit native-leases
+sbar-orbit native-leases release LEASE_ID
 sbar-orbit status
 sbar-orbit doctor
 sbar-orbit doctor --report

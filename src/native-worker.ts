@@ -145,8 +145,12 @@ export class NativeWorker {
             OWNER_BUSY: "The application client is receiving owner input. Handoff leaves owner focus unchanged; wait until the client is no longer receiving owner input.",
             APPLICATION_BUSY: "The application client is already leased or native lease capacity is reached. Inspect active sessions and arrange an explicit handoff; do not stop another task or relaunch blindly.",
           };
-          pending.reject(new OrbitError(code, (Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
-            ?? "Native request failed; inspect its private worker journal"));
+          // The holder detail is fixed-shape text produced by the worker from the plugin's own reply.
+          const holder = code === "APPLICATION_BUSY" && typeof failure?.message === "string"
+            && /^Application client is already leased by lease [0-9a-f]{32} \(worker pid \d+\); [a-z ,]+(; .{0,160})?$/.test(failure.message)
+            ? " " + failure.message : "";
+          pending.reject(new OrbitError(code, ((Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
+            ?? "Native request failed; inspect its private worker journal") + holder));
           // A compositor handback ends this backend even if its worker still
           // accepts framed requests. EOF performs normal lease cleanup and the
           // existing close listener updates broker status.

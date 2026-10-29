@@ -213,7 +213,13 @@ int main() {
         with tempfile.TemporaryDirectory(prefix="orbit-handoff-focus-") as directory:
             root = Path(directory)
             cpp, binary = root / "probe.cpp", root / "probe"
-            cpp.write_text(fixture + release + claim + main)
+            # The claim records the owner token, so the fixture carries the plugin's real owner helpers.
+            owner = source[source.index("// BEGIN lease-owner"):source.index("// END lease-owner")] if "// BEGIN lease-owner" in source else ""
+            body = fixture.replace("struct RetainedWindow", owner + "struct RetainedWindow", 1) if owner else fixture
+            if owner:
+                body = ("#include <chrono>\n#include <cstdlib>\n#include <filesystem>\n#include <fstream>\n#include <sstream>\n" + body).replace(
+                    "    std::array<char,256> claimFailure{};\n};", "    std::array<char,256> claimFailure{};\n    lease_owner::Owner owner;\n};", 1)
+            cpp.write_text(body + release + claim + main)
             subprocess.run(["g++", "-std=c++23", str(cpp), "-o", str(binary)], check=True, timeout=30)
             subprocess.run([str(binary)], check=True, timeout=5)
 

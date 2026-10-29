@@ -1,6 +1,7 @@
 import { OrbitError, record } from "./errors";
 import { resolveInstalledApplication } from "./application-launch";
 import { requireNativeAdapter } from "./native-availability";
+import { reapWorkerLease } from "./native-prepare";
 import { NativeWorker, type NativeOptions } from "./native-worker";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
@@ -263,7 +264,14 @@ export class NativeBackend {
   close() {
     return this.closing ??= (async () => {
       // Failed worker cleanup retains its private workspace for diagnosis.
-      await this.worker.close();
+      let workerFailure: unknown;
+      try { await this.worker.close(); } catch (error) { workerFailure = error; }
+      // However the worker ended, its lease must not outlive it.
+      if (this.borrowed) {
+        try { await reapWorkerLease(join(this.directory, "worker"), this.options.planPath, this.options.controlDirectory); }
+        catch { /* the compositor reaps leases whose worker is gone */ }
+      }
+      if (workerFailure !== undefined) throw workerFailure;
       const logs = join(this.options.controlDirectory, "broker-logs");
       await mkdir(logs, { recursive: true, mode: 0o700 });
       const retained = join(logs, basename(this.directory));
