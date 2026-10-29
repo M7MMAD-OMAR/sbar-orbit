@@ -35,6 +35,13 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Broker smoke (private broker, doctor over its endpoint)
+        shell: bash
+        run: bun run scripts/limited.ts bun run scripts/platform-smoke.ts
+      - name: Launcher status (bin launcher of this platform)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then cmd //c "bin\\sbar-orbit.cmd status"; else bin/sbar-orbit status; fi
       - name: Run each test file separately
         shell: bash
         env:
