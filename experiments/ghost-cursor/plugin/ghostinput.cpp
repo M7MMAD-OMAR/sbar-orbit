@@ -252,12 +252,129 @@ class RetainedScope {
 // Native unload scope identity end.
 
 inline HANDLE PHANDLE = nullptr;
+// BEGIN cursor-motion
+// Pure, dependency free path generator for the private visible cursor. It only
+// shapes what is drawn; the application's pointer events are sent separately.
+// tests/ghost-cursor-motion.test.ts extracts this region and compiles it alone.
+namespace cursor_motion {
+constexpr double kMinSeconds = 0.14, kMaxSeconds = 0.9, kSettleSeconds = 0.12;
+constexpr double kOvershootFrom = 160, kOvershootMax = 14, kBowMax = 60, kDriftMax = 3;
+constexpr double kDriftRampSeconds = 0.6;
+
+struct Vec { double x = 0, y = 0; };
+
+struct Rng {
+    uint64_t state;
+    explicit Rng(uint64_t seed) : state(seed) {}
+    uint64_t next() {
+        uint64_t z = (state += 0x9e3779b97f4a7c15ULL);
+        z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+        return z ^ (z >> 31);
+    }
+    double unit() { return (next() >> 11) * (1.0 / 9007199254740992.0); }
+    double range(double low, double high) { return low + (high - low) * unit(); }
+};
+
+struct Move {
+    Vec from, to, c1, c2, over;
+    bool overshoot = false, drift = false;
+    double start = 0, mainSeconds = 0, settleSeconds = 0;
+    double amplitude[2][2] = {}, rate[2][2] = {}, phase[2][2] = {};
+    double total() const { return mainSeconds + settleSeconds; }
+};
+
+inline double minimumJerk(double tau) {
+    tau = tau < 0 ? 0 : tau > 1 ? 1 : tau;
+    return tau * tau * tau * (10 + tau * (-15 + 6 * tau));
+}
+
+inline Vec cubic(Vec a, Vec b, Vec c, Vec d, double t) {
+    const double u = 1 - t, w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+    return {w0 * a.x + w1 * b.x + w2 * c.x + w3 * d.x, w0 * a.y + w1 * b.y + w2 * c.y + w3 * d.y};
+}
+
+inline double travelSeconds(double distance) {
+    const double seconds = 0.14 + 0.095 * std::log2(1 + distance / 30);
+    return seconds < kMinSeconds ? kMinSeconds : seconds > kMaxSeconds ? kMaxSeconds : seconds;
+}
+
+// A fresh Move from the cursor's displayed position, so a new action begins
+// exactly where the previous motion or drift left the drawing.
+inline Move plan(Vec from, Vec to, uint64_t seed, double start, bool allowDrift) {
+    Rng rng(seed);
+    Move m;
+    m.from = from; m.to = to; m.start = start; m.drift = allowDrift;
+    const Vec delta{to.x - from.x, to.y - from.y};
+    const double distance = std::hypot(delta.x, delta.y);
+    if (distance >= 0.5) {
+        const Vec unit{delta.x / distance, delta.y / distance}, normal{-unit.y, unit.x};
+        const double sign = rng.unit() < 0.5 ? -1 : 1;
+        double bow = distance * rng.range(0.04, 0.12) * sign;
+        bow = bow > kBowMax ? kBowMax : bow < -kBowMax ? -kBowMax : bow;
+        m.overshoot = distance >= kOvershootFrom;
+        double reach = 0;
+        if (m.overshoot) {
+            reach = distance * 0.025 * rng.range(0.5, 1.0);
+            reach = reach > kOvershootMax ? kOvershootMax : reach;
+            m.over = {to.x + unit.x * reach + normal.x * bow * 0.05, to.y + unit.y * reach + normal.y * bow * 0.05};
+        } else {
+            m.over = to;
+        }
+        const Vec aim = m.over;
+        m.c1 = {from.x + (aim.x - from.x) / 3 + normal.x * bow, from.y + (aim.y - from.y) / 3 + normal.y * bow};
+        m.c2 = {from.x + (aim.x - from.x) * 2 / 3 + normal.x * bow * 0.6, from.y + (aim.y - from.y) * 2 / 3 + normal.y * bow * 0.6};
+        m.mainSeconds = travelSeconds(distance);
+        m.settleSeconds = m.overshoot ? kSettleSeconds : 0;
+    }
+    // Two slow sine terms per axis; the summed amplitude stays below kDriftMax.
+    for (int axis = 0; axis < 2; ++axis) {
+        m.amplitude[axis][0] = rng.range(0.8, 1.6);
+        m.amplitude[axis][1] = rng.range(0.4, 1.0);
+        m.rate[axis][0] = rng.range(0.12, 0.30) * 6.283185307179586;
+        m.rate[axis][1] = rng.range(0.35, 0.60) * 6.283185307179586;
+        m.phase[axis][0] = rng.range(0, 6.283185307179586);
+        m.phase[axis][1] = rng.range(0, 6.283185307179586);
+    }
+    return m;
+}
+
+inline bool traveling(const Move& m, double now) { return now < m.start + m.total(); }
+
+// The cursor's drawn position. Exactly `from` before start, exactly `to` at the
+// end of travel, then `to` plus a bounded drift that eases in from zero.
+inline Vec position(const Move& m, double now) {
+    const double elapsed = now - m.start;
+    if (elapsed <= 0) return m.from;
+    if (elapsed < m.mainSeconds) return cubic(m.from, m.c1, m.c2, m.over, minimumJerk(elapsed / m.mainSeconds));
+    if (elapsed < m.total()) {
+        const double s = minimumJerk((elapsed - m.mainSeconds) / m.settleSeconds);
+        return {m.over.x + (m.to.x - m.over.x) * s, m.over.y + (m.to.y - m.over.y) * s};
+    }
+    if (!m.drift) return m.to;
+    const double idle = elapsed - m.total();
+    const double ramp = minimumJerk(idle / kDriftRampSeconds);
+    double offset[2];
+    for (int axis = 0; axis < 2; ++axis) {
+        offset[axis] = 0;
+        for (int term = 0; term < 2; ++term)
+            offset[axis] += m.amplitude[axis][term] * std::sin(m.rate[axis][term] * idle + m.phase[axis][term]);
+        offset[axis] *= ramp;
+    }
+    return {m.to.x + offset[0], m.to.y + offset[1]};
+}
+}  // namespace cursor_motion
+// END cursor-motion
+
 struct SCursor {
     PHLWINDOWREF window;
     Vector2D local;
     Vector2D clickLocal;
     std::chrono::steady_clock::time_point clicked{};
     uint64_t sequence = 0;
+    cursor_motion::Move motion;
+    bool held = false;
+    CBox lastDamage{};
 };
 static std::map<std::string, SCursor> cursors;
 static uint64_t cursorSequence = 0;
@@ -1275,7 +1392,19 @@ static void drawCursors(eRenderStage stage) {
         const auto goal = w->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
         if (goal.x <= 0 || goal.y <= 0) { ++it; continue; }
         const auto animationScale = w->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) / goal;
-        const Vector2D pos = (w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + it->second.local * animationScale - mon->m_position) * mon->m_scale;
+        const double motionNow = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const auto shownPoint = cursor_motion::position(it->second.motion, motionNow);
+        const Vector2D shown{shownPoint.x, shownPoint.y};
+        const Vector2D pos = (w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + shown * animationScale - mon->m_position) * mon->m_scale;
+        {
+            // Keep frames coming while the drawing travels or drifts, damaging only
+            // the previous and the new cursor box (logical coordinates).
+            const Vector2D logical = w->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT) + shown * animationScale;
+            const CBox box{logical.x - 12, logical.y - 10, 56, 64};
+            if (it->second.lastDamage.w > 0) g_pHyprRenderer->damageBox(it->second.lastDamage);
+            g_pHyprRenderer->damageBox(box);
+            it->second.lastDamage = box;
+        }
         const int variant = (reinterpret_cast<uintptr_t>(w.get()) >> 4) & 1;
         if (!framed) {
             framed = true;
@@ -1874,8 +2003,23 @@ static std::string pointerCmd(std::string req, int kind) {
         } else ++it;
     }
     auto& cursor = cursors[address];
-    cursor.window = t.window; cursor.local = point; cursor.sequence = ++cursorSequence;
-    if (kind == 1) { cursor.clickLocal = point; cursor.clicked = std::chrono::steady_clock::now(); }
+    {
+        const auto stamp = std::chrono::steady_clock::now();
+        const double now = std::chrono::duration<double>(stamp.time_since_epoch()).count();
+        const bool known = cursor.sequence != 0;
+        // Begin from where the cursor is drawn now (travel or drift), so the next
+        // action cancels drift without a jump. A new window starts at the target.
+        const auto shown = known ? cursor_motion::position(cursor.motion, now)
+                                 : cursor_motion::Vec{point.x, point.y};
+        const uint64_t seed = static_cast<uint64_t>(stamp.time_since_epoch().count()) ^ (cursorSequence * 0x9e3779b97f4a7c15ULL);
+        cursor.motion = cursor_motion::plan(shown, {point.x, point.y}, seed, now, !cursor.held);
+        cursor.window = t.window; cursor.local = point; cursor.sequence = ++cursorSequence;
+        if (kind == 1) {
+            cursor.clickLocal = point;
+            cursor.clicked = stamp + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(cursor.motion.total()));
+        }
+    }
     g_pHyprRenderer->damageMonitor(t.window->m_monitor.lock());
     if (kind == 3)
         return "ok";
