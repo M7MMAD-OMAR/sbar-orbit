@@ -35,9 +35,8 @@
 #define private public
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #undef private
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/view/Popup.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
 #include <hyprland/src/desktop/rule/Engine.hpp>
 #include <hyprland/src/managers/TokenManager.hpp>
@@ -92,6 +91,26 @@
 #include <regex>
 #include <memory>
 #include <cstdio>
+
+// Workspace ids became a numbered or special variant in Hyprland 0.57.
+static std::optional<int64_t> workspaceNumber(const PHLWORKSPACE& workspace) {
+    if (!workspace) return std::nullopt;
+    const auto id = workspace->id();
+    if (const auto numbered = std::get_if<Workspace::SWorkspaceNumberedID>(&id)) return static_cast<int64_t>(numbered->value);
+    return std::nullopt;
+}
+static PHLWORKSPACE findNumberedWorkspace(int64_t id) {
+    for (const auto& ref : State::workspaceState()->workspaces())
+        if (const auto workspace = ref.lock(); workspaceNumber(workspace) == id) return workspace;
+    return nullptr;
+}
+// Hyprland 0.57 moved the XDG resource behind the window backend.
+static SP<CXDGSurfaceResource> windowXdg(const PHLWINDOW& window) {
+    if (!window || window->backend().isX11()) return {};
+    const auto surface = window->backend().surface();
+    if (!surface || !surface->m_role || surface->m_role->role() != SURFACE_ROLE_XDG_SHELL) return {};
+    return static_cast<CXDGSurfaceRole*>(surface->m_role.get())->m_xdgSurface.lock();
+}
 
 // Native scoped identity begin. Also compiled independently by the lease probe.
 class ScopedProcess {
@@ -260,6 +279,25 @@ class RetainedScope {
 // Native unload scope identity end.
 
 inline HANDLE PHANDLE = nullptr;
+// Hyprland 0.57 replaced SHyprCtlCommand with IPC::Socket1::SCommand; keep one adapter.
+#include <hyprland/src/ipc/s1/S1.hpp>
+using eHyprCtlOutputFormat = IPC::Socket1::eOutputFormat;
+struct SHyprCtlCommand {
+    std::string name;
+    bool exact;
+    std::function<std::string(eHyprCtlOutputFormat, std::string)> handler;
+};
+static std::vector<SP<IPC::Socket1::SCommand>> ctlRegistrations;
+static void registerCtl(SHyprCtlCommand command) {
+    auto handler = std::move(command.handler);
+    const auto registration = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{
+        command.name,
+        command.exact ? IPC::Socket1::COMMAND_MATCH_EXACT : IPC::Socket1::COMMAND_MATCH_PREFIX,
+        [handler](const IPC::Socket1::SRequest& request) {
+            return IPC::Socket1::SResponse(handler(request.format, request.command));
+        }});
+    if (registration) ctlRegistrations.push_back(registration);
+}
 // BEGIN cursor-motion
 // Pure, dependency free path generator for the private visible cursor. It only
 // shapes what is drawn; the application's pointer events are sent separately.
@@ -398,7 +436,7 @@ static bool indicatorStyleDirty = false;
 static std::map<int64_t, SP<Render::ITexture>> workspaceLabels;
 class CAgentKeyboard : public IKeyboard {
   public:
-    bool isVirtual() override { return true; }
+    bool isVirtual() const override { return true; }
     SP<Aquamarine::IKeyboard> aq() override { return nullptr; }
 };
 static SP<CAgentKeyboard> agentKeyboard;
@@ -545,8 +583,8 @@ static bool applicationWindowAllowed(const SApplicationLease& lease, PHLWINDOW w
     if (!window || !root) return false;
     if (window == root) return true;
     std::set<uint64_t> visited;
-    for (auto parent = window->parent(); parent && visited.size() < 16; parent = parent->parent()) {
-        if (!visited.insert(parent->m_stableID).second) return false;
+    for (auto parent = window->backend().parent(); parent && visited.size() < 16; parent = parent->backend().parent()) {
+        if (!visited.insert(parent->metadata().stableID()).second) return false;
         if (parent == root) return true;
     }
     return false;
@@ -561,13 +599,13 @@ static void recordApplicationFailure(wl_client* client, const char* reason) noex
 
 static void retainApplicationWindow(SApplicationLease& lease, PHLWINDOW window, bool createdWhileLeased = false) {
     std::erase_if(lease.windows, [](const auto& entry) { return !entry.second.window.lock(); });
-    if (lease.windows.contains(window->m_stableID)) return;
+    if (lease.windows.contains(window->metadata().stableID())) return;
     if (lease.windows.size() >= 64) throw std::runtime_error("application window bound reached");
     using namespace Desktop::Types;
     auto saved = [](const COverridableVar<bool>& property) -> std::optional<bool> {
         return property.hasValue() && property.getPriority() == PRIORITY_SET_PROP ? std::optional<bool>{property.value()} : std::nullopt;
     };
-    lease.windows.emplace(window->m_stableID, SLeasedWindow{window,
+    lease.windows.emplace(window->metadata().stableID(), SLeasedWindow{window,
         saved(window->m_ruleApplicator->renderUnfocused()), saved(window->m_ruleApplicator->focusOnActivate()),
         std::ranges::find(g_pHyprRenderer->m_renderUnfocused, window) != g_pHyprRenderer->m_renderUnfocused.end(),
         createdWhileLeased, window->m_ruleApplicator->static_.noInitialFocus, window->m_ruleApplicator->static_.workspace,
@@ -647,11 +685,11 @@ static std::string openingRequest(const std::string& operation, const std::strin
     if (found != openingTickets.end() && !ambiguous) {
         const auto observed = found->second.surface.lock();
         if (observed) for (const auto& window : Desktop::windowState()->windows()) {
-            if (!window->m_isMapped || window->resource() != observed) continue;
+            if (!window->mapped() || window->resource() != observed) continue;
             if (!first) windows += ',';
             first = false;
             windows += std::format("{{\"address\":\"0x{:x}\",\"stableId\":\"{:x}\"}}",
-                reinterpret_cast<uintptr_t>(window.get()), window->m_stableID);
+                reinterpret_cast<uintptr_t>(window.get()), window->metadata().stableID());
         }
     }
     windows += ']';
@@ -815,7 +853,7 @@ static bool leasedWindow(PHLWINDOW window) {
     auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
     if (!lease)
         return false;
-    const auto retained = lease->windows.find(window->m_stableID);
+    const auto retained = lease->windows.find(window->metadata().stableID());
     return retained != lease->windows.end() && retained->second.window.lock() == window;
 }
 
@@ -845,7 +883,7 @@ static void restoreRelatedWindows(SApplicationLease& lease, wl_client* selectedC
         auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
         if (selectedClient && resource && resource->client() != selectedClient) { ++it; continue; }
         if (selection && window && !applicationWindowAllowed(*selection, window)) { ++it; continue; }
-        if (window && window->m_stableID == it->first) {
+        if (window && window->metadata().stableID() == it->first) {
             auto rules = window->m_ruleApplicator.get();
             rules->static_.noInitialFocus = it->second.noInitialFocus;
             rules->static_.workspace = it->second.originalWorkspace;
@@ -924,7 +962,7 @@ static void handbackApplication(const std::string& id) {
     }
     for (auto& [stable, retained] : lease.windows) {
         auto window = retained.window.lock();
-        if (!window || window->m_stableID != stable) continue;
+        if (!window || window->metadata().stableID() != stable) continue;
         using namespace Desktop::Types;
         window->m_ruleApplicator->renderUnfocused().matchOptional(retained.renderUnfocused, PRIORITY_SET_PROP);
         // Upstream only prunes false properties when another entry expires.
@@ -939,7 +977,7 @@ static void handbackApplication(const std::string& id) {
     for (auto awake = awakeWindows.begin(); awake != awakeWindows.end();) {
         const auto marker = awake->first.rfind("@lease-");
         if (marker == std::string::npos || std::string_view{awake->first}.substr(marker + 7) != id) { ++awake; continue; }
-        if (auto window = awake->second.lock(); window && window->m_isMapped && !g_pHyprRenderer->shouldRenderWindow(window))
+        if (auto window = awake->second.lock(); window && window->mapped() && !g_pHyprRenderer->shouldRenderWindow(window))
             window->setSuspended(true);
         awake = awakeWindows.erase(awake);
     }
@@ -1000,7 +1038,7 @@ static std::string applicationInfo(const std::string& id) {
     for (const auto& [stable, retained] : lease.windows) {
         auto window = retained.window.lock();
         auto surface = window ? window->resource() : SP<CWLSurfaceResource>{};
-        if (!window || !window->m_isMapped || window->m_stableID != stable || !surface || surface->client() != lease.client) continue;
+        if (!window || !window->mapped() || window->metadata().stableID() != stable || !surface || surface->client() != lease.client) continue;
         if (!first) windows += ',';
         first = false;
         windows += std::format("{{\"address\":\"0x{:x}\",\"stable\":\"{:x}\",\"target\":\"0x{:x}@{:x}@lease-{}\"}}",
@@ -1010,8 +1048,8 @@ static std::string applicationInfo(const std::string& id) {
     size_t excludedWindows = 0;
     for (const auto& window : Desktop::windowState()->windows()) {
         auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
-        if (window && window->m_isMapped && resource && resource->client() == lease.client &&
-            !lease.windows.contains(window->m_stableID)) ++excludedWindows;
+        if (window && window->mapped() && resource && resource->client() == lease.client &&
+            !lease.windows.contains(window->metadata().stableID())) ++excludedWindows;
     }
     return std::format("{{\"schema\":1,\"status\":\"{}\",\"ownerInput\":{},\"lease_id\":\"{}\",\"scope\":\"entire-wayland-client\",\"windowEnrollment\":\"{}\",\"excludedWindows\":{},\"windows\":{},\"failure\":{},\"claim_failure\":{}}}",
         lease.paused ? "paused" : "active", ownerInputActive(lease) ? "true" : "false", id, lease.windowBound ? "selected-dialog-family" : "client-windows", excludedWindows,
@@ -1026,10 +1064,10 @@ static std::string claimApplication(const std::string& address, const std::strin
     PHLWINDOW selected;
     for (const auto& window : Desktop::windowState()->windows())
         if (std::format("0x{:x}", reinterpret_cast<uintptr_t>(window.get())) == address &&
-            std::format("{:x}", window->m_stableID) == stable)
+            std::format("{:x}", window->metadata().stableID()) == stable)
             selected = window;
     auto surface = selected ? selected->resource() : SP<CWLSurfaceResource>{};
-    if (!selected || !selected->m_isMapped || !selected->m_workspace || !surface || selected->m_isX11)
+    if (!selected || !selected->mapped() || !selected->m_workspace || !surface || selected->backend().isX11())
         throw std::runtime_error("existing application target is unavailable or unsupported");
     auto client = surface->client();
     if (!client || !g_pSeatManager || !PROTO::data || !PROTO::primarySelection)
@@ -1053,22 +1091,22 @@ static std::string claimApplication(const std::string& address, const std::strin
     retained->id = id;
     if (!ownerToken.empty() && !lease_owner::parse(ownerToken, retained->owner))
         throw std::runtime_error("invalid lease owner token");
-    const auto parent = selected->parent();
+    const auto parent = selected->backend().parent();
     const auto parentResource = parent ? parent->resource() : SP<CWLSurfaceResource>{};
     retained->windowBound = parentResource && parentResource->client() != client;
     retained->windowRoot = selected;
     for (const auto& window : Desktop::windowState()->windows())
-        retained->baselineWindows.insert(window->m_stableID);
-    retained->homeWorkspace = selected->m_workspace->m_name;
+        retained->baselineWindows.insert(window->metadata().stableID());
+    retained->homeWorkspace = selected->m_workspace->addressableName();
     retained->homeWorkspaceRule = retained->homeWorkspace + " silent";
     const auto selectedSize = selected->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
-    if (selected->m_isFloating && std::isfinite(selectedSize.x) && std::isfinite(selectedSize.y) &&
+    if (selected->isFloating() && std::isfinite(selectedSize.x) && std::isfinite(selectedSize.y) &&
         selectedSize.x >= 320 && selectedSize.x <= 3840 && selectedSize.y >= 240 && selectedSize.y <= 2160)
         retained->newWindowSize = Math::SExpressionVec2{std::to_string(std::lround(selectedSize.x)), std::to_string(std::lround(selectedSize.y))};
     for (const auto& window : Desktop::windowState()->windows()) {
         auto resource = window->resource();
-        if (window->m_isMapped && resource && resource->client() == client && applicationWindowAllowed(*retained, window)) {
-            if (window->m_isX11 || !window->m_xdgSurface || retained->windows.size() >= 64)
+        if (window->mapped() && resource && resource->client() == client && applicationWindowAllowed(*retained, window)) {
+            if (window->backend().isX11() || !windowXdg(window) || retained->windows.size() >= 64)
                 throw std::runtime_error("client includes unsupported targets");
             retainApplicationWindow(*retained, window);
         }
@@ -1242,14 +1280,14 @@ static void applyNewApplicationGeometry(Desktop::Rule::CWindowRuleApplicator* ru
 
 static SApplicationLease* relatedApplicationLease(PHLWINDOW window) {
     std::set<uint64_t> visited;
-    auto parent = window ? window->parent() : PHLWINDOW{};
-    for (int depth = 0; parent && depth < 16; ++depth, parent = parent->parent()) {
-        if (!visited.insert(parent->m_stableID).second) return nullptr;
+    auto parent = window ? window->backend().parent() : PHLWINDOW{};
+    for (int depth = 0; parent && depth < 16; ++depth, parent = parent->backend().parent()) {
+        if (!visited.insert(parent->metadata().stableID()).second) return nullptr;
         auto surface = parent->resource();
         auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
-        if (lease && !lease->paused && parent->m_isMapped && parent->m_workspace &&
-            parent->m_workspace->m_name == lease->homeWorkspace && lease->windows.contains(parent->m_stableID) &&
-            !lease->baselineWindows.contains(window->m_stableID)) return lease;
+        if (lease && !lease->paused && parent->mapped() && parent->m_workspace &&
+            parent->m_workspace->addressableName() == lease->homeWorkspace && lease->windows.contains(parent->metadata().stableID()) &&
+            !lease->baselineWindows.contains(window->metadata().stableID())) return lease;
     }
     return nullptr;
 }
@@ -1258,7 +1296,7 @@ static void routeRelatedApplicationWindow(Desktop::Rule::CWindowRuleApplicator* 
     auto lease = relatedApplicationLease(window);
     if (!lease) return;
     std::erase_if(lease->relatedWindows, [](const auto& entry) { return !entry.second.window.lock(); });
-    if (!lease->relatedWindows.contains(window->m_stableID)) {
+    if (!lease->relatedWindows.contains(window->metadata().stableID())) {
         if (lease->relatedWindows.size() >= 64) return;
         SLeasedWindow saved;
         saved.window = window; saved.createdWhileLeased = true;
@@ -1266,7 +1304,7 @@ static void routeRelatedApplicationWindow(Desktop::Rule::CWindowRuleApplicator* 
         saved.originalWorkspace = rules->static_.workspace;
         saved.originalFloating = rules->static_.floating; saved.originalCenter = rules->static_.center;
         saved.originalSize = rules->static_.size;
-        lease->relatedWindows.emplace(window->m_stableID, std::move(saved));
+        lease->relatedWindows.emplace(window->metadata().stableID(), std::move(saved));
     }
     rules->static_.workspace = lease->homeWorkspaceRule;
     rules->static_.noInitialFocus = true;
@@ -1278,7 +1316,7 @@ static void enforceApplicationRules(Desktop::Rule::CWindowRuleApplicator* rules)
     auto surface = window ? window->resource() : SP<CWLSurfaceResource>{};
     auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
     if (!lease || !applicationWindowAllowed(*lease, window)) { routeRelatedApplicationWindow(rules, window); return; }
-    const auto existing = lease->windows.find(window->m_stableID);
+    const auto existing = lease->windows.find(window->metadata().stableID());
     const bool newlyObserved = existing == lease->windows.end();
     const bool clampWorkspace = newlyObserved || existing->second.createdWhileLeased;
     const auto originalFloating = rules->static_.floating, originalCenter = rules->static_.center;
@@ -1294,7 +1332,7 @@ static void enforceApplicationRules(Desktop::Rule::CWindowRuleApplicator* rules)
         }
         retainApplicationWindow(*lease, window, true);
         if (newlyObserved) {
-            auto& saved = lease->windows.at(window->m_stableID);
+            auto& saved = lease->windows.at(window->metadata().stableID());
             saved.originalWorkspace = std::move(originalWorkspace);
             saved.originalFloating = originalFloating; saved.originalCenter = originalCenter; saved.originalSize = originalSize;
         }
@@ -1326,15 +1364,15 @@ static void sharedPrimarySelection(CSeatManager* manager, SP<IDataSource>& sourc
 }
 // The pinned compositor omits XDG client decoration geometry from main-surface
 // UVs. Correct leased main surfaces in desktop rendering and window captures.
-static void applicationSurfaceUV(Render::IElementRenderer* renderer, PHLWINDOW& window,
+static void applicationSurfaceUV(Render::IElementRenderer* renderer, Render::CRenderContext& ctx, PHLWINDOW& window,
         SP<CWLSurfaceResource>& surface, PHLMONITOR& monitor, bool main,
         const Vector2D& projected, const Vector2D& unscaled, bool fixMisaligned) {
-    using Original = void (*)(Render::IElementRenderer*, PHLWINDOW&, SP<CWLSurfaceResource>&,
+    using Original = void (*)(Render::IElementRenderer*, Render::CRenderContext&, PHLWINDOW&, SP<CWLSurfaceResource>&,
                              PHLMONITOR&, bool, const Vector2D&, const Vector2D&, bool);
-    reinterpret_cast<Original>(surfaceUVHook->m_original)(renderer, window, surface, monitor, main, projected, unscaled, fixMisaligned);
-    auto& data = g_pHyprRenderer->m_renderData;
+    reinterpret_cast<Original>(surfaceUVHook->m_original)(renderer, ctx, window, surface, monitor, main, projected, unscaled, fixMisaligned);
+    auto& data = ctx.m_data;
     if (!main || !window || !surface || !leasedWindow(window)) return;
-    const auto xdg = window->m_xdgSurface.lock();
+    const auto xdg = windowXdg(window);
     if (!xdg) return;
     const auto geometry = xdg->m_current.geometry;
     const auto size = surface->m_current.size;
@@ -1398,7 +1436,7 @@ struct PresentationNotReady : std::runtime_error { using std::runtime_error::run
 
 // Render-only geometry has no Wayland surface or input region.
 static void presentWorkspace(PHLWORKSPACE workspace, PHLMONITOR monitor) {
-    if (!workspace || !monitor || workspace->m_id <= 0 || workspace->m_isSpecialWorkspace)
+    if (!workspace || !monitor || workspaceNumber(workspace).value_or(0) <= 0)
         throw PresentationNotReady("numbered workspace and connected monitor required");
     if (monitor->m_activeWorkspace == workspace) return;
     const auto focus = Desktop::focusState();
@@ -1453,10 +1491,11 @@ static double clickProgress(std::chrono::steady_clock::time_point clicked,
     return elapsed >= 0 && elapsed < 0.65 ? elapsed / 0.65 : -1;
 }
 
-static void drawCursors(eRenderStage stage) {
-    if (stage != RENDER_LAST_MOMENT)
+static void drawCursors(Event::SRenderStageEvent event) {
+    if (event.stage != RENDER_LAST_MOMENT || !event.context)
         return;
-    auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
+    auto& ctx = event.context->get();
+    auto mon = event.monitor;
     if (!mon)
         return;
     if (indicatorStyleDirty) {
@@ -1470,14 +1509,14 @@ static void drawCursors(eRenderStage stage) {
         auto window = cursor.window.lock();
         auto resource = window ? window->resource() : SP<CWLSurfaceResource>{};
         auto lease = resource ? applicationLeaseForClient(resource->client()) : nullptr;
-        if (window && window->m_isMapped && window->m_workspace && leasedWindow(window) &&
+        if (window && window->mapped() && window->m_workspace && leasedWindow(window) &&
             window->m_monitor.lock() == mon && window->m_workspace->isVisibleNotCovered() &&
             (!lease || !lease->paused)) latest = std::max(latest, cursor.sequence);
     }
     bool framed = false;
     for (auto it = cursors.begin(); it != cursors.end();) {
         auto w = it->second.window.lock();
-        if (!w || !w->m_isMapped || !w->m_workspace || !leasedWindow(w)) {
+        if (!w || !w->mapped() || !w->m_workspace || !leasedWindow(w)) {
             it = cursors.erase(it);
             continue;
         }
@@ -1534,14 +1573,14 @@ static void drawCursors(eRenderStage stage) {
                     glow.tex = frameTextures[edge]; glow.box = edges[edge];
                     glow.a = indicatorPulse ? indicatorOpacity(seconds) : 1;
                     glow.damage = CRegion{glow.box};
-                    g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(glow)));
+                    Render::IHyprRenderer::addPassElement(ctx, makeUnique<CTexPassElement>(std::move(glow)));
                     if (indicatorPulse) {
                         const auto& area = screenFrame(mon->m_size, 1)[edge];
                         g_pHyprRenderer->damageBox(CBox{mon->m_position + Vector2D{area.x, area.y}, {area.w, area.h}});
                     }
                 }
             }
-            const auto workspace = w->m_workspace->m_id;
+            const auto workspace = workspaceNumber(w->m_workspace).value_or(0);
             if (!workspaceLabels.contains(workspace)) {
                 if (workspaceLabels.size() >= 64) workspaceLabels.clear();
                 auto surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 520, 64);
@@ -1559,7 +1598,7 @@ static void drawCursors(eRenderStage stage) {
             label.tex = workspaceLabels.at(workspace);
             label.box = CBox{(mon->m_size.x - 300) * mon->m_scale / 2, 40 * mon->m_scale, 300 * mon->m_scale, 38 * mon->m_scale};
             label.damage = CRegion{label.box};
-            g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(label)));
+            Render::IHyprRenderer::addPassElement(ctx, makeUnique<CTexPassElement>(std::move(label)));
         }
         const auto progress = clickProgress(it->second.clicked, std::chrono::steady_clock::now());
         if (progress >= 0) {
@@ -1578,7 +1617,7 @@ static void drawCursors(eRenderStage stage) {
             pulse.tex = clickTexture; pulse.a = 1 - progress;
             pulse.box = CBox{click.x - diameter / 2, click.y - diameter / 2, diameter, diameter};
             pulse.damage = CRegion{pulse.box};
-            g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(pulse)));
+            Render::IHyprRenderer::addPassElement(ctx, makeUnique<CTexPassElement>(std::move(pulse)));
             // Keep frames coming through expiry so no final pulse is left on screen.
             g_pHyprRenderer->damageMonitor(mon);
         }
@@ -1619,7 +1658,7 @@ static void drawCursors(eRenderStage stage) {
         data.box = CBox{pos.x - 4 * pointerScale * mon->m_scale, pos.y - 3 * pointerScale * mon->m_scale,
                        40 * mon->m_scale, 48 * mon->m_scale};
         data.damage = CRegion{data.box};
-        g_pHyprRenderer->addPassElement(makeUnique<CTexPassElement>(std::move(data)));
+        Render::IHyprRenderer::addPassElement(ctx, makeUnique<CTexPassElement>(std::move(data)));
         ++it;
     }
 }
@@ -1671,12 +1710,12 @@ static STarget resolve(const std::string& address, bool wake = true) {
         t.error = "no such window";
         return t;
     }
-    if (!stable.empty() && std::format("{:x}", t.window->m_stableID) != stable) {
+    if (!stable.empty() && std::format("{:x}", t.window->metadata().stableID()) != stable) {
         t.error = "refused: native window stable identity changed";
         return t;
     }
     const bool applicationTarget = unit.starts_with("lease-");
-    if (!t.window->m_isMapped || !t.window->m_workspace ||
+    if (!t.window->mapped() || !t.window->m_workspace ||
         !applicationTarget) {
         t.error = "refused: an explicit owner application lease is required";
         t.window.reset();
@@ -1734,7 +1773,7 @@ static STarget resolve(const std::string& address, bool wake = true) {
         clientHasDataControlDevice(PROTO::data, t.surface->client());
         guardPrimarySelection(t.surface->client());
         // Background rendering requires the client to keep processing paint events.
-        auto xdg = t.window->m_xdgSurface.lock();
+        auto xdg = windowXdg(t.window);
         if (xdg && xdg->m_toplevel &&
             std::ranges::find(xdg->m_toplevel->m_pendingApply.states, XDG_TOPLEVEL_STATE_SUSPENDED) !=
                 xdg->m_toplevel->m_pendingApply.states.end())
@@ -1832,7 +1871,7 @@ static void prepareKeyboardResource(const SP<CWLKeyboardResource>& keyboard, con
 static bool preparationMatches(const SKeyboardPreparation& value, const STarget& target) {
     if (value.invalid || std::chrono::steady_clock::now() >= value.expires ||
         value.window.lock() != target.window || value.surface.lock() != target.surface ||
-        value.xdg.lock() != target.window->m_xdgSurface.lock() || value.seat.lock() != target.seat ||
+        value.xdg.lock() != windowXdg(target.window) || value.seat.lock() != target.seat ||
         value.client != target.surface->client()) return false;
     const auto keyboards = targetKeyboards(target);
     if (keyboards.empty() || keyboards.size() != value.keyboards.size()) return false;
@@ -1880,7 +1919,7 @@ static std::string cmdKeyboardPreparation(eHyprCtlOutputFormat, std::string requ
     if ((previous != producers.end() && sequence <= previous->second) ||
         (previous == producers.end() && producers.size() >= 64))
         return "refused: replayed or excessive keyboard producer";
-    const auto xdg = target.window->m_xdgSurface.lock();
+    const auto xdg = windowXdg(target.window);
     const auto keyboards = targetKeyboards(target);
     if (!xdg || !xdg->m_toplevel || keyboards.empty()) return "refused: native keyboard preparation unavailable";
     if (keyboardPreparations.size() >= 64) return "refused: too many pending keyboard operations";
@@ -2148,7 +2187,7 @@ static bool pumpSend(SPointerPump& pump, cursor_motion::Vec point) {
     auto surface = pump.surface.lock();
     auto seat = pump.seat.lock();
     if (!window || !surface || !seat) return false;
-    const auto xdg = window->m_xdgSurface.lock();
+    const auto xdg = windowXdg(window);
     const auto local = surfaceInputPoint(window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL), surface->m_current.size,
         xdg ? xdg->m_current.geometry : CBox{}, Vector2D{point.x, point.y});
     bool sent = false;
@@ -2302,7 +2341,7 @@ static std::string pointerCmd(std::string req, int kind) {
     if (!t.error.empty())
         return t.error;
     const Vector2D point{x, y};
-    const auto xdg = t.window->m_xdgSurface.lock();
+    const auto xdg = windowXdg(t.window);
     const auto local = surfaceInputPoint(t.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL),
         t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, point);
     if (!std::isfinite(extra) || !local)
@@ -2429,7 +2468,7 @@ static std::string dragCmd(std::string req) {
     auto t = resolve(address);
     if (!t.error.empty())
         return t.error;
-    const auto xdg = t.window->m_xdgSurface.lock();
+    const auto xdg = windowXdg(t.window);
     const auto goal = t.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
     const auto start = surfaceInputPoint(goal, t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, {x1, y1});
     const auto end = surfaceInputPoint(goal, t.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, {x2, y2});
@@ -2519,7 +2558,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     agentKeyboard->updateKeymapFD();
     installApplicationHooks();
 #ifdef ORBIT_PLUGIN_SOURCE_SHA256
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-build-info", false,
+    registerCtl(SHyprCtlCommand{"ghost-build-info", false,
         [sourceStamp, HASH](eHyprCtlOutputFormat, std::string request) {
             if (request != "ghost-build-info")
                 return std::string{"refused: build-info takes no arguments"};
@@ -2533,7 +2572,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 "\",\"abi_hash\":\"" + HASH + "\",\"live_roots\":" + std::to_string(roots) + "}";
         }});
 #endif
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-claim", false,
+    registerCtl(SHyprCtlCommand{"ghost-application-claim", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
             std::string command, address, stable, id, owner, extra;
@@ -2543,14 +2582,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
 
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-info", false,
+    registerCtl(SHyprCtlCommand{"ghost-application-info", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request); std::string command, id, extra;
             if (!(input >> command >> id) || (input >> extra)) return std::string{"refused: application lease identity required"};
             try { return applicationInfo(id); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-list", false,
+    registerCtl(SHyprCtlCommand{"ghost-application-list", false,
         [](eHyprCtlOutputFormat, std::string) {
             std::string out{"{\"schema\":1,\"leases\":["};
             bool first = true;
@@ -2568,7 +2607,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             }
             return out + "]}";
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-reap", false,
+    registerCtl(SHyprCtlCommand{"ghost-application-reap", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request); std::string command, id, extra;
             if (!(input >> command >> id) || (input >> extra) || !std::regex_match(id, std::regex{"[0-9a-f]{32}"}))
@@ -2578,7 +2617,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"ok"};
             } catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-application-control", false,
+    registerCtl(SHyprCtlCommand{"ghost-application-control", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
             std::string command, id, operation, extra;
@@ -2604,7 +2643,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"ok"};
             } catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-indicator-style", false,
+    registerCtl(SHyprCtlCommand{"ghost-indicator-style", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
             std::string command, hex, pulse, frame, extra;
@@ -2621,20 +2660,20 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             }
             return std::string{"ok"};
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-workspace-present", false,
+    registerCtl(SHyprCtlCommand{"ghost-workspace-present", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
             std::string command, name, extra;
-            WORKSPACEID id = 0;
+            int64_t id = 0;
             if (!(input >> command >> id >> name) || (input >> extra) || id <= 0)
                 return std::string{"refused: numbered workspace and exact monitor name required"};
             try {
-                presentWorkspace(State::workspaceState()->query().id(id).run(), State::monitorState()->query().name(name).run());
+                presentWorkspace(findNumberedWorkspace(id), State::monitorState()->query().name(name).run());
                 return std::string{"ok"};
             } catch (const PresentationNotReady& error) { return std::string{"not-ready: "} + error.what(); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-admission", false,
+    registerCtl(SHyprCtlCommand{"ghost-admission", false,
         [](eHyprCtlOutputFormat, std::string request) {
             if (request == "ghost-admission pause")
                 admissionPaused = true;
@@ -2644,7 +2683,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"refused: admission requires pause or resume"};
             return std::string{admissionPaused ? "ok paused" : "ok running"};
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-opening", false,
+    registerCtl(SHyprCtlCommand{"ghost-opening", false,
         [](eHyprCtlOutputFormat, std::string request) {
             std::istringstream input(request);
             std::string command, operation, token, extra;
@@ -2653,7 +2692,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             try { return openingRequest(operation, token); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-unload-info", false,
+    registerCtl(SHyprCtlCommand{"ghost-unload-info", false,
         [](eHyprCtlOutputFormat, std::string request) {
             if (request != "ghost-unload-info")
                 return std::string{"refused: unload-info takes no arguments"};
@@ -2671,7 +2710,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{"refused: unload readiness unavailable: "} + error.what();
             }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-scope-process", false,
+    registerCtl(SHyprCtlCommand{"ghost-register-scope-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
             if (admissionPaused)
                 return std::string{"refused: native admission is paused"};
@@ -2707,7 +2746,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 return std::string{error.what()};
             }
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-register-process", false,
+    registerCtl(SHyprCtlCommand{"ghost-register-process", false,
         [](eHyprCtlOutputFormat, std::string request) {
             if (admissionPaused)
                 return std::string{"refused: native admission is paused"};
@@ -2746,9 +2785,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             legacyEnrollmentOccurred = true;
             return std::string{"ok"};
         }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-selection-diagnostic", false,
+    registerCtl(SHyprCtlCommand{"ghost-selection-diagnostic", false,
         [](eHyprCtlOutputFormat, std::string) { return std::string{"shared owner clipboard and primary selection"}; }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-target-check", false, [](eHyprCtlOutputFormat, std::string r) {
+    registerCtl(SHyprCtlCommand{"ghost-target-check", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string command, address, extra;
         if (!(in >> command >> address) || (in >> extra) || address.find('@') == std::string::npos)
@@ -2756,28 +2795,28 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         const auto target = resolve(address, false);
         return target.error.empty() ? std::string{"ok"} : target.error;
     }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-window-close", false, [](eHyprCtlOutputFormat, std::string request) {
+    registerCtl(SHyprCtlCommand{"ghost-window-close", false, [](eHyprCtlOutputFormat, std::string request) {
         std::istringstream input(request);
         std::string command, handle, extra;
         if (!(input >> command >> handle) || (input >> extra) || handle.find('@') == std::string::npos)
             return std::string{"refused: exact guarded window target required"};
         auto target = resolve(handle, false);
         if (!target.error.empty()) return target.error;
-        auto xdg = target.window->m_xdgSurface.lock();
+        auto xdg = windowXdg(target.window);
         if (!xdg || !xdg->m_toplevel) return std::string{"target has no native close request"};
         // Ask this exact toplevel to close normally. The application owns its
         // unsaved-content prompt and can decline. Never terminate its process.
         xdg->m_toplevel->close();
         return std::string{"ok"};
     }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-state", false, [](eHyprCtlOutputFormat, std::string r) {
+    registerCtl(SHyprCtlCommand{"ghost-state", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string cmd, address;
         in >> cmd >> address;
         auto target = resolve(address, false);
         if (!target.error.empty())
             return target.error;
-        auto xdg = target.window->m_xdgSurface.lock();
+        auto xdg = windowXdg(target.window);
         if (!xdg || !xdg->m_toplevel)
             return std::string{"state unavailable: target is not an XDG toplevel"};
         const auto& states = xdg->m_toplevel->m_pendingApply.states;
@@ -2791,14 +2830,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             goal.x, goal.y, surface.x, surface.y, geometry.x, geometry.y, geometry.w, geometry.h,
             pumps.contains(address) ? "true" : "false", static_cast<int>(pumpRemainingSeconds(address) * 1000));
     }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-prepare", false, cmdKeyboardPreparation});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-keyboard-cancel", false, cmdKeyboardPreparation});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-key-prepared", false, cmdKey});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-texthex-prepared", false, cmdType});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-type", false, cmdType});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-texthex", false, cmdType});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-key", false, cmdKey});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-click", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 1); }});
+    registerCtl(SHyprCtlCommand{"ghost-keyboard-prepare", false, cmdKeyboardPreparation});
+    registerCtl(SHyprCtlCommand{"ghost-keyboard-cancel", false, cmdKeyboardPreparation});
+    registerCtl(SHyprCtlCommand{"ghost-key-prepared", false, cmdKey});
+    registerCtl(SHyprCtlCommand{"ghost-texthex-prepared", false, cmdType});
+    registerCtl(SHyprCtlCommand{"ghost-type", false, cmdType});
+    registerCtl(SHyprCtlCommand{"ghost-texthex", false, cmdType});
+    registerCtl(SHyprCtlCommand{"ghost-key", false, cmdKey});
+    registerCtl(SHyprCtlCommand{"ghost-click", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 1); }});
     holdTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { sweepPointerHolds(); }, nullptr);
     g_pEventLoopManager->addTimer(holdTimer);
     leaseReapTimer = makeShared<CEventLoopTimer>(std::chrono::seconds(5), [](SP<CEventLoopTimer> self, void*) {
@@ -2807,12 +2846,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         g_pEventLoopManager->scheduleRecalc();
     }, nullptr);
     g_pEventLoopManager->addTimer(leaseReapTimer);
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-move", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 0); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-down", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 4); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-mouse-up", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 5); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-drag", false, [](eHyprCtlOutputFormat, std::string r) { return dragCmd(r); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-scroll", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 2); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-release", false, [](eHyprCtlOutputFormat, std::string r) {
+    registerCtl(SHyprCtlCommand{"ghost-move", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 0); }});
+    registerCtl(SHyprCtlCommand{"ghost-mouse-down", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 4); }});
+    registerCtl(SHyprCtlCommand{"ghost-mouse-up", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 5); }});
+    registerCtl(SHyprCtlCommand{"ghost-drag", false, [](eHyprCtlOutputFormat, std::string r) { return dragCmd(r); }});
+    registerCtl(SHyprCtlCommand{"ghost-scroll", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 2); }});
+    registerCtl(SHyprCtlCommand{"ghost-release", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string cmd, address;
         in >> cmd >> address;
@@ -2843,8 +2882,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
         return std::string{"ok"};
     }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-cursor", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 3); }});
-    HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{"ghost-hide-cursor", false, [](eHyprCtlOutputFormat, std::string r) {
+    registerCtl(SHyprCtlCommand{"ghost-cursor", false, [](eHyprCtlOutputFormat, std::string r) { return pointerCmd(r, 3); }});
+    registerCtl(SHyprCtlCommand{"ghost-hide-cursor", false, [](eHyprCtlOutputFormat, std::string r) {
         std::istringstream in(r);
         std::string cmd, address;
         in >> cmd >> address;
