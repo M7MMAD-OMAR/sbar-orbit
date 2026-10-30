@@ -1,6 +1,6 @@
 {
   "name": "sbar-orbit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Desktop application control for agents, with explicit application and window scope.",
   "license": "Apache-2.0",
   "repository": {

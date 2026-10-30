@@ -2,7 +2,13 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
-## Unreleased
+## 0.4.1 (30 October 2026)
+
+Hyprland 0.57 support. The plugin is ported to 0.57.0, whose window, workspace, render and IPC
+interfaces changed, and is no longer buildable against 0.56.x. The 0.56 surface UV correction was
+removed because 0.57 applies the XDG geometry itself and the correction cropped windows twice. Plugin
+probes follow the new window API.
+
 
 Native failures now say what is wrong. A stale prepared plan, an upgraded compositor, an unloaded
 plugin or a missing service environment is named in the error and in `doctor`
