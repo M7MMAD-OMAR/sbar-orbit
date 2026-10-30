@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
-from src.native.host import read_plan, TargetClosed, UnsupportedText
+from src.native.host import read_plan, HostError, TargetClosed, UnsupportedText
 from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
 from src.native.plugin_compatibility import NativeCompatibilityError
 from src.native.host import verify_host
@@ -48,6 +48,34 @@ class ReplyCache:
         self.metadata_bytes += self.size(response)
 
 
+FATAL_PREFIX = "ORBIT-WORKER-FATAL "
+
+
+def failure_response(error, session_type):
+    """Classify one failure. HostError text is fixed by host.py and names the command that repairs it."""
+    code = ("TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
+            else "TARGET_CLOSED" if isinstance(error, TargetClosed)
+            else "OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
+            else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
+            else "OWNER_BUSY" if isinstance(error, ApplicationOwnerBusy)
+            else "APPLICATION_BUSY" if isinstance(error, ApplicationLeaseConflict)
+            else "NATIVE_INCOMPATIBLE" if isinstance(error, NativeCompatibilityError)
+            else "NATIVE_STALE" if isinstance(error, HostError)
+            else "SESSION_CLOSED" if isinstance(error, ApplicationControlEnded) else "APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
+            else "INVALID_REQUEST" if isinstance(error, SessionError) else "NATIVE_FAILED")
+    # Exactly HostError: its subclasses (TargetClosed, UnsupportedText) have their own fixed public text.
+    classified = ((isinstance(error, (SessionError, NativeCompatibilityError)) and session_type is not NativeSession)
+                  or type(error) is HostError)
+    message = str(error)[:300] if classified else "Native request failed; see the private worker log"
+    return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def announce_fatal(error):
+    """One bounded line the broker can read from the worker log after the traceback."""
+    text = "".join(char if char.isprintable() else " " for char in str(error))[:300]
+    print(FATAL_PREFIX + json.dumps({"type": type(error).__name__, "message": text}), file=sys.stderr, flush=True)
+
+
 def main(directory, control_directory, plan_path, session_type=None):
     if session_type is None:
         raise SessionError("Private native sessions were removed; use the existing application worker")
@@ -57,12 +85,26 @@ def main(directory, control_directory, plan_path, session_type=None):
     session = None
     requests = ReplyCache()
     with ActionControl(control_directory) as control:
+        startup_error = None
         try:
-            session = session_type(read_plan(plan_path), directory, control)
+            try:
+                session = session_type(read_plan(plan_path), directory, control)
+            except BaseException as error:
+                # Answer every request with the classified reason instead of dying with a traceback
+                # nobody reads: the broker still gets a framed, actionable reply.
+                traceback.print_exception(error, file=sys.stderr)
+                announce_fatal(error)
+                startup_error = error
             for raw in iter(lambda: sys.stdin.buffer.readline(65537), b""):
                 if len(raw) > 65536 or not raw.endswith(b"\n"):
                     raise SessionError("Invalid native request framing")
                 request = json.loads(raw)
+                if startup_error is not None:
+                    if not isinstance(request, dict) or not isinstance(request.get("requestId"), str):
+                        raise SessionError("Invalid native worker request")
+                    sys.stdout.write(json.dumps({"requestId": identifier(request["requestId"]), **failure_response(startup_error, session_type)}) + "\n")
+                    sys.stdout.flush()
+                    continue
                 if (not isinstance(request, dict) or set(request) != {"requestId", "method", "params"}
                         or not isinstance(request["params"], dict)):
                     raise SessionError("Invalid native worker request")
@@ -100,17 +142,7 @@ def main(directory, control_directory, plan_path, session_type=None):
                         response = {"ok": True, "result": result}
                     except BaseException as error:
                         traceback.print_exception(error, file=sys.stderr)
-                        code = ("TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
-                                else "TARGET_CLOSED" if isinstance(error, TargetClosed)
-                                else "OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
-                                else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
-                                else "OWNER_BUSY" if isinstance(error, ApplicationOwnerBusy)
-                                else "APPLICATION_BUSY" if isinstance(error, ApplicationLeaseConflict)
-                                else "NATIVE_INCOMPATIBLE" if isinstance(error, NativeCompatibilityError)
-                                else "SESSION_CLOSED" if isinstance(error, ApplicationControlEnded) else "APPROVAL_REQUIRED" if isinstance(error, ControlError) and str(error).startswith("Protected mode")
-                                else "INVALID_REQUEST" if isinstance(error, SessionError) else "NATIVE_FAILED")
-                        message = str(error)[:300] if session_type is not NativeSession and isinstance(error, SessionError) else "Native request failed; see the private worker log"
-                        response = {"ok": False, "error": {"code": code, "message": message}}
+                        response = failure_response(error, session_type)
                     requests.retain(request_id, fingerprint, response)
                 sys.stdout.write(json.dumps({"requestId": request_id, **response}) + "\n")
                 sys.stdout.flush()

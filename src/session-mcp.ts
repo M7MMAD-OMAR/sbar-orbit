@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { call } from "./ipc";
+import { call, callPatient } from "./ipc";
 import { configureCaller, type ClientIdentity } from "./caller";
 import { OrbitError } from "./errors";
 import { ConversationUsage } from "./conversation-usage";
@@ -24,7 +24,7 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
   const invoke = async (method: string, params: Record<string, unknown> = {}): Promise<CallToolResult> => {
     try {
       await usage.assertEnabled();
-      const result = await call(socket, method, { ...params, sessionId }, undefined, identity);
+      const result = await callPatient(socket, method, { ...params, sessionId }, identity);
       if (method === "session.observe") {
         return renderObservation(result);
       }
@@ -76,6 +76,10 @@ if (import.meta.main) {
   try { socket = process.env.ORBIT_SOCKET || serviceSocketPath(); }
   catch { console.error("ORBIT_SOCKET is required, or a runtime directory the managed broker's socket can live in"); process.exit(1); }
   configureCaller({ kind: "adapter" });
+  // A stray rejection (a socket reset during a broker restart, say) must not end the process: the host
+  // never restarts a stdio server that exited, so the agent would lose every tool for the session.
+  process.on("uncaughtException", error => console.error("sbar-orbit adapter: uncaught", error));
+  process.on("unhandledRejection", error => console.error("sbar-orbit adapter: unhandled rejection", error));
   const server = createSessionMcpServer(socket, sessionId);
   await server.connect(new StdioServerTransport());
   const stop = async () => { try { await call(socket, "caller.detach"); } catch { /* the broker's poll covers a missed goodbye */ } await server.close(); process.exit(0); };

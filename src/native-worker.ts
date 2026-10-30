@@ -1,11 +1,44 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { open, mkdir, realpath, type FileHandle } from "node:fs/promises";
+import { openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { OrbitError, record } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
 
 export type NativeOptions = { planPath: string; controlDirectory: string; appearanceDirectory?: string };
+
+/**
+ * What a native worker said as it died, from the last bytes of its private journal.
+ *
+ * A worker that cannot start used to leave only a Python traceback in a directory the broker then
+ * deleted, so the person saw "Request failed" and the cause was visible to ABRT alone. Two things are
+ * read back: the one bounded line the worker prints for a startup failure it classified, and, for a
+ * death before that code ran (an import error), the final exception line of the traceback. Nothing
+ * else of the journal leaves this function, and control characters never do.
+ */
+export function workerFailureDetail(logPath: string, bytes = 8192): string | undefined {
+  let tail: string;
+  try {
+    const fd = openSync(logPath, "r");
+    try {
+      const size = fstatSync(fd).size, length = Math.min(size, bytes), buffer = Buffer.alloc(length);
+      readSync(fd, buffer, 0, length, size - length);
+      tail = buffer.toString("utf8");
+    } finally { closeSync(fd); }
+  } catch { return undefined; }
+  const clean = (text: string) => text.replace(/[^\x20-\x7e]/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  const lines = tail.split("\n");
+  const fatal = lines.findLast(line => line.startsWith("ORBIT-WORKER-FATAL "));
+  if (fatal) {
+    try {
+      const value = JSON.parse(fatal.slice("ORBIT-WORKER-FATAL ".length)) as { type?: unknown; message?: unknown };
+      if (typeof value.type === "string" && typeof value.message === "string") return clean(`${value.type}: ${value.message}`);
+    } catch { /* fall through to the traceback line */ }
+  }
+  const last = lines.findLast(line => /^[A-Za-z_][\w.]*(Error|Exception|Exit|Interrupt|Warning)\b.*$/.test(line));
+  return last ? clean(last) : undefined;
+}
 
 export function nativeOptionsFromEnv(): NativeOptions | undefined {
   const planPath = process.env.ORBIT_NATIVE_PLAN, controlDirectory = process.env.ORBIT_NATIVE_CONTROL;
@@ -34,10 +67,18 @@ export class NativeWorker {
   private listeners: (() => void)[] = [];
   private exit: Promise<number | null>;
 
-  private constructor(readonly child: ChildProcess, private stdin: Writable, stdout: Readable, private log: FileHandle) {
+  /** Why the worker ended, read once from its journal after it closed. */
+  exitDetail?: string;
+
+  private constructor(readonly child: ChildProcess, private stdin: Writable, stdout: Readable, private log: FileHandle, private logPath: string) {
     this.exit = new Promise(resolve => child.once("close", async code => {
       this.ended = true;
-      this.reject(this.failure ?? new OrbitError("BACKEND_ERROR", "Native worker closed"));
+      if (code !== 0) {
+        this.exitDetail = workerFailureDetail(this.logPath);
+        // The broker's own journal, beside the trace IDs, is where the operator looks. Not an RPC reply.
+        console.error(JSON.stringify({ nativeWorkerExit: code, detail: this.exitDetail ?? "no exception line in the worker journal" }));
+      }
+      this.reject(this.failure ?? new OrbitError("BACKEND_ERROR", this.exitDetail ? "Native worker closed: " + this.exitDetail : "Native worker closed"));
       try { await this.releaseLog(); } catch (error) {
         this.failure ??= error instanceof Error ? error : new Error("Native log release failed");
       }
@@ -72,7 +113,7 @@ export class NativeWorker {
         child.kill("SIGTERM");
         throw new OrbitError("BACKEND_ERROR", "Native worker did not expose its framed streams");
       }
-      return new NativeWorker(child, child.stdin, child.stdout, log);
+      return new NativeWorker(child, child.stdin, child.stdout, log, join(directory, "worker.log"));
     } catch (error) {
       await log.close();
       throw error;
@@ -141,16 +182,20 @@ export class NativeWorker {
             SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",
             OPENING_UNCERTAIN: "Application launch was attempted and delivery is uncertain. Inspect native candidates and reuse the same requestId; do not relaunch blindly.",
             NATIVE_INCOMPATIBLE: "Native plugin does not match this installation or compositor. Prepare the current compositor, rebuild and reload its matching plugin.",
+            NATIVE_STALE: "Native preparation no longer matches the running compositor. Run sbar-orbit native-refresh, or sbar-orbit doctor for the exact mismatch.",
             PRESENTATION_NOT_READY: "Workspace presentation was refused before display changes. Inspect monitors and wait until the requested output is unfocused with no special workspace. Retry the same requestId with unchanged parameters when ready.",
             OWNER_BUSY: "The application client is receiving owner input. Handoff leaves owner focus unchanged; wait until the client is no longer receiving owner input.",
             APPLICATION_BUSY: "The application client is already leased or native lease capacity is reached. Inspect active sessions and arrange an explicit handoff; do not stop another task or relaunch blindly.",
           };
           // The holder detail is fixed-shape text produced by the worker from the plugin's own reply.
+          // HostError text is fixed in host.py and names its own repair command, so it is passed through.
+          const fixed = (code === "NATIVE_STALE" || code === "NATIVE_INCOMPATIBLE") && typeof failure?.message === "string"
+            && /^[\x20-\x7e]{1,300}$/.test(failure.message) && failure.message !== "Native request failed; see the private worker log" ? " Detail: " + failure.message : "";
           const holder = code === "APPLICATION_BUSY" && typeof failure?.message === "string"
             && /^Application client is already leased by lease [0-9a-f]{32} \(worker pid \d+\); [a-z ,]+(; .{0,160})?$/.test(failure.message)
             ? " " + failure.message : "";
           pending.reject(new OrbitError(code, ((Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
-            ?? "Native request failed; inspect its private worker journal") + holder));
+            ?? "Native request failed; inspect its private worker journal") + holder + fixed));
           // A compositor handback ends this backend even if its worker still
           // accepts framed requests. EOF performs normal lease cleanup and the
           // existing close listener updates broker status.
@@ -201,7 +246,7 @@ export class NativeWorker {
       };
       try {
         const code = await wait(15_000);
-        if (code !== 0) failures.push(new OrbitError("BACKEND_ERROR", "Native worker failed during cleanup"));
+        if (code !== 0) failures.push(new OrbitError("BACKEND_ERROR", this.exitDetail ? "Native worker failed during cleanup: " + this.exitDetail : "Native worker failed during cleanup"));
       } catch (error) {
         failures.push(error);
         this.child.kill("SIGCONT");

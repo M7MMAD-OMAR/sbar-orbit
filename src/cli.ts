@@ -94,7 +94,7 @@ configureCaller({ kind: "cli", owner });
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
   const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
-  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh" && command !== "native-leases") await usage.assertEnabled();
+  if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh" && command !== "native-check" && command !== "native-leases") await usage.assertEnabled();
   if (command === "usage") {
     if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");
     if (!["on", "off", "status"].includes(verb ?? "") || fourth !== undefined) throw new OrbitError("INVALID_REQUEST", "Use usage on|off|status [ID]");
@@ -124,6 +124,19 @@ try {
       throw new OrbitError("INVALID_REQUEST", "Use native-refresh [--plugin-manifest ABSOLUTE_PRIVATE_JSON] [--if-configured]");
     const { refreshNative } = await import("./native-prepare");
     console.log(JSON.stringify(await refreshNative(manifest, ifConfigured)));
+  } else if (command === "native-check") {
+    // The regression check: compositor, prepared plan, plugin build, loaded plugin and the service
+    // environment must agree. Plain sentences, and a non-zero exit when they do not.
+    if (process.argv.slice(2).length !== 1) throw new OrbitError("INVALID_REQUEST", "Use native-check");
+    if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native check requires Linux and Hyprland");
+    const { nativeStateRoot } = await import("./native-prepare");
+    const { diagnoseNative } = await import("./native-readiness");
+    const report = await diagnoseNative(nativeStateRoot());
+    const lines = report.ready ? ["OK: compositor, plan, plugin build and loaded plugin agree."] : [];
+    for (const problem of report.problems) lines.push(`${problem.blocking ? "BLOCKING" : "NOTE"} ${problem.code}: ${problem.message}`, `  Fix: ${problem.fix}`);
+    if (report.lastRefresh && !report.lastRefresh.ok) lines.push(`NOTE last native-refresh failed at ${report.lastRefresh.at}: ${report.lastRefresh.message}`);
+    console.log(lines.join("\n"));
+    process.exitCode = report.ready ? 0 : 1;
   } else if (command === "native-plugin") {
     if (process.argv.slice(2).length !== 3)
       throw new OrbitError("INVALID_REQUEST", "Use native-plugin status|load|unload|resume ABSOLUTE_PREPARATION_DIRECTORY");

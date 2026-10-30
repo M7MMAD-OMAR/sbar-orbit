@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.control import ActionControl
+from src.native.diagnose import effective_environment
 from src.native.host import inspect_host, verify_host
 from src.native.budget import require_budget
 from src.native.plugin_bundle import stage_plugin, verify_staged_plugin
@@ -112,7 +113,7 @@ def main():
     parser.add_argument("--control-directory", type=Path)
     args = parser.parse_args()
     try:
-        result = prepare(args.directory, os.environ, args.plugin_manifest, args.control_directory)
+        result = prepare(args.directory, effective_environment(os.environ), args.plugin_manifest, args.control_directory)
         print(json.dumps({"ok": True, "result": result}))
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, ExceptionGroup) as error:

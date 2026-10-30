@@ -68,3 +68,8 @@ instruction instead of loading a mismatched binary. Record the build once with
 `native-refresh --plugin-manifest ABSOLUTE_PRIVATE_JSON`; the autostart entry then runs
 `native-refresh --if-configured` at each desktop start, and every new worker binds the
 plan `current` points to, so a running broker needs no restart.
+
+The broker also runs `native-refresh --if-configured` itself before a native request when only the
+compositor restarted, and refuses early with the exact mismatch when it cannot repair it (an upgraded
+compositor needs a rebuilt plugin, an upgraded but not restarted one needs a new login). Check
+agreement at any time with `sbar-orbit native-check`; see [diagnostics](diagnostics.md#native-control-does-not-work-start-here).

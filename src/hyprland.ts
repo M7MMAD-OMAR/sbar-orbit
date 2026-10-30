@@ -3,6 +3,7 @@ import { resolveInstalledApplication } from "./application-launch";
 import { requireNativeAdapter } from "./native-availability";
 import { reapWorkerLease } from "./native-prepare";
 import { NativeWorker, type NativeOptions } from "./native-worker";
+import { ensureNativeReady } from "./native-readiness";
 import { defaultViewport, type Viewport } from "./viewport";
 import { createWorkspaceDirectory } from "./workspace-storage";
 import { requireResourceBudget } from "./resource-budget";
@@ -63,6 +64,22 @@ function target(value: Record<string, unknown>): Target {
   return { appId: identifier(value.appId), windowId: identifier(value.windowId) };
 }
 
+/**
+ * A failed cleanup must not replace the reason the work failed. Wrapping a classified refusal in an
+ * AggregateError made it a non-Orbit error, which the diagnostics layer reports as the unattributable
+ * "Request failed" (measured 30 October 2026: a stale native plan, whose exact repair command the
+ * worker had printed, reached the agent as nothing but that). The refusal keeps its code and message,
+ * and the cleanup failure rides along as its cause.
+ */
+export function withCleanup(primary: unknown, cleanup: unknown[], message: string): unknown {
+  if (!cleanup.length) return primary;
+  if (primary instanceof OrbitError) {
+    Object.defineProperty(primary, "cause", { value: new AggregateError(cleanup, message), configurable: true });
+    return primary;
+  }
+  return new AggregateError([primary, ...cleanup], message);
+}
+
 /** The compositor is fixed at broker startup. All application targets are worker-owned handles. */
 export class NativeBackend {
   readonly visible = true;
@@ -85,6 +102,7 @@ export class NativeBackend {
     requireNativeAdapter();
     await requireResourceBudget();
     if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
+    await ensureNativeReady(options);
     // Application bus socket paths must stay below the Unix path limit, independent of project paths.
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker;
@@ -94,7 +112,7 @@ export class NativeBackend {
     }
     catch (error) {
       try { await rm(directory, { recursive: true, force: true }); }
-      catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and directory cleanup failed"); }
+      catch (cleanup) { throw withCleanup(error, [cleanup], "Native startup and directory cleanup failed"); }
       throw error;
     }
     const backend = new NativeBackend(worker, directory, options, handoff !== undefined);
@@ -134,23 +152,30 @@ export class NativeBackend {
       // Retain the same private diagnostics as a normal close. Deleting a failed
       // claim's journal made its public diagnostic reference impossible to inspect.
       try { await backend.close(); }
-      catch (cleanup) { throw new AggregateError([error, cleanup], "Native startup and cleanup failed"); }
+      catch (cleanup) { throw withCleanup(error, [cleanup], "Native startup and cleanup failed"); }
       throw error;
     }
   }
 
   static async candidates(options: NativeOptions, selection: HandoffSelection) {
     await requireResourceBudget();
+    await ensureNativeReady(options);
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker | undefined;
+    let result: unknown;
+    let primary: unknown;
+    let failed = false;
     try {
       worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
-      return await worker.request("candidates", selection);
-    } finally {
-      if (worker) await worker.close();
-      await rm(directory, { recursive: true, force: true });
-    }
+      result = await worker.request("candidates", selection);
+    } catch (error) { failed = true; primary = error; }
+    const cleanup: unknown[] = [];
+    if (worker) { try { await worker.close(); } catch (error) { cleanup.push(error); } }
+    try { await rm(directory, { recursive: true, force: true }); } catch (error) { cleanup.push(error); }
+    if (failed) throw withCleanup(primary, cleanup, "Native candidates cleanup failed");
+    if (cleanup.length) throw new AggregateError(cleanup, "Native candidates cleanup failed");
+    return result;
   }
 
   private static async presentationRequest(options: NativeOptions, method: "monitors" | "present", params: Record<string, unknown>) {
@@ -161,6 +186,7 @@ export class NativeBackend {
     let result: unknown;
     try {
       await requireResourceBudget();
+      await ensureNativeReady(options, { requirePlugin: method === "present" });
       directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
       const worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
@@ -183,7 +209,8 @@ export class NativeBackend {
           Object.defineProperty(error, "cause", { value: cleanup, configurable: true });
       }
       if (method === "present" && !dispatched) {
-        const failure = new OrbitError("PRESENTATION_NOT_READY", "Presentation did not start. Inspect native readiness and retry the same requestId after resolving the startup failure.");
+        const reason = error instanceof OrbitError && ["NATIVE_STALE", "NATIVE_INCOMPATIBLE"].includes(error.code) ? " " + error.message : "";
+        const failure = new OrbitError("PRESENTATION_NOT_READY", "Presentation did not start. Inspect native readiness and retry the same requestId after resolving the startup failure." + reason);
         Object.defineProperty(failure, "cause", { value: error, configurable: true });
         throw failure;
       }
@@ -225,6 +252,7 @@ export class NativeBackend {
     value = parseNativeOpen(value);
     const application = await resolveInstalledApplication(value.applicationId);
     await requireResourceBudget();
+    await ensureNativeReady(options);
     const directory = await createWorkspaceDirectory("native", "/var/tmp/orbit-native-" + process.getuid?.());
     let worker: NativeWorker | undefined;
     let remove = false;

@@ -126,3 +126,29 @@ export async function call(socket: string, method: string, params: unknown = {},
   if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
   return result.result;
 }
+
+/** The broker was not there at all, so nothing was sent and the same request can be sent again. */
+export function brokerNotListening(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "";
+  return code === "FailedToOpenSocket" || code === "ENOENT" || code === "ECONNREFUSED" || code === "ConnectionRefused";
+}
+
+/**
+ * `call` for a long lived adapter. A restarted broker is unreachable for a second or two, and an
+ * adapter that reported that as a failure left the agent without an answer for a moment that
+ * `systemctl restart` makes routine. Only "nobody is listening" is waited out, because then nothing
+ * was delivered; a reset or a timeout after sending is never retried here, since the action may
+ * have happened.
+ */
+export async function callPatient(socket: string, method: string, params: unknown = {}, identity?: ClientIdentity, waitMs = 15_000,
+    sleep: (ms: number) => Promise<unknown> = ms => new Promise(resolve => setTimeout(resolve, ms))): Promise<unknown> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try { return await call(socket, method, params, undefined, identity); }
+    catch (error) {
+      if (!brokerNotListening(error)) throw error;
+      if (Date.now() >= deadline) throw new OrbitError("BROKER_UNAVAILABLE", `The Orbit broker did not answer for ${Math.round(waitMs / 1000)} seconds. It may be restarting or stopped; this adapter stays connected, so retry shortly (sbar-orbit status, journalctl --user -u sbar-orbit.service).`);
+      await sleep(250);
+    }
+  }
+}

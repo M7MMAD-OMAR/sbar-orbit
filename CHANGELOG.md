@@ -2,6 +2,16 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## Unreleased
+
+Native failures now say what is wrong. A stale prepared plan, an upgraded compositor, an unloaded
+plugin or a missing service environment is named in the error and in `doctor`
+(`machine.native`, and a computed `nativeDisplaySupported`), with the command that fixes it;
+`sbar-orbit native-check` is the regression check. The broker renews a stale plan by itself before a
+native request. A worker that dies reports its final exception line instead of "Request failed". The
+MCP adapter waits out a broker restart and survives stray errors. `build.sh` refuses headers of another
+Hyprland commit and no longer writes to `/tmp`.
+
 ## 0.4.0 (29 October 2026)
 
 Faster agent loops, more of the web, several agents at once, and a panel that controls sessions again.

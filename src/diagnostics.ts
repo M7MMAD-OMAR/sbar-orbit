@@ -6,7 +6,7 @@ import { OrbitError } from "./errors";
 import { stateDirectory } from "./service";
 import { version } from "../package.json";
 
-const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write']);
+const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write', 'native.open', 'native.candidates', 'native.monitors', 'native.present']);
 const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'select-tab', 'close-tab', 'launch', 'scroll', 'pointer', 'resize', 'window', 'text', 'paste', 'key']);
 /**
  * The codes a diagnostic event may carry. Anything not here is recorded as `BACKEND_ERROR`, which is
@@ -30,14 +30,20 @@ export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSI
   // "you hit a ceiling" from "something broke" retries the wrong thing.
   'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
   'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID',
-  'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED']);
+  'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED', 'NATIVE_STALE', 'NATIVE_INCOMPATIBLE', 'BROKER_UNAVAILABLE']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;
 export const diagnosticRoot = () => join(stateDirectory(), 'diagnostics');
 export interface DiagnosticEvent {
   at: string; traceId: string; method: string; action?: string; session?: string; request?: string;
   outcome: 'started' | 'ok' | 'error'; durationMs?: number; code?: string; backend?: string;
+  /** The refusal's own public message (never a raw exception), so a report says what to do and not only that it failed. */
+  detail?: string;
 }
+const detailText = (value: unknown) => typeof value === 'string' ? value.replace(/[^\x20-\x7e]/g, ' ').slice(0, 300) : undefined;
+/** The classified refusal behind an error, looking inside an AggregateError raised by a failed cleanup. */
+export const orbitCause = (error: unknown): OrbitError | undefined =>
+  error instanceof OrbitError ? error : error instanceof AggregateError ? error.errors.map(orbitCause).find(Boolean) : undefined;
 
 // Only enumerated metadata crosses this boundary. Never serialize request objects or errors.
 export class Diagnostics {
@@ -99,18 +105,22 @@ export class Diagnostics {
       await this.record({ ...event, at: new Date().toISOString(), session: event.session ?? hash(object(result).sessionId), outcome: 'ok', durationMs: Math.round(performance.now() - start) });
       return result;
     } catch (error) {
-      const code = error instanceof OrbitError && diagnosticCodes.has(error.code) ? error.code : 'BACKEND_ERROR';
-      await this.record({ ...event, at: new Date().toISOString(), outcome: 'error', code, durationMs: Math.round(performance.now() - start) });
+      const known = orbitCause(error);
+      const code = known && diagnosticCodes.has(known.code) ? known.code : 'BACKEND_ERROR';
+      await this.record({ ...event, at: new Date().toISOString(), outcome: 'error', code, durationMs: Math.round(performance.now() - start),
+        ...(known ? { detail: detailText(known.message) } : {}) });
       // The journal is metadata by design, and an exception that is not Orbit's own says nothing here
       // except that something threw. Its own words go to the broker's stderr, which is the operator's
       // journal rather than anything an agent or a page can read, carried beside the trace ID so the
       // two can be put together. Measured 13 September 2026 on a fresh machine: every session
       // creation failed as BACKEND_ERROR with the cause discarded at this line, in the journal, in the
       // report and on stderr all at once, which left nothing to debug from.
-      if (!(error instanceof OrbitError))
+      if (!known) {
+        const inner = error instanceof AggregateError ? error.errors.map(item => item instanceof Error ? `${item.name}: ${item.message}` : String(item)) : undefined;
         console.error(JSON.stringify({ traceId: event.traceId, method: event.method,
-          unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }));
-      throw new OrbitError(error instanceof OrbitError ? error.code : 'BACKEND_ERROR', error instanceof OrbitError ? error.message : 'Request failed', event.traceId);
+          unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error), ...(inner ? { inner } : {}) }));
+      }
+      throw new OrbitError(known ? known.code : 'BACKEND_ERROR', known ? known.message : 'Request failed', event.traceId);
     }
   }
   async report() {
@@ -130,6 +140,7 @@ export class Diagnostics {
               ...(/^[a-f0-9]{16}$/.test(String(e.session)) ? { session: String(e.session) } : {}),
               ...(/^[a-f0-9]{16}$/.test(String(e.request)) ? { request: String(e.request) } : {}),
               ...(diagnosticCodes.has(String(e.code)) ? { code: String(e.code) } : {}),
+              ...(typeof e.detail === 'string' ? { detail: detailText(e.detail) } : {}),
               ...(typeof e.durationMs === 'number' && Number.isFinite(e.durationMs) && e.durationMs >= 0 ? { durationMs: e.durationMs } : {}) });
           } catch { this.failedReads++; }
         }
@@ -140,7 +151,7 @@ export class Diagnostics {
     const report = { schemaVersion: 1, reportId: crypto.randomUUID(), generatedAt: new Date().toISOString(), orbitVersion: version,
       platform: process.platform, architecture: process.arch,
       collection: { failedWrites: this.failedWrites, failedReads: this.failedReads, retainedEvents: events.length, maxBytesPerFile: this.maxBytes, files: 2,
-        coverage: 'Orbit dispatch metadata only. Browser content, arguments, native stderr and host activity are not collected. Starts without outcomes may indicate interruption or an operation still running. Old events rotate out.' },
+        coverage: 'Orbit dispatch metadata only. Browser content, arguments and host activity are not collected; native worker output is not collected except the one bounded exception line a failed worker reports. Starts without outcomes may indicate interruption or an operation still running. Old events rotate out.' },
       events };
     const latest = events.findLast(e => e.outcome === 'error');
     const summary = { ...report, events: [...events.filter(e => e.outcome === 'error').slice(-3), ...events.slice(-3)] };

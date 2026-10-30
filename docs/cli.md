@@ -87,9 +87,13 @@ frees one by hand. Release refuses a lease whose worker is alive, whose broker s
 closed, or that the compositor no longer holds. A refused handoff names the holder, and says
 whether its worker is alive.
 
+`sbar-orbit native-check` compares the live compositor, the prepared plan, the plugin build and
+the loaded plugin, prints one sentence per disagreement with its fix, and exits 1 unless they agree.
+
 ```sh
 sbar-orbit native-leases
 sbar-orbit native-leases release LEASE_ID
+sbar-orbit native-check
 sbar-orbit status
 sbar-orbit doctor
 sbar-orbit doctor --report

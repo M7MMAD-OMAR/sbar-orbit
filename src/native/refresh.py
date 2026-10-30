@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.native.budget import require_budget
 from src.native.control import ActionControl
+from src.native.diagnose import effective_environment
 from src.native.host import HostError, inspect_host, read_plan
 from src.native.plugin_bundle import FIELDS
 from src.native.plugin_owner import operate
@@ -149,6 +150,16 @@ def refresh(root, environment, plugin_manifest=None, if_configured=False):
             "environment_file": str(env_file), "compositor": live["compositor"]}
 
 
+def record(root, ok, message):
+    """Leave the last outcome where doctor reads it. Autostart runs this with no terminal to print to."""
+    try:
+        state = Path(root) / "refresh-status.json"
+        state.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "ok": ok, "message": message[:600]}))
+        os.chmod(state, 0o600)
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
@@ -156,9 +167,14 @@ def main():
     parser.add_argument("--if-configured", action="store_true")
     args = parser.parse_args()
     try:
-        print(json.dumps({"ok": True, "result": refresh(args.root, os.environ, args.plugin_manifest, args.if_configured)}))
+        # The environment of a systemd user service may predate the compositor; the runtime directory does not.
+        result = refresh(args.root, effective_environment(os.environ), args.plugin_manifest, args.if_configured)
+        if result.get("refreshed") or result.get("configured") is not False:
+            record(args.root, True, "refreshed" if result.get("refreshed") else "already current")
+        print(json.dumps({"ok": True, "result": result}))
         return 0
     except BaseException as error:
+        record(args.root, False, str(error))
         print(json.dumps({"ok": False, "error": {"code": "CONFIG_REQUIRED", "message": str(error)},
                           "owner_activation": "not performed"}), file=sys.stderr)
         return 1
