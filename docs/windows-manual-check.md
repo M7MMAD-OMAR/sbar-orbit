@@ -18,6 +18,8 @@ not run, with the date.
 6. Refusals: opening an application or `native-plugin status` must fail with the plain unsupported
    message, not a stack trace. `panel` and `settings` must refuse the same way.
 7. Update: run a managed update with a newer local package and confirm the pointer file moves.
+8. Download: fetch the source tarball from the GitHub release in a browser, extract it, run `install.cmd` and record
+   whether SmartScreen or Defender prompts at the download or at the run, with the Windows build and the file hash (see [Windows signing](windows-signing.md)).
 
-Expected on Windows today: steps 1 to 7 pass or refuse plainly; native open, input, capture and the
+Expected on Windows today: steps 1 to 7 pass or refuse plainly, step 8 is recorded; native open, input, capture and the
 numbered workspace are not implemented and must not be reported as working.

@@ -105,3 +105,46 @@ for (const host of agentHosts) {
     if (host === "codex") expect(next.text).toContain("# keep this comment");
   });
 }
+
+test("doctor reports each host adapter fingerprint without writing anything", async () => {
+  const root = await mkdtemp(join(await resolvedTmpdir(), "orbit-drift-"));
+  const versioned = (host: typeof agentHosts[number], version: string) =>
+    addHostEntry(host, samples[host], { ...entry, env: { ...entry.env, ORBIT_CLIENT_VERSION: version } }).text;
+  try {
+    const files: Record<string, string> = {};
+    for (const [host, version] of [["claude", "0.3.0"], ["codex", "0.4.1"]] as const) {
+      const path = hostConfigPath(host, {}, root);
+      await mkdir(join(path, ".."), { recursive: true });
+      files[path] = versioned(host, version);
+      await writeFile(path, files[path]);
+    }
+    const hermes = hostConfigPath("hermes", {}, root);
+    await mkdir(join(hermes, ".."), { recursive: true });
+    files[hermes] = samples.hermes.replace("neighbour:", "orbit:\n    command: foreign\n  neighbour:");
+    await writeFile(hermes, files[hermes]);
+    const { hostAdapterReport } = await import("../src/host-registration");
+    const report = await hostAdapterReport("0.4.1", { home: root, env: {} });
+    expect(Object.fromEntries(report.hosts.map(host => [host.host, host.state]))).toEqual({ claude: "stale", codex: "current", hermes: "unversioned" });
+    expect(report.outdated).toEqual(["claude", "hermes"]);
+    expect(report.fix).toContain("install --connect claude,hermes");
+    for (const [path, text] of Object.entries(files)) expect(await readFile(path, "utf8")).toBe(text);
+    expect((await readdir(join(hermes, ".."))).every(name => !name.includes("orbit-"))).toBe(true);
+    const current = await hostAdapterReport("0.3.0", { home: root, env: {} });
+    expect(current.hosts.find(host => host.host === "claude")?.state).toBe("current");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a missing host or an unreadable file is reported and never changed", async () => {
+  const root = await mkdtemp(join(await resolvedTmpdir(), "orbit-drift-none-"));
+  try {
+    const { hostAdapterReport } = await import("../src/host-registration");
+    const none = await hostAdapterReport("0.4.1", { home: root, env: {} });
+    expect(none.hosts.every(host => host.state === "absent")).toBe(true);
+    expect(none.fix).toBeUndefined();
+    const path = hostConfigPath("claude", {}, root);
+    await writeFile(path, "{ not json");
+    const broken = await hostAdapterReport("0.4.1", { home: root, env: {} });
+    expect(broken.hosts.find(host => host.host === "claude")?.state).toBe("unreadable");
+    expect(await readFile(path, "utf8")).toBe("{ not json");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

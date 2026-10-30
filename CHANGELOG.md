@@ -2,6 +2,14 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## Unreleased
+
+`doctor` now reports each agent host's registered adapter fingerprint (Claude, Codex, Hermes) against the running
+version, read only, with the `install --connect` command that refreshes a stale registration. A host keeps the tool
+list it loaded, so a new task or an MCP reload in that host is still needed. New `docs/windows-signing.md` records
+the Windows signing decision, the sibling project's measured results and what carries over; the Windows manual
+check gains a download step.
+
 ## 0.4.1 (30 October 2026)
 
 Hyprland 0.57 support. The plugin is ported to 0.57.0, whose window, workspace, render and IPC

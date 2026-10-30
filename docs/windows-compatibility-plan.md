@@ -235,7 +235,7 @@ shared with the overlay), `src/session.ts` (doctor capabilities by platform).
 - Origin mismatch between capture and click space: measure on Firefox, Chromium, a Win32 and a packaged app
   before claiming input and capture together.
 - Accessibility depends on each application's provider; Electron and Chromium need activation.
-- Antivirus and SmartScreen reactions to an unsigned helper that injects input; a signing decision is needed.
+- Antivirus and SmartScreen reactions to an unsigned helper that injects input; a signing decision is needed; see [Windows signing](windows-signing.md) for the decision record.
 - Virtual desktops: do not ship an undocumented interface.
 - Runner results are not a person's desktop.
 

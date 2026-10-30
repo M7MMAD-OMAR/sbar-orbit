@@ -101,6 +101,61 @@ async function existingFile(path: string) {
   return readFile(path, "utf8");
 }
 
+/** Where a host keeps its settings, following Hermes' active profile when no profile directory is forced. */
+async function resolveHostPath(host: AgentHost, env: NodeJS.ProcessEnv, home: string): Promise<{ path: string } | { path: string; failure: string }> {
+  const path = hostConfigPath(host, env, home);
+  if (host !== "hermes" || env.HERMES_HOME) return { path };
+  const selected = await readFile(join(dirname(path), "active_profile"), "utf8").catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return "";
+    return "invalid profile";
+  });
+  const profile = selected.trim();
+  if (!profile || profile === "default") return { path };
+  if (!/^[A-Za-z0-9_-]+$/.test(profile)) return { path, failure: "Could not resolve the active Hermes profile; settings left unchanged" };
+  return { path: join(dirname(path), "profiles", profile, "config.yaml") };
+}
+
+export type HostAdapterDrift = { host: AgentHost; path: string;
+  state: "current" | "stale" | "unversioned" | "absent" | "unreadable"; registered?: string; detail: string };
+
+/**
+ * Read only. Compares each host's registered adapter fingerprint with the running version. A host keeps
+ * the tool schema it loaded when its adapter started, so a stale fingerprint is the reliable sign that a
+ * running host may still hold an older tool list. Nothing is written: host settings are changed only by
+ * `install --connect`, which the person runs on purpose.
+ */
+export async function inspectHostAdapters(version: string, options: { env?: NodeJS.ProcessEnv; home?: string } = {}): Promise<HostAdapterDrift[]> {
+  const env = options.env ?? process.env, home = options.home ?? homedir();
+  const results: HostAdapterDrift[] = [];
+  for (const host of agentHosts) {
+    const resolved = await resolveHostPath(host, env, home);
+    if ("failure" in resolved) { results.push({ host, path: resolved.path, state: "unreadable", detail: resolved.failure }); continue; }
+    const path = resolved.path;
+    try {
+      const text = await existingFile(path);
+      if (text === null) { results.push({ host, path, state: "absent", detail: "No settings file" }); continue; }
+      const parsed = mapping(text.trim() ? host === "codex" ? Bun.TOML.parse(text) : host === "hermes" ? Bun.YAML.parse(text) : JSON.parse(text) : {});
+      const servers = mapping(parsed[host === "claude" ? "mcpServers" : "mcp_servers"]);
+      if (!Object.hasOwn(servers, "orbit")) { results.push({ host, path, state: "absent", detail: "Orbit is not registered" }); continue; }
+      const registered = mapping(mapping(servers.orbit).env).ORBIT_CLIENT_VERSION;
+      if (typeof registered !== "string") results.push({ host, path, state: "unversioned", detail: "Registered without an adapter fingerprint" });
+      else if (registered === version) results.push({ host, path, state: "current", registered, detail: `Registered for ${version}` });
+      else results.push({ host, path, state: "stale", registered, detail: `Registered for ${registered}, running ${version}; a running host may hold an older tool list` });
+    } catch {
+      results.push({ host, path, state: "unreadable", detail: "Could not read host settings; nothing was changed" });
+    }
+  }
+  return results;
+}
+
+/** The doctor view of host adapters: the per host state, and one plain remedy when any is out of date. */
+export async function hostAdapterReport(version: string, options: { env?: NodeJS.ProcessEnv; home?: string } = {}) {
+  const hosts = await inspectHostAdapters(version, options);
+  const outdated = hosts.filter(host => host.state === "stale" || host.state === "unversioned").map(host => host.host);
+  return { hosts, outdated,
+    ...(outdated.length ? { fix: `Run sbar-orbit install --connect ${outdated.join(",")} to refresh the registration, then start a new task or reload Orbit in that host; a running host keeps the tool list it loaded.` } : {}) };
+}
+
 export async function registerAgentHosts(selection: "auto" | AgentHost[], entry: HostEntry,
   options: { dryRun?: boolean; env?: NodeJS.ProcessEnv; home?: string;
     which?: (name: string) => string | null } = {}): Promise<HostRegistration[]> {
@@ -109,21 +164,12 @@ export async function registerAgentHosts(selection: "auto" | AgentHost[], entry:
   const which = options.which ?? Bun.which;
   const results: HostRegistration[] = [];
   for (const host of selection === "auto" ? agentHosts : selection) {
-    let path = hostConfigPath(host, env, home);
-    if (host === "hermes" && !env.HERMES_HOME) {
-      const selected = await readFile(join(dirname(path), "active_profile"), "utf8").catch((error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return "";
-        return "invalid profile";
-      });
-      const profile = selected.trim();
-      if (profile && profile !== "default") {
-        if (!/^[A-Za-z0-9_-]+$/.test(profile)) {
-          results.push({ host, path, state: "failed", detail: "Could not resolve the active Hermes profile; settings left unchanged" });
-          continue;
-        }
-        path = join(dirname(path), "profiles", profile, "config.yaml");
-      }
+    const resolved = await resolveHostPath(host, env, home);
+    if ("failure" in resolved) {
+      results.push({ host, path: resolved.path, state: "failed", detail: resolved.failure });
+      continue;
     }
+    const path = resolved.path;
     let lock: Awaited<ReturnType<typeof open>> | undefined;
     const lockPath = `${path}.orbit-lock`;
     const temporary = `${path}.orbit-${crypto.randomUUID()}.tmp`;

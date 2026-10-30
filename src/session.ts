@@ -15,6 +15,7 @@ import { autostartPaths } from "./autostart";
 import { internalCaller, type Caller } from "./caller";
 import { CallerRegistry } from "./caller-registry";
 import { WaitQueue, allocateWorkspace, busyMessage, duration, graceSeconds, parseWait, workspacePool, type Holder } from "./arbitration";
+import { hostAdapterReport } from "./host-registration";
 
 async function installedUnitDrift() {
   try {
@@ -637,7 +638,8 @@ export class Sessions {
     // Doctor is what a person on an unverified platform runs first, and what a community bug report
     // is built from, so it carries the probed capabilities rather than an assumption about Linux.
     if (request.method === "doctor") return { managedIdentity: await this.releaseIdentity,
-      version: (await import("../package.json")).version, platform: process.platform, backend: "native",
+      version: (await import("../package.json")).version,
+      hostAdapters: await hostAdapterReport((await import("../package.json")).version), platform: process.platform, backend: "native",
       backends: this.native ? ["native"] : [], sessionMode: "native-only", capabilities,
       sessions: this.sessions.size, resources: await resourceStatus(), machine: await describeDesktopMachine(),
       units: process.platform === "linux" ? await installedUnitDrift() : undefined };
