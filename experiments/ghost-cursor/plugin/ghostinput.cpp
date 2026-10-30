@@ -1160,7 +1160,6 @@ static CFunctionHook* staticRulesHook = nullptr;
 static CFunctionHook* staticRecheckHook = nullptr;
 static CFunctionHook* clipboardSelectionHook = nullptr;
 static CFunctionHook* primarySelectionHook = nullptr;
-static CFunctionHook* surfaceUVHook = nullptr;
 
 #if !defined(__linux__) || !defined(__x86_64__)
 #error "Native lifecycle detours require the verified Linux x86_64 ABI"
@@ -1362,39 +1361,8 @@ static void sharedPrimarySelection(CSeatManager* manager, SP<IDataSource>& sourc
     reinterpret_cast<Original>(primarySelectionHook->m_original)(manager, source);
     broadcastSharedSelection(true);
 }
-// The pinned compositor omits XDG client decoration geometry from main-surface
-// UVs. Correct leased main surfaces in desktop rendering and window captures.
-static void applicationSurfaceUV(Render::IElementRenderer* renderer, Render::CRenderContext& ctx, PHLWINDOW& window,
-        SP<CWLSurfaceResource>& surface, PHLMONITOR& monitor, bool main,
-        const Vector2D& projected, const Vector2D& unscaled, bool fixMisaligned) {
-    using Original = void (*)(Render::IElementRenderer*, Render::CRenderContext&, PHLWINDOW&, SP<CWLSurfaceResource>&,
-                             PHLMONITOR&, bool, const Vector2D&, const Vector2D&, bool);
-    reinterpret_cast<Original>(surfaceUVHook->m_original)(renderer, ctx, window, surface, monitor, main, projected, unscaled, fixMisaligned);
-    auto& data = ctx.m_data;
-    if (!main || !window || !surface || !leasedWindow(window)) return;
-    const auto xdg = windowXdg(window);
-    if (!xdg) return;
-    const auto geometry = xdg->m_current.geometry;
-    const auto size = surface->m_current.size;
-    if (size.x <= 0 || size.y <= 0 || geometry.x < 0 || geometry.y < 0 || geometry.w <= 0 || geometry.h <= 0 ||
-        geometry.x + geometry.w > size.x || geometry.y + geometry.h > size.y ||
-        (geometry.x == 0 && geometry.y == 0)) return;
-    // Use the committed viewporter source directly. The compositor's original
-    // UVs can already contain an undersized-texture crop, which would crop twice.
-    auto top = Vector2D{};
-    auto bottom = Vector2D{1, 1};
-    if (surface->m_current.viewport.hasSource) {
-        const auto buffer = surface->m_current.bufferSize;
-        const auto source = surface->m_current.viewport.source;
-        if (buffer.x <= 0 || buffer.y <= 0) return;
-        top = Vector2D{source.x / buffer.x, source.y / buffer.y};
-        bottom = Vector2D{(source.x + source.w) / buffer.x, (source.y + source.h) / buffer.y};
-    }
-    const auto range = bottom - top;
-    data.primarySurfaceUVTopLeft = top + Vector2D{geometry.x / size.x, geometry.y / size.y} * range;
-    data.primarySurfaceUVBottomRight = top + Vector2D{(geometry.x + geometry.w) / size.x, (geometry.y + geometry.h) / size.y} * range;
-}
-
+// Hyprland 0.57 computes main-surface UVs with the XDG client geometry itself, so the
+// 0.56 correction hook was removed: keeping it cropped leased windows a second time.
 static CFunctionHook* applicationHook(const std::string& qualified, void* replacement) {
     const auto matches = HyprlandAPI::findFunctionsByName(PHANDLE, qualified.substr(qualified.rfind("::") + 2));
     void* address = nullptr;
@@ -1409,7 +1377,6 @@ static CFunctionHook* applicationHook(const std::string& qualified, void* replac
     return hook;
 }
 static void installApplicationHooks() {
-    surfaceUVHook = applicationHook("Render::IElementRenderer::calculateUVForSurface", reinterpret_cast<void*>(applicationSurfaceUV));
     keyboardFocusHook = applicationHook("CSeatManager::setKeyboardFocus", reinterpret_cast<void*>(beforeKeyboardFocus));
     keyboardKeyHook = applicationHook("CSeatManager::sendKeyboardKey", reinterpret_cast<void*>(ownerKeyboardKey));
     pointerButtonHook = applicationHook("CSeatManager::sendPointerButton", reinterpret_cast<void*>(ownerPointerButton));
@@ -1424,7 +1391,7 @@ static void installApplicationHooks() {
 }
 static void removeApplicationHooks() {
     for (auto slot : {&keyboardFocusHook, &keyboardKeyHook, &pointerButtonHook, &pointerAxisHook, &popupGrabHook, &popupMapHook, &simulatedMotionHook,
-                      &staticRulesHook, &staticRecheckHook, &clipboardSelectionHook, &primarySelectionHook, &surfaceUVHook}) {
+                      &staticRulesHook, &staticRecheckHook, &clipboardSelectionHook, &primarySelectionHook}) {
         if (!*slot) continue;
         if (!HyprlandAPI::removeFunctionHook(PHANDLE, *slot))
             throw std::runtime_error("cannot remove application lifecycle hook");
