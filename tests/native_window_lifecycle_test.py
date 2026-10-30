@@ -23,6 +23,9 @@ struct Monitor;
 struct Workspace {long m_id=7; bool m_isSpecialWorkspace=false; std::weak_ptr<Monitor> m_monitor;};
 using PHLWORKSPACE=std::shared_ptr<Workspace>;
 using PHLMONITOR=std::shared_ptr<Monitor>;
+#include <optional>
+#include <cstdint>
+static std::optional<int64_t> workspaceNumber(const PHLWORKSPACE& w){if(!w||w->m_isSpecialWorkspace)return std::nullopt;return w->m_id;}
 struct Monitor {
  PHLWORKSPACE m_activeWorkspace,m_activeSpecialWorkspace;
  bool internal=false,noMouse=false,noFocus=false;int changes=0;
@@ -122,10 +125,12 @@ namespace Desktop::Rule{struct CWindowRuleApplicator{std::weak_ptr<W>m_window;st
 struct Surface{void* owner;void* client(){return owner;}};
 template<class T>using SP=std::shared_ptr<T>;using CWLSurfaceResource=Surface;
 using wl_client=void;
-struct Workspace{std::string m_name;};
+struct Workspace{std::string m_name;const std::string&addressableName()const{return m_name;}};
 struct W{uint64_t m_stableID;bool m_isMapped=true;std::shared_ptr<Workspace>m_workspace;PHLWINDOW ancestor;std::shared_ptr<Surface>surface;
  std::shared_ptr<Desktop::Rule::CWindowRuleApplicator>m_ruleApplicator=std::make_shared<Desktop::Rule::CWindowRuleApplicator>();
- PHLWINDOW parent(){return ancestor;}std::shared_ptr<Surface>resource(){return surface;}};
+ PHLWINDOW parent(){return ancestor;}std::shared_ptr<Surface>resource(){return surface;}
+ struct Meta{uint64_t v;uint64_t stableID()const{return v;}};struct Back{PHLWINDOW p;PHLWINDOW parent()const{return p;}bool isX11()const{return false;}};
+ Meta metadata()const{return Meta{m_stableID};}Back backend()const{return Back{ancestor};}bool mapped()const{return m_isMapped;}};
 struct SLeasedWindow{std::weak_ptr<W>window;bool createdWhileLeased=false;std::optional<bool>noInitialFocus,originalFloating,originalCenter;std::optional<Math::SExpressionVec2>originalSize;std::string originalWorkspace;};
 struct SApplicationLease{bool paused=false,windowBound=false;std::weak_ptr<W>windowRoot;std::string homeWorkspace="2",homeWorkspaceRule="2 silent";std::optional<Math::SExpressionVec2>newWindowSize=Math::SExpressionVec2{"900","650"};std::map<uint64_t,SLeasedWindow>windows,relatedWindows;std::set<uint64_t>baselineWindows;};
 static SApplicationLease lease;

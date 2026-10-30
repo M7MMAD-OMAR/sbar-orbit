@@ -41,7 +41,7 @@ static void wl_client_add_destroy_listener(wl_client*, wl_listener*) { ++listene
 struct Vector { double x = 720, y = 640; };
 struct CWLSurfaceResource { wl_client* owner; wl_client* client() { return owner; } };
 template<typename T> using SP = std::shared_ptr<T>;
-struct Workspace { std::string m_name = "7"; };
+struct Workspace { std::string m_name = "7"; const std::string& addressableName() const { return m_name; } };
 struct Window {
     SP<CWLSurfaceResource> surface;
     std::shared_ptr<Window> parentWindow;
@@ -50,8 +50,15 @@ struct Window {
     uint64_t m_stableID = 1;
     auto resource() { return surface; }
     auto parent() { return parentWindow; }
+    struct Meta { uint64_t v; uint64_t stableID() const { return v; } };
+    struct Back { std::shared_ptr<Window> p; bool x11; auto parent() const { return p; } bool isX11() const { return x11; } };
+    Meta metadata() const { return Meta{m_stableID}; }
+    Back backend() const { return Back{parentWindow, m_isX11}; }
+    bool mapped() const { return m_isMapped; }
+    bool isFloating() const { return m_isFloating; }
     Vector size(int) { return {}; }
 };
+static bool windowXdg(const std::shared_ptr<Window>& w) { return w->m_xdgSurface; }
 using PHLWINDOW = std::shared_ptr<Window>;
 struct Seat {
     struct { std::weak_ptr<CWLSurfaceResource> keyboardFocus, pointerFocus; } m_state;
