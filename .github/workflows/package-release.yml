@@ -123,7 +123,7 @@ jobs:
           const name="sbar-orbit-site-"+version+".tar.gz",archive=join(directory,name);
           const child=Bun.spawn(await immutableTarArguments("/usr/bin/tar",archive,join(process.env.BUILD_SOURCE,"website"),"dist"),{stdout:"inherit",stderr:"inherit",env:{...process.env,TAR_OPTIONS:undefined,GZIP:undefined}});
           if(await child.exited)throw Error("Site archive failed");
-          const bytes=await Bun.file(archive).arrayBuffer(),sha256=createHash("sha256").update(bytes).digest("hex");
+          const bytes=await Bun.file(archive).arrayBuffer(),sha256=createHash("sha256").update(Buffer.from(bytes)).digest("hex");
           await Bun.write(archive+".sha256",sha256+"  "+name+"\n");
           await Bun.write(join(directory,"site-verification.json"),JSON.stringify({schema:1,version,sourceCommit:process.env.SOURCE_REF,workflowCommit:process.env.WORKFLOW_REF,bunVersion:Bun.version,files:count,unpackedBytes:total,archive:{name,bytes:bytes.byteLength,sha256},verification:{typecheck:true,tests:true,build:true,deployed:false}},null,2)+"\n");
           JS
@@ -136,7 +136,7 @@ jobs:
           import { join } from 'node:path';
           const directory=process.env.ASSET_DIRECTORY, version=process.env.RELEASE_VERSION;
           for(const name of ['sbar-orbit-'+version+'-source.tar.gz','sbar-orbit-'+version+'.tgz']) {
-            const sha=createHash('sha256').update(await Bun.file(join(directory,name)).arrayBuffer()).digest('hex');
+            const sha=createHash('sha256').update(Buffer.from(await Bun.file(join(directory,name)).arrayBuffer())).digest('hex');
             const expected=sha+'  '+name+'\n', file=join(directory,name+'.sha256');
             if(await Bun.file(file).exists() && await Bun.file(file).text()!==expected)throw Error('Existing checksum mismatch');
             await Bun.write(file,expected);
@@ -187,7 +187,7 @@ jobs:
           import {join} from 'node:path';
           const directory=process.env.ASSET_DIRECTORY,version=process.env.RELEASE_VERSION;
           const names=['sbar-orbit-'+version+'-source.tar.gz','sbar-orbit-'+version+'-source.tar.gz.sha256','sbar-orbit-'+version+'.tgz','sbar-orbit-'+version+'.tgz.sha256'];
-          const assets=[];for(const name of names){const bytes=await Bun.file(join(directory,name)).arrayBuffer();assets.push({name,bytes:bytes.byteLength,sha256:createHash('sha256').update(bytes).digest('hex')});}
+          const assets=[];for(const name of names){const bytes=await Bun.file(join(directory,name)).arrayBuffer();assets.push({name,bytes:bytes.byteLength,sha256:createHash('sha256').update(Buffer.from(bytes)).digest('hex')});}
           await Bun.write(join(directory,'release-verification.json'),JSON.stringify({schema:1,version,sourceCommit:process.env.SOURCE_REF,workflowCommit:process.env.WORKFLOW_REF,bunVersion:Bun.version,verification:{typecheck:true,defaultVerify:true,packagingVerify:true,sourceManifest:true,registrySourceReceipt:true,frozenInstall:true,help:true,preflightContract:true,installDryRun:true,nativeAcceptance:false},budget:{memoryBytes:1610612736,cpuQuotaPercent:150,tasks:256,swapBytes:0},assets},null,2)+'\n');
           JS
           BUILD
