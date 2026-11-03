@@ -1,5 +1,49 @@
 # Agent interface
 
+## Error delivery and retry metadata
+
+Broker error envelopes and MCP error results retain their existing `code`, `message`
+and optional `diagnosticId`, with additive `disposition` and `suggestion` fields.
+MCP returns the same error payload as text and structured content. For example:
+
+```json
+{"code":"TIMEOUT","message":"Request failed","disposition":{"delivery":"unknown","retry":"unsafe"},"suggestion":"observe-before-retry"}
+```
+
+`delivery` is `not-delivered`, `delivered` or `unknown`. `retry` is `safe` or
+`unsafe`. Suggestions are fixed values: `correct-request`, `observe-before-retry`
+or `do-not-retry`. Missing, legacy or incoherent metadata defaults to unknown
+delivery and unsafe replay. Never derive safety from an error code, HTTP status,
+missing acknowledgement or timeout. Audited pure validation may prove non-delivery;
+a policy refusal can prove non-delivery while still forbidding replay.
+
+These fields describe this attempt, not earlier requests or application acceptance.
+They do not trigger retries, grant permissions or prove a save. Batch receipt
+errors carry per-action metadata, not permission to repeat earlier successful
+actions. Reuse the existing requestId with unchanged arguments to retrieve the
+in-session cached outcome; inspect actual state after uncertainty or a broker
+restart. See the [execution plan](efficiency-plan.md#retry-and-idempotency).
+
+## Observation measurements
+
+Native observation adds content-free `observation` metadata: `requestedFormat`,
+`returnedFormat`, `workerMs`, `imageBytes`, `treeBytes`, `treeNodes`, `treeComplete`.
+`workerMs` is local worker elapsed time including its control journal, not model
+or end-to-end workflow latency. Image bytes exclude base64 overhead; tree bytes
+count the compact UTF-8 node array. Tree payload also exposes `readMs` for helper
+startup/read cost and its existing `queryMs` for the in-helper query elapsed time.
+
+`treeComplete` is null without a usable tree, false for partial filtered traversal
+and true only when that traversal reports no truncation. Depth, child, node, byte,
+deadline and unreadable-node limits are explicit. Completeness does not establish
+retained element identity or that image and text were captured atomically.
+Only a unique full native window title match is accepted; substring, suffix,
+ambiguous and missing matches fall back to capture rather than guessing.
+window PID/title changes during a tree query discard that tree. Password-role
+values, names and descendants are omitted from text, but mislabeled fields and
+screenshots are not guaranteed redacted. Never put raw observations in public
+benchmarks. See [measurement and acceptance gates](efficiency-plan.md).
+
 For ordinary web tasks, prefer the AI host's built-in browser or its normal web
 tools. Orbit provides native desktop application control, not a browser-specific
 session backend. Use Orbit for original installed desktop application tasks. Use

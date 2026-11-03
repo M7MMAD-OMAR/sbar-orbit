@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { NativeBackend, parseHandoff, parseNativeOpen, parseNativePresentation } from "./hyprland";
 import { nativeOptionsFromEnv } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
+import { errorPayload, preflightDisposition, refusedDisposition } from "./error-disposition";
 import { resourceStatus } from "./resource-budget";
 import { describeDesktopMachine } from "./desktop-machine";
 import { decide, nativeApplicationPolicy, journalEntry, narrow, parseActionClasses, parseOrigins, parsePolicy, type JournalEntry, type SessionPolicy } from "./policy";
@@ -324,7 +325,13 @@ export class Sessions {
     this.ensureOpen(session);
     const requestId = text(input.requestId, "requestId");
     if (input.actions !== undefined || input.capture !== undefined) return this.batch(session, input, requestId);
-    const action = session.backend.parseAction(input.action);
+    // This parser is pure validation. No request has been admitted or sent to the worker yet.
+    let action: ReturnType<NativeBackend["parseAction"]>;
+    try { action = session.backend.parseAction(input.action); }
+    catch (error) {
+      if (error instanceof OrbitError) throw new OrbitError(error.code, error.message, error.diagnosticId, preflightDisposition);
+      throw error;
+    }
     const fingerprint = JSON.stringify(action);
     const existing = session.requests.get(requestId);
     if (existing) {
@@ -370,7 +377,7 @@ export class Sessions {
         session.policy = narrow(session.policy, { allow: ["read"] });
         record(decision, decidedBy, session.policy);
       } else record(decision, decidedBy);
-      throw new OrbitError("POLICY_DENIED", decision.reason);
+      throw new OrbitError("POLICY_DENIED", decision.reason, undefined, refusedDisposition);
     };
     const decision = decide(session.policy, action.type, destination, method, methodIsImplied);
     if (decision.outcome !== "consult") {
@@ -378,7 +385,7 @@ export class Sessions {
       record(decision);
       // A supervised session stops and waits for the person. An autonomous one never reaches here
       // with anything but an allow, which is what lets it finish a task without them.
-      if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason);
+      if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason, undefined, refusedDisposition);
       return () => this.track(session, "agent", action.type, () => this.guarded(session, action));
     }
     // Accepted advisor work belongs to the same queue that pause drains. Otherwise a late allow
@@ -470,17 +477,16 @@ export class Sessions {
       } catch (error) {
         this.ensureOpen(session);
         const code = error instanceof OrbitError ? error.code : error instanceof Error && error.name === "TimeoutError" ? "TIMEOUT" : "BACKEND_ERROR";
-        const message = error instanceof OrbitError ? error.message : "Native action failed";
         const status = code.startsWith("POLICY_") ? "refused" : uncertain.includes(code) ? "uncertain" : "failed";
-        receipts.push({ ...base, status, error: { code, message } });
+        receipts.push({ ...base, status, error: errorPayload(error, code, "Native action failed") });
         stopped = status === "uncertain" ? "PRIOR_UNCERTAIN" : "PRIOR_FAILED";
       }
     }
     const completed = receipts.filter(receipt => receipt.status === "ok").length;
     const result: Record<string, unknown> = { ok: completed === actions.length, completed, receipts };
     if (capture !== undefined) {
-      if (observing?.outcome !== "allow") result.captureError = { code: "POLICY_DENIED", message: "Observation is not allowed for this session" };
-      else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = { code: "NOT_ATTEMPTED", message: "No action ran, so there is nothing new to capture" };
+      if (observing?.outcome !== "allow") result.captureError = errorPayload(undefined, "POLICY_DENIED", "Observation is not allowed for this session");
+      else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = errorPayload(undefined, "NOT_ATTEMPTED", "No action ran, so there is nothing new to capture");
       else {
         try {
           result.capture = await session.backend.observe(target, "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs, ...(capture.quietMs === undefined ? {} : { quietMs: capture.quietMs }) });
@@ -491,8 +497,7 @@ export class Sessions {
           }));
         } catch (error) {
           this.ensureOpen(session);
-          result.captureError = { code: error instanceof OrbitError ? error.code : "BACKEND_ERROR",
-            message: error instanceof OrbitError ? error.message : "Capture failed; observe separately" };
+          result.captureError = errorPayload(error, "BACKEND_ERROR", "Capture failed; observe separately");
         }
       }
     }

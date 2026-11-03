@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import time
 
 DUMP = Path(__file__).with_name("a11y_dump.py")
 FORMATS = ("image", "text", "both")
@@ -24,15 +25,18 @@ def _trim(nodes):
     """Drop whole trailing nodes until the serialized tree fits, so the cut never splits a node."""
     size, kept = 2, []
     for node in nodes:
-        size += len(json.dumps(node, ensure_ascii=False, separators=(",", ":"))) + 1
+        size += len(json.dumps(node, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) + (1 if kept else 0)
         if size > MAX_BYTES:
-            return kept, True
+            return kept, "bytes"
+        if len(kept) >= MAX_NODES:
+            return kept, "nodes"
         kept.append(node)
-    return kept, False
+    return kept, None
 
 
 def read_tree(pid, title, runtime):
     """A bounded tree for one window, or the reason none is available. Never raises on a missing tree."""
+    started = time.monotonic()
     environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "XDG_RUNTIME_DIR": runtime}
     try:
         done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(DEADLINE_MS)],
@@ -44,7 +48,11 @@ def read_tree(pid, title, runtime):
         return {"status": "unavailable", "reason": "accessibility query failed or timed out"}
     if reply["status"] != "ok":
         return {"status": "unavailable", "reason": str(reply.get("reason", "unavailable"))[:120]}
-    nodes, cut = _trim(reply["nodes"] if isinstance(reply.get("nodes"), list) else [])
-    truncated = reply.get("truncated") or ("bytes" if cut else None)
+    raw_nodes = reply.get("nodes")
+    if not isinstance(raw_nodes, list) or not raw_nodes or not all(isinstance(node, dict) for node in raw_nodes):
+        return {"status": "unavailable", "reason": "accessibility query returned no usable nodes"}
+    nodes, cut = _trim(raw_nodes)
+    truncated = reply.get("truncated") or cut
     return {"status": "ok", "toolkit": str(reply.get("toolkit", ""))[:24], "nodes": nodes,
-            "truncated": truncated, "queryMs": reply.get("ms")}
+            "truncated": truncated, "complete": truncated is None, "queryMs": reply.get("ms"),
+            "readMs": round((time.monotonic() - started) * 1000, 3)}

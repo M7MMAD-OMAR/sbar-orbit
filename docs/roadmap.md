@@ -1,5 +1,9 @@
 # Native desktop roadmap
 
+The [efficiency execution plan](efficiency-plan.md) defines the staged
+measurement, retry, accessibility and rollout gates, including current source
+foundations and work that still needs implementation or native acceptance.
+
 Updated 27 October 2026. The goal is original application work on an explicitly
 selected visible workspace. This is a development plan, not a compatibility claim.
 

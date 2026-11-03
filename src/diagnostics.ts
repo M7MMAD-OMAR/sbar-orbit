@@ -120,7 +120,7 @@ export class Diagnostics {
         console.error(JSON.stringify({ traceId: event.traceId, method: event.method,
           unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error), ...(inner ? { inner } : {}) }));
       }
-      throw new OrbitError(known ? known.code : 'BACKEND_ERROR', known ? known.message : 'Request failed', event.traceId);
+      throw new OrbitError(known ? known.code : 'BACKEND_ERROR', known ? known.message : 'Request failed', event.traceId, known === error ? known : undefined);
     }
   }
   async report() {

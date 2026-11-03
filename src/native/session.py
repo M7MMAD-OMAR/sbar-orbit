@@ -174,7 +174,12 @@ class NativeSession:
         identity = a11y.window_identity(clients, target["address"], target["key"][1]) if isinstance(clients, list) else None
         if identity is None:
             return {"status": "unavailable", "reason": "window process is unknown"}
-        return a11y.read_tree(identity[0], identity[1], self.plan["runtime"])
+        tree = a11y.read_tree(identity[0], identity[1], self.plan["runtime"])
+        current = json.loads(self.transport._exchange("j/clients"))
+        after = a11y.window_identity(current, target["address"], target["key"][1]) if isinstance(current, list) else None
+        if after != identity:
+            return {"status": "unavailable", "reason": "window identity or title changed during accessibility query"}
+        return tree
 
     def _check_target(self, address):
         action_response("ghost-target-check", self.transport._exchange("ghost-target-check " + address))
@@ -327,6 +332,7 @@ class NativeSession:
         raise SessionError("Native pointer action did not finish; a held button is released by the compositor timeout")
 
     def execute(self, value):
+        started = time.monotonic()
         require_budget()
         if self.closed:
             raise SessionError("Native session is closed")
@@ -461,4 +467,19 @@ class NativeSession:
             return {"response": json.loads(response) if kind == "state" else response}
 
         result = self.control.execute(request, operation)
-        return frame if frame is not None else result
+        observed = frame if frame is not None else result
+        if action["type"] == "observe":
+            # Local worker cost only, not model latency or evidence of application acceptance.
+            tree = observed.get("tree")
+            nodes = tree.get("nodes", []) if isinstance(tree, dict) and tree.get("status") == "ok" else None
+            encoded_image = observed.get("image", "")
+            observed["observation"] = {
+                "requestedFormat": action["format"],
+                "returnedFormat": "text" if observed.get("mimeType") == "text/x-orbit-a11y" else "image",
+                "workerMs": round((time.monotonic() - started) * 1000, 3),
+                "imageBytes": len(encoded_image) * 3 // 4 - (len(encoded_image) - len(encoded_image.rstrip("="))),
+                "treeBytes": len(json.dumps(nodes, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) if nodes is not None else 0,
+                "treeNodes": len(nodes) if nodes is not None else 0,
+                "treeComplete": tree.get("complete") is True if nodes is not None else None,
+            }
+        return observed

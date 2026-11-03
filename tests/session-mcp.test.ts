@@ -37,7 +37,7 @@ test("session adapter fixes every call to its own Orbit session", async () => {
       "orbit_act", "orbit_journal", "orbit_narrow", "orbit_observe", "orbit_pause",
       "orbit_resume", "orbit_stop",
     ]);
-    const action = { type: "pointer", x: 5, y: 6 };
+    const action = { type: "move", appId: "a".repeat(32), windowId: "b".repeat(32), x: 5, y: 6 };
     expect((await tool(a, "orbit_act", { requestId: "a", action, sessionId: second })).isError).not.toBe(true);
     expect((await tool(b, "orbit_act", { requestId: "b", action, sessionId: first })).isError).not.toBe(true);
     expect(requests).toEqual([

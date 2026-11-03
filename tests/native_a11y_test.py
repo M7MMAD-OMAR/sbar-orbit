@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.native import a11y, a11y_dump
+from src.native.session import NativeSession
 
 
 class State:
@@ -89,9 +90,64 @@ class DumpTests(unittest.TestCase):
     def test_frame_choice_refuses_to_guess_between_unmatched_windows(self):
         app = Node("application", "", children=[Node("frame", "One"), Node("frame", "Two")])
         self.assertIs(a11y_dump.pick_frame(app, "Something else", fake_atspi()), False)
-        self.assertEqual(a11y_dump.pick_frame(app, "Two - Suffix", fake_atspi()).name, "Two")
+        self.assertIs(a11y_dump.pick_frame(app, "Two - Suffix", fake_atspi()), False)
+        self.assertEqual(a11y_dump.pick_frame(app, "Two", fake_atspi()).name, "Two")
         solo = Node("application", "", children=[Node("frame", "Only")])
-        self.assertEqual(a11y_dump.pick_frame(solo, "Different", fake_atspi()).name, "Only")
+        self.assertIs(a11y_dump.pick_frame(solo, "Different", fake_atspi()), False)
+
+    def test_ambiguous_exact_and_suffix_titles_are_refused(self):
+        twins = Node("application", children=[Node("frame", "Same"), Node("frame", "Same")])
+        self.assertIs(a11y_dump.pick_frame(twins, "Same", fake_atspi()), False)
+        overlapping = Node("application", children=[Node("frame", "Doc"), Node("frame", "Doc - Editor")])
+        self.assertIs(a11y_dump.pick_frame(overlapping, "Doc - Editor - App", fake_atspi()), False)
+        self.assertEqual(a11y_dump.pick_frame(overlapping, "Doc", fake_atspi()).name, "Doc")
+        self.assertIs(a11y_dump.pick_frame(overlapping, "", fake_atspi()), False)
+
+    def test_frame_match_uses_untruncated_names_and_refuses_unexamined_frames(self):
+        prefix = "a" * 240
+        app = Node("application", children=[Node("frame", prefix + "1"), Node("frame", prefix + "2")])
+        self.assertEqual(a11y_dump.pick_frame(app, prefix + "2", fake_atspi()).name, prefix + "2")
+        many = Node("application", children=[Node("frame", str(i)) for i in range(65)])
+        self.assertIs(a11y_dump.pick_frame(many, "0", fake_atspi()), False)
+
+    def test_password_values_names_and_descendants_are_not_read_or_returned(self):
+        password = Node("password text", "PRIVATE_VALUE", states=(State.SHOWING, State.EDITABLE),
+                        text="PRIVATE_VALUE", children=[Node("label", "PRIVATE_VALUE")])
+        with patch.object(a11y_dump, "read_text", side_effect=AssertionError("password queried")), \
+             patch.object(password, "get_name", side_effect=AssertionError("password name queried")) as get_name:
+            nodes, _ = self.walk(Node("frame", "App", children=[password]))
+        get_name.assert_not_called()
+        self.assertEqual(nodes[-1]["role"], "password text")
+        self.assertNotIn("PRIVATE_VALUE", json.dumps(nodes))
+
+    def test_null_advertised_children_do_not_prove_a_unique_or_complete_tree(self):
+        app = Node("application", children=[Node("frame", "Exact"), None])
+        self.assertIs(a11y_dump.pick_frame(app, "Exact", fake_atspi()), False)
+        _, stats = self.walk(Node("frame", "App", children=[None]))
+        self.assertEqual(stats["truncated"], "unreadable")
+
+    def test_depth_and_child_caps_report_partial_output(self):
+        child = Node("push button", "Leaf")
+        for _ in range(a11y_dump.MAX_DEPTH + 2):
+            child = Node("panel", children=[child])
+        _, stats = self.walk(Node("frame", "App", children=[child]))
+        self.assertEqual(stats["truncated"], "depth")
+        wide = Node("frame", "App", children=[Node("panel") for _ in range(513)])
+        _, stats = self.walk(wide)
+        self.assertEqual(stats["truncated"], "children")
+
+    def test_unreadable_nodes_never_look_like_a_complete_visible_tree(self):
+        for method in ("get_role_name", "get_state_set", "get_name", "get_child_count", "get_child_at_index"):
+            node = Node("push button", "A", children=[Node("label", "B")])
+            with patch.object(node, method, side_effect=RuntimeError("unavailable")):
+                _, stats = self.walk(Node("frame", "App", children=[node]))
+            self.assertEqual(stats["truncated"], "unreadable", method)
+
+    def test_deadline_is_checked_while_enumerating_children(self):
+        root = Node("frame", "App", children=[Node("push button", str(i)) for i in range(10)])
+        with patch.object(a11y_dump.time, "monotonic", side_effect=[0, 0, 2, 2]):
+            _, stats = a11y_dump.walk(root, fake_atspi(), 100, 1)
+        self.assertEqual(stats["truncated"], "time")
 
     def test_a_margin_container_counted_twice_is_reanchored_and_carried_to_children(self):
         # GTK4 shape: the grid margin of 12 appears on two nested wrappers of identical size, so every raw
@@ -183,6 +239,93 @@ class WorkerHelperTests(unittest.TestCase):
         self.assertEqual(reply["truncated"], "bytes")
         self.assertLessEqual(len(json.dumps(reply["nodes"], separators=(",", ":"))), a11y.MAX_BYTES)
         self.assertTrue(all(node["name"] == "n" * 70 for node in reply["nodes"]))
+
+    def test_utf8_byte_limit_counts_multibyte_names_and_never_splits_a_node(self):
+        for name in ("مرحبا" * 16, "😀" * 80):
+            nodes = [{"role": "push button", "name": name} for _ in range(300)]
+            reply = self.run_dump(json.dumps({"status": "ok", "nodes": nodes}).encode())
+            size = len(json.dumps(reply["nodes"], ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            self.assertLessEqual(size, a11y.MAX_BYTES)
+            self.assertFalse(reply["complete"])
+            self.assertEqual(reply["truncated"], "bytes")
+            self.assertTrue(all(node["name"] == name for node in reply["nodes"]))
+
+    def test_node_cap_and_completeness_are_independent_of_output_size(self):
+        reply = self.run_dump(json.dumps({"status": "ok", "nodes": [{}] * 301}).encode())
+        self.assertEqual(len(reply["nodes"]), a11y.MAX_NODES)
+        self.assertEqual(reply["truncated"], "nodes")
+        self.assertFalse(reply["complete"])
+        complete = self.run_dump(json.dumps({"status": "ok", "nodes": [{"role": "frame"}]}).encode())
+        self.assertTrue(complete["complete"])
+        self.assertGreaterEqual(complete["readMs"], 0)
+
+    def test_empty_or_malformed_node_lists_fall_back_instead_of_fake_success(self):
+        for nodes in ([], ["not a node"], None):
+            reply = self.run_dump(json.dumps({"status": "ok", "nodes": nodes}).encode())
+            self.assertEqual(reply["status"], "unavailable")
+
+
+class ObservationMetricsTests(unittest.TestCase):
+    def session(self, tree):
+        session = NativeSession.__new__(NativeSession)
+        session.closed = False
+        session.plan = {"runtime": "/run/user/1000"}
+        session.control = SimpleNamespace(execute=lambda request, operation: operation())
+        target = {"address": "0x1", "key": ("a" * 32, "stable"), "size": (100, 80), "pointer": None}
+        session._target = lambda app, window: target
+        session._app = lambda app: SimpleNamespace(unit="fixture", profile=Path("/unused-fixture"))
+        session._tree = lambda target: tree
+        session._ensure_pointer = lambda target, address: None
+        session._check_target = lambda address: None
+        session._geometry = lambda address: None
+        return session, target
+
+    def test_text_worker_metrics_contain_counts_not_application_content(self):
+        nodes = [{"role": "text", "name": "PRIVATE_مرحبا"}]
+        session, _ = self.session({"status": "ok", "nodes": nodes, "complete": True})
+        with patch("src.native.session.require_budget"), patch("src.native.session.verify_host"):
+            result = session.execute({"type": "observe", "format": "text", "appId": "a" * 32, "windowId": "b" * 32})
+        metrics = result["observation"]
+        self.assertEqual(metrics["requestedFormat"], "text")
+        self.assertEqual(metrics["returnedFormat"], "text")
+        self.assertEqual(metrics["imageBytes"], 0)
+        self.assertEqual(metrics["treeNodes"], 1)
+        self.assertEqual(metrics["treeBytes"], len(json.dumps(nodes, ensure_ascii=False, separators=(",", ":")).encode()))
+        self.assertTrue(metrics["treeComplete"])
+        self.assertGreaterEqual(metrics["workerMs"], 0)
+        self.assertNotIn("PRIVATE", json.dumps(metrics))
+
+    def test_partial_tree_is_never_reported_as_complete(self):
+        session, _ = self.session({"status": "ok", "nodes": [{"role": "frame"}], "complete": False, "truncated": "depth"})
+        with patch("src.native.session.require_budget"), patch("src.native.session.verify_host"):
+            result = session.execute({"type": "observe", "format": "text", "appId": "a" * 32, "windowId": "b" * 32})
+        self.assertFalse(result["observation"]["treeComplete"])
+
+    def test_image_and_fallback_report_exact_raw_bytes_without_a_second_capture(self):
+        for requested, tree in (("image", None), ("text", {"status": "unavailable", "reason": "no tree"}),
+                                ("both", {"status": "ok", "nodes": [{"role": "frame"}], "complete": True})):
+            for pixels in (b"p", b"pn", b"png"):
+                session, _ = self.session(tree)
+                session.plan["display"] = "wayland-fixture"
+                with patch("src.native.session.require_budget"), patch("src.native.session.verify_host"), \
+                     patch("src.native.session.bounded_capture", return_value=(pixels, 100, 80)) as capture:
+                    result = session.execute({"type": "observe", "format": requested, "appId": "a" * 32, "windowId": "b" * 32})
+                self.assertEqual(capture.call_count, 1)
+                self.assertEqual(result["observation"]["imageBytes"], len(pixels))
+                self.assertEqual(result["observation"]["returnedFormat"], "image")
+                self.assertEqual(result["observation"]["requestedFormat"], requested)
+                self.assertEqual(result["observation"]["treeComplete"], True if requested == "both" else None)
+
+    def test_tree_is_discarded_if_window_changes_during_query(self):
+        session, target = self.session(None)
+        before = [{"address": "0x1", "stableId": "stable", "pid": 42, "title": "Before"}]
+        after = [{**before[0], "title": "After"}]
+        replies = iter([json.dumps(before), json.dumps(after)])
+        session.transport = SimpleNamespace(_exchange=lambda request: next(replies))
+        with patch("src.native.session.a11y.read_tree", return_value={"status": "ok", "nodes": [{"name": "PRIVATE"}]}):
+            result = NativeSession._tree(session, target)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertNotIn("PRIVATE", json.dumps(result))
 
 
 if __name__ == "__main__":

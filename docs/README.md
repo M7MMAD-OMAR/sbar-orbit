@@ -19,6 +19,8 @@ failed historical results without treating them as current runtime policy.
 - [Architecture and diagram](architecture.md)
 - [Installation](agent-install.md), [CLI](cli.md), [MCP](connectors.md)
 - [Adapter contract](porting.md) and [remaining work](roadmap.md)
+- [Efficiency execution plan, benchmarks and test gates](efficiency-plan.md)
+- [Pinned agent-desktop comparison and integration limits](research/agent-desktop.md)
 
 ## Dated evidence and release records
 

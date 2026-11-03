@@ -4,6 +4,7 @@ import { z } from "zod";
 import { call, callPatient } from "./ipc";
 import { configureCaller, type ClientIdentity } from "./caller";
 import { OrbitError } from "./errors";
+import { errorPayload } from "./error-disposition";
 import { ConversationUsage } from "./conversation-usage";
 import { renderAct, renderObservation } from "./observation-output";
 import { orbitActionSchema, orbitBatchShape } from "./mcp";
@@ -33,11 +34,8 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
         ...(result && typeof result === "object" && !Array.isArray(result)
           ? { structuredContent: result as Record<string, unknown> } : {}) };
     } catch (error) {
-      return { isError: true, content: [{ type: "text", text: JSON.stringify({
-        code: error instanceof OrbitError ? error.code : "BROKER_UNAVAILABLE",
-        diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined,
-        message: error instanceof OrbitError ? error.message : "Cannot reach the Orbit broker",
-      }) }] };
+      const payload = errorPayload(error, "BROKER_UNAVAILABLE", "Cannot reach the Orbit broker");
+      return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
     }
   };
   server.registerTool("orbit_observe", {

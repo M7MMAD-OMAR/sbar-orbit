@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DesktopSessions } from "./desktop-session";
 import { OrbitError } from "./errors";
+import { errorPayload, preflightDisposition } from "./error-disposition";
 import { restrictSocketToOwner } from "./socket-acl";
 import { settingsRequest } from "./desktop-settings";
 import { createWorkspaceDirectory, markWorkspaceOwner } from "./workspace-storage";
@@ -36,8 +37,10 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
     async fetch(request) {
       this.timeout(request, 60);
       if (request.method !== "POST" || new URL(request.url).pathname !== "/rpc") return new Response("Not found", { status: 404 });
+      let parsed = false;
       try {
         const body = await request.json();
+        parsed = true;
         if (body?.method === "native.open") this.timeout(request, 90);
         if (body?.method === "settings.list" || body?.method === "settings.write")
           return Response.json({ ok: true, result: await settingsRequest(body) });
@@ -59,7 +62,9 @@ export async function startBroker(options: { accountRoot?: string; socketPath?: 
         // creation failed with nothing anywhere saying what had thrown.
         if (!(error instanceof OrbitError))
           console.error(JSON.stringify({ unexpected: error instanceof Error ? `${error.name}: ${error.message}` : String(error) }));
-        return Response.json({ ok: false, error: { code, message, diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined } });
+        return Response.json({ ok: false, error: !parsed && error instanceof SyntaxError
+          ? errorPayload(new OrbitError(code, message, undefined, preflightDisposition), code, message)
+          : errorPayload(error, code, message) });
       }
     },
   });
@@ -96,8 +101,8 @@ async function cancellableCall(socket: string, method: string, params: unknown, 
       response.on("error", reject);
       response.on("end", () => {
         try {
-          const result = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok: boolean; result?: unknown; error?: { code?: string; message?: string; diagnosticId?: string } };
-          if (!result.ok) reject(new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId));
+          const result = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok: boolean; result?: unknown; error?: { code?: string; message?: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
+          if (!result.ok) reject(new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId, result.error));
           else resolve(result.result);
         } catch { reject(new OrbitError("BROKER_ERROR", "Native broker reply is invalid JSON")); }
       });
@@ -122,8 +127,8 @@ export async function call(socket: string, method: string, params: unknown = {},
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
     headers: { "Content-Type": "application/json", ...identityHeaders(who) }, body: JSON.stringify({ method, params }),
     signal: AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000) });
-  const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string } };
-  if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId);
+  const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
+  if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId, result.error);
   return result.result;
 }
 

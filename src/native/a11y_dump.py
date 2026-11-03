@@ -40,11 +40,13 @@ def clean(value, limit):
     return value if len(value) <= limit else value[:limit - 1] + "…"
 
 
-def states_of(node, Atspi):
+def states_of(node, Atspi, stats=None):
     """Short state words that change what an agent should do next."""
     try:
         have = node.get_state_set()
     except Exception:
+        if stats is not None:
+            stats["truncated"] = stats["truncated"] or "unreadable"
         return None
     contains = have.contains
     S = Atspi.StateType
@@ -165,15 +167,18 @@ def walk(frame, Atspi, max_nodes, deadline):
         try:
             role = node.get_role_name() or ""
         except Exception:
+            stats["truncated"] = stats["truncated"] or "unreadable"
             continue
-        have = states_of(node, Atspi)
+        have = states_of(node, Atspi, stats)
         if have is None:
             continue
+        password = role == "password text"
         name = ""
-        try:
-            name = clean(node.get_name(), NAME_LIMIT)
-        except Exception:
-            pass
+        if not password:
+            try:
+                name = clean(node.get_name(), NAME_LIMIT)
+            except Exception:
+                stats["truncated"] = stats["truncated"] or "unreadable"
         raw = box_of(node, Atspi)
         box = None
         if raw is not None and role == DOCUMENT and unit == 1.0:
@@ -196,7 +201,8 @@ def walk(frame, Atspi, max_nodes, deadline):
             actionable = Atspi.Action.get_n_actions(node) > 0
         except Exception:
             pass
-        text = read_text(node, Atspi) if role in EDITABLE_TEXT or "editable" in have else ""
+        # Never ask a password node for its value, even if a toolkit would return plaintext.
+        text = read_text(node, Atspi) if not password and (role in EDITABLE_TEXT or "editable" in have) else ""
         interesting = box is not None and (name or text or role in KEEP_UNNAMED or depth == 0)
         if role in STRUCTURAL and not name and depth > 0:
             interesting = False
@@ -220,21 +226,34 @@ def walk(frame, Atspi, max_nodes, deadline):
             if actionable:
                 entry["act"] = 1
             nodes.append(entry)
-        if depth >= MAX_DEPTH:
+        if password:
             continue
         try:
             count = node.get_child_count()
         except Exception:
+            stats["truncated"] = stats["truncated"] or "unreadable"
             continue
+        if depth >= MAX_DEPTH:
+            if count:
+                stats["truncated"] = stats["truncated"] or "depth"
+            continue
+        if count > 512:
+            stats["truncated"] = stats["truncated"] or "children"
         # Reversed so the pop order stays document order.
         children = []
         for index in range(min(count, 512)):
+            if time.monotonic() > deadline:
+                stats["truncated"] = "time"
+                break
             try:
                 child = node.get_child_at_index(index)
             except Exception:
+                stats["truncated"] = stats["truncated"] or "unreadable"
                 continue
             if child is not None:
                 children.append((child, depth + 1, chain, scrolling, unit))
+            else:
+                stats["truncated"] = stats["truncated"] or "unreadable"
         stack.extend(reversed(children))
     return nodes, stats
 
@@ -242,29 +261,29 @@ def walk(frame, Atspi, max_nodes, deadline):
 def pick_frame(app, title, Atspi):
     """The top level window of the application that carries the compositor title."""
     frames = []
-    for index in range(min(app.get_child_count(), 64)):
+    count = app.get_child_count()
+    if count > 64:
+        return False  # An unexamined frame could be another match.
+    for index in range(count):
         try:
             child = app.get_child_at_index(index)
             if child is None:
-                continue
+                return False
             role = child.get_role_name()
             if role not in ("frame", "window", "dialog", "alert", "file chooser", "document frame"):
                 continue
-            frames.append((clean(child.get_name(), 200), child))
+            # Match full native names, not the truncated/sanitized output labels.
+            frames.append((child.get_name(), child))
         except Exception:
-            continue
+            return False
     if not frames:
         return None
-    for name, child in frames:
-        if name and name == title:
-            return child
-    # Compositor titles often add an application suffix to the toolkit name, or the reverse.
-    for name, child in frames:
-        if name and (title.startswith(name) or name.startswith(title) or name in title):
-            return child
-    if len(frames) == 1:
-        return frames[0][1]
-    # Several windows and no title match: refuse to guess which one the caller means.
+    if not title:
+        return False
+    exact = [child for name, child in frames if name and name == title]
+    if exact:
+        return exact[0] if len(exact) == 1 else False
+    # A substring, suffix or sole window is not exact target evidence. Capture is the fallback.
     return False
 
 

@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { call, callPatient } from "./ipc";
 import { configureCaller, type ClientIdentity } from "./caller";
-import { OrbitError } from "./errors";
+import { errorPayload } from "./error-disposition";
 import { ConversationUsage } from "./conversation-usage";
 import { renderAct, renderObservation } from "./observation-output";
 import { serviceSocketPath } from "./service";
@@ -63,11 +63,8 @@ export function createMcpServer(socket: string, identity?: ClientIdentity) {
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result as Record<string, unknown> } : {}) };
     } catch (error) {
-      return { isError: true, content: [{ type: "text", text: JSON.stringify({
-        code: error instanceof OrbitError ? error.code : "BROKER_UNAVAILABLE",
-        diagnosticId: error instanceof OrbitError ? error.diagnosticId : undefined,
-        message: error instanceof OrbitError ? error.message : "Cannot reach the Orbit broker",
-      }) }] };
+      const payload = errorPayload(error, "BROKER_UNAVAILABLE", "Cannot reach the Orbit broker");
+      return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
     }
   };
   server.registerTool("orbit_usage", {
@@ -78,7 +75,8 @@ export function createMcpServer(socket: string, identity?: ClientIdentity) {
       const result = mode === "status" ? await usage.status() : await usage.set(mode);
       return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
     } catch (error) {
-      return { isError: true, content: [{ type: "text", text: JSON.stringify({ code: error instanceof OrbitError ? error.code : "USAGE_STATE_INVALID", message: error instanceof OrbitError ? error.message : "Cannot update conversation usage state" }) }] };
+      const payload = errorPayload(error, "USAGE_STATE_INVALID", "Cannot update conversation usage state");
+      return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
     }
   });
   server.registerTool("orbit_observe", {
