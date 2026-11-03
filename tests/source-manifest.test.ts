@@ -56,7 +56,7 @@ test("the extracted-source packager refuses altered content before creating an a
   const f = await fixture(), project = resolve(import.meta.dir, "..");
   // Every module the packager imports, so this fixture exercises manifest enforcement rather than a
   // missing file. package-endings carries the CRLF correction a published release depends on.
-  for (const path of ["scripts/package.ts", "scripts/public-paths.ts", "scripts/source-manifest.ts", "scripts/package-endings.ts"]) {
+  for (const path of ["scripts/package.ts", "scripts/package-source.ts", "scripts/public-paths.ts", "scripts/source-manifest.ts", "scripts/package-endings.ts"]) {
     await mkdir(dirname(join(f.root, path)), { recursive: true });
     await writeFile(join(f.root, path), await readFile(join(project, path)));
   }

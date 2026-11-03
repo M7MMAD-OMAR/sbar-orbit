@@ -70,8 +70,17 @@ Before setup/install/build, the runner checks available memory, CPU/load, memory
 pressure and disk. The serial pipeline then runs inside a kernel-enforced hosted
 `sbarorbit.slice`: 1536 MiB memory, 150% CPU, 256 tasks and zero swap. Missing
 systemd/cgroup enforcement or failed resource gates abort with no unbounded
-fallback. The only system units created are ephemeral hosted-CI resource controls,
-not an installed Orbit broker or plugin. No owner machine is built on or restarted.
+fallback. Hosted CI configures only its ephemeral resource controls and, if absent,
+a real runner user manager/user bus. It does not install an Orbit broker/plugin or
+start a compositor/application. No owner machine is built on or restarted.
+
+Wayland compiler headers, LuaJIT library/interpreter, pkg-config and GCC fixture
+prerequisites are installed only on the hosted runner, inside the same bounded
+cgroup, with no package upgrade operation or desktop packages. The runner runtime
+directory must belong to its actual UID and contain real systemd/private and bus
+sockets; user-manager and bus connectivity are checked. The real XDG/DBus session
+is forwarded to the bounded build while HOME remains the owned private fixture
+directory. No fake sockets or skipped prerequisite assertions are accepted.
 
 The exact source undergoes frozen dependency installation, root typecheck, the
 full default verification suite, focused packaging checks and bilingual website

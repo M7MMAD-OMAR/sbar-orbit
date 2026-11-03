@@ -82,6 +82,12 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_REF"
           test -z "$(git status --porcelain --untracked-files=no)"
           bun -e 'const {requireResourceBudget}=await import("./src/resource-budget.ts"); const b=await requireResourceBudget(); if(b.memoryBytes!==1610612736||b.cpuCores>1.5||b.swapBytes!==0||b.tasks>256)throw Error("Wrong hosted cgroup budget");'
+          # Hosted-only fixture prerequisites, inside the same enforced cgroup. No upgrades or desktop packages.
+          sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get install -y --no-install-recommends --no-upgrade libwayland-dev libluajit-5.1-2 luajit pkg-config gcc
+          pkg-config --exists wayland-server
+          command -v gcc
+          command -v luajit
           # Serial only. All descendants stay inside the same kernel-enforced slice.
           bun install --frozen-lockfile --ignore-scripts
           (cd website && bun install --frozen-lockfile --ignore-scripts)
@@ -189,6 +195,19 @@ jobs:
           printf '[Unit]\nDescription=Owned hosted Orbit release budget\n[Slice]\nCPUAccounting=true\nMemoryAccounting=true\nCPUQuota=150%%\nMemoryMax=1536M\nMemorySwapMax=0\nTasksMax=256\n' | sudo tee /run/systemd/system/sbarorbit.slice >/dev/null
           sudo systemctl daemon-reload
           sudo systemctl start sbarorbit.slice
+          # A real ephemeral runner user manager, never a forged fixture socket.
+          uid="$(id -u)"; account="$(id -un)"; runtime="/run/user/$uid"
+          if [[ ! -S "$runtime/systemd/private" ]]; then
+            sudo loginctl enable-linger "$account"
+            sudo systemctl start "user@$uid.service"
+          fi
+          test -d "$runtime"
+          test "$(stat -c %u "$runtime")" = "$uid"
+          test -S "$runtime/systemd/private"
+          env XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" systemctl --user start dbus.socket
+          test -S "$runtime/bus"
+          env XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" systemctl --user show-environment >/dev/null
+          env XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" busctl --user status >/dev/null
       - name: Verify and package exact commit inside the enforced budget
         shell: bash
         run: |
@@ -198,6 +217,7 @@ jobs:
             --slice=sbarorbit.slice --uid="$(id -u)" --gid="$(id -g)" \
             --property=CPUQuota=150% --property=MemoryMax=1536M --property=MemorySwapMax=0 --property=TasksMax=256 \
             --setenv="PATH=$PATH" --setenv="HOME=$RUNNER_TEMP/release-home" \
+            --setenv="XDG_RUNTIME_DIR=/run/user/$(id -u)" --setenv="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" \
             --setenv="BUN_INSTALL_CACHE_DIR=$RUNNER_TEMP/release-bun-cache" --setenv="ORBIT_BUN=$(command -v bun)" \
             --setenv="SOURCE_REF=$SOURCE_REF" --setenv="RELEASE_VERSION=$RELEASE_VERSION" --setenv="WORKFLOW_REF=$WORKFLOW_REF" \
             --setenv="BUILD_SOURCE=$GITHUB_WORKSPACE" --setenv="SMOKE_ROOT=$RUNNER_TEMP/release-smoke" \
