@@ -344,6 +344,33 @@ export class NativeBackend {
     return { ...input, type: input.type };
   }
 
+  /** Validate the full scoped acknowledgement before changing any cached metadata. */
+  private readWindows(value: unknown, appId: string): Window[] {
+    const invalid = () => new OrbitError("BACKEND_ERROR", "Native worker returned invalid scoped window metadata");
+    if (!Array.isArray(value) || value.length > 4096) throw invalid();
+    const seen = new Set<string>();
+    return Array.from(value, entry => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw invalid();
+      const window = entry as Record<string, unknown>;
+      if (window.appId !== appId || typeof window.windowId !== "string" || !/^[a-f0-9]{32}$/.test(window.windowId)
+          || typeof window.title !== "string" || typeof window.width !== "number" || typeof window.height !== "number"
+          || !Number.isFinite(window.width) || !Number.isFinite(window.height) || window.width <= 0 || window.height <= 0
+          || seen.has(window.windowId) || (this.windows.has(window.windowId) && this.windows.get(window.windowId)!.appId !== appId))
+        throw invalid();
+      seen.add(window.windowId);
+      return { appId, windowId: window.windowId, title: window.title, width: window.width, height: window.height };
+    });
+  }
+
+  private acknowledgeWindows(owned: Window[], appId: string) {
+    const retained = new Set(owned.map(window => window.windowId));
+    for (const [key, window] of this.windows) if (window.appId === appId) {
+      this.windows.delete(key);
+      if (!retained.has(key)) this.scales.delete(key);
+    }
+    for (const window of owned) this.windows.set(window.windowId, window);
+  }
+
   async act(value: unknown): Promise<unknown> {
     const action = this.parseAction(value);
     const appId = identifier(action.appId);
@@ -360,15 +387,7 @@ export class NativeBackend {
     const result = await this.worker.request("act", action);
     if (action.type === "windows") {
       const reply = record(result);
-      if (!Array.isArray(reply.windows)) throw new OrbitError("BACKEND_ERROR", "Native worker returned invalid window metadata");
-      const owned = reply.windows.map(value => {
-        const window = record(value), identity = target(window);
-        if (identity.appId !== appId || typeof window.title !== "string" || typeof window.width !== "number" || typeof window.height !== "number")
-          throw new OrbitError("BACKEND_ERROR", "Native worker returned a foreign or invalid window");
-        return { ...identity, title: window.title, width: window.width, height: window.height };
-      });
-      for (const [key, window] of this.windows) if (window.appId === appId) this.windows.delete(key);
-      for (const window of owned) this.windows.set(window.windowId, window);
+      this.acknowledgeWindows(this.readWindows(reply.windows, appId), appId);
       return result;
     }
     this.selected = target(action);
@@ -412,15 +431,48 @@ export class NativeBackend {
     const textOnly = frame.mimeType === "text/x-orbit-a11y" && format === "text" && frame.image === undefined;
     if (frame.appId !== selected.appId || frame.windowId !== selected.windowId
         || (!textOnly && (frame.mimeType !== "image/png" || typeof frame.image !== "string"))
-        || typeof frame.width !== "number" || typeof frame.height !== "number")
+        || typeof frame.width !== "number" || typeof frame.height !== "number"
+        || typeof frame.surfaceWidth !== "number" || typeof frame.surfaceHeight !== "number"
+        || !Number.isFinite(frame.width) || !Number.isFinite(frame.height) || frame.width <= 0 || frame.height <= 0
+        || !Number.isFinite(frame.surfaceWidth) || !Number.isFinite(frame.surfaceHeight) || frame.surfaceWidth <= 0 || frame.surfaceHeight <= 0)
       throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target frame");
-    await this.act({ type: "windows", appId: selected.appId });
+    const scale = { x: frame.width / frame.surfaceWidth, y: frame.height / frame.surfaceHeight };
+    if (!Number.isFinite(scale.x) || !Number.isFinite(scale.y) || scale.x <= 0 || scale.y <= 0)
+      throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target scale");
+    let pointer: { x: number; y: number } | null = null;
+    if (frame.pointer !== null) {
+      const point = frame.pointer;
+      if (!point || typeof point !== "object" || Array.isArray(point))
+        throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target pointer");
+      const { x, y } = point as Record<string, unknown>;
+      if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)
+          || x < 0 || y < 0 || x >= frame.surfaceWidth || y >= frame.surfaceHeight)
+        throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid target pointer");
+      pointer = { x: x * scale.x, y: y * scale.y };
+      if (!Number.isFinite(pointer.x) || !Number.isFinite(pointer.y))
+        throw new OrbitError("BACKEND_ERROR", "Native worker returned an invalid scaled pointer");
+    }
+    let owned: Window[];
+    if (Object.hasOwn(frame, "windows")) {
+      owned = this.readWindows(frame.windows, selected.appId);
+    } else {
+      // Stage the legacy acknowledgement too: a missing captured target must not commit stale state.
+      if (!this.applications.has(selected.appId))
+        throw new OrbitError("INVALID_REQUEST", "Observed native application is closed");
+      const reply = record(await this.worker.request("act", { type: "windows", appId: selected.appId }));
+      owned = this.readWindows(reply.windows, selected.appId);
+    }
+    if (!this.applications.has(selected.appId))
+      throw new OrbitError("INVALID_REQUEST", "Observed native application is closed");
+    if (!owned.some(window => window.windowId === selected.windowId))
+      throw new OrbitError("BACKEND_ERROR", "Observed target was not acknowledged in native window metadata");
+    this.acknowledgeWindows(owned, selected.appId);
     this.selected = selected;
     this.size = { width: frame.width, height: frame.height };
-    this.scales.set(selected.windowId, { x: frame.width / Number(frame.surfaceWidth), y: frame.height / Number(frame.surfaceHeight) });
-    const point = frame.pointer === null ? null : record(frame.pointer);
-    this.pointer = point === null ? null : { x: Number(point.x) * frame.width / Number(frame.surfaceWidth),
-      y: Number(point.y) * frame.height / Number(frame.surfaceHeight) };
-    return { ...frame, presence: await this.presence() };
+    this.scales.set(selected.windowId, scale);
+    this.pointer = pointer;
+    // Window metadata is already represented in presence; never duplicate the internal acknowledgement.
+    const { windows: _windows, ...publicFrame } = frame;
+    return { ...publicFrame, presence: await this.presence() };
   }
 }

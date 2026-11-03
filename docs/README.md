@@ -22,6 +22,7 @@ failed historical results without treating them as current runtime policy.
 - [Efficiency execution plan, benchmarks and test gates](efficiency-plan.md)
 - [Read-only accessibility host and future reference safety gates](accessibility-host-design.md)
 - [Pinned agent-desktop comparison and integration limits](research/agent-desktop.md)
+- [Pinned GTK4, Qt6 and libatspi identity lifetime audit](research/atspi-identity-lifetimes.md)
 
 ## Dated evidence and release records
 

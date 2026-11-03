@@ -2,7 +2,7 @@
 
 Status: source implementation plus future safety design, 4 November 2026. The supervised **read-only warm helper** is implemented as an explicit `ORBIT_A11Y_WARM_HOST=1` opt-in. The default cold-process observation path is unchanged. No refs or semantic actions are exposed. Source implementation, installed activation and live acceptance are separate gates. The [execution plan](efficiency-plan.md), [pinned upstream review](research/agent-desktop.md) and [original application contract](desktop-only.md) remain applicable.
 
-At review time, native-check reports `COMPOSITOR_NOT_RESTARTED`: installed Hyprland 0.57.1, running 0.57.0. This blocks live native acceptance, not source work. Do not activate a mismatched plugin, restart the shared broker/compositor or log the owner out to bypass it.
+Initial review found `COMPOSITOR_NOT_RESTARTED`: installed Hyprland 0.57.1, running 0.57.0. Later the owner session was running 0.57.1; after confirming no active leases, an ABI-matched signed-header build and normal refresh restored `native-check` agreement. See the [readiness repair ledger](efficiency-plan.md#native-readiness-repair-not-application-acceptance). No shared broker/compositor restart or forced logout was used. Readiness alone does not establish application, identity or semantic safety acceptance.
 
 ## Stage A: warm read-only observation
 

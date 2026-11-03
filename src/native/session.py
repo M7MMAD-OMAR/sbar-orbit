@@ -468,7 +468,16 @@ class NativeSession:
                                      else {"x": action["x"], "y": action["y"]})
             return {"response": json.loads(response) if kind == "state" else response}
 
-        result = self.control.execute(request, operation)
+        def admitted_operation():
+            result = operation()
+            if action["type"] == "observe" and not action.get("digestOnly"):
+                # Same scoped post-capture refresh as the old separate windows request,
+                # but under this read admission and without another worker round trip.
+                acknowledged = frame if frame is not None else result
+                acknowledged["windows"] = self._owned_windows(action["appId"])
+            return result
+
+        result = self.control.execute(request, admitted_operation)
         observed = frame if frame is not None else result
         if action["type"] == "observe":
             # Local worker cost only, not model latency or evidence of application acceptance.

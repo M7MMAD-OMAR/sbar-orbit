@@ -24,6 +24,18 @@ actions. Reuse the existing requestId with unchanged arguments to retrieve the
 in-session cached outcome; inspect actual state after uncertainty or a broker
 restart. See the [execution plan](efficiency-plan.md#retry-and-idempotency).
 
+## Current authority at queued dispatch
+
+Admission still refuses denied/confirmation-required actions synchronously. Accepted
+queued work re-evaluates the current policy immediately before broker dispatch,
+and a pending advisor answer is refused if its policy changed while awaiting it.
+No stale approval restores narrowed authority or triggers another consultation.
+Batch steps and final capture use current authority after their asynchronous waits.
+Only actual dispatch emits an allow journal record; request deduplication is unchanged.
+Already accepted single actions still drain during pause, while remaining batch
+steps stop. These are broker-dispatch checks, not cancellation or atomic revocation
+of input/read requests already sent to the native worker or application.
+
 ## Observation measurements
 
 Native observation adds content-free `observation` metadata: `requestedFormat`,
@@ -43,6 +55,18 @@ Window PID/title changes during a tree query discard that tree. Password-role
 values, names and descendants are omitted from text, but mislabeled fields and
 screenshots are not guaranteed redacted. Never put raw observations in public
 benchmarks. See [measurement and acceptance gates](efficiency-plan.md).
+
+### Scoped window acknowledgement
+
+Current native workers attach fresh scoped window metadata inside the admitted
+observation after capture, avoiding a separate worker windows request. The backend
+validates target identity, dimensions, pointer/scales and the complete window list
+before updating acknowledged presence. Missing inline metadata uses the legacy
+second scoped read; malformed-present data never triggers that fallback. Both
+paths require the captured selected target to remain acknowledged. Internal windows
+are stripped from the public frame because presence already carries that metadata.
+This is one worker RPC instead of two on the modern path, not an end-to-end speed
+result, atomic image/title snapshot or provider identity proof.
 
 ### Experimental warm read-only helper
 

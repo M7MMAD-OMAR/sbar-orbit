@@ -360,6 +360,7 @@ class ObservationMetricsTests(unittest.TestCase):
         session._ensure_pointer = lambda target, address: None
         session._check_target = lambda address: None
         session._geometry = lambda address: None
+        session._owned_windows = lambda app: [{"appId": app, "windowId": "b" * 32, "title": "Updated fixture", "width": 100, "height": 80}]
         return session, target
 
     def test_text_worker_metrics_contain_counts_not_application_content(self):
@@ -376,6 +377,27 @@ class ObservationMetricsTests(unittest.TestCase):
         self.assertTrue(metrics["treeComplete"])
         self.assertGreaterEqual(metrics["workerMs"], 0)
         self.assertNotIn("PRIVATE", json.dumps(metrics))
+
+    def test_observation_carries_fresh_scoped_windows_inside_read_admission(self):
+        session, _ = self.session({"status": "ok", "nodes": [{"role": "frame"}], "complete": True})
+        admitted = [False]
+        calls = []
+        def control(request, operation):
+            admitted[0] = True
+            try:
+                return operation()
+            finally:
+                admitted[0] = False
+        def windows(app):
+            self.assertTrue(admitted[0])
+            calls.append(app)
+            return [{"appId": app, "windowId": "b" * 32, "title": "Saved title", "width": 100, "height": 80}]
+        session.control = SimpleNamespace(execute=control)
+        session._owned_windows = windows
+        with patch("src.native.session.require_budget"), patch("src.native.session.verify_host"):
+            result = session.execute({"type": "observe", "format": "text", "appId": "a" * 32, "windowId": "b" * 32})
+        self.assertEqual(calls, ["a" * 32])
+        self.assertEqual(result["windows"][0]["title"], "Saved title")
 
     def test_partial_tree_is_never_reported_as_complete(self):
         session, _ = self.session({"status": "ok", "nodes": [{"role": "frame"}], "complete": False, "truncated": "depth"})

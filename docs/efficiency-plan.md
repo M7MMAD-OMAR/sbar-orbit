@@ -125,4 +125,21 @@ Source work reviewed on 4 November 2026, after foundation commit `e3aa4f56a4ebfd
 
 Budgeted typecheck passed. Default `bun run verify` passed 282 tests, skipped 4 platform-specific cases, failed 0 across 44 files. Bun wrappers include pure registry, fake-provider transport and trusted-worker supervision fixtures. No real application/account task or native warm/cold performance comparison was performed. See the [host design and remaining authority/lifetime gates](accessibility-host-design.md).
 
-The recorded compositor readiness mismatch still prevents installed/live acceptance; it was not bypassed. Ref exposure, provider ABA proof, semantic authority/pause/off/narrow parity, Nautilus geometry and Thunderbird drill-down remain open. The next source step must preserve those distinctions instead of equating a warm helper with safe semantic control.
+At that wave, the recorded compositor readiness mismatch still prevented installed/live acceptance and was not bypassed. The later readiness repair is recorded below. Ref exposure, provider ABA proof, semantic authority/pause/off/narrow parity, Nautilus geometry and Thunderbird drill-down remain open. A warm helper is not safe semantic control.
+
+## Implementation ledger: dispatch authority and observation round trips
+
+Source work reviewed on 4 November 2026 after `82c1083d280cc9780027339e545d882d301bf781`:
+
+- Re-evaluate current policy at queued broker dispatch and after an advisor await. A changed policy invalidates the pending advisor answer; no stale approval or second consultation restores authority. Actual allow decisions are journaled once at dispatch, preserving cached request promises and accepted single-action pause draining. Batch steps/capture recheck current authority after waits. These checks do not retract work already dispatched to a native worker/application.
+- Current native observation includes fresh scoped window acknowledgement inside the admitted read. The backend validates frame/scale/pointer and all window identities before one atomic cache update, then strips the internal acknowledgement from the public response. Modern source fixtures prove one worker RPC rather than two; old workers retain the second scoped read, with the same selected-target and atomicity checks. This is a measured protocol count, not a wall-time gain.
+- Cross-review found and fixed the legacy path accepting missing selected windows before cache commit. Empty, replaced, foreign, duplicate or malformed legacy/modern acknowledgements now refuse without partially changing state or retrying input.
+- Added a [pinned GTK4/Qt6/libatspi remote lifetime audit](research/atspi-identity-lifetimes.md). GTK UUID realization paths give a conditional provider-specific source basis, not installed support; Qt ID wrapping and private routing remain unsupported identity gates.
+
+Budgeted typecheck passed. Default verification passed 342 tests, skipped 4 platform-specific cases, failed 0 across 46 files. New source tests cover 48 acknowledgement/geometry/legacy cases and 12 queued-policy/advisor/batch cases.
+
+### Native readiness repair, not application acceptance
+
+A later read-only check found the owner session now running Hyprland 0.57.1, with no loaded plugin and an old 0.57.0 plan/build. The broker reported no active leases. Matching `hyprland-devel-0.57.1-1.fc44.x86_64` was downloaded, its Fedora signatures/digests verified, and extracted into a new private cache. Existing headers, original plugin artifacts and unrelated checkout changes were preserved; no package was installed.
+
+The source-stamped plugin built successfully for running commit `acc1aa0bfd4bd575dcb0f76c35ccf12b660a1ab9`. Plugin source SHA-256: `beb3024586ce1e7f07735bd5f6cdf4cc129424f4e72ee1ee5491d60b7aff9a67`; new binary SHA-256: `31e6892227f58c98003bb147ed08b49dd9b3b5163840f58c4ab525bf2077b3cd`. Prior build metadata was retained privately. Normal `native-refresh --plugin-manifest` succeeded without restarting the shared broker, compositor or desktop, and `native-check` reported compositor, plan, build and loaded plugin agreement. This resolves the readiness gate only, not capture/input/owner-state behavior or any comparative speed claim.

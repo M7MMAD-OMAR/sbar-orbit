@@ -348,8 +348,8 @@ export class Sessions {
   private decided(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): Promise<unknown> {
     return this.enqueue(session, this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId));
   }
-  /** Decide and journal now; the returned work runs the action later, in the session's queue. */
-  private admit(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): () => Promise<unknown> {
+  /** Refuse synchronously at admission, then re-decide current authority at queue dispatch. */
+  private admit(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string, atDispatch = false): () => Promise<unknown> {
     const record = (decision: ReturnType<typeof decide>, decidedBy?: string, after?: SessionPolicy) => {
       void this.record(session, journalEntry({
         at: new Date().toISOString(), requestId,
@@ -379,15 +379,20 @@ export class Sessions {
       } else record(decision, decidedBy);
       throw new OrbitError("POLICY_DENIED", decision.reason, undefined, refusedDisposition);
     };
-    const decision = decide(session.policy, action.type, destination, method, methodIsImplied);
+    const policy = session.policy;
+    const decision = decide(policy, action.type, destination, method, methodIsImplied);
+    const dispatch = () => this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId, true)();
     if (decision.outcome !== "consult") {
       if (decision.outcome === "deny") refuse(decision);
-      record(decision);
-      // A supervised session stops and waits for the person. An autonomous one never reaches here
-      // with anything but an allow, which is what lets it finish a task without them.
-      if (decision.outcome === "ask") throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason, undefined, refusedDisposition);
-      return () => this.track(session, "agent", action.type, () => this.guarded(session, action));
+      // Keep synchronous refusals, but journal an allow only when current authority actually dispatches it.
+      if (decision.outcome === "ask") {
+        record(decision);
+        throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", decision.reason, undefined, refusedDisposition);
+      }
+      if (atDispatch) record(decision);
+      return atDispatch ? () => this.track(session, "agent", action.type, () => this.guarded(session, action)) : dispatch;
     }
+    if (!atDispatch) return dispatch;
     // Accepted advisor work belongs to the same queue that pause drains. Otherwise a late allow
     // could apply input after pause has acknowledged that no agent work remains.
     return async () => {
@@ -396,10 +401,18 @@ export class Sessions {
         actionType: action.type, decision, url: destination,
         ...(inputLength === undefined ? {} : { inputLength }),
       });
-      const answer = await consultAdvisor(session.policy.advisor!, {
+      const answer = await consultAdvisor(policy.advisor!, {
         pending, tail: session.journal.slice(-20), reason: decision.reason, ruleId: decision.ruleId,
       });
       this.ensureOpen(session);
+      // The advisor judged one exact policy. A late answer cannot restore removed authority.
+      const current = decide(session.policy, action.type, destination, method, methodIsImplied);
+      if (current.outcome === "deny") return refuse(current);
+      if (current.outcome === "ask") {
+        record(current);
+        throw new OrbitError("POLICY_CONFIRMATION_REQUIRED", current.reason, undefined, refusedDisposition);
+      }
+      if (session.policy !== policy) return refuse({ outcome: "deny", reason: "Session policy changed while the advisor decision was pending" });
       if (answer.decision.outcome === "deny") return refuse(answer.decision, answer.decidedBy);
       record(answer.decision, answer.decidedBy);
       return this.track(session, "agent", action.type, () => this.guarded(session, action));
@@ -471,8 +484,12 @@ export class Sessions {
       if (stopped !== undefined) { receipts.push({ ...base, status: "not-attempted", reason: stopped }); continue; }
       try {
         if (actions[index - 1]?.type === "click" && (action.type === "text" || action.type === "key")) await new Promise(resolve => setTimeout(resolve, clickFocusSettleMs));
+        this.ensureOpen(session);
+        if ((session.state as State) !== "running") {
+          stopped = "PAUSED"; receipts.push({ ...base, status: "not-attempted", reason: stopped }); continue;
+        }
         const inputLength = "text" in action ? String(action.text ?? "").length : undefined;
-        const result = await this.admit(session, action, undefined, undefined, false, inputLength, requestId)();
+        const result = await this.admit(session, action, undefined, undefined, false, inputLength, requestId, true)();
         receipts.push({ ...base, status: "ok", result });
       } catch (error) {
         this.ensureOpen(session);
@@ -485,7 +502,15 @@ export class Sessions {
     const completed = receipts.filter(receipt => receipt.status === "ok").length;
     const result: Record<string, unknown> = { ok: completed === actions.length, completed, receipts };
     if (capture !== undefined) {
-      if (observing?.outcome !== "allow") result.captureError = errorPayload(undefined, "POLICY_DENIED", "Observation is not allowed for this session");
+      this.ensureOpen(session);
+      // Input and baseline awaits can interleave with narrowing. Never start a new read on stale authority.
+      const currentObservation = decide(session.policy, "observe");
+      if (currentObservation.outcome !== "allow") {
+        void this.record(session, journalEntry({ at: new Date().toISOString(), requestId,
+          sequence: session.journal.length + 1, sessionId: session.id, actor: "agent", actionType: "observe",
+          decision: currentObservation, after: session.policy }));
+        result.captureError = errorPayload(undefined, "POLICY_DENIED", "Observation is not allowed for this session");
+      }
       else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = errorPayload(undefined, "NOT_ATTEMPTED", "No action ran, so there is nothing new to capture");
       else {
         try {

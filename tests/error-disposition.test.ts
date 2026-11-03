@@ -81,8 +81,8 @@ test("capture errors remain conservative even after earlier batch input succeede
   const runBatch = Reflect.get(Sessions.prototype, "runBatch");
   for (const mode of ["capture-failed", "capture-denied", "not-attempted"] as const) {
     let attempts = 0, observations = 0;
-    const context = { ensureOpen: () => {}, admit: () => async () => { attempts++; return {}; } };
-    const session = { state: mode === "not-attempted" ? "paused" : "running",
+    const context = { ensureOpen: () => {}, record: async () => {}, admit: () => async () => { attempts++; return {}; } };
+    const session = { id: "fixture", journal: [], state: mode === "not-attempted" ? "paused" : "running",
       policy: mode === "capture-denied" ? { ...nativeApplicationPolicy, allow: [] } : nativeApplicationPolicy,
       backend: { baseline: async () => "fixture-digest", observe: async () => {
         observations++; throw new Error("secret application text");
