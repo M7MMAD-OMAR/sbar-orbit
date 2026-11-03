@@ -39,6 +39,24 @@ enabled("native worker reads owner settings from custom config and home without 
   }
 });
 
+enabled("experimental warm accessibility helper requires an exact opt-in without leaking environment", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orbit-worker-warm-optin-"));
+  const previous = process.env.ORBIT_A11Y_WARM_HOST;
+  try {
+    for (const value of ["0", "true", "1"]) {
+      process.env.ORBIT_A11Y_WARM_HOST = value;
+      const worker = await NativeWorker.create(join(directory, value), options, ["/usr/bin/python3", fixture]);
+      try {
+        const result = await worker.request("indicator-style", {}) as { environment: string[] };
+        expect(result.environment.includes("ORBIT_A11Y_WARM_HOST")).toBe(value === "1");
+      } finally { await worker.close(); }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ORBIT_A11Y_WARM_HOST; else process.env.ORBIT_A11Y_WARM_HOST = previous;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 const descriptors = async (path: string) => {
   const links = await Promise.all((await readdir("/proc/self/fd")).map(async fd => {
     try { return await readlink("/proc/self/fd/" + fd); }

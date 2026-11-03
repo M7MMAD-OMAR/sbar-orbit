@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
+from .a11y_host import A11yHostError
 
 DUMP = Path(__file__).with_name("a11y_dump.py")
 FORMATS = ("image", "text", "both")
@@ -34,15 +35,18 @@ def _trim(nodes):
     return kept, None
 
 
-def read_tree(pid, title, runtime):
+def read_tree(pid, title, runtime, host=None):
     """A bounded tree for one window, or the reason none is available. Never raises on a missing tree."""
     started = time.monotonic()
     environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "XDG_RUNTIME_DIR": runtime}
     try:
-        done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(DEADLINE_MS)],
-                              env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=5, check=False)
-        reply = json.loads(done.stdout[:2_000_000]) if done.returncode == 0 else None
-    except (subprocess.TimeoutExpired, ValueError, OSError):
+        if host is not None:
+            reply = host.observe(pid, title)
+        else:
+            done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(DEADLINE_MS)],
+                                  env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=5, check=False)
+            reply = json.loads(done.stdout[:2_000_000]) if done.returncode == 0 else None
+    except (A11yHostError, subprocess.TimeoutExpired, ValueError, OSError):
         reply = None
     if not isinstance(reply, dict) or reply.get("status") not in ("ok", "unavailable"):
         return {"status": "unavailable", "reason": "accessibility query failed or timed out"}
@@ -55,4 +59,5 @@ def read_tree(pid, title, runtime):
     truncated = reply.get("truncated") or cut
     return {"status": "ok", "toolkit": str(reply.get("toolkit", ""))[:24], "nodes": nodes,
             "truncated": truncated, "complete": truncated is None, "queryMs": reply.get("ms"),
-            "readMs": round((time.monotonic() - started) * 1000, 3)}
+            "readMs": round((time.monotonic() - started) * 1000, 3),
+            "readMode": "warm-helper" if host is not None else "cold-process"}

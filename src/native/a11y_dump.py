@@ -153,7 +153,7 @@ def read_text(node, Atspi):
         return ""
 
 
-def walk(frame, Atspi, max_nodes, deadline):
+def walk(frame, Atspi, max_nodes, deadline, refresh=None):
     """Depth first, document order, with every bound enforced on the way in."""
     nodes, stats = [], {"visited": 0, "truncated": None, "recalibrated": 0}
     origin = [0, 0]
@@ -163,6 +163,8 @@ def walk(frame, Atspi, max_nodes, deadline):
             stats["truncated"] = "time"
             break
         node, depth, chain, scrolling, unit = stack.pop()
+        if refresh is not None:
+            refresh(node)
         stats["visited"] += 1
         try:
             role = node.get_role_name() or ""
@@ -258,7 +260,7 @@ def walk(frame, Atspi, max_nodes, deadline):
     return nodes, stats
 
 
-def pick_frame(app, title, Atspi):
+def pick_frame(app, title, Atspi, refresh=None):
     """The top level window of the application that carries the compositor title."""
     frames = []
     count = app.get_child_count()
@@ -269,6 +271,8 @@ def pick_frame(app, title, Atspi):
             child = app.get_child_at_index(index)
             if child is None:
                 return False
+            if refresh is not None:
+                refresh(child)
             role = child.get_role_name()
             if role not in ("frame", "window", "dialog", "alert", "file chooser", "document frame"):
                 continue
@@ -287,7 +291,7 @@ def pick_frame(app, title, Atspi):
     return False
 
 
-def main(argv):
+def main(argv, refresh=None):
     pid, title, max_nodes, budget_ms = int(argv[0]), argv[1], int(argv[2]), int(argv[3])
     started = time.monotonic()
     deadline = started + budget_ms / 1000
@@ -296,10 +300,14 @@ def main(argv):
     from gi.repository import Atspi
     Atspi.init()
     desktop = Atspi.get_desktop(0)
+    if refresh is not None:
+        refresh(desktop)
     app = None
     for index in range(min(desktop.get_child_count(), 256)):
         try:
             candidate = desktop.get_child_at_index(index)
+            if candidate is not None and refresh is not None:
+                refresh(candidate)
             if candidate is not None and candidate.get_process_id() == pid:
                 app = candidate
                 break
@@ -307,12 +315,12 @@ def main(argv):
             continue
     if app is None:
         return {"status": "unavailable", "reason": "application exposes no accessibility tree"}
-    frame = pick_frame(app, title, Atspi)
+    frame = pick_frame(app, title, Atspi, refresh)
     if frame is None:
         return {"status": "unavailable", "reason": "application exposes no top level window"}
     if frame is False:
         return {"status": "unavailable", "reason": "no accessible window matches the compositor title"}
-    nodes, stats = walk(frame, Atspi, max_nodes, deadline)
+    nodes, stats = walk(frame, Atspi, max_nodes, deadline, refresh)
     if len(nodes) <= 1:
         return {"status": "unavailable", "reason": "accessible window has no visible content"}
     return {"status": "ok", "toolkit": clean(app.get_toolkit_name() or "", 24), "nodes": nodes,

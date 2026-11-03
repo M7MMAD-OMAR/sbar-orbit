@@ -174,7 +174,9 @@ class NativeSession:
         identity = a11y.window_identity(clients, target["address"], target["key"][1]) if isinstance(clients, list) else None
         if identity is None:
             return {"status": "unavailable", "reason": "window process is unknown"}
-        tree = a11y.read_tree(identity[0], identity[1], self.plan["runtime"])
+        host = getattr(self, "a11y_host", None)
+        tree = (a11y.read_tree(identity[0], identity[1], self.plan["runtime"], host=host) if host is not None
+                else a11y.read_tree(identity[0], identity[1], self.plan["runtime"]))
         current = json.loads(self.transport._exchange("j/clients"))
         after = a11y.window_identity(current, target["address"], target["key"][1]) if isinstance(current, list) else None
         if after != identity:

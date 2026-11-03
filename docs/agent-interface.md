@@ -39,10 +39,29 @@ deadline and unreadable-node limits are explicit. Completeness does not establis
 retained element identity or that image and text were captured atomically.
 Only a unique full native window title match is accepted; substring, suffix,
 ambiguous and missing matches fall back to capture rather than guessing.
-window PID/title changes during a tree query discard that tree. Password-role
+Window PID/title changes during a tree query discard that tree. Password-role
 values, names and descendants are omitted from text, but mislabeled fields and
 screenshots are not guaranteed redacted. Never put raw observations in public
 benchmarks. See [measurement and acceptance gates](efficiency-plan.md).
+
+### Experimental warm read-only helper
+
+The broker may explicitly opt in with `ORBIT_A11Y_WARM_HOST=1`; other values are
+not forwarded. The default remains one cold process per text query. No shared
+broker restart or installed activation is performed by this source change.
+Successful tree responses expose `readMode: "warm-helper"` or `"cold-process"`
+with the existing read-cost metadata. The warm helper accepts observe only, not
+refs or semantic input. A transport failure yields unavailable-tree/image fallback,
+not an automatic second query. Idle expiry can therefore cause one unavailable
+observation before a later explicit request creates a fresh helper generation.
+
+Private inherited framing is bounded; each call has a 5-second maximum absolute
+deadline plus up to 0.4 seconds for cleanup. Pause and close release the helper;
+failed helper cleanup must not prevent attempting native pause or lease handback,
+and its tracked handle is retained for retry. Source fixtures verify actual helper
+parent-death termination/reaping without initializing application accessibility.
+Native cache freshness and end-to-end efficiency remain unmeasured. See the
+[host safety design](accessibility-host-design.md) before opt-in or future ref work.
 
 For ordinary web tasks, prefer the AI host's built-in browser or its normal web
 tools. Orbit provides native desktop application control, not a browser-specific

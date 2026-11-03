@@ -105,6 +105,8 @@ export class NativeWorker {
       for (const key of ["HOME", "XDG_CONFIG_HOME"] as const) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
       }
+      // Experimental read-only helper is opt-in, never inferred from unrelated environment.
+      if (process.env.ORBIT_A11Y_WARM_HOST === "1") env.ORBIT_A11Y_WARM_HOST = "1";
       // The plan path may be a stable name whose target a native refresh replaces; each worker binds the current one.
       const planPath = await realpath(options.planPath).catch(() => options.planPath);
       const child = spawn(entry[0] ?? "/usr/bin/python3", [...entry.slice(1), directory, options.controlDirectory, planPath],

@@ -10,6 +10,9 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.native import a11y, a11y_dump
 from src.native.session import NativeSession
+from src.native.a11y_host import A11yHostError
+from src.native.existing import ExistingApplicationSession
+import threading
 
 
 class State:
@@ -263,6 +266,85 @@ class WorkerHelperTests(unittest.TestCase):
         for nodes in ([], ["not a node"], None):
             reply = self.run_dump(json.dumps({"status": "ok", "nodes": nodes}).encode())
             self.assertEqual(reply["status"], "unavailable")
+
+
+class WarmIntegrationTests(unittest.TestCase):
+    def test_warm_read_has_same_bounds_without_starting_cold_process(self):
+        calls = []
+        host = SimpleNamespace(observe=lambda pid, title: calls.append((pid, title)) or {"status": "ok", "nodes": [{"role": "frame"}], "ms": 1})
+        with patch("src.native.a11y.subprocess.run", side_effect=AssertionError("cold fallback executed")):
+            result = a11y.read_tree(42, "T", "/unused", host=host)
+        self.assertEqual(calls, [(42, "T")])
+        self.assertEqual(result["readMode"], "warm-helper")
+        self.assertTrue(result["complete"])
+
+    def test_failed_warm_transport_returns_unavailable_without_second_query(self):
+        def fail(*args):
+            raise A11yHostError("private provider details")
+        with patch("src.native.a11y.subprocess.run", side_effect=AssertionError("automatic retry")):
+            result = a11y.read_tree(42, "T", "/unused", host=SimpleNamespace(observe=fail))
+        self.assertEqual(result["status"], "unavailable")
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_failed_helper_cleanup_does_not_skip_native_pause_or_handback(self):
+        import tempfile
+        for operation in ("pause", "close"):
+            calls = []
+            def fail():
+                raise A11yHostError("Accessibility helper transport failed")
+            session = ExistingApplicationSession.__new__(ExistingApplicationSession)
+            session.lock = threading.RLock()
+            session.closed = False
+            session.lease_id = "a" * 32
+            retained = SimpleNamespace(close=fail)
+            session.a11y_host = retained
+            session.apps, session.windows = {}, {}
+            session._info = lambda: {"status": "available"}
+            session.control = SimpleNamespace(cleanup=lambda request, action: action())
+            session.transport = SimpleNamespace(_exchange=lambda request: calls.append(request) or "ok")
+            with tempfile.TemporaryDirectory() as directory:
+                session.directory = Path(directory)
+                with self.assertRaises(A11yHostError):
+                    session.set_paused(True) if operation == "pause" else session.close()
+            self.assertIs(session.a11y_host, retained)
+            if operation == "pause":
+                self.assertIn("ghost-application-control " + "a" * 32 + " pause", calls)
+            else:
+                self.assertIn("ghost-application-control " + "a" * 32 + " handback", calls)
+                self.assertIn("ghost-application-reap " + "a" * 32, calls)
+                self.assertTrue(session.closed)
+                self.assertIsNone(session.lease_id)
+
+    def test_native_and_helper_cleanup_failures_are_both_retained(self):
+        session = ExistingApplicationSession.__new__(ExistingApplicationSession)
+        session.lock = threading.RLock()
+        session.closed = False
+        session.lease_id = None
+        def fail():
+            raise A11yHostError("Accessibility helper transport failed")
+        retained = SimpleNamespace(close=fail)
+        session.a11y_host = retained
+        with self.assertRaises(ExceptionGroup) as caught:
+            session.set_paused(True)
+        self.assertEqual(len(caught.exception.exceptions), 2)
+        self.assertIs(session.a11y_host, retained)
+
+    def test_pause_and_close_release_helper_before_handback(self):
+        for operation in ("pause", "close"):
+            calls = []
+            session = ExistingApplicationSession.__new__(ExistingApplicationSession)
+            session.lock = threading.RLock()
+            session.closed = False
+            session.lease_id = None
+            session.a11y_host = SimpleNamespace(close=lambda: calls.append("helper closed"))
+            session.apps, session.windows = {}, {}
+            if operation == "pause":
+                with self.assertRaises(Exception):
+                    session.set_paused(True)  # No application lease, but the helper must still end.
+            else:
+                session.close()
+            self.assertEqual(calls, ["helper closed"])
+            self.assertIsNone(session.a11y_host)
 
 
 class ObservationMetricsTests(unittest.TestCase):

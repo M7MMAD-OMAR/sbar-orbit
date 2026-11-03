@@ -112,3 +112,17 @@ Verification run: `bun install --frozen-lockfile --ignore-scripts` and budgeted 
 Live gate: the read-only `native-check` command returned `COMPOSITOR_NOT_RESTARTED`: installed Hyprland 0.57.1 versus running 0.57.0. No logout, compositor/broker restart, plugin activation or application/account operation was attempted. Resume installed/native acceptance only after a normal owner-coordinated session transition and current source/ABI verification. Source development can continue meanwhile. No comparative workflow gain has been measured.
 
 Remaining delivery is explicit: snapshot identity retention and refs (#24), semantic actions (#25), residual geometry (#26), drill-down (#28), Chromium decision (#29), launch outcomes (#32), profiles and platform adapters. Foundation source completion does not close those live gates.
+
+## Implementation ledger: read-only host and retention primitive
+
+Source work reviewed on 4 November 2026, after foundation commit `e3aa4f56a4ebfd9a1081d3fd3ee3cf81ed33dcbc`:
+
+- Added an internal bounded retained-object registry, with mandatory injected validation, absolute TTL, whole-snapshot eviction/publication, reentry refusal and foreign/generation invalidation. Root retention counts toward budgets. It is not wired to a desktop provider or public refs API; Python object retention does not prove remote AT-SPI object survival.
+- Added an experimental warm helper behind exact broker opt-in `ORBIT_A11Y_WARM_HOST=1`, with the cold default unchanged. Its only verb is observe. Repeated helper requests are framed/serialized under one deadline; malformed replies, timeout and EOF invalidate its generation without automatic retry.
+- Added explicit parent-death protection, owned TERM/KILL/wait cleanup and unreaped-process quarantine. Actual trusted worker startup and supervisor-death fixtures verify SIGKILL and waitpid reaping without application accessibility initialization.
+- Added bounded per-proxy cache clearing/cache-none, GLib event pumping and process-start checks. These are best-effort read freshness, not atomic snapshots, lossless events or provider identity proof. No performance claim follows.
+- Independent reviews found and fixed request-lock/preflight cleanup interfering with another observation, plus optional helper cleanup failures preventing native pause/handback. Native lifecycle cleanup is still attempted and both errors retained.
+
+Budgeted typecheck passed. Default `bun run verify` passed 282 tests, skipped 4 platform-specific cases, failed 0 across 44 files. Bun wrappers include pure registry, fake-provider transport and trusted-worker supervision fixtures. No real application/account task or native warm/cold performance comparison was performed. See the [host design and remaining authority/lifetime gates](accessibility-host-design.md).
+
+The recorded compositor readiness mismatch still prevents installed/live acceptance; it was not bypassed. Ref exposure, provider ABA proof, semantic authority/pause/off/narrow parity, Nautilus geometry and Thunderbird drill-down remain open. The next source step must preserve those distinctions instead of equating a warm helper with safe semantic control.

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import uuid
 
 from .application import private_directory
+from .a11y_host import A11yHost
 from .plugin_compatibility import require_native_plugin
 from .indicator_style import apply_indicator_style
 from .budget import require_budget
@@ -53,6 +54,7 @@ class ExistingApplicationSession(NativeSession):
         self.closed = False
         self.lease_id = None
         self.lock = threading.RLock()
+        self.a11y_host = A11yHost(self.plan["runtime"]) if os.environ.get("ORBIT_A11Y_WARM_HOST") == "1" else None
 
     @staticmethod
     def selection(value):
@@ -272,26 +274,46 @@ class ExistingApplicationSession(NativeSession):
         with self.lock:
             return super().execute(value)
 
+    def _retire_a11y_host(self):
+        host = getattr(self, "a11y_host", None)
+        if host is not None:
+            try:
+                host.close()
+            except Exception as error:
+                return error  # Retain quarantined ownership for another cleanup attempt.
+            self.a11y_host = None
+        return None
+
     def set_paused(self, paused):
         if not paused:
             require_budget()
         with self.lock:
-            if self.closed or self.lease_id is None:
-                raise SessionError("Application handoff is unavailable")
-            if self._info()["status"] == "unavailable":
-                raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
-            operation = "pause" if paused else "resume"
-            request = f"ghost-application-control {self.lease_id} {operation}"
-            def action():
-                reply = self.transport._exchange(request)
-                if reply.strip() == "refused: application lease unavailable":
-                    return {"controlEnded": True}
-                return action_response("application-control", reply)
-            result = self.control.cleanup(request, action) if paused else self.control.execute(request, action)
-            # Preserve the reconciled terminal outcome outside cleanup's grouped
-            # journal errors so the worker can close this backend accurately.
-            if isinstance(result, dict) and result.get("controlEnded") is True:
-                raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
+            cleanup_error = self._retire_a11y_host() if paused else None
+            try:
+                if self.closed or self.lease_id is None:
+                    raise SessionError("Application handoff is unavailable")
+                if self._info()["status"] == "unavailable":
+                    raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
+                operation = "pause" if paused else "resume"
+                request = f"ghost-application-control {self.lease_id} {operation}"
+
+                def action():
+                    reply = self.transport._exchange(request)
+                    if reply.strip() == "refused: application lease unavailable":
+                        return {"controlEnded": True}
+                    return action_response("application-control", reply)
+
+                result = self.control.cleanup(request, action) if paused else self.control.execute(request, action)
+                if isinstance(result, dict) and result.get("controlEnded") is True:
+                    raise ApplicationControlEnded("Application control ended; inspect native candidates before another handoff")
+                if not paused and getattr(self, "a11y_host", None) is None and os.environ.get("ORBIT_A11Y_WARM_HOST") == "1":
+                    self.a11y_host = A11yHost(self.plan["runtime"])
+            except Exception as native_error:
+                if cleanup_error is not None:
+                    raise ExceptionGroup("Native pause and helper cleanup failed", [native_error, cleanup_error]) from None
+                raise
+            if cleanup_error is not None:
+                raise cleanup_error
             return result
 
     def launch(self, *args, **kwargs):
@@ -306,22 +328,29 @@ class ExistingApplicationSession(NativeSession):
 
     def close(self):
         with self.lock:
-            if self.closed:
-                return
-            if self.lease_id is not None:
-                lease_id = self.lease_id
+            cleanup_error = self._retire_a11y_host()
+            try:
+                if not self.closed:
+                    if self.lease_id is not None:
+                        lease_id = self.lease_id
 
-                def handback():
-                    info = self._info()
-                    if info["status"] != "unavailable":
-                        action_response("application-control", self.transport._exchange(
-                            f"ghost-application-control {lease_id} handback"))
-                    action_response("application-reap", self.transport._exchange("ghost-application-reap " + lease_id))
-                    return {"handedBack": True, "applicationClosed": False}
+                        def handback():
+                            info = self._info()
+                            if info["status"] != "unavailable":
+                                action_response("application-control", self.transport._exchange(
+                                    f"ghost-application-control {lease_id} handback"))
+                            action_response("application-reap", self.transport._exchange("ghost-application-reap " + lease_id))
+                            return {"handedBack": True, "applicationClosed": False}
 
-                self.control.cleanup("native-handoff-close " + lease_id, handback)
-                (self.directory / "handoff.json").unlink(missing_ok=True)
-                self.lease_id = None
-            self.apps.clear()
-            self.windows.clear()
-            self.closed = True
+                        self.control.cleanup("native-handoff-close " + lease_id, handback)
+                        (self.directory / "handoff.json").unlink(missing_ok=True)
+                        self.lease_id = None
+                    self.apps.clear()
+                    self.windows.clear()
+                    self.closed = True
+            except Exception as native_error:
+                if cleanup_error is not None:
+                    raise ExceptionGroup("Native handback and helper cleanup failed", [native_error, cleanup_error]) from None
+                raise
+            if cleanup_error is not None:
+                raise cleanup_error
