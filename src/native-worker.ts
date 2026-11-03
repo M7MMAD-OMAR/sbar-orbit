@@ -233,7 +233,8 @@ export class NativeWorker {
       this.pending = { id, resolve, reject, timer };
       this.stdin.write(bytes, error => { if (error) this.abort(error); });
     })).finally(() => { this.queued--; });
-    this.tail = operation.catch(() => {});
+    // Serialization needs completion only, never a retained successful frame or native response.
+    this.tail = operation.then(() => undefined, () => undefined);
     return operation;
   }
 

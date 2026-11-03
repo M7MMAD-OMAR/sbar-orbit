@@ -1,5 +1,50 @@
 # Agent interface
 
+## Same-call post-action text readback
+
+Batch `orbit_act` supports `capture.format` of `image` (default), `text` or
+`both`. Omitted format and explicit `image` preserve the same existing request
+fingerprint and behavior. Changing format with the same requestId conflicts
+rather than replaying inputs.
+
+```json
+{"sessionId":"CURRENT_SESSION","requestId":"UNIQUE_REQUEST","actions":[{"type":"key","appId":"OWNED_APP","windowId":"OWNED_WINDOW","key":"Return"}],"capture":{"format":"text","timeoutMs":1500}}
+```
+
+Explicit text skips the image baseline and pixel settling. `quietMs` is rejected
+for text before any input; `graceMs` remains unsupported in the public batch
+schema. The timeout is one nonsettling observation budget, including any existing
+image fallback when no usable tree is available. A text request is therefore not
+a text-support or no-image guarantee. `both` retains image baseline/settling and
+adds the tree. Existing image defaults do not change.
+
+Text is returned once, in the same tool response, as an explicitly untrusted
+application-data block and structured tree. Read permission is re-evaluated after
+inputs. Input receipts survive a read failure; no input is replayed automatically.
+A tree or image is a point-in-time readback, not an automatic application-success,
+save or stability verdict. Inspect the intended postcondition.
+
+Cached batch duplicates retain receipts/metrics but expire image and tree payloads
+without another read. Broker and worker queue tails resolve void after success or
+failure instead of retaining the full completed response. This is not a claim
+that every native buffer is empty: the existing Python reply cache remains bounded
+and can retain text-tree replies under its current metadata limit.
+
+## Provisional internal identity comparison
+
+The internal identity primitive compares exact helper/bus/unique-owner/process
+epochs, compositor binding, node path and separate accessibility-window-root path.
+It requires a typed immutable caller attestation through a mandatory verifier
+callback. No toolkit/version string, proxy hash/equality, path syntax, label or
+coordinate automatically enables a provider. Its numeric unique-name syntax is
+a conservative subset, not full D-Bus name grammar.
+
+This is not integrated provider discovery or a public ref/action capability.
+Fresh routing/owner credentials, actual loaded exporter/source, root membership,
+event invalidation, authority and registry TTL remain external mandatory gates.
+GTK UUID noncollision is an explicit provider assumption, not an absolute remote
+reservation. Widget identity does not establish virtualized business-row identity.
+
 ## Error delivery and retry metadata
 
 Broker error envelopes and MCP error results retain their existing `code`, `message`

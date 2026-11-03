@@ -324,6 +324,54 @@ class ObservationBudgetTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.assertTrue(all(deadline == 100.1 for deadline in self.calls))
 
+    def test_nonsettling_text_budget_is_bounded_and_fallback_does_not_enter_pixel_settle(self):
+        self.stack.enter_context(patch.object(native, "bounded_capture", side_effect=self.capture))
+        settle = self.stack.enter_context(patch.object(self.session, "_settle", side_effect=AssertionError("Unexpected pixel settle")))
+        result = self.observe(format="text", observationTimeoutMs=500)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.calls, [100.5])
+        self.assertEqual(result["mimeType"], "image/png")
+        self.assertNotIn("settle", result)
+        settle.assert_not_called()
+
+    def test_nonsettling_text_success_uses_deadline_without_any_pixel_capture(self):
+        deadlines = []
+        def tree(_target, deadline=None):
+            deadlines.append(deadline)
+            return {"status": "ok", "nodes": [{"role": "frame"}], "complete": True}
+        self.session._tree = tree
+        capture = self.stack.enter_context(patch.object(native, "bounded_capture"))
+        result = self.observe(format="text", observationTimeoutMs=700)
+        self.assertEqual(result["mimeType"], "text/x-orbit-a11y")
+        self.assertEqual(deadlines, [100.7])
+        self.assertNotIn("settle", result)
+        capture.assert_not_called()
+
+    def test_nonsettling_budget_expiry_prevents_fallback_capture(self):
+        def tree(_target, deadline=None):
+            self.clock.now = deadline
+            return {"status": "unavailable"}
+        self.session._tree = tree
+        capture = self.stack.enter_context(patch.object(native, "bounded_capture"))
+        with self.assertRaises(native.CaptureDeadlineExceeded):
+            self.observe(format="text", observationTimeoutMs=100)
+        capture.assert_not_called()
+
+    def test_nonsettling_budget_wire_rejects_invalid_and_conflicting_options(self):
+        base = {"type": "observe", "appId": APP, "windowId": WINDOW, "format": "text"}
+        for budget in (True, 99, 3001, 1500.5, float("nan"), "500"):
+            with self.assertRaises(native.SessionError):
+                native.NativeSession.parse({**base, "observationTimeoutMs": budget})
+        for conflict in ({"timeoutMs": 500}, {"quietMs": 20}, {"graceMs": 0},
+                         {"since": "c" * 64}, {"digestOnly": True}):
+            with self.assertRaises(native.SessionError):
+                native.NativeSession.parse({**base, "observationTimeoutMs": 500, **conflict})
+        result = native.NativeSession.parse({**base, "observationTimeoutMs": 500})
+        self.assertEqual(result["observationTimeoutMs"], 500)
+        self.assertNotIn("timeoutMs", result)
+        self.assertNotIn("quietMs", result)
+        self.assertNotIn("graceMs", result)
+
     def test_tree_budget_exhaustion_does_not_start_pixel_fallback(self):
         deadlines = []
         def tree(_target, deadline=None):

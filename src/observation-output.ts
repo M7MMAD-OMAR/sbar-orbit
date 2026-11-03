@@ -41,11 +41,13 @@ export function renderAct(value: unknown) {
   const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const { capture, ...rest } = body;
   const frame = capture && typeof capture === "object" ? capture as Record<string, unknown> : undefined;
-  const { image, tree: _tree, ...metadata } = frame ?? {};
-  const structured = { ...rest, ...(frame === undefined ? {} : { capture: metadata }) };
+  const { image, tree, ...metadata } = frame ?? {};
+  const summary = { ...rest, ...(frame === undefined ? {} : { capture: metadata }) };
+  const structured = { ...rest, ...(frame === undefined ? {} : { capture: { ...metadata, ...(tree === undefined ? {} : { tree }) } }) };
   const content: ({ type: "image"; data: string; mimeType: string } | { type: "text"; text: string })[] =
-    [{ type: "text", text: JSON.stringify(structured) }];
+    [{ type: "text", text: JSON.stringify(summary) }];
   if (typeof image === "string") content.push({ type: "image", data: image, mimeType: String(metadata.mimeType) });
+  if (tree !== undefined) content.push({ type: "text", text: treeBlock(tree) });
   return { content, structuredContent: structured as Record<string, unknown>, ...(body.ok === false ? { isError: true } : {}) };
 }
 

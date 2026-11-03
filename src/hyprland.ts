@@ -426,7 +426,10 @@ export class NativeBackend {
     const selected = value === undefined ? this.selected : target(record(value));
     if (!selected || !this.applications.has(selected.appId))
       throw new OrbitError("INVALID_REQUEST", "Observe requires an explicit owned native target");
-    const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }), ...(settle ?? {}) }));
+    if (format === "text" && settle && (settle.since !== undefined || settle.quietMs !== undefined))
+      throw new OrbitError("INVALID_REQUEST", "Text capture does not accept pixel-settle options");
+    const observationOptions = format === "text" && settle ? { observationTimeoutMs: settle.timeoutMs } : settle;
+    const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }), ...(observationOptions ?? {}) }));
     // A text frame carries the accessibility tree and no pixels; every other frame is an image.
     const textOnly = frame.mimeType === "text/x-orbit-a11y" && format === "text" && frame.image === undefined;
     if (frame.appId !== selected.appId || frame.windowId !== selected.windowId

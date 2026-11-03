@@ -30,6 +30,7 @@ async function installedUnitDrift() {
 }
 
 type State = "running" | "pausing" | "paused" | "closing" | "closed";
+type BatchCapture = { format?: "text" | "both"; timeoutMs: number; quietMs?: number };
 interface Session {
   agentName: string; taskName: string; conversationName?: string; projectName?: string;
   activity?: { type: string; actor: string; state: string; sequence: number };
@@ -57,7 +58,7 @@ const uncertain = ["TIMEOUT", "DEADLINE_EXCEEDED", "BACKEND_ERROR", "NATIVE_FAIL
 function expireCapture(result: unknown) {
   const body = record(result);
   if (!body.capture) return result;
-  const { image: _image, ...frame } = record(body.capture);
+  const { image: _image, tree: _tree, ...frame } = record(body.capture);
   return { ...body, capture: { ...frame, expired: true } };
 }
 
@@ -317,7 +318,8 @@ export class Sessions {
         throw error;
       }
     });
-    session.tail = result.catch(() => {});
+    // Queue/drain state must not retain successful image or tree payloads while idle.
+    session.tail = result.then(() => undefined, () => undefined);
     return result;
   }
   act(input: Record<string, unknown>): Promise<unknown> {
@@ -438,14 +440,18 @@ export class Sessions {
       if (action.appId !== actions[0]!.appId || action.windowId !== actions[0]!.windowId)
         throw new OrbitError("INVALID_REQUEST", "A batch acts on one window");
     }
-    let capture: { timeoutMs: number; quietMs?: number } | undefined;
+    let capture: BatchCapture | undefined;
     if (input.capture !== undefined) {
       const options = record(input.capture);
-      if (Object.keys(options).some(key => key !== "timeoutMs" && key !== "quietMs") ||
+      if (Object.keys(options).some(key => key !== "format" && key !== "timeoutMs" && key !== "quietMs") ||
+          (options.format !== undefined && options.format !== "image" && options.format !== "text" && options.format !== "both") ||
           (options.timeoutMs !== undefined && (typeof options.timeoutMs !== "number" || !Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 3000)) ||
           (options.quietMs !== undefined && (typeof options.quietMs !== "number" || !Number.isInteger(options.quietMs) || options.quietMs < 20 || options.quietMs > 1000)))
-        throw new OrbitError("INVALID_REQUEST", "capture accepts timeoutMs, an integer from 100 to 3000, and quietMs, an integer from 20 to 1000");
-      capture = { timeoutMs: options.timeoutMs ?? 1500, ...(options.quietMs === undefined ? {} : { quietMs: options.quietMs }) };
+        throw new OrbitError("INVALID_REQUEST", "capture accepts format image, text or both; timeoutMs from 100 to 3000; and quietMs from 20 to 1000");
+      if (options.format === "text" && Object.hasOwn(options, "quietMs"))
+        throw new OrbitError("INVALID_REQUEST", "Text capture does not accept pixel-settle options");
+      capture = { ...(options.format === "text" || options.format === "both" ? { format: options.format } : {}),
+        timeoutMs: options.timeoutMs ?? 1500, ...(options.quietMs === undefined ? {} : { quietMs: options.quietMs }) };
     }
     const fingerprint = JSON.stringify({ actions, capture });
     const existing = session.requests.get(requestId);
@@ -468,12 +474,13 @@ export class Sessions {
     session.requests.set(requestId, { fingerprint, result: kept });
     return full;
   }
-  private async runBatch(session: Session, actions: { type: string; [key: string]: unknown }[], capture: { timeoutMs: number; quietMs?: number } | undefined, requestId: string) {
+  private async runBatch(session: Session, actions: { type: string; [key: string]: unknown }[], capture: BatchCapture | undefined, requestId: string) {
     const target = { appId: String(actions[0]!.appId), windowId: String(actions[0]!.windowId) };
     const observing = capture === undefined ? undefined : decide(session.policy, "observe");
     let since: string | undefined;
-    if (observing?.outcome === "allow") {
-      // Before the first input, so a frame that differs from it can only be the result of the batch.
+    if (observing?.outcome === "allow" && capture?.format !== "text") {
+      // A visual baseline only: asynchronous application or owner changes may also alter the frame.
+      // A difference is not causal evidence for this batch or proof of an application postcondition.
       try { since = await session.backend.baseline(target); } catch { since = undefined; }
     }
     const receipts: Record<string, unknown>[] = [];
@@ -514,7 +521,7 @@ export class Sessions {
       else if (receipts.every(receipt => receipt.status === "not-attempted")) result.captureError = errorPayload(undefined, "NOT_ATTEMPTED", "No action ran, so there is nothing new to capture");
       else {
         try {
-          result.capture = await session.backend.observe(target, "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs, ...(capture.quietMs === undefined ? {} : { quietMs: capture.quietMs }) });
+          result.capture = await session.backend.observe(target, capture.format ?? "image", { ...(since === undefined ? {} : { since }), timeoutMs: capture.timeoutMs, ...(capture.quietMs === undefined ? {} : { quietMs: capture.quietMs }) });
           this.taintedBy(session, "observe");
           void this.record(session, journalEntry({
             at: new Date().toISOString(), sequence: session.journal.length + 1, sessionId: session.id,

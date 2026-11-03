@@ -267,7 +267,7 @@ class NativeSession:
                   "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
-        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly"}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "observationTimeoutMs"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -306,6 +306,10 @@ class NativeSession:
     @staticmethod
     def _settle_options(result):
         """Validate the optional settled-capture fields of an observe, and fill the defaults."""
+        if "observationTimeoutMs" in result:
+            if (type(result["observationTimeoutMs"]) is not int or not 100 <= result["observationTimeoutMs"] <= 3000 or
+                    any(name in result for name in ("timeoutMs", "quietMs", "graceMs", "since", "digestOnly"))):
+                raise SessionError("Nonsettling observation budget must be an integer from 100 to 3000 without settle options")
         if "digestOnly" in result and result["digestOnly"] is not True:
             raise SessionError("digestOnly must be true when present")
         if "since" in result and (not isinstance(result["since"], str) or not re.fullmatch(r"[0-9a-f]{64}", result["since"])):
@@ -396,7 +400,7 @@ class NativeSession:
         action = self.parse(value)
         request = "native-session " + json.dumps(action, sort_keys=True, ensure_ascii=True)
         frame = None
-        observation_deadline = (started + action.get("timeoutMs", CAPTURE_TIMEOUT_SECONDS * 1000) / 1000
+        observation_deadline = (started + action.get("observationTimeoutMs", action.get("timeoutMs", CAPTURE_TIMEOUT_SECONDS * 1000)) / 1000
                                 if action["type"] == "observe" else None)
 
         def operation():

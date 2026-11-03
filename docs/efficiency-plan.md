@@ -2,6 +2,28 @@
 
 Status: staged implementation plan, 3 November 2026. This is not an installed-runtime report or a speed claim. The [original application contract](desktop-only.md), [dated acceptance](acceptance.md) and [native roadmap](roadmap.md) remain authoritative.
 
+## Current source milestone: same-call text and identity comparison
+
+Explicit batch `capture.format:text` can return post-action accessibility data in
+the same MCP invocation without an image baseline or pixel settling. `both` keeps
+the original image path. Format normalization, pre-input validation, current read
+authority, receipt preservation and expired-payload deduplication are verified
+through real source Sessions/NativeBackend and both MCP surfaces using owned
+fixtures. Queue tails now resolve void rather than retaining completed payloads.
+This can remove a follow-up model/tool invocation when usable text is available;
+no latency or workflow percentage is inferred from fixture call counts.
+
+A pure internal identity comparator binds helper/accessibility-bus/process epochs
+and distinct native node/window-root UUID paths to exact target bindings. Its
+mandatory trusted-caller attestation is not runtime evidence or provider
+eligibility. Public refs and semantic mutations remain disabled. The matching
+GTK source/GIR/override routing audit is in the [installed provenance record](research/installed-atspi-provenance-2026-11-04.md).
+
+Verification: budgeted typecheck passed; default verification passed 362 tests,
+skipped 4 platform-specific cases and failed 0 across 51 files. Focused cross-layer
+verification passed 43 tests. No new desktop operation or shared service restart
+was used for these fixtures; an unrelated live lease was left untouched.
+
 ## Outcome and evidence hierarchy
 
 Reduce completed-task cost, not just tool latency. Measure successful workflows per elapsed second, end-to-end p50/p95, failure rate, retries, owner interventions and measured response bytes/tokens. A faster failed task is not an improvement. The target to evaluate is 80% higher successful-task throughput (1.8 times baseline, about 44.4% less time for a fixed successful workload), not 80% lower duration (5 times throughput). Predeclare per-task reliability/intervention bounds; any wrong-target effect or policy bypass fails acceptance. No achieved 80% efficiency claim, account safety claim, detection avoidance claim or ban guarantee follows from this plan.

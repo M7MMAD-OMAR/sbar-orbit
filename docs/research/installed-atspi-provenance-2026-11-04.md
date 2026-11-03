@@ -81,3 +81,39 @@ Important release-specific detail: [get_application](https://github.com/GNOME/at
 5. Keep semantic mutation disabled until the [authority/revocation/drain requirements](../accessibility-host-design.md#stage-c-semantic-mutation-remains-disabled) and remote in-flight uncertainty contract are satisfied. Nothing here establishes task-level success, live stale-ref refusal or a speed gain.
 
 **Result:** installed binaries and matching Fedora/release sources are now concretely corroborated beyond a version string. Runtime provider attribution, archive/signature reconstruction and mutation safety remain separate unresolved gates. No native application was opened or queried for this audit.
+
+## Exact GTK routing and identity boundary followup
+
+Additional source/static-metadata review, 4 November 2026. This section refines the earlier generic private-endpoint warning. It does not inspect or change an application, accessibility bus, live lease or runtime provider.
+
+### GetApplicationBusAddress returns the managed-bus address
+
+For the exact GTK 4.22.5 release, [handle_application_method](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L191-L195) returns `root->bus_address`. It does **not** return an unconditional empty string. That field is the construct-only bus-address property copied by [the setter](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L124-L133); [the constructor](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L1056-L1063) receives the same address that [constructed](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L955-L961) opens with `G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION`. The root explicitly calls this a fully managed accessibility bus.
+
+[Address selection](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspicontext.c#L1915-L1950) uses a cached display address, then nonempty `AT_SPI_BUS_ADDRESS` if supplied; on Wayland it otherwise requests [org.a11y.Bus.GetAddress](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspicontext.c#L1882-L1910) over the session bus. Environment overrides/portals therefore remain relevant provenance, not proof that every address is the ordinary host endpoint.
+
+[Root registration](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L854-L885) exports Application and Accessible interfaces at `/org/a11y/atspi/accessible/root` on that connection, and passes its **unique** name plus root path to Registry Embed. This traced GTK root does not construct a separate application GDBusServer for the method.
+
+Thus libatspi 2.60.7 may call `dbus_connection_open_private` on the **same managed bus address** returned by GTK. Private ownership of the client connection is not, by itself, evidence of a distinct application peer endpoint. The earlier generic warning must not be read as a claim that this GTK release necessarily routes through a separate peer server. Conversely, source tracing does not prove the endpoint/bus instance actually selected by a future running process, successful authentication/registration on it or identity under address replacement. A future route token needs corroborated bus-instance/endpoint evidence, not merely a nonempty address or the word private. No bus-only environment switch or native route change is enabled here.
+
+### Exact object path and owner extraction contract
+
+[Base-path selection](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L976-L1023) uses the registered GApplication object path plus `/a11y`; otherwise it uses `/org/gtk/application/<program-name>/a11y`, replacing invalid non-slash path characters with underscores. [Context realization](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspicontext.c#L1599-L1613) appends `/` and a random UUID with hyphens replaced by underscores. The source-backed suffix shape is:
+
+```text
+[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}
+```
+
+A pure validator should require an independently trusted exact base path followed by that suffix and otherwise valid D-Bus path syntax. The broad shape `(valid-base)/a11y/(UUID-suffix)` is only parsing, never provider provenance. Do not treat the fixed application root, numeric Qt paths, bare accessible IDs, labels or proxy repr strings as GTK realization handles. This audit does not add UUID version/variant bit constraints without separately pinning the GLib generator contract.
+
+[Context references](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspicontext.c#L2048-L2055) carry the connection unique name and context path. Re-realization generates a new UUID, so an original ref must not be rebound to it even if the widget/name/bounds remain the same. The native typed pair is usable input to a future identity adapter; it does not alone supply helper/bus/process/window generations or authority.
+
+### Installed static GI exposure, without initialization
+
+The installed [GIR metadata](</usr/share/gir-1.0/Atspi-2.0.gir#L8622-L8638>) exposes `Atspi.Object.app` as `Atspi.Application` and `path` as UTF-8; [Application.bus_name](</usr/share/gir-1.0/Atspi-2.0.gir#L2099-L2125>) is UTF-8. These are declared fields, not names invented by inspecting a proxy repr. The installed [Python override](</usr/lib64/python3.14/site-packages/gi/overrides/Atspi.py#L44-L51>) itself accesses `self.app.bus_name` and `self.path`. Static declarations and consumer code support that access pattern; actual live field reads and null/disposal handling were not exercised.
+
+Important: [that override](</usr/lib64/python3.14/site-packages/gi/overrides/Atspi.py#L33-L50>) implements equality by comparing hashes and caches a hash of concatenated bus name/path. Neither equality nor hash is an authoritative remote lifetime test. Use retained-object `is` only for local registry bookkeeping, plus exact immutable typed token fields for proven remote bindings; never proxy `==`, proxy hash or string concatenation as identity proof. A disposed proxy can retain its cached hash.
+
+[Installed toolkit getter metadata](</usr/share/gir-1.0/Atspi-2.0.gir#L1261-L1305>) declares root-only `get_toolkit_name` and `get_toolkit_version`. [GTK sets](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L854-L856) ToolkitName to `GTK` and Version to `PACKAGE_VERSION`; [property handling](https://github.com/GNOME/gtk/blob/bd25f1e2dc2c2fbf3b8864e61afe642910ba359c/gtk/a11y/gtkatspiroot.c#L211-L218) returns those values. [libatspi getters](https://github.com/GNOME/at-spi2-core/blob/66707c370bef824ed4edb08a909fc6a61449c12c/atspi/atspi-accessible.c#L887-L934) may cache them on the application proxy. Those strings are compatibility observations, not signed provider provenance or a per-object generation.
+
+**Pure comparison boundary:** an injected trusted proof must bind exact reviewed provider/release and artifact provenance, managed-bus route and bus instance, unique owner, PID/start generation, helper generation, exact compositor window lifetime, trusted base path and captured UUID path. Every component must match at validation. Well-known-name rebinding, unknown route/version/source, absent epochs, custom providers or changed UUID fail closed. This remains an unintegrated token-comparison contract, not public refs, provider lifetime acceptance or semantic-action enablement.
