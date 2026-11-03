@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.native.session import NativeSession, SessionError, bounded_capture
+from src.native.session import NativeSession, SessionError, CaptureUnavailable, bounded_capture
 
 
 if "--context-reap" in sys.argv:
@@ -40,9 +40,9 @@ class NativeSessionTests(unittest.TestCase):
     def test_capture_preserves_failed_command_and_private_stderr(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "capture.log"
-            with self.assertRaises(BaseExceptionGroup) as failure:
+            with self.assertRaises(CaptureUnavailable) as failure:
                 bounded_capture(["/usr/bin/python3", "-c", "import sys; sys.stderr.write('fixture capture error'); sys.exit(9)"], {}, log)
-            self.assertIn("capture failed", str(failure.exception.exceptions[0]))
+            self.assertIn("capture is unavailable", str(failure.exception))
             self.assertEqual(log.read_text(), "fixture capture error")
             self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 

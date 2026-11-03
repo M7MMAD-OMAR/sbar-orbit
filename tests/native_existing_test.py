@@ -254,8 +254,11 @@ class ExistingApplicationTests(unittest.TestCase):
             return raw
         self.transport._exchange = exchange
         captures = 0
-        def capture(*args):
+        deadlines = []
+        def capture(*args, deadline=None):
             nonlocal captures
+            self.assertIsNotNone(deadline)
+            deadlines.append(deadline)
             captures += 1
             before = tuple(dimensions)
             dimensions[:] = [321, 181]
@@ -264,6 +267,7 @@ class ExistingApplicationTests(unittest.TestCase):
             frame = self.session.execute({"type": "observe", "appId": claimed["appId"], "windowId": target["windowId"]})
         self.assertEqual((frame["surfaceWidth"], frame["surfaceHeight"]), (321, 181))
         self.assertEqual(captures, 2)
+        self.assertEqual(len(set(deadlines)), 1)
         self.assertFalse(any(request.startswith(("ghost-key ", "ghost-texthex ", "ghost-click ")) for request in self.transport.requests))
         self.session.close()
 

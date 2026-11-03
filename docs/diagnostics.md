@@ -26,6 +26,24 @@ that owner. Stop only your own sessions with `scope: "mine"`.
 `SESSION_CLOSED` describes ended control, not proof that a window closed. See
 [handoff](existing-application-handoff.md) and [current acceptance](acceptance.md).
 
+## Capture failed after input
+
+Keep the original batch receipts. `CAPTURE_UNAVAILABLE`,
+`CAPTURE_DEADLINE_EXCEEDED` and `CAPTURE_GEOMETRY_CHANGED` are distinct capture
+outcomes, not permission to repeat earlier keys/clicks. `NATIVE_FAILED` can still
+represent a mixed or otherwise unclassified native/cleanup failure. Do not infer
+that an application is hidden, replaced or broken from a nonzero capture exit
+or empty private stderr alone.
+
+Inspect the same exact lifetime-bound target. An authorized text/state read can
+verify an application effect independently; text observation may fall back to an
+image when no tree is available, so it is not a guarantee of text support. Never
+force a workspace, owner focus or pointer to make capture succeed. Preserve
+private diagnostic evidence before normal session cleanup, and publish only
+content-free summaries. See [the actual Calculator run](efficiency-native-acceptance-2026-11-04.md)
+for a four-key batch whose final image failed but whose `1+2=3` UI state was
+independently verified without input replay.
+
 ## Native control does not work: start here
 
 Run `sbar-orbit native-check`. It compares four things and prints one plain sentence

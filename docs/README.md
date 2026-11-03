@@ -23,6 +23,8 @@ failed historical results without treating them as current runtime policy.
 - [Read-only accessibility host and future reference safety gates](accessibility-host-design.md)
 - [Pinned agent-desktop comparison and integration limits](research/agent-desktop.md)
 - [Pinned GTK4, Qt6 and libatspi identity lifetime audit](research/atspi-identity-lifetimes.md)
+- [Installed GTK/libatspi provenance and remaining proof gaps](research/installed-atspi-provenance-2026-11-04.md)
+- [Original Calculator live evidence and capture failure limits](efficiency-native-acceptance-2026-11-04.md)
 
 ## Dated evidence and release records
 

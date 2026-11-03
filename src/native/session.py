@@ -25,6 +25,35 @@ class SessionError(RuntimeError):
     pass
 
 
+CAPTURE_TIMEOUT_SECONDS = 10
+CAPTURE_CLEANUP_SECONDS = 3
+
+
+class CaptureUnavailable(SessionError):
+    def __init__(self):
+        super().__init__("Native window capture is unavailable; inspect the current target before another observation")
+
+
+class CaptureDeadlineExceeded(SessionError):
+    def __init__(self):
+        super().__init__("Native observation exceeded its capture deadline; inspect the current target before another observation")
+
+
+class CaptureGeometryChanged(SessionError):
+    def __init__(self):
+        super().__init__("Native target geometry changed during capture; inspect the current target before another observation")
+
+
+def capture_remaining(deadline):
+    """Cooperative absolute budget, never a fresh per-frame wait. Blocking native/FS calls are not preempted."""
+    if type(deadline) not in (int, float) or not 0 < deadline < 1e100 or not math.isfinite(deadline):
+        raise CaptureDeadlineExceeded()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise CaptureDeadlineExceeded()
+    return remaining
+
+
 class ApplicationControlEnded(SessionError):
     """A missing lease is not evidence that the application window disappeared."""
 
@@ -103,61 +132,77 @@ def visible_crop(image_size, surface_size, geometry):
     return left, top, crop_w, crop_h
 
 
-def bounded_capture(argv, environment, diagnostics, raster=False):
-    """Retain one bounded PNG (or PPM raster) and private stderr, with bounded reap attempts."""
-    child = subprocess.Popen(argv, env=environment, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def bounded_capture(argv, environment, diagnostics, raster=False, deadline=None):
+    """One absolute capture budget, plus at most 3 seconds for child kill/reap cleanup.
+
+    The optional deadline preserves the old direct-call 10 second default. Native
+    and filesystem syscalls cannot be forcibly preempted by these cooperative checks.
+    """
+    deadline = time.monotonic() + CAPTURE_TIMEOUT_SECONDS if deadline is None else deadline
+    capture_remaining(deadline)  # Expired work must not start a child.
+    child = None
     data, stderr, errors = bytearray(), bytearray(), []
     result = None
     try:
-        deadline = time.monotonic() + 10
+        child = subprocess.Popen(argv, env=environment, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        capture_remaining(deadline)
         with selectors.DefaultSelector() as ready:
             ready.register(child.stdout, selectors.EVENT_READ, data)
             ready.register(child.stderr, selectors.EVENT_READ, stderr)
             while ready.get_map():
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError("Native window capture exceeded its deadline")
-                events = ready.select(remaining)
+                events = ready.select(capture_remaining(deadline))
                 if not events:
-                    raise TimeoutError("Native window capture exceeded its deadline")
+                    raise CaptureDeadlineExceeded()
                 for key, _ in events:
+                    capture_remaining(deadline)
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk:
                         ready.unregister(key.fileobj)
                         continue
                     key.data.extend(chunk)
                     if len(data) > (64 if raster else 16) * 1024 * 1024 or len(stderr) > 65536:
-                        raise SessionError("Native window capture output is too large")
-        child.wait(timeout=max(0.01, deadline - time.monotonic()))
+                        raise CaptureUnavailable()
+        child.wait(timeout=capture_remaining(deadline))
         if child.returncode != 0:
-            raise SessionError("Native window capture failed")
+            # Exit status, including empty stderr, does not identify visibility or geometry as the cause.
+            raise CaptureUnavailable()
         if raster:
             width, height = raster_header(data)[:2]
         elif len(data) < 24 or data[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR":
-            raise SessionError("Native window capture did not return PNG")
+            raise CaptureUnavailable()
         else:
             width, height = struct.unpack(">II", data[16:24])
         if not 1 <= width <= 16384 or not 1 <= height <= 16384:
-            raise SessionError("Native window capture has invalid dimensions")
+            raise CaptureUnavailable()
+        capture_remaining(deadline)
         result = bytes(data), width, height
+    except (TimeoutError, subprocess.TimeoutExpired):
+        errors.append(CaptureDeadlineExceeded())
+    except (OSError, SessionError, ValueError, struct.error) as error:
+        errors.append(error if isinstance(error, (CaptureUnavailable, CaptureDeadlineExceeded)) else CaptureUnavailable())
     except BaseException as error:
         errors.append(error)
     finally:
-        try:
-            if child.poll() is None:
-                child.kill()
-            child.wait(timeout=3)
-        except BaseException as error:
-            errors.append(error)
-        finally:
-            child.stdout.close()
-            child.stderr.close()
+        if child is not None:
+            try:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=CAPTURE_CLEANUP_SECONDS)
+            except BaseException as error:
+                errors.append(error)
+            for stream in (child.stdout, child.stderr):
+                try:
+                    stream.close()
+                except BaseException as error:
+                    errors.append(error)
         try:
             with open(diagnostics, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                 log.write(stderr)
         except BaseException as error:
             errors.append(error)
+    if len(errors) == 1:
+        raise errors[0]
     if errors:
         raise BaseExceptionGroup("Native capture or cleanup failed", errors)
     return result
@@ -168,17 +213,25 @@ class NativeSession:
 
 
 
-    def _tree(self, target):
+    def _tree(self, target, deadline=None):
         """Accessibility tree of one window, or the reason there is none."""
+        if deadline is not None:
+            capture_remaining(deadline)
         clients = json.loads(self.transport._exchange("j/clients"))
         identity = a11y.window_identity(clients, target["address"], target["key"][1]) if isinstance(clients, list) else None
         if identity is None:
             return {"status": "unavailable", "reason": "window process is unknown"}
         host = getattr(self, "a11y_host", None)
-        tree = (a11y.read_tree(identity[0], identity[1], self.plan["runtime"], host=host) if host is not None
-                else a11y.read_tree(identity[0], identity[1], self.plan["runtime"]))
+        options = {"deadline": deadline} if deadline is not None else {}
+        if host is not None:
+            options["host"] = host
+        tree = a11y.read_tree(identity[0], identity[1], self.plan["runtime"], **options)
+        if deadline is not None:
+            capture_remaining(deadline)
         current = json.loads(self.transport._exchange("j/clients"))
         after = a11y.window_identity(current, target["address"], target["key"][1]) if isinstance(current, list) else None
+        if deadline is not None:
+            capture_remaining(deadline)
         if after != identity:
             return {"status": "unavailable", "reason": "window identity or title changed during accessibility query"}
         return tree
@@ -267,7 +320,7 @@ class NativeSession:
             raise SessionError("Settle options require timeoutMs")
 
     @staticmethod
-    def _settle(capture, first, action):
+    def _settle(capture, first, action, deadline=None, started=None):
         """Re-capture until the window stops changing, bounded by timeoutMs.
 
         Two identical frames are not enough: a slow redraw leaves two identical OLD frames. With a
@@ -277,8 +330,10 @@ class NativeSession:
         Frames are taken back to back: a capture itself takes 25 to 70 ms, so a pause between them
         only delays the answer.
         """
-        since, started = action.get("since"), time.monotonic()
+        since = action.get("since")
+        started = time.monotonic() if started is None else started
         limit, quiet, grace = action["timeoutMs"] / 1000, action["quietMs"] / 1000, action["graceMs"] / 1000
+        deadline = started + limit if deadline is None else deadline
         current, captures = first, 1
         digest = hashlib.sha256(current[0]).hexdigest()
         stable_since = time.monotonic()
@@ -289,7 +344,7 @@ class NativeSession:
                 ready = now - started >= grace
             else:
                 ready = now - stable_since >= quiet
-            if ready or now - started >= limit:
+            if ready or now >= deadline:
                 return (*current, {"settled": bool(ready), "changed": changed, "captures": captures,
                                    "waitedMs": int((now - started) * 1000)})
             current = capture()
@@ -341,6 +396,8 @@ class NativeSession:
         action = self.parse(value)
         request = "native-session " + json.dumps(action, sort_keys=True, ensure_ascii=True)
         frame = None
+        observation_deadline = (started + action.get("timeoutMs", CAPTURE_TIMEOUT_SECONDS * 1000) / 1000
+                                if action["type"] == "observe" else None)
 
         def operation():
             nonlocal frame
@@ -352,10 +409,16 @@ class NativeSession:
             if kind in ("key", "text", "state"):
                 self._ensure_pointer(target, address)
             if kind == "observe":
+                capture_remaining(observation_deadline)
                 verify_host(self.plan)
                 tree = None
                 if action["format"] != "image":
-                    tree = self._tree(target)
+                    tree_size = tuple(target["size"])
+                    tree = self._tree(target, deadline=observation_deadline)
+                    after_tree = self._target(app_id, action["windowId"])
+                    capture_remaining(observation_deadline)
+                    if tree.get("status") == "ok" and tuple(after_tree["size"]) != tree_size:
+                        raise CaptureGeometryChanged()
                     if action["format"] == "text" and tree["status"] == "ok":
                         # Text only: no pixels are captured. The surface size is the compositor's.
                         captured = int(time.time() * 1000)
@@ -371,6 +434,7 @@ class NativeSession:
 
                 def begin():
                     """Everything before the pixels leave the compositor, then the capture itself."""
+                    capture_remaining(observation_deadline)
                     self._ensure_pointer(target, address)
                     captured = int(time.time() * 1000)
                     surface_size = tuple(target["size"])
@@ -381,16 +445,22 @@ class NativeSession:
                     margin = geometry is not None and (geometry[0] != 0 or geometry[1] != 0)
                     arguments = (["/usr/bin/grim"] + (["-t", "ppm"] if margin else []) + ["-T", target["key"][1], "-"],
                                  environment, log, margin)
-                    return bounded_capture(*arguments), captured, surface_size, geometry
+                    return bounded_capture(*arguments, deadline=observation_deadline), captured, surface_size, geometry
 
                 def finish(handle):
-                    """Verify the target after the pixels; None when the window resized under this capture."""
+                    """Verify target size and reliable crop geometry before using the captured frame."""
+                    capture_remaining(observation_deadline)
                     pixels, captured, surface_size, geometry = handle
                     image, width, height = pixels
                     verify_host(self.plan)
                     self._target(app_id, action["windowId"])
                     self._check_target(address)
-                    if tuple(target["size"]) != surface_size:
+                    after_geometry = self._geometry(address)
+                    capture_remaining(observation_deadline)
+                    if (geometry is None) != (after_geometry is None):
+                        # Availability changed, not reliable evidence of a geometry transition.
+                        raise CaptureUnavailable()
+                    if tuple(target["size"]) != surface_size or (geometry is not None and after_geometry != geometry):
                         return None
                     crop = visible_crop((width, height), surface_size, geometry) if geometry is not None else None
                     if crop is not None:
@@ -407,10 +477,10 @@ class NativeSession:
                         if frame is not None:
                             return frame
                         if attempt == 2:
-                            raise SessionError("Native target keeps resizing; wait before observing again")
+                            raise CaptureGeometryChanged()
                         # Capture is read-only. Keep the exact lifetime-bound target
                         # and retry its new geometry, never any prior input action.
-                        time.sleep(0.05)
+                        time.sleep(min(0.05, capture_remaining(observation_deadline)))
 
                 image, width, height, captured, surface_size = capture()
                 if action.get("digestOnly"):
@@ -420,7 +490,8 @@ class NativeSession:
                 settle = None
                 if "timeoutMs" in action:
                     image, width, height, captured, surface_size, settle = self._settle(
-                        capture, (image, width, height, captured, surface_size), action)
+                        capture, (image, width, height, captured, surface_size), action,
+                        deadline=observation_deadline, started=started)
                 frame = {"mimeType": "image/png", "image": base64.b64encode(image).decode(),
                          "capturedAt": captured, "width": width, "height": height,
                          "surfaceWidth": surface_size[0], "surfaceHeight": surface_size[1],
@@ -470,11 +541,14 @@ class NativeSession:
 
         def admitted_operation():
             result = operation()
+            if action["type"] == "observe":
+                capture_remaining(observation_deadline)
             if action["type"] == "observe" and not action.get("digestOnly"):
                 # Same scoped post-capture refresh as the old separate windows request,
                 # but under this read admission and without another worker round trip.
                 acknowledged = frame if frame is not None else result
                 acknowledged["windows"] = self._owned_windows(action["appId"])
+                capture_remaining(observation_deadline)
             return result
 
         result = self.control.execute(request, admitted_operation)

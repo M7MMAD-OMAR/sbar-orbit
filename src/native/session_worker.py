@@ -10,7 +10,7 @@ from src.native.application import private_directory
 from src.native.budget import require_budget
 from src.native.control import ActionControl, ControlError
 from src.native.host import read_plan, HostError, TargetClosed, UnsupportedText
-from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, identifier
+from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, CaptureUnavailable, CaptureDeadlineExceeded, CaptureGeometryChanged, identifier
 from src.native.plugin_compatibility import NativeCompatibilityError
 from src.native.host import verify_host
 
@@ -53,7 +53,10 @@ FATAL_PREFIX = "ORBIT-WORKER-FATAL "
 
 def failure_response(error, session_type):
     """Classify one failure. HostError text is fixed by host.py and names the command that repairs it."""
-    code = ("TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
+    code = ("CAPTURE_UNAVAILABLE" if isinstance(error, CaptureUnavailable)
+            else "CAPTURE_DEADLINE_EXCEEDED" if isinstance(error, CaptureDeadlineExceeded)
+            else "CAPTURE_GEOMETRY_CHANGED" if isinstance(error, CaptureGeometryChanged)
+            else "TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
             else "TARGET_CLOSED" if isinstance(error, TargetClosed)
             else "OPENING_UNCERTAIN" if isinstance(error, OpeningDeliveryUncertain)
             else "PRESENTATION_NOT_READY" if isinstance(error, PresentationNotReady)
@@ -66,7 +69,12 @@ def failure_response(error, session_type):
     # Exactly HostError: its subclasses (TargetClosed, UnsupportedText) have their own fixed public text.
     classified = ((isinstance(error, (SessionError, NativeCompatibilityError)) and session_type is not NativeSession)
                   or type(error) is HostError)
-    message = str(error)[:300] if classified else "Native request failed; see the private worker log"
+    capture_messages = {
+        "CAPTURE_UNAVAILABLE": str(CaptureUnavailable()),
+        "CAPTURE_DEADLINE_EXCEEDED": str(CaptureDeadlineExceeded()),
+        "CAPTURE_GEOMETRY_CHANGED": str(CaptureGeometryChanged()),
+    }
+    message = capture_messages.get(code) or (str(error)[:300] if classified else "Native request failed; see the private worker log")
     return {"ok": False, "error": {"code": code, "message": message}}
 
 

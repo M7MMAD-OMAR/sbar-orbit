@@ -1,5 +1,6 @@
 """Compact text observation from the platform accessibility tree, run beside the image capture path."""
 import json
+import math
 from pathlib import Path
 import subprocess
 import time
@@ -35,18 +36,30 @@ def _trim(nodes):
     return kept, None
 
 
-def read_tree(pid, title, runtime, host=None):
+def read_tree(pid, title, runtime, host=None, deadline=None):
     """A bounded tree for one window, or the reason none is available. Never raises on a missing tree."""
     started = time.monotonic()
     environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "XDG_RUNTIME_DIR": runtime}
     try:
+        timeout, budget_ms = 5, DEADLINE_MS
+        if deadline is not None:
+            if type(deadline) not in (int, float) or not 0 < deadline < 1e100 or not math.isfinite(deadline):
+                raise ValueError("Invalid observation deadline")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("Expired observation deadline")
+            timeout = min(timeout, remaining)
+            budget_ms = min(budget_ms, max(1, int(remaining * 1000)))
         if host is not None:
-            reply = host.observe(pid, title)
+            reply = host.observe(pid, title, timeout_ms=timeout * 1000) if deadline is not None else host.observe(pid, title)
         else:
-            done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(DEADLINE_MS)],
-                                  env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=5, check=False)
+            done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(budget_ms)],
+                                  env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, check=False)
             reply = json.loads(done.stdout[:2_000_000]) if done.returncode == 0 else None
     except (A11yHostError, subprocess.TimeoutExpired, ValueError, OSError):
+        reply = None
+        deadline = None  # Invalid/failed reads already have no result to accept or retry.
+    if deadline is not None and time.monotonic() >= deadline:
         reply = None
     if not isinstance(reply, dict) or reply.get("status") not in ("ok", "unavailable"):
         return {"status": "unavailable", "reason": "accessibility query failed or timed out"}

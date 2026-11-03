@@ -356,7 +356,7 @@ class ObservationMetricsTests(unittest.TestCase):
         target = {"address": "0x1", "key": ("a" * 32, "stable"), "size": (100, 80), "pointer": None}
         session._target = lambda app, window: target
         session._app = lambda app: SimpleNamespace(unit="fixture", profile=Path("/unused-fixture"))
-        session._tree = lambda target: tree
+        session._tree = lambda target, deadline=None: tree
         session._ensure_pointer = lambda target, address: None
         session._check_target = lambda address: None
         session._geometry = lambda address: None

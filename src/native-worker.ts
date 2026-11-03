@@ -179,6 +179,9 @@ export class NativeWorker {
         else {
           const code = typeof failure?.code === "string" ? failure.code : "BACKEND_ERROR";
           const publicMessages: Record<string, string> = {
+            CAPTURE_UNAVAILABLE: "Native window capture is unavailable; inspect the current target before another observation",
+            CAPTURE_DEADLINE_EXCEEDED: "Native observation exceeded its capture deadline; inspect the current target before another observation",
+            CAPTURE_GEOMETRY_CHANGED: "Native target geometry changed during capture; inspect the current target before another observation",
             TARGET_CLOSED: "The target window closed or was replaced, so nothing was delivered. Inspect native candidates for the current window before sending more.",
             TEXT_UNSUPPORTED: "Nothing was typed: the text has a character with no key in the seat keyboard layout. Send the characters the active layouts can type, or paste through the shared clipboard.",
             SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",

@@ -30,6 +30,7 @@ export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSI
   // "you hit a ceiling" from "something broke" retries the wrong thing.
   'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
   'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID',
+  'CAPTURE_UNAVAILABLE', 'CAPTURE_DEADLINE_EXCEEDED', 'CAPTURE_GEOMETRY_CHANGED',
   'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED', 'NATIVE_STALE', 'NATIVE_INCOMPATIBLE', 'BROKER_UNAVAILABLE']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;

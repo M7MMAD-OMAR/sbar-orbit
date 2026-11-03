@@ -47,6 +47,9 @@ async function thrownCodes(): Promise<Set<string>> {
  */
 const listedButNeverThrown = new Map<string, string>([
   ["APPLICATION_BUSY", "Raised by Python ApplicationLeaseConflict in native/session_worker.py and forwarded dynamically by NativeWorker.receive"],
+  ["CAPTURE_UNAVAILABLE", "Raised by Python CaptureUnavailable and mapped in native/session_worker.py, forwarded dynamically by NativeWorker.receive"],
+  ["CAPTURE_DEADLINE_EXCEEDED", "Raised by Python CaptureDeadlineExceeded and mapped in native/session_worker.py, forwarded dynamically by NativeWorker.receive"],
+  ["CAPTURE_GEOMETRY_CHANGED", "Raised by Python CaptureGeometryChanged and mapped in native/session_worker.py, forwarded dynamically by NativeWorker.receive"],
 ]);
 
 /**
@@ -82,14 +85,14 @@ test("a thrown ceiling or native lease conflict is recorded under its own name r
   const root = await mkdtemp(join(tmpdir(), "orbit-diag-codes-"));
   const diagnostics = new Diagnostics(root);
   const recorded: string[] = [];
-  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY"]) {
+  for (const code of ["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY", "CAPTURE_UNAVAILABLE", "CAPTURE_DEADLINE_EXCEEDED", "CAPTURE_GEOMETRY_CHANGED"]) {
     try {
       await diagnostics.run({ method: "session.act", params: {} }, async () => { throw new OrbitError(code, "ceiling"); });
     } catch { /* the throw is the point */ }
   }
   const report = await diagnostics.report() as { events?: { code?: string }[] };
   for (const event of report.events ?? []) if (event.code) recorded.push(event.code);
-  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY"]);
+  expect(recorded).toEqual(["LIMIT_REACHED", "RESOURCE_EXHAUSTED", "RESOURCE_BOUNDARY_LOST", "POLICY_DENIED", "APPLICATION_BUSY", "CAPTURE_UNAVAILABLE", "CAPTURE_DEADLINE_EXCEEDED", "CAPTURE_GEOMETRY_CHANGED"]);
   // And the negative: a code that is genuinely not Orbit's still falls back, so the allowlist is
   // doing filtering rather than passing everything through.
   const fallback = new Diagnostics(await mkdtemp(join(tmpdir(), "orbit-diag-fallback-")));

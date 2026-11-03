@@ -24,6 +24,76 @@ actions. Reuse the existing requestId with unchanged arguments to retrieve the
 in-session cached outcome; inspect actual state after uncertainty or a broker
 restart. See the [execution plan](efficiency-plan.md#retry-and-idempotency).
 
+### Broker diagnostic code catalogue
+
+The current tested catalogue is below. Additional fixed Python-native outcomes are
+listed after the capture table. Names are compatibility/diagnostic identifiers,
+not authorization, application-category restrictions or retry permissions.
+
+```text
+APPLICATION_BUSY BACKEND_ERROR BACKEND_FAILED BROKER_ERROR BROKER_UNAVAILABLE
+CAPTURE_DEADLINE_EXCEEDED CAPTURE_GEOMETRY_CHANGED CAPTURE_UNAVAILABLE
+CONFIG_REQUIRED CONVERSATION_REQUIRED DEADLINE_EXCEEDED INVALID_REQUEST LIMIT_REACHED
+NATIVE_INCOMPATIBLE NATIVE_STALE NOT_PAUSED ORBIT_DISABLED OUTPUT_UNAVAILABLE PAUSED
+POLICY_CONFIRMATION_REQUIRED POLICY_DENIED PRESENTATION_NOT_READY PRESENTATION_UNCONFIRMED
+PROFILE_BUSY REQUEST_CONFLICT RESOURCE_BOUNDARY_LOST RESOURCE_EXHAUSTED
+RESOURCE_LIMIT_REQUIRED RESOURCE_STATUS_UNAVAILABLE SESSION_CLOSED SESSION_NOT_FOUND
+SESSION_NOT_OWNED SESSION_OPEN SETTINGS_REFUSED SOCKET_UNPROTECTED TIMEOUT
+UNSUPPORTED USAGE_STATE_INVALID
+```
+
+The source completeness tests compare the diagnostic registry with actual runtime
+producers, including explicit Python-worker exceptions. Unknown external codes
+are recorded conservatively as `BACKEND_ERROR`; they never imply safe replay.
+
+### Native capture codes
+
+| Code | What it establishes | Safe next step |
+| --- | --- | --- |
+| `CAPTURE_UNAVAILABLE` | The bounded capture could not return a usable image. Empty stderr or a nonzero child exit does not identify visibility, geometry or an application cause. | Inspect the same current target with an authorized read; do not replay preceding input. |
+| `CAPTURE_DEADLINE_EXCEEDED` | The shared observation/capture deadline expired or no usable frame could finish within it. | Inspect state and remaining work; do not extend a mutation by repeating its request with a new identity. |
+| `CAPTURE_GEOMETRY_CHANGED` | The exact target size or qualified crop geometry changed across a read boundary. Text-query size changes refuse immediately; image resampling remains bounded. | Obtain current geometry/observation; never claim the old screenshot is fresh. |
+
+These capture errors default to unknown delivery and unsafe replay. Batch input
+receipts are independent and remain intact. Existing same-target read resampling
+is limited to 3 positively observed size/crop mismatches under one absolute deadline;
+nonzero exit, unavailable data and timeout are not automatically retried. Without
+an explicit settled timeout, the native observation budget is 10 seconds. Child
+kill/reap cleanup has a separate reserve of at most 3 seconds. Cold/warm tree
+queries consume the remaining observation budget rather than restarting it.
+Cooperative checks cannot forcibly preempt every native or filesystem syscall.
+
+Production observation returns a deadline error rather than accepting an older
+last settle frame after the shared budget expires. This tightens the earlier
+implementation that could return an unsettled frame after its settle timer.
+Successful frames retain their actual `capturedAt` and explicit settle metadata;
+`changed:false` is not proof that input had an application effect. A failed capture
+is never replaced by an older image labeled final or fresh. Mixed capture/cleanup
+failures retain aggregate uncertainty rather than pretending a clean typed completion.
+
+Other fixed native-worker outcomes include `TARGET_CLOSED`, `TEXT_UNSUPPORTED`,
+`OPENING_UNCERTAIN`, `PRESENTATION_NOT_READY`, `OWNER_BUSY`, `APPLICATION_BUSY`,
+`NATIVE_INCOMPATIBLE`, `NATIVE_STALE`, `SESSION_CLOSED`, `APPROVAL_REQUIRED` and
+`NATIVE_FAILED`. A code alone never authorizes replay or proves non-delivery.
+
+### Opening outcome qualification
+
+Opening responses add `openingOutcome` without changing original identity, focus,
+placement or launch success rules. `process.launchProcessPid` names the recorded
+registration-launch-scope helper, not proof of the application executable PID.
+`windowPid` is separate. `relation` is `same`, `descendant` or `unknown`, and only
+an ancestry-proven attribution branch can report the first two. Activation token,
+launch scope and registered D-Bus evidence do not imply forwarding; `forwarded`
+remains `unknown` without stronger evidence.
+
+`geometry` reports requested size, the fitted placement request, sampled actual
+size, comparison/difference with a 2-pixel tolerance and `sampledAtMs`. The clock
+is local wall time at receipt of an existing compositor response, not a native
+compositor event timestamp. `stability`, minimum-size enforcement, difference
+cause and future geometry are unproven; an early matched size may change later.
+Malformed or missing samples remain unknown. A candidate with matching dimensions
+is still only a candidate, not a verified opening or permission to move it.
+
 ## Current authority at queued dispatch
 
 Admission still refuses denied/confirmation-required actions synchronously. Accepted
@@ -35,6 +105,16 @@ Only actual dispatch emits an allow journal record; request deduplication is unc
 Already accepted single actions still drain during pause, while remaining batch
 steps stop. These are broker-dispatch checks, not cancellation or atomic revocation
 of input/read requests already sent to the native worker or application.
+
+## Visibility qualification
+
+The legacy session/backend `visible:true` field marks the native desktop backend,
+not a fresh sample that the selected workspace is displayed or the window is
+unoccluded. In particular, a paused native session can still return that marker
+after the owner changes the displayed workspace. Use `orbit_monitors` and the
+exact current target workspace for qualified monitor metadata; even this is not
+pixel visibility or a continuous owner-state guarantee. Never force an owner
+workspace/focus/pointer change to make an acceptance test appear successful.
 
 ## Observation measurements
 

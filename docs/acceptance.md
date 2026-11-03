@@ -1,10 +1,11 @@
 # Native acceptance status
 
-Updated 27 October 2026. This is the maintained index of dated measurements, not a
+Updated 4 November 2026. This is the maintained index of dated measurements, not a
 claim that every operation works in every application or on every machine.
 
 | Evidence date | Measured scope | Record and limits |
 | --- | --- | --- |
+| 4 November 2026 | Hyprland 0.57.1 readiness repaired; original Calculator on visible workspace 1, native `1+2=3` verified by independent text, normal exact test closure and lease cleanup. Settled result capture failed, later workspace visibility changed and pointer preservation was not established | [Efficiency native acceptance](efficiency-native-acceptance-2026-11-04.md). Cold observation only; no warm comparison, end-to-end gain or semantic identity claim. |
 | 22 October 2026 | Original application opening, capture and exact cleanup matrix; real editor Save, Arabic input and shared clipboard Calculator workflows; external-agent and visible-indicator observations | [Native application report](native-acceptance-0.3.0.md). Individual failures and inconclusive owner-activity samples remain explicit. |
 | 26 October 2026 | Original Chrome local document and address selection replacement, modifier aliases and recovery after a rejected key; original Calculator result `19134` followed by exact normal closure | [Keyboard reliability investigation](native-input-reliability.md). No platform account or detection test; earlier selection-collapse cause remains unestablished. |
 | 26 October 2026 | Source and installation contracts on Linux, Windows and macOS; static English/Arabic website | [Exact 0.3.2 provider run](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/40376588771). These jobs do not control native desktop applications. |

@@ -1,5 +1,6 @@
 """Open a real owner application, preserving its normal profile and lifetime."""
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -61,8 +62,59 @@ def belongs_to(pid, root):
     return False
 
 
-def candidate_result(window, value, evidence, *, existing=False, reason=None):
-    return {"opened": False, "launchAcknowledged": True, "reusedExisting": existing,
+def _outcome_number(value):
+    try:
+        return type(value) in (int, float) and value > 0 and math.isfinite(value)
+    except (OverflowError, TypeError, ValueError):
+        return False
+
+
+def _outcome_size(value):
+    """Copy only measured numeric dimensions, never infer a missing or invalid size."""
+    if not isinstance(value, dict) or any(not _outcome_number(value.get(key)) for key in ("width", "height")):
+        return None
+    return {key: value[key] for key in ("width", "height")}
+
+
+def opening_outcome(window, requested, *, launcher_root=None, ancestry_proven=False,
+                    placement_request=None, sampled_at_ms=None):
+    """Describe one already sampled window, not application constraints or future stability.
+
+    ancestry_proven is supplied only by the successful belongs_to branch at attribution.
+    The receipt root may exec a launcher or systemd-run; it is not an executable identity.
+    Token attribution and scope membership do not establish forwarding or process ancestry.
+    """
+    root_valid = (isinstance(launcher_root, (list, tuple)) and len(launcher_root) == 2
+                  and all(type(value) is int and value > 0 for value in launcher_root))
+    window_pid = window.get("pid")
+    pid_valid = type(window_pid) is int and window_pid > 0
+    proven = ancestry_proven is True and root_valid and pid_valid
+    relation = ("same" if window_pid == launcher_root[0] else "descendant") if proven else "unknown"
+    size = window.get("size")
+    actual = _outcome_size({"width": size[0], "height": size[1]}) if isinstance(size, list) and len(size) == 2 else None
+    requested = _outcome_size(requested)
+    difference = ({key: actual[key] - requested[key] for key in ("width", "height")}
+                  if actual is not None and requested is not None else None)
+    comparison = ("matched" if all(abs(value) <= 2 for value in difference.values()) else "mismatched") if difference is not None else "unknown"
+    timestamp = sampled_at_ms if type(sampled_at_ms) is int and sampled_at_ms >= 0 else None
+    return {
+        "process": {"launchProcessPid": launcher_root[0] if root_valid else None,
+                    "launchProcessKind": "registration-launch-scope-helper", "windowPid": window_pid if pid_valid else None,
+                    "relation": relation, "evidence": "live-launch-ancestry-at-attribution" if proven else "unknown",
+                    "forwarded": "unknown"},
+        "geometry": {"requested": requested, "placementRequest": _outcome_size(placement_request),
+                     "actual": actual, "comparison": comparison, "difference": difference, "tolerancePx": 2,
+                     "sampledAtMs": timestamp, "clock": "local-wall-at-compositor-reply",
+                     "source": "compositor-window-list", "stability": "not-established",
+                     "minimumSizeEnforced": "unknown", "differenceCause": "unknown", "futureGeometry": "unknown"},
+    }
+
+
+def candidate_result(window, value, evidence, *, existing=False, reason=None, launcher_root=None,
+                     ancestry_proven=False, placement_request=None, sampled_at_ms=None):
+    return {"openingOutcome": opening_outcome(window, value["window"], launcher_root=launcher_root,
+                ancestry_proven=ancestry_proven, placement_request=placement_request, sampled_at_ms=sampled_at_ms),
+        "opened": False, "launchAcknowledged": True, "reusedExisting": existing,
         "identityEvidence": evidence, "attribution": "candidate-only",
         "requestedWorkspace": value["workspace"], "requestedWindow": value["window"],
         "candidate": {"address": window["address"], "stableId": window["stableId"], "pid": window["pid"],
@@ -155,13 +207,16 @@ def open_application(session, value):
                         # placement mutation after an uncertain acknowledgement.
                         time.sleep(0.05)
                         continue
-                    current = json.loads(session.transport._exchange("j/clients"))
+                    current_reply = session.transport._exchange("j/clients")
+                    sampled_at_ms = time.time_ns() // 1_000_000
+                    current = json.loads(current_reply)
                     existing_targets = [window for window in current
                         if (window.get("address"), window.get("stableId")) in activated & baseline]
                     if len(existing_targets) > 1:
                         raise SessionError("Activation selected multiple existing windows; inspect candidates")
                     if existing_targets:
-                        return candidate_result(existing_targets[0], value, "activation-token", existing=True)
+                        return candidate_result(existing_targets[0], value, "activation-token", existing=True,
+                                                launcher_root=root, placement_request=fitted, sampled_at_ms=sampled_at_ms)
                     evidence = {}
                     matches = []
                     for window in current:
@@ -196,7 +251,8 @@ def open_application(session, value):
                                 continue
                             # A shared activation process can also map owner-created
                             # windows. Process identity is not a launch correlation.
-                            return candidate_result(window, value, "registered-dbus-client")
+                            return candidate_result(window, value, "registered-dbus-client", launcher_root=root,
+                                                    placement_request=fitted, sampled_at_ms=sampled_at_ms)
                         identity = (window["address"], window["stableId"])
                         first_seen = map_first_seen.setdefault(identity, time.perf_counter())
                         focused = (current_focus.get("address") == window["address"]
@@ -210,7 +266,9 @@ def open_application(session, value):
                         if focused and not map_focus:
                             if identity in positioned:
                                 raise OpeningDeliveryUncertain("Opening delivery is uncertain: owner input reached the candidate after post-map placement. Inspect its current state without relaunching or refocusing")
-                            return candidate_result(window, value, evidence[window["address"]], reason="owner-input")
+                            return candidate_result(window, value, evidence[window["address"]], reason="owner-input",
+                                                    launcher_root=root, ancestry_proven=evidence[window["address"]] == "launch-ancestry",
+                                                    placement_request=fitted, sampled_at_ms=sampled_at_ms)
                         if evidence[window["address"]] != "launch-ancestry" and identity not in positioned:
                             place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
                             positioned.add(identity)
@@ -230,7 +288,10 @@ def open_application(session, value):
                         adjustment = {} if (abs(measured["width"] - actual_fit["width"]) <= 2 and abs(measured["height"] - actual_fit["height"]) <= 2) else {
                             "windowAdjustment": {"reason": "observed-size-difference", "requested": value["window"],
                                                  "actual": {"width": measured["width"], "height": measured["height"]}}}
-                        return {**adjustment, "identityEvidence": evidence[window["address"]], "opened": True, "windowProtocol": "xwayland" if window.get("xwayland") else "wayland", "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
+                        return {**adjustment, "openingOutcome": opening_outcome(window, value["window"], launcher_root=root,
+                                    ancestry_proven=evidence[window["address"]] == "launch-ancestry",
+                                    placement_request=fitted, sampled_at_ms=sampled_at_ms),
+                                "identityEvidence": evidence[window["address"]], "opened": True, "windowProtocol": "xwayland" if window.get("xwayland") else "wayland", "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
                                 "stableId": window["stableId"], "pid": window["pid"],
                                 "title": str(window.get("title", ""))[:160], "applicationLifetime": "owner",
                                 "handoff": "explicit native handoff with a compatible prepared plugin"}
