@@ -2,6 +2,31 @@ import { expect, test } from 'bun:test';
 import { renderToString } from 'react-dom/server';
 import App from '../src/App';
 import { arabic } from '../src/locale';
+import { release } from '../src/release';
+import { version } from '../../package.json';
+
+test('release links use the runtime package version in both prerendered languages', () => {
+  const repository = 'https://github.com/M7MMAD-OMAR/sbar-orbit';
+  const downloads = `${repository}/releases/download/v${version}`;
+  expect(release.version).toBe(version);
+  expect(release.url).toBe(`${repository}/releases/tag/v${version}`);
+  expect(release.source).toBe(`${downloads}/sbar-orbit-${version}-source.tar.gz`);
+  expect(release.package).toBe(`${downloads}/sbar-orbit-${version}.tgz`);
+  expect(release.sourceChecksum).toBe(`${release.source}.sha256`);
+  expect(release.packageChecksum).toBe(`${release.package}.sha256`);
+  for (const locale of ['en', 'ar'] as const) {
+    const html = renderToString(<App locale={locale} />);
+    for (const url of [release.url, release.source, release.sourceChecksum, release.package, release.packageChecksum])
+      expect(html).toContain(`href="${url}"`);
+    expect(html).toContain(`<bdi dir="ltr">${version}</bdi>`);
+    expect(html).not.toContain('/releases/latest');
+    expect(html).not.toContain('.exe');
+    expect(html).not.toContain('.msi');
+    expect(html).toContain(locale === 'ar' ? 'نسخة التطوير' : 'Development checkout');
+    expect(html).toContain(locale === 'ar' ? 'مع انتظار 72 ساعة' : '72-hour release delay');
+    expect(html).toContain(locale === 'ar' ? 'لا توجد آلية فتح على Windows' : 'Windows, macOS and other Linux compositors have no opening adapter.');
+  }
+});
 
 test('every copy lookup has an Arabic rewrite', async () => {
   const source = await Bun.file(new URL('../src/App.tsx', import.meta.url)).text();

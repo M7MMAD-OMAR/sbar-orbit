@@ -25,6 +25,18 @@ These checks cover source types, localization and generated HTML. They do not me
 
 ## Publish
 
+Release metadata in `src/release.ts` imports the runtime version from the root
+`package.json`. The private website package version is independent. Both prerendered
+languages link the exact GitHub version tag, source archive, installable `.tgz` and
+their SHA-256 files. Development checkout commands remain separately labelled.
+The website does not fetch a moving latest version at runtime.
+
+Before deploying a version bump, publish and verify all 4 linked release assets
+from that exact reviewed source revision. Do not deploy dead future-version links.
+There is no Windows executable installer link or new native Windows support claim.
+Registry publication and managed Linux opt-in are separate from website deployment;
+a new registry version still waits 72 hours before automatic-update eligibility.
+
 ```sh
 bun run scripts/limited.ts bun run --cwd website deploy:check
 WRANGLER_SEND_METRICS=false ESBUILD_WORKER_THREADS=0 NODE_OPTIONS=--max-old-space-size=768 bun run scripts/limited.ts bun run --cwd website deploy

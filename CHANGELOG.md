@@ -4,6 +4,22 @@ Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a pr
 
 ## Unreleased
 
+## 0.4.2 (4 November 2026)
+
+Release preparation: source changes and scoped native observations, not a new platform-support claim.
+Conservative delivery/retry metadata and dispatch-time policy checks prevent stale queued authority
+from restoring removed permissions. UTF-8 bounded observations report honest completeness; a
+supervised read-only accessibility helper is opt-in, with the cold default unchanged. Capture errors
+retain typed unavailable/deadline outcomes under one observation budget, without replaying input.
+Native observations acknowledge window metadata inline; opening outcomes distinguish sampled
+geometry and attributed helper ancestry from unknown forwarding or size constraints.
+
+Internal retained-object and exact identity comparison primitives remain unintegrated. No public
+refs, semantic writes, new Windows/macOS native adapter or measured 80% efficiency gain is claimed.
+The content-free benchmark evaluator compares compatible measured task records; its fixtures are
+not performance results. Website release links derive from the root package version and retain
+separate development checkout instructions and platform limits. See [the release notes](docs/release-0.4.2.md).
+
 `doctor` now reports each agent host's registered adapter fingerprint (Claude, Codex, Hermes) against the running
 version, read only, with the `install --connect` command that refreshes a stale registration. A host keeps the tool
 list it loaded, so a new task or an MCP reload in that host is still needed. New `docs/windows-signing.md` records

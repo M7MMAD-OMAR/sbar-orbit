@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { requireResourceBudget } from "../src/resource-budget";
 import { readVerifiedSource } from "./source-manifest";
+import { immutableTarArguments, packageRefArguments, readCommittedSource } from "./package-source";
 
+const arguments_ = packageRefArguments(process.argv.slice(2));
 await requireResourceBudget();
 const project = resolve(import.meta.dir, "..");
 const git = async (...args: string[]) => {
@@ -14,10 +16,14 @@ const git = async (...args: string[]) => {
   return { bytes, code: await child.exited };
 };
 const top = await git("rev-parse", "--show-toplevel");
-const fromIndex = top.code === 0 && top.bytes.toString().trim() === project;
+const committed = arguments_.ref === undefined ? undefined : await readCommittedSource(project, arguments_.ref);
+const fromIndex = committed === undefined && top.code === 0 && top.bytes.toString().trim() === project;
 let paths: string[];
 const verifiedFiles = new Map<string, { bytes: Buffer; executable: boolean }>();
-if (fromIndex) {
+if (committed) {
+  for (const file of committed.files) verifiedFiles.set(file.path, file);
+  paths = committed.files.map(file => file.path);
+} else if (fromIndex) {
   const audit = Bun.spawn([process.execPath, join(project, "scripts/public-audit.ts")], { cwd: project, stdout: "inherit", stderr: "inherit" });
   if (await audit.exited) throw new Error("Public index audit failed");
   paths = (await git("ls-files", "--cached", "-z")).bytes.toString().split("\0").filter(Boolean);
@@ -82,12 +88,15 @@ for (const path of [...new Set(paths)].sort()) {
   // not have one. Without this a repackage on Windows would silently ship a launcher with mode 0644.
   manifest.push({ path, sha256: createHash("sha256").update(bytes).digest("hex"), executable });
 }
-await writeFile(join(root, "SOURCE-MANIFEST.json"), JSON.stringify({ version: pkg.version, files: manifest }, null, 2) + "\n");
+await writeFile(join(root, "SOURCE-MANIFEST.json"), JSON.stringify({ version: pkg.version, ...(committed ? { sourceCommit: committed.sourceCommit } : {}), files: manifest }, null, 2) + "\n");
 const output = join(project, "output/packages"); await mkdir(output, { recursive: true });
 const archive = join(output, `${name}.tar.gz`);
 if (await Bun.file(archive).exists()) throw new Error("Archive already exists; use a new version instead of replacing it");
-const tar = Bun.spawn(["/usr/bin/tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-czf", archive, "-C", staging, name], { stdout: "inherit", stderr: "inherit" });
+const archiveArgs = committed ? await immutableTarArguments("/usr/bin/tar", archive, staging, name)
+  : ["/usr/bin/tar", "--sort=name", "--mtime=@0", "--owner=0", "--group=0", "--numeric-owner", "-czf", archive, "-C", staging, name];
+const tar = Bun.spawn(archiveArgs, { stdout: "inherit", stderr: "inherit",
+  ...(committed ? { env: { ...process.env, TAR_OPTIONS: undefined, GZIP: undefined } } : {}) });
 if (await tar.exited) throw new Error("Source packaging failed");
 const sha256 = createHash("sha256").update(await readFile(archive)).digest("hex");
 await writeFile(`${archive}.sha256`, `${sha256}  ${name}.tar.gz\n`);
-console.log(JSON.stringify({ archive, sha256, files: manifest.length, source: fromIndex ? "reviewed-git-index" : "source-manifest", includesDependencies: false, includesNativeRuntime: false }));
+console.log(JSON.stringify({ archive, sha256, files: manifest.length, source: committed ? "git-commit" : fromIndex ? "reviewed-git-index" : "source-manifest", ...(committed ? { sourceCommit: committed.sourceCommit } : {}), includesDependencies: false, includesNativeRuntime: false }));
