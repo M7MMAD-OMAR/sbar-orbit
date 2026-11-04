@@ -214,7 +214,7 @@ try {
       if (!arg && !process.env.ORBIT_LAUNCHER) throw new OrbitError("INVALID_REQUEST", "Use autostart enable PATH\\TO\\sbar-orbit.cmd");
       console.log(JSON.stringify(await enableLogonTask(arg ?? process.env.ORBIT_LAUNCHER!), null, 2));
     }
-    else if (verb === "disable") console.log(JSON.stringify(await disableLogonTask(), null, 2));
+    else if (verb === "disable") console.log(JSON.stringify(await disableLogonTask({ launcher: arg ?? process.env.ORBIT_LAUNCHER }), null, 2));
     else throw new OrbitError("INVALID_REQUEST", "Use autostart enable PATH|disable|status");
   } else if (command === "clean") {
     // Profiles that outlived their broker. No socket is needed; a live broker's directory is kept.

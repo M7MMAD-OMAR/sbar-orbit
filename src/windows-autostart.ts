@@ -64,6 +64,8 @@ import { OrbitError } from "./errors";
 import { boundedCommand } from "./lifecycle-command";
 
 /** The task's name, and the marker that proves Orbit wrote a task before anything removes one. */
+import { qualifiedTaskPolicyMatches } from "./windows-task-policy";
+
 export const TASK_NAME = "SbarOrbitBroker";
 export const TASK_DESCRIPTION = "Sbar Orbit local broker, started when you log in";
 
@@ -245,6 +247,12 @@ export async function logonTaskStatus(requestedName?: string): Promise<LogonTask
  * Scheduler store whatever this function was told, so a test that skips registration is the only way
  * to exercise the XML without changing what the machine running the suite starts at logon.
  */
+async function legacyTaskAbsent(taskName: string) {
+  if (!/^[A-Za-z0-9._-]{1,240}$/.test(taskName)) return false;
+  const result = await boundedCommand(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';$tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskPath -eq [string][char]92 -and $_.TaskName -eq '" + taskName + "'});if($tasks.Count -eq 0){'ABSENT'}else{'PRESENT'}"], 5000);
+  return result.ok && result.output.trim() === "ABSENT";
+}
+
 export async function enableLogonTask(launcher: string, options: { register?: boolean; sid?: string; environment?: Record<string, string>; startNow?: boolean; taskName?: string } = {}) {
   if (process.platform !== "win32" && options.register !== false)
     throw new OrbitError("UNSUPPORTED", "A Windows logon task can only be registered on Windows");
@@ -253,12 +261,15 @@ export async function enableLogonTask(launcher: string, options: { register?: bo
   const file = Bun.file(launcher);
   if (!await file.exists()) throw new OrbitError("CONFIG_REQUIRED", "Launcher path is not a regular file");
   const register = options.register !== false;
-  if (register) {
-    const existing = await logonTaskStatus(taskName);
-    if (existing.taskPresent && !existing.orbitOwned)
-      throw new OrbitError("CONFIG_REQUIRED", `A scheduled task named ${taskName} already exists and Orbit did not write it; remove it deliberately`);
-  }
   const contents = brokerTaskXml(launcher, sid, options.environment ?? {});
+  let replacingQualified = false;
+  if (register) {
+    const actual = await schtasks("/Query", "/TN", taskName, "/XML");
+    if (actual.ok) {
+      if (!await qualifiedTaskPolicyMatches(actual.output, contents, sid, taskName)) throw new OrbitError("CONFIG_REQUIRED", "Existing logon task does not match the exact live account policy");
+      replacingQualified = true;
+    } else if (!await legacyTaskAbsent(taskName)) throw new OrbitError("CONFIG_REQUIRED", "Logon task absence is unproven; registration was refused");
+  }
   // UTF-16LE with a BOM, because the declaration says UTF-16 and schtasks believes it. Written with
   // a random name in the temp directory and removed afterwards: the XML is an argument to schtasks,
   // not state, and leaving it behind would leave a file describing the person's autostart lying
@@ -267,7 +278,7 @@ export async function enableLogonTask(launcher: string, options: { register?: bo
   await writeFile(path, Buffer.from(`\ufeff${contents}`, "utf16le"));
   try {
     if (!register) return { wrote: [path], registered: false, started: false, taskName, xml: contents, status: await logonTaskStatus(taskName) };
-    const created = await schtasks("/Create", "/TN", taskName, "/XML", path, "/F");
+    const created = await schtasks("/Create", "/TN", taskName, "/XML", path, ...(replacingQualified ? ["/F"] : []));
     // Registration alone starts nothing. The installer requests an on-demand run
     // in the same interactive account, then verifies the broker's actual socket.
     const started = created.ok && options.startNow
@@ -287,14 +298,20 @@ export async function enableLogonTask(launcher: string, options: { register?: bo
  * Linux uninstall refuses a unit it did not write and the macOS one refuses a plist without its
  * label. Removing nothing and saying so is the right answer for a machine that has nothing of ours.
  */
-export async function disableLogonTask(options: { register?: boolean; taskName?: string } = {}) {
+export async function disableLogonTask(options: { register?: boolean; taskName?: string; launcher?: string; environment?: Record<string, string> } = {}) {
   const taskName = options.taskName ?? (process.platform === "win32" ? taskNameForUser(await currentUserSid()) : TASK_NAME);
   const register = options.register !== false;
   if (!register) return { removed: [], status: await logonTaskStatus(taskName) };
   const before = await logonTaskStatus(taskName);
-  if (!before.taskPresent) return { removed: [], status: before };
-  if (!before.orbitOwned)
-    throw new OrbitError("CONFIG_REQUIRED", `The scheduled task ${taskName} was not written by Orbit; remove it deliberately`);
+  const queried = await schtasks("/Query", "/TN", taskName, "/XML");
+  if (!queried.ok) {
+    if (await legacyTaskAbsent(taskName)) return { removed: [], status: before };
+    throw new OrbitError("CONFIG_REQUIRED", "Logon task absence is unproven; removal was refused");
+  }
+  const launcher = options.launcher ?? process.env.ORBIT_LAUNCHER;
+  if (!launcher) throw new OrbitError("CONFIG_REQUIRED", "Logon task removal requires its explicit launcher context");
+  const sid = await currentUserSid();
+  if (!await qualifiedTaskPolicyMatches(queried.output, brokerTaskXml(launcher, sid, options.environment ?? {}), sid, taskName)) throw new OrbitError("CONFIG_REQUIRED", "Logon task removal requires the exact live account policy");
   const deleted = await schtasks("/Delete", "/TN", taskName, "/F");
   return { removed: deleted.ok ? [taskName] : [], output: deleted.output, status: await logonTaskStatus(taskName) };
 }

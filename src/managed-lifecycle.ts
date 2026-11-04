@@ -6,6 +6,7 @@ import { BROKER_LABEL, brokerAgentPlist, launchAgentPath, launchAgentsDirectory 
 import { brokerTaskXml, taskActionMatches, currentUserSid, taskNameForUser, TASK_DESCRIPTION } from "./windows-autostart";
 import { admitInstalledStartup } from "./installed-startup-diagnostic";
 import { realpathSync } from "node:fs";
+import { taskPolicyMatches, qualifiedTaskPolicyMatches } from "./windows-task-policy";
 import { boundedCommand, type CommandResult, type CommandRunner } from "./lifecycle-command";
 export { boundedCommand, type CommandResult, type CommandRunner } from "./lifecycle-command";
 
@@ -165,16 +166,26 @@ export function taskOwnershipDiagnostics(xml: string, launcher: string, sid: str
 }
 
 export function taskOwned(xml: string, launcher: string, sid: string, updater = false, desktopUpdater = false) {
-  if (desktopUpdater && (!updater || value(xml, "Description") !== NATIVE_UPDATE_DESCRIPTION)) return false;
+  const expected = expectedOwnedTask(xml, launcher, sid, updater, desktopUpdater);
+  return expected !== null && taskPolicyMatches(xml, expected, sid);
+}
+/** Shared live qualification for every managed control operation, not a startup bypass. */
+export async function taskOwnedLive(xml: string, launcher: string, sid: string, updater = false, desktopUpdater = false) {
+  const expected = expectedOwnedTask(xml, launcher, sid, updater, desktopUpdater);
+  return expected !== null && await qualifiedTaskPolicyMatches(xml, expected, sid, taskNameForUser(sid) + (updater ? "-Update" : ""));
+}
+
+function expectedOwnedTask(xml: string, launcher: string, sid: string, updater = false, desktopUpdater = false) {
+  if (desktopUpdater && (!updater || value(xml, "Description") !== NATIVE_UPDATE_DESCRIPTION)) return null;
   if (updater && value(xml, "Description") === NATIVE_UPDATE_DESCRIPTION) {
     const command = value(xml, "Command"), directory = win32.dirname(win32.dirname(win32.dirname(command)));
     const runtime = win32.join(directory, "runtime/bun.exe");
     try {
       const action = nativeUpdateAction(launcher, runtime);
-      if (command !== action.command || value(xml, "Arguments") !== action.arguments) return false;
+      if (command !== action.command || value(xml, "Arguments") !== action.arguments) return null;
       const expected = windowsDesktopUpdateTaskXml(launcher, sid, { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: runtime });
-      return canonicalTaskOwned(xml, expected, sid, NATIVE_UPDATE_DESCRIPTION);
-    } catch { return false; }
+      return expected;
+    } catch { return null; }
   }
   // Decode a single canonical action. Never inherit values from the updater.
   const argumentsText = value(xml, "Arguments");
@@ -184,49 +195,27 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
   const diagnostics = new Set(["GITHUB_ACTIONS", "ORBIT_TEST_NATIVE", "ORBIT_TEST_INSTALLED_STARTUP_ROOT", "ORBIT_TEST_INSTALLED_STARTUP_BINDING"]);
   while (remaining.startsWith('set "')) {
     const match = /^set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /.exec(remaining);
-    if (!match || !match[1] || match[2] === undefined || recorded[match[1]] !== undefined) return false;
+    if (!match || !match[1] || match[2] === undefined || recorded[match[1]] !== undefined) return null;
     const key = match[1], datum = match[2];
-    if (!paths.has(key) && !diagnostics.has(key) && key !== "ORBIT_MANAGED_ENV_SCHEMA") return false;
-    if (key === "ORBIT_MANAGED_ENV_SCHEMA" && datum !== "1") return false;
-    if (paths.has(key) && (!win32.isAbsolute(datum) || !datum)) return false;
+    if (!paths.has(key) && !diagnostics.has(key) && key !== "ORBIT_MANAGED_ENV_SCHEMA") return null;
+    if (key === "ORBIT_MANAGED_ENV_SCHEMA" && datum !== "1") return null;
+    if (paths.has(key) && (!win32.isAbsolute(datum) || !datum)) return null;
     recorded[key] = datum;
     remaining = remaining.slice(match[0].length);
   }
   if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || !recorded.ORBIT_BUN
-      || (remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`)) return false;
+      || (remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`)) return null;
   if ([...diagnostics].some(key => recorded[key] !== undefined)) {
     const root = recorded.ORBIT_TEST_INSTALLED_STARTUP_ROOT;
-    if (!root || [...diagnostics].some(key => recorded[key] === undefined)) return false;
-    if (admitInstalledStartup(recorded, { platform: "win32", runtime: join(root, "package/src/installed-startup-diagnostic.ts") }) !== root) return false;
+    if (!root || [...diagnostics].some(key => recorded[key] === undefined)) return null;
+    if (admitInstalledStartup(recorded, { platform: "win32", runtime: join(root, "package/src/installed-startup-diagnostic.ts") }) !== root) return null;
     try {
       const prefix = realpathSync(join(root, "prefix"));
-      if (!realpathSync(launcher).startsWith(prefix + win32.sep)) return false;
-    } catch { return false; }
+      if (!realpathSync(launcher).startsWith(prefix + win32.sep)) return null;
+    } catch { return null; }
   }
   const expected = updater ? updateTaskXml(launcher, sid, recorded, true) : brokerTaskXml(launcher, sid, recorded, true);
-  return canonicalTaskOwned(xml, expected, sid, updater ? UPDATE_DESCRIPTION : TASK_DESCRIPTION);
-}
-
-function canonicalTaskOwned(xml: string, expected: string, sid: string, description: string) {
-  const users = [...xml.matchAll(/<UserId>([^<]*)<\/UserId>/g)].map(match => decode(match[1] ?? ""));
-  return value(xml, "Description") === description
-    && users.length > 0 && users.every(user => user === sid)
-    && value(xml, "LogonType") === "InteractiveToken" && value(xml, "RunLevel") === "LeastPrivilege"
-    && taskActionMatches(xml, expected)
-    && ["Description", "LogonType", "RunLevel", "Command", "Arguments", "Settings", "Triggers", "Principals", "MultipleInstancesPolicy", "AllowHardTerminate", "AllowStartOnDemand", "ExecutionTimeLimit", "RunOnlyIfNetworkAvailable", "StartWhenAvailable"].every(key => (xml.match(new RegExp(`<${key}(?:\\s[^>]*)?>`, "g"))?.length ?? 0) === 1)
-    && (xml.match(/<Exec>/g)?.length ?? 0) === 1
-    && (xml.match(/<Principal\b/g)?.length ?? 0) === 1
-    && (xml.match(/<Actions\b/g)?.length ?? 0) === 1
-    && /<Task version="1.4" xmlns="http:\/\/schemas.microsoft.com\/windows\/2004\/02\/mit\/task">/.test(xml)
-    && /<Actions Context="Author">/.test(xml)
-    && /<Actions Context="Author">([\s\S]*?)<\/Actions>/.exec(xml)?.[1]?.replace(/>\s+</g, "><").trim() === /<Actions Context="Author">([\s\S]*?)<\/Actions>/.exec(expected)?.[1]?.replace(/>\s+</g, "><").trim()
-    && ["Triggers", "Principals", "Settings"].every(section => {
-      const extract = (text: string) => new RegExp(`<${section}>([\\s\\S]*?)</${section}>`).exec(text)?.[1]?.replace(/>\s+</g, "><").trim();
-      return extract(xml) === extract(expected);
-    })
-    && ["MultipleInstancesPolicy", "AllowHardTerminate", "Enabled", "AllowStartOnDemand", "ExecutionTimeLimit", "RunOnlyIfNetworkAvailable", "StartWhenAvailable"]
-      .every(key => value(xml, key) === value(expected, key));
-
+  return expected;
 }
 
 /** Uses only this account's installed mechanism. Tests may supply a command recorder. */
@@ -308,7 +297,7 @@ export function managedLifecycle(options: {
     } else if (platform === "win32") {
       const sid = await taskSid();
       const exported = await run(["schtasks.exe", "/Query", "/TN", taskNameForUser(sid), "/XML"]);
-      if (!exported.ok || !taskOwned(exported.output, options.launcher, sid))
+      if (!exported.ok || !await taskOwnedLive(exported.output, options.launcher, sid))
         return refused("Installed account task identity is unknown or differs");
       pendingWindowsArguments = value(exported.output, "Arguments");
       recorded = Object.fromEntries([...pendingWindowsArguments.matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)]
@@ -362,7 +351,7 @@ export function managedLifecycle(options: {
     if (platform === "win32") {
       const sid = await taskSid(), task = taskNameForUser(sid);
       const registered = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
-      if (!registered.ok || !taskOwned(registered.output, options.launcher, sid))
+      if (!registered.ok || !await taskOwnedLive(registered.output, options.launcher, sid))
         return refused("Installed interactive-logon task ownership or launcher differs; reinstall the managed task");
       if (options.windowsDesktopRoot && (!admittedWindowsArguments || value(registered.output, "Arguments") !== admittedWindowsArguments))
         return unconfirmed(refused("Account task changed after exact installation admission"));
@@ -377,7 +366,7 @@ export function managedLifecycle(options: {
           if (!start) return { ok: true, output: "Owned interactive task exit confirmed" };
           if (options.windowsDesktopRoot) {
             const again = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
-            if (!again.ok || !taskOwned(again.output, options.launcher, sid) || value(again.output, "Arguments") !== admittedWindowsArguments)
+            if (!again.ok || !await taskOwnedLive(again.output, options.launcher, sid) || value(again.output, "Arguments") !== admittedWindowsArguments)
               return unconfirmed(refused("Account task changed while stopping"));
             const selected = await selectWindowsBootstrap(options.windowsDesktopRoot);
             const recorded = Object.fromEntries([...value(again.output, "Arguments").matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)].map(match => [match[1]!, match[2]!]));
@@ -388,7 +377,7 @@ export function managedLifecycle(options: {
               const changed = await run(["schtasks.exe", "/Create", "/TN", task, "/XML", xml, "/F"]);
               if (!changed.ok) return changed;
               const confirmed = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
-              if (!confirmed.ok || !taskOwned(confirmed.output, options.launcher, sid) || value(confirmed.output, "Arguments") !== value(contents, "Arguments"))
+              if (!confirmed.ok || !await taskOwnedLive(confirmed.output, options.launcher, sid) || value(confirmed.output, "Arguments") !== value(contents, "Arguments"))
                 return unconfirmed(refused("Retargeted account task was not acknowledged"));
               admittedWindowsArguments = value(confirmed.output, "Arguments");
             } finally { await rm(xml, { force: true }); }
@@ -455,7 +444,7 @@ export function managedLifecycle(options: {
           `@(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq '${task}').Count`]);
         if (!enumerated.ok || enumerated.output.trim() !== "0") return existing;
       }
-      if (existing.ok && !taskOwned(existing.output, options.launcher, sid, true, !!options.windowsDesktopRoot))
+      if (existing.ok && !await taskOwnedLive(existing.output, options.launcher, sid, true, !!options.windowsDesktopRoot))
         return refused("Update task ownership or configuration differs; inspect it before changing scheduling");
       if (!on) return existing.ok ? run(["schtasks.exe", "/Delete", "/TN", task, "/F"]) : { ok: true, output: "" };
       const path = join(dirname(options.launcher), `.orbit-update-${crypto.randomUUID()}.xml`);
@@ -463,7 +452,7 @@ export function managedLifecycle(options: {
         let contents = updateTaskXml(options.launcher, sid);
         if (options.windowsDesktopRoot) {
           const broker = await run(["schtasks.exe", "/Query", "/TN", taskNameForUser(sid), "/XML"]);
-          if (!broker.ok || !taskOwned(broker.output, options.launcher, sid)) return refused("Owned broker task is required for desktop update scheduling");
+          if (!broker.ok || !await taskOwnedLive(broker.output, options.launcher, sid)) return refused("Owned broker task is required for desktop update scheduling");
           const recorded = Object.fromEntries([...value(broker.output, "Arguments").matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)].map(match => [match[1]!, match[2]!]));
           const selected = await verifyWindowsCurrent(options.windowsDesktopRoot, { internalTransition: true });
           if (recorded.ORBIT_BUN !== selected.runtime) return refused("Updater runtime differs from the admitted current release");

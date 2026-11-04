@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "kind": "synthetic-observed-scheduler-normalization",
+  "sid": "S-1-5-21-1000",
+  "alias": "OWNED_SYNTHETIC_ACCOUNT",
+  "runLevel": 0,
+  "settings": {
+    "AllowHardTerminate": true,
+    "AllowStartOnDemand": true,
+    "Enabled": true,
+    "StartWhenAvailable": false,
+    "RunOnlyIfNetworkAvailable": false
+  }
+}

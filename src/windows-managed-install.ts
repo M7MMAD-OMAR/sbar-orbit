@@ -7,7 +7,7 @@ import { preparedIdentity, sealRelease, sameBrokerIdentity, type BrokerIdentity 
 import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
 import { withUpdateLock } from "./update-lock";
 import { brokerTaskXml, currentUserSid, taskNameForUser } from "./windows-autostart";
-import { boundedCommand, managedLifecycle, taskOwned, type CommandRunner, type ManagedLifecycle } from "./managed-lifecycle";
+import { boundedCommand, managedLifecycle, taskOwnedLive, type CommandRunner, type ManagedLifecycle } from "./managed-lifecycle";
 import { serviceSocketPath } from "./service";
 import { call } from "./ipc";
 import { DESKTOP_MANIFEST, DESKTOP_RUNTIME, desktopSourceDigest, validateDesktopPayload, windowsFileDigest } from "./windows-desktop-update";
@@ -305,7 +305,7 @@ export async function uninstallWindowsManaged(root: string, options: Omit<Window
     await noInstalledProcesses(root, run, false);
     const disabled = await lifecycle.schedule(false); if (!disabled.ok) fail("Owned updater removal was not confirmed");
     const task = taskNameForUser(sid), exported = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
-    if (!exported.ok || !taskOwned(exported.output, launcher, sid)) fail("Broker task ownership changed before removal");
+    if (!exported.ok || !await taskOwnedLive(exported.output, launcher, sid)) fail("Broker task ownership changed before removal");
     const removed = await run(["schtasks.exe", "/Delete", "/TN", task, "/F"]); if (!removed.ok) fail("Owned broker task removal failed");
     await freshTaskAbsent(run, task);
     for (const inventory of inventories) {
@@ -343,7 +343,7 @@ async function verifyBrokerStartup(root: string) {
       || process.env.ORBIT_MANAGED_ENV_SCHEMA !== "1" || process.env.ORBIT_BUN !== selected.runtime
       || process.env.ORBIT_SOCKET !== serviceSocketPath()) fail("Managed broker startup is not exactly admitted by the pending transaction");
   const sid = await currentUserSid(), task = await boundedCommand(["schtasks.exe", "/Query", "/TN", taskNameForUser(sid), "/XML"]);
-  if (!task.ok || !taskOwned(task.output, join(root, "bin/sbar-orbit.cmd"), sid)) fail("Pending startup lacks the exact owned account task");
+  if (!task.ok || !await taskOwnedLive(task.output, join(root, "bin/sbar-orbit.cmd"), sid)) fail("Pending startup lacks the exact owned account task");
   return selected;
 }
 
