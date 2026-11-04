@@ -2,6 +2,9 @@ import { call } from "./ipc";
 import { serviceSocketPath } from "./service";
 import { connectorEntry, connectorEnvironment } from "./connector-entry";
 import { dirname, join } from "node:path";
+import { requireResourceBudget } from "./resource-budget";
+
+await requireResourceBudget();
 // Prefer the managed broker's fixed socket, so generated configuration survives a restart.
 let socket = process.env.ORBIT_SOCKET, managed = false;
 if (!socket) {

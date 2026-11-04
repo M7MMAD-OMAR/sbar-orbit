@@ -4,6 +4,21 @@ Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a pr
 
 ## Unreleased
 
+### 0.4.3 source candidate
+
+Windows desktop delivery source adds a .NET 10 WinForms/WebView2 window and tray, per-user installer
+and stable native launcher. A coherent GUI/CLI/Bun payload updates through the existing mature npm
+selection plus a same-version verified GitHub desktop overlay, with owned-task admission, exact health,
+rollback/recovery and preserved off preferences. Stable native MCP configuration avoids version-pinned
+Bun paths; a mapped compatible bootstrap can be retained without closing its clients.
+
+Windows pruning is disabled before any deletion: all versions remain until kernel-qualified
+whole-directory quiescence is available. First adoption refuses unknown/unmanaged state; guarded
+uninstall uses external maintenance. The source candidate is not a built, signed, installed or
+Windows-runtime-verified release. Original-application Windows native control, public refs and semantic
+writes remain unsupported; no measured efficiency gain or native parity is claimed. Published 0.4.2
+contains no Windows EXE. See [candidate notes](docs/release-0.4.3.md) for source evidence and pending gates.
+
 ## 0.4.2 (4 November 2026)
 
 Release preparation: source changes and scoped native observations, not a new platform-support claim.

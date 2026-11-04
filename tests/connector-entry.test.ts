@@ -1,6 +1,12 @@
 import { version } from "../package.json";
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { mkdir, writeFile, copyFile, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { fixtureRoot } from "./platform-support";
+import { releaseFixture } from "./managed-release-fixture";
+import { sealRelease } from "../src/managed-identity";
+import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME, DESKTOP_MANIFEST, desktopSourceDigest } from "../src/windows-desktop-update";
 import { connectorEntry, connectorEnvironment } from "../src/connector-entry";
 
 test("an agent host is handed the launcher, not an interpreter and a source file", () => {
@@ -53,4 +59,65 @@ test("the same escape hatch works on Linux, where the launcher is an extensionle
 
 test("generated adapter environment carries the current release for host cache invalidation", () => {
   expect(connectorEnvironment("/owner/broker.sock")).toEqual({ ORBIT_SOCKET: "/owner/broker.sock", ORBIT_CLIENT_VERSION: version });
+});
+
+/** Synthetic byte-sealed native image, never executed as a Windows acceptance claim. */
+async function nativeFixture(root: string, release = "1.2.3") {
+  const directory = join(root, "versions", release); await releaseFixture(directory, release, false);
+  const sourceDigest = await desktopSourceDigest(directory), files = [];
+  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME]) {
+    const bytes = "owned native connector fixture " + release + " " + path;
+    await mkdir(dirname(join(directory, path)), { recursive: true }); await writeFile(join(directory, path), bytes);
+    files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
+  }
+  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version: release, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, files }));
+  await sealRelease(directory, release, join(directory, DESKTOP_RUNTIME)); return { directory, files };
+}
+async function installedNativeFixture() {
+  const root = await fixtureRoot("orbit-native-connector-"), fixture = await nativeFixture(root);
+  await mkdir(join(root, "bin")); await copyFile(join(fixture.directory, DESKTOP_LAUNCHER), join(root, "bin/Orbit.exe"));
+  await writeFile(join(root, "windows-bootstrap.json"), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version: "1.2.3", launcherDigest: fixture.files.find(file => file.path === DESKTOP_LAUNCHER)!.sha256 }));
+  await writeFile(join(root, "current.txt"), fixture.directory); return { root, ...fixture };
+}
+test("validated native Windows MCP stays stable with or without --no-launcher", async () => {
+  const fixture = await installedNativeFixture();
+  try {
+    const expected = { command: join(fixture.root, "bin/Orbit.exe"), args: ["--cli", fixture.root, "mcp"] };
+    for (const preferInterpreter of [false, true]) expect(connectorEntry({ source: fixture.directory, platform: "win32", preferInterpreter, interpreter: "unused-versioned-bun" })).toEqual(expected);
+    expect(connectorEntry({ source: join(fixture.root, "current"), platform: "win32" })).toEqual(expected);
+    expect(JSON.stringify(expected)).not.toContain("versions");
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+test("an arbitrary exe path or env hint does not establish native bootstrap authority", async () => {
+  const fixture = await installedNativeFixture();
+  try {
+    expect(connectorEntry({ source: join(fixture.root, "unmanaged"), launcher: join(fixture.root, "bin/Orbit.exe"), platform: "win32" }).command).not.toBe(join(fixture.root, "bin/Orbit.exe"));
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+test("tampered stable native image is refused rather than falling back to a versioned interpreter", async () => {
+  const fixture = await installedNativeFixture();
+  try {
+    await writeFile(join(fixture.root, "bin/Orbit.exe"), "foreign image");
+    expect(() => connectorEntry({ source: fixture.directory, platform: "win32", preferInterpreter: true })).toThrow();
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+test("native MCP entry refuses recovery admission and incompatible bootstrap protocol", async () => {
+  const fixture = await installedNativeFixture();
+  try {
+    await writeFile(join(fixture.root, "activation-recovery.json"), "{}");
+    expect(() => connectorEntry({ source: fixture.directory, platform: "win32" })).toThrow();
+    await rm(join(fixture.root, "activation-recovery.json"));
+    const path = join(fixture.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(path, "utf8")); manifest.bootstrapProtocol = 2;
+    await writeFile(path, JSON.stringify(manifest)); expect(() => connectorEntry({ source: fixture.directory, platform: "win32" })).toThrow();
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+test("compatible retained origin and a newer current payload still produce one stable MCP image", async () => {
+  const fixture = await installedNativeFixture();
+  try {
+    const next = await nativeFixture(fixture.root, "1.2.4"); await writeFile(join(fixture.root, "current.txt"), next.directory);
+    for (const source of [fixture.directory, next.directory]) expect(connectorEntry({ source, platform: "win32", preferInterpreter: true })).toEqual({ command: join(fixture.root, "bin/Orbit.exe"), args: ["--cli", fixture.root, "mcp"] });
+    const original = join(fixture.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(original, "utf8"));
+    manifest.files.find((file: { path: string }) => file.path === DESKTOP_LAUNCHER).sha256 = "f".repeat(64);
+    await writeFile(original, JSON.stringify(manifest)); expect(() => connectorEntry({ source: next.directory, platform: "win32" })).toThrow();
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });

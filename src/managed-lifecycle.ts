@@ -10,8 +10,10 @@ import { boundedCommand, type CommandResult, type CommandRunner } from "./lifecy
 export { boundedCommand, type CommandResult, type CommandRunner } from "./lifecycle-command";
 
 import type { BrokerIdentity } from "./managed-identity";
+import { selectWindowsBootstrap, verifyWindowsCurrent } from "./windows-bootstrap";
 
 export type ManagedLifecycle = {
+  stop?: () => Promise<CommandResult>;
   admit?: (identity: BrokerIdentity) => Promise<CommandResult>;
   restart: () => Promise<CommandResult>;
   schedule: (on: boolean) => Promise<CommandResult>;
@@ -79,6 +81,21 @@ export function updateTaskXml(launcher: string, sid: string, environment: Record
     .replace("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", "<ExecutionTimeLimit>PT20M</ExecutionTimeLimit>");
 }
 
+function directUpdateInvocation(runtime: string) {
+  const directory = win32.dirname(win32.dirname(runtime));
+  return `"${runtime}" "${win32.join(directory, "scripts/limited.ts")}" "${runtime}" "${win32.join(directory, "src/cli.ts")}" update run`;
+}
+
+/** Direct pinned Bun avoids holding the stable native launcher open during its own update. */
+export function windowsDesktopUpdateTaskXml(launcher: string, sid: string, environment: Record<string, string>) {
+  const contents = updateTaskXml(launcher, sid, environment, true);
+  const original = value(contents, "Arguments"), suffix = `"${launcher}" update run`;
+  if (!environment.ORBIT_BUN || !original.endsWith(suffix)) throw new Error("Missing exact desktop updater runtime");
+  const escape = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+  const replaced = original.slice(0, -suffix.length) + directUpdateInvocation(environment.ORBIT_BUN);
+  return contents.replace(`<Arguments>${escape(original)}</Arguments>`, `<Arguments>${escape(replaced)}</Arguments>`);
+}
+
 export function taskOwned(xml: string, launcher: string, sid: string, updater = false) {
   // Decode a single canonical action. Never inherit values from the updater.
   const argumentsText = value(xml, "Arguments");
@@ -96,7 +113,9 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
     recorded[key] = datum;
     remaining = remaining.slice(match[0].length);
   }
-  if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || !recorded.ORBIT_BUN || remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`) return false;
+  const directUpdater = updater && recorded.ORBIT_BUN !== undefined && remaining === directUpdateInvocation(recorded.ORBIT_BUN);
+  if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || !recorded.ORBIT_BUN
+      || (!directUpdater && remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`)) return false;
   if ([...diagnostics].some(key => recorded[key] !== undefined)) {
     const root = recorded.ORBIT_TEST_INSTALLED_STARTUP_ROOT;
     if (!root || [...diagnostics].some(key => recorded[key] === undefined)) return false;
@@ -106,7 +125,7 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
       if (!realpathSync(launcher).startsWith(prefix + win32.sep)) return false;
     } catch { return false; }
   }
-  const expected = updater ? updateTaskXml(launcher, sid, recorded, true) : brokerTaskXml(launcher, sid, recorded, true);
+  const expected = updater ? directUpdater ? windowsDesktopUpdateTaskXml(launcher, sid, recorded) : updateTaskXml(launcher, sid, recorded, true) : brokerTaskXml(launcher, sid, recorded, true);
   const users = [...xml.matchAll(/<UserId>([^<]*)<\/UserId>/g)].map(match => decode(match[1] ?? ""));
   return value(xml, "Description") === (updater ? UPDATE_DESCRIPTION : TASK_DESCRIPTION)
     && users.length > 0 && users.every(user => user === sid)
@@ -130,12 +149,13 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
 /** Uses only this account's installed mechanism. Tests may supply a command recorder. */
 export function managedLifecycle(options: {
   launcher: string; socket: string; platform?: string; home?: string; env?: NodeJS.ProcessEnv;
-  run?: CommandRunner; sid?: () => Promise<string>; uid?: number;
+  run?: CommandRunner; sid?: () => Promise<string>; uid?: number; windowsDesktopRoot?: string;
 }): ManagedLifecycle {
   const platform = options.platform ?? process.platform, home = options.home ?? homedir();
   const env = options.env ?? process.env, run = options.run ?? boundedCommand;
   const domain = `gui/${options.uid ?? process.getuid?.()}`;
   const taskSid = options.sid ?? currentUserSid;
+  let admittedWindowsArguments: string | undefined;
   const plist = launchAgentPath(home, env);
   const updaterPlist = join(launchAgentsDirectory(home, env), `${UPDATE_LABEL}.plist`);
   const unitDirectory = env.ORBIT_UNIT_DIR || join(env.XDG_CONFIG_HOME || join(home, ".config"), "systemd/user");
@@ -177,6 +197,8 @@ export function managedLifecycle(options: {
 
   async function admit(identity: BrokerIdentity): Promise<CommandResult> {
     let recorded: NodeJS.ProcessEnv;
+    let expectedRuntime = identity.runtime;
+    let pendingWindowsArguments: string | undefined;
     if (platform === "linux") {
       const admitted = await linuxAdmission(["sbar-orbit.service"]);
       if (!admitted.ok) return admitted;
@@ -205,19 +227,27 @@ export function managedLifecycle(options: {
       const exported = await run(["schtasks.exe", "/Query", "/TN", taskNameForUser(sid), "/XML"]);
       if (!exported.ok || !taskOwned(exported.output, options.launcher, sid))
         return refused("Installed account task identity is unknown or differs");
-      recorded = Object.fromEntries([...value(exported.output, "Arguments").matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)]
+      pendingWindowsArguments = value(exported.output, "Arguments");
+      recorded = Object.fromEntries([...pendingWindowsArguments.matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)]
         .map(match => [match[1] ?? "", match[2] ?? ""]));
+      if (options.windowsDesktopRoot) {
+        const selected = await verifyWindowsCurrent(options.windowsDesktopRoot);
+        if (selected.root !== identity.root || identity.runtime !== join(identity.directory, "runtime/bun.exe"))
+          return refused("Windows candidate is not a coherent desktop and CLI release");
+        expectedRuntime = selected.runtime;
+      }
     } else return refused("No managed identity admission exists for this platform");
     const recordedRoot = platform === "win32"
       ? win32.join(recorded.LOCALAPPDATA || win32.join(recorded.USERPROFILE || home, "AppData", "Local"), "sbar-orbit")
       : join(recorded.XDG_DATA_HOME || join(recorded.HOME || home, ".local/share"), "sbar-orbit");
-    if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || recorded.ORBIT_BUN !== identity.runtime ||
+    if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || recorded.ORBIT_BUN !== expectedRuntime ||
       resolve(recordedRoot) !== identity.root || (recorded.ORBIT_SOCKET && recorded.ORBIT_SOCKET !== options.socket))
       return refused("Installed mechanism runtime, managed root or socket differs from the prepared release");
+    if (pendingWindowsArguments !== undefined) admittedWindowsArguments = pendingWindowsArguments;
     return { ok: true, output: "" };
   }
 
-  async function restart(): Promise<CommandResult> {
+  async function restart(start = true): Promise<CommandResult> {
     if (platform === "linux") {
       const admission = await linuxAdmission(["sbar-orbit.service"]);
       if (!admission.ok) return admission;
@@ -251,6 +281,8 @@ export function managedLifecycle(options: {
       const registered = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
       if (!registered.ok || !taskOwned(registered.output, options.launcher, sid))
         return refused("Installed interactive-logon task ownership or launcher differs; reinstall the managed task");
+      if (options.windowsDesktopRoot && (!admittedWindowsArguments || value(registered.output, "Arguments") !== admittedWindowsArguments))
+        return unconfirmed(refused("Account task changed after exact installation admission"));
       const stopped = await run(["schtasks.exe", "/End", "/TN", task]);
       if (!stopped.ok) return unconfirmed(stopped);
       // End is a request. Do not start a successor until the scheduler reports exit.
@@ -259,6 +291,28 @@ export function managedLifecycle(options: {
           `(Get-ScheduledTask -TaskName '${task}' -ErrorAction Stop).State.ToString()`], 1_000);
         if (!state.ok) return unconfirmed(state);
         if (state.output.trim() === "Ready") {
+          if (!start) return { ok: true, output: "Owned interactive task exit confirmed" };
+          if (options.windowsDesktopRoot) {
+            const again = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
+            if (!again.ok || !taskOwned(again.output, options.launcher, sid) || value(again.output, "Arguments") !== admittedWindowsArguments)
+              return unconfirmed(refused("Account task changed while stopping"));
+            const selected = await selectWindowsBootstrap(options.windowsDesktopRoot);
+            const recorded = Object.fromEntries([...value(again.output, "Arguments").matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)].map(match => [match[1]!, match[2]!]));
+            const contents = brokerTaskXml(options.launcher, sid, { ...recorded, ORBIT_BUN: selected.runtime }, true);
+            const xml = join(options.windowsDesktopRoot, ".broker-task-" + crypto.randomUUID() + ".xml");
+            await atomic(xml, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(contents, "utf16le")]));
+            try {
+              const changed = await run(["schtasks.exe", "/Create", "/TN", task, "/XML", xml, "/F"]);
+              if (!changed.ok) return changed;
+              const confirmed = await run(["schtasks.exe", "/Query", "/TN", task, "/XML"]);
+              if (!confirmed.ok || !taskOwned(confirmed.output, options.launcher, sid) || value(confirmed.output, "Arguments") !== value(contents, "Arguments"))
+                return unconfirmed(refused("Retargeted account task was not acknowledged"));
+              admittedWindowsArguments = value(confirmed.output, "Arguments");
+            } finally { await rm(xml, { force: true }); }
+            if ((await readFile(join(options.windowsDesktopRoot, "automatic"), "utf8").catch(() => "")).trim() === "on") {
+              const updater = await schedule(true); if (!updater.ok) return updater;
+            }
+          }
           const started = await run(["schtasks.exe", "/Run", "/TN", task]);
           return started.ok ? started : unconfirmed(started);
         }
@@ -323,7 +377,16 @@ export function managedLifecycle(options: {
       if (!on) return existing.ok ? run(["schtasks.exe", "/Delete", "/TN", task, "/F"]) : { ok: true, output: "" };
       const path = join(dirname(options.launcher), `.orbit-update-${crypto.randomUUID()}.xml`);
       try {
-        await atomic(path, Buffer.from(`\ufeff${updateTaskXml(options.launcher, sid)}`, "utf16le"));
+        let contents = updateTaskXml(options.launcher, sid);
+        if (options.windowsDesktopRoot) {
+          const broker = await run(["schtasks.exe", "/Query", "/TN", taskNameForUser(sid), "/XML"]);
+          if (!broker.ok || !taskOwned(broker.output, options.launcher, sid)) return refused("Owned broker task is required for desktop update scheduling");
+          const recorded = Object.fromEntries([...value(broker.output, "Arguments").matchAll(/set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /g)].map(match => [match[1]!, match[2]!]));
+          const selected = await verifyWindowsCurrent(options.windowsDesktopRoot, { internalTransition: true });
+          if (recorded.ORBIT_BUN !== selected.runtime) return refused("Updater runtime differs from the admitted current release");
+          contents = windowsDesktopUpdateTaskXml(options.launcher, sid, recorded);
+        }
+        await atomic(path, Buffer.from(`\ufeff${contents}`, "utf16le"));
         return await run(["schtasks.exe", "/Create", "/TN", task, "/XML", path, "/F"]);
       } finally { await rm(path, { force: true }); }
     }
@@ -333,6 +396,7 @@ export function managedLifecycle(options: {
   return {
     admit: async identity => { try { return await admit(identity); } catch (error) { return refused(String(error)); } },
     restart: async () => { try { return await restart(); } catch (error) { return refused(String(error)); } },
+    stop: async () => { try { return platform === "win32" ? await restart(false) : refused("Explicit owned stop is only implemented for Windows"); } catch (error) { return unconfirmed(refused(String(error))); } },
     schedule: async on => { try { return await schedule(on); } catch (error) { return refused(String(error)); } },
   };
 }

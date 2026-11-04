@@ -3,7 +3,8 @@ import { preparedIdentitySync } from "./managed-identity";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { existsSync, readFileSync, lstatSync, realpathSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, parseDesktopManifest } from "./windows-desktop-update";
 
 /**
  * How an agent host is told to start Orbit's MCP adapter.
@@ -38,8 +39,47 @@ import { dirname } from "node:path";
  * than no flag: the person would register the same configuration they already had and conclude the
  * problem was elsewhere. `sbar-orbit connector-config --no-launcher` is how a person reaches it.
  */
+/** A native image is usable only through its sealed managed source, never by an exe name/env hint. */
+function nativeWindowsConnector(source: string) {
+  source = resolve(source);
+  const root = basename(dirname(source)) === "versions" ? dirname(dirname(source))
+    : basename(source) === "current" && existsSync(source + ".txt") ? dirname(source) : null;
+  if (!root || !existsSync(join(root, "windows-bootstrap.json"))) return null;
+  const refuse = (): never => { throw new Error("Managed native Windows connector identity differs; recover deliberately"); };
+  const json = (path: string) => {
+    const info = lstatSync(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024 || realpathSync(path) !== path) refuse();
+    return JSON.parse(readFileSync(path, "utf8"));
+  };
+  if (realpathSync(root) !== root) refuse();
+  if (existsSync(join(root, "activation-recovery.json"))) refuse();
+  const pointer = join(root, "current.txt"), pointerInfo = lstatSync(pointer);
+  if (!pointerInfo.isFile() || pointerInfo.isSymbolicLink() || pointerInfo.size > 32768) refuse();
+  const target = readFileSync(pointer, "utf8").replace(/\r?\n$/, "");
+  if (target !== resolve(target) || dirname(target) !== join(root, "versions") || realpathSync(target) !== target) refuse();
+  if (source !== join(root, "current")) preparedIdentitySync(root, basename(source));
+  const selectedVersion = basename(target), selected = preparedIdentitySync(root, selectedVersion);
+  if (selected.runtime !== join(target, DESKTOP_RUNTIME)) refuse();
+  parseDesktopManifest(json(join(target, DESKTOP_MANIFEST)), selectedVersion);
+  const bootstrap = json(join(root, "windows-bootstrap.json"));
+  if (bootstrap.schema !== 1 || bootstrap.bootstrapProtocol !== 1 || typeof bootstrap.version !== "string" || !/^[a-f0-9]{64}$/.test(bootstrap.launcherDigest)) refuse();
+  const origin = join(root, "versions", bootstrap.version);
+  preparedIdentitySync(root, bootstrap.version);
+  const manifest = parseDesktopManifest(json(join(origin, DESKTOP_MANIFEST)), bootstrap.version);
+  const native = join(root, "bin/Orbit.exe"), info = lstatSync(native);
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024 || realpathSync(native) !== native
+      || manifest.files.find(file => file.path === DESKTOP_LAUNCHER)?.sha256 !== bootstrap.launcherDigest
+      || createHash("sha256").update(readFileSync(native)).digest("hex") !== bootstrap.launcherDigest) refuse();
+  return { command: native, args: ["--cli", root, "mcp"] };
+}
+
 export function connectorEntry(options: { launcher?: string; source: string; platform?: string; interpreter?: string; preferInterpreter?: boolean }) {
   const platform = options.platform ?? process.platform;
+  if (platform === "win32") {
+    const native = nativeWindowsConnector(options.source);
+    // --no-launcher means no shell script, not a version-pinned interpreter when a verified native image exists.
+    if (native) return native;
+  }
   const launcher = platform === "win32" ? windowsLauncher(options.launcher) : options.launcher;
   if (launcher && !options.preferInterpreter) return { command: launcher, args: ["mcp"] };
   if (platform === "win32" && existsSync(`${options.source}.txt`)) {

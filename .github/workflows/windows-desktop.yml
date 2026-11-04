@@ -1,0 +1,43 @@
+name: Windows desktop candidate (unsigned, no native-control claim)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-desktop-candidate
+  cancel-in-progress: false
+jobs:
+  build-and-own-window-smoke:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      DOTNET_PROCESSOR_COUNT: "2"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Pinned Bun, frozen source and actual Windows IPC before SDK download
+        shell: pwsh
+        run: ./packaging/windows/build.ps1 -Phase Probe
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: desktop/windows/global.json
+      - name: Serial resource-gated native build, installer and owned GUI smoke
+        shell: pwsh
+        run: ./packaging/windows/build.ps1 -Phase Build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-desktop-content-free-evidence-only
+          path: |
+            ${{ runner.temp }}/orbit-windows-candidate/artifacts/*.build.json
+            ${{ runner.temp }}/orbit-windows-candidate/artifacts/overlay/desktop-manifest.json
+            ${{ runner.temp }}/orbit-windows-candidate/published/vendor-notice-inventory.json
+            ${{ runner.temp }}/orbit-windows-candidate/owned-gui-smoke/*.json
+            ${{ runner.temp }}/orbit-windows-candidate/owned-gui-smoke/*.png
+            ${{ runner.temp }}/orbit-windows-candidate/owned-windows-acceptance/*.json
+            ${{ runner.temp }}/orbit-windows-candidate/owned-windows-acceptance/candidate-gui/*.json
+            ${{ runner.temp }}/orbit-windows-candidate/owned-windows-acceptance/candidate-gui/*.png
+          if-no-files-found: error
+# Public Actions artifacts contain metadata/owned GUI screenshots only, never Setup EXE, ZIP or Bun payload.
+# Publication remains blocked independently of runtime verdict until vendor redistribution review clears.

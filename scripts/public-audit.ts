@@ -96,7 +96,8 @@ for (const file of files) {
     ["personal-home-path", /\/(?:home|Users)\/(?!example\/|linuxbrew\/)[a-zA-Z0-9._-]+\//],
     ["windows-user-path", /[A-Z]:\\Users\\[^\\\s]+\\/i],
     ["private-task-link", /thread:\/\/|\?hostId=[l]ocal/],
-    ["private-network-address", /\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b/],
+    // Match address components, not a four-part substring inside a longer dotted catalog timestamp.
+    ["private-network-address", /(?<!\d\.)\b(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b(?!\.\d)/],
     ["private-key-material", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
   ];
   for (const [rule, pattern] of rules) if (pattern.test(content)) findings.push({ file, rule });

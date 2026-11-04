@@ -10,7 +10,12 @@ const files = requested.length ? requested : [
   "tests/policy.test.ts", "tests/diagnostic-codes.test.ts", "tests/settings.test.ts", "tests/socket-acl.test.ts", "tests/resources.test.ts",
   "tests/source-manifest.test.ts", "tests/install.test.ts", "tests/connector-entry.test.ts", "tests/host-registration.test.ts", "tests/update-admission.test.ts", "tests/preflight.test.ts",
   "tests/process-scope.test.ts", "tests/windows-system-tools.test.ts", "tests/workspace-storage.test.ts", "tests/session-batch.test.ts", "tests/multi-agent-sessions.test.ts", "tests/native-settle.test.ts",
+  "tests/windows-desktop-package.test.ts", "tests/windows-managed-install.test.ts", "tests/managed-lifecycle.test.ts", "tests/update.test.ts",
 ];
+// Bun filters can silently ignore a missing filename. Default coverage must never shrink that way.
+if (!requested.length) for (const file of files) {
+  if (!await Bun.file(file).exists()) throw new Error(`Default verification file is missing: ${file}`);
+}
 const child = Bun.spawn([process.execPath, "--smol", "run", "scripts/limited.ts", process.execPath, "--smol", "test", ...files], {
   stdin: "inherit", stdout: "inherit", stderr: "inherit",
 });

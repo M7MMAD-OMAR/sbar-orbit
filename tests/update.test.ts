@@ -2,9 +2,12 @@ import { activateLocal } from "../src/local-install";
 import { releaseFixture } from "./managed-release-fixture";
 import { test, expect } from "bun:test";
 import { tarExecutable } from "../src/platform";
-import { mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { fixtureRoot } from "./platform-support";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { sealRelease } from "../src/managed-identity";
+import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, desktopSourceDigest } from "../src/windows-desktop-update";
 import { summarize } from "../src/status";
 import { activateVersion, automaticUpdates, launcherName, checkForUpdate, compareVersions, currentVersion, layout, prepareVersion, preparedVersions, pruneVersions, runUpdate, sameLine, setAutomaticUpdates, updatableInstall, updateStatus, linkTarget } from "../src/update";
 
@@ -18,6 +21,35 @@ async function prepared(root: string, version: string) {
   const directory = join(layout(root).versions, version);
   await releaseFixture(directory, version);
   return directory;
+}
+
+/** Synthetic coherent Windows payload. No fixture executable is ever run. */
+async function preparedWindows(root: string, version: string) {
+  const directory = join(layout(root).versions, version);
+  await releaseFixture(directory, version, false);
+  const sourceDigest = await desktopSourceDigest(directory);
+  const files = [];
+  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME]) {
+    const bytes = `owned Windows pointer fixture: ${path}`;
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), bytes);
+    files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
+  }
+  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, files }));
+  await sealRelease(directory, version, join(directory, DESKTOP_RUNTIME));
+  return directory;
+}
+
+async function snapshotFiles(directory: string): Promise<[string, string][]> {
+  const files: [string, string][] = [];
+  async function visit(path: string, relative: string) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const name = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await visit(join(path, entry.name), name);
+      else files.push([name, createHash("sha256").update(await readFile(join(path, entry.name))).digest("hex")]);
+    }
+  }
+  await visit(directory, ""); return files.sort(([left], [right]) => left.localeCompare(right));
 }
 
 /** An archive shaped like a release: one directory below the root, with a launcher in it. */
@@ -384,8 +416,8 @@ test("on Windows the current version is a pointer file swapped by rename, not a 
 
     await asWindows(async () => {
       // Inside the override, so the fixture carries the launcher name a Windows install really has.
-      await prepared(root, "1.0.0");
-      await prepared(root, "2.0.0");
+      await preparedWindows(root, "1.0.0");
+      await preparedWindows(root, "2.0.0");
       expect(launcherName()).toBe("bin/sbar-orbit.cmd");
       const environment = { root, openSessions: async () => 0, restart: async () => ({ ok: true, output: "" }), healthy: async () => true };
       expect(await currentVersion(root)).toBeNull();
@@ -401,10 +433,17 @@ test("on Windows the current version is a pointer file swapped by rename, not a 
       expect(await currentVersion(root)).toBe("2.0.0");
       expect(await Bun.file(`${paths.previous}.txt`).text()).toBe(join(paths.versions, "1.0.0"));
 
-      // And the rollback target must survive a prune, which is what the backslash split protects.
-      const pruned = await pruneVersions(root, 0);
-      expect(pruned.removed).toEqual([]);
-      expect(pruned.kept.sort()).toEqual(["1.0.0", "2.0.0"]);
+      // A live intermediate GUI/MCP image need not be current, previous or the bootstrap origin.
+      const intermediate = await preparedWindows(root, "1.5.0");
+      const holder = await open(join(intermediate, "src/mcp.ts"), "r");
+      try {
+        const before = await snapshotFiles(paths.versions);
+        const pruned = await pruneVersions(root, 0);
+        expect(pruned).toMatchObject({ removed: [], supported: false });
+        expect(pruned.kept.sort()).toEqual(["1.0.0", "1.5.0", "2.0.0"]);
+        expect("reason" in pruned && pruned.reason).toContain("kernel-qualified whole-directory quiescence");
+        expect(await snapshotFiles(paths.versions)).toEqual(before);
+      } finally { await holder.close(); }
     });
 
     // No symlink was created at any point, which is the whole reason this branch exists.

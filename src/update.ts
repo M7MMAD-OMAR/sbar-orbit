@@ -11,6 +11,7 @@ import { preparedIdentity, pointerVersion, sealRelease, releaseDigest, sameBroke
 import { requireUpdateAdmission } from "./update-admission";
 import { managedUpdateRoot } from "./update-admission";
 import { managedTarget } from "./managed-entry";
+import { DESKTOP_RUNTIME, desktopSourceDigest, extractDesktopZip, fetchDesktopOverlay, mergeDesktopOverlay, validateDesktopPayload } from "./windows-desktop-update";
 import { bunExecutable, launcherName } from "./runtime-command";
 
 /**
@@ -170,9 +171,9 @@ async function brokerSessions(): Promise<number | null> {
 }
 
 async function restartService(): Promise<CommandResult> {
-  if (process.platform !== "linux")
-    return { ok: false, output: "Managed update activation is currently supported only on Linux" };
-  try { return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }).restart(); }
+  if (!["linux", "win32"].includes(process.platform))
+    return { ok: false, output: "Managed update activation requires an implemented lifecycle adapter" };
+  try { return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath(), ...(process.platform === "win32" ? { windowsDesktopRoot: updateRoot() } : {}) }).restart(); }
   // A missing binary is a failed restart, not an exception out of the middle of an activation: the
   // rollback below is what has to run, and it only runs if this returns.
   catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 300) : "systemctl could not be started" }; }
@@ -209,8 +210,8 @@ export async function activateVersion(version: string, environment: ActivationEn
 
 async function activateVersionUnlocked(version: string, environment: ActivationEnvironment = {}): Promise<Activation> {
   requireVersion(version);
-  if (!environment.restart && !environment.lifecycle && process.platform !== "linux")
-    return { activated: false, reason: "Managed update activation is currently supported only on Linux" };
+  if (!environment.restart && !environment.lifecycle && !["linux", "win32"].includes(process.platform))
+    return { activated: false, reason: "Managed update activation requires an implemented lifecycle adapter" };
   const paths = layout(environment.root);
   const recoveryPath = join(paths.root, "activation-recovery.json");
   if (await lstat(recoveryPath).then(() => true, error => {
@@ -227,9 +228,13 @@ async function activateVersionUnlocked(version: string, environment: ActivationE
   let identity: BrokerIdentity;
   try { identity = { ...await preparedIdentity(paths.root, version), root: resolve(paths.root), directory: target }; }
   catch (error) { return { activated: false, reason: `${version} lacks a verified prepared identity: ${String(error)}` }; }
+  if (process.platform === "win32") {
+    try { await validateDesktopPayload(target, version, await desktopSourceDigest(target)); }
+    catch { return { activated: false, reason: "Windows activation requires one verified same-version desktop and CLI payload" }; }
+  }
   const previous = await currentVersion(paths.root);
   if (previous === version) return { activated: false, reason: `${version} is already the current version` };
-  const lifecycle = environment.lifecycle ?? (!environment.restart ? managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }) : undefined);
+  const lifecycle = environment.lifecycle ?? (!environment.restart ? managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath(), ...(process.platform === "win32" ? { windowsDesktopRoot: paths.root } : {}) }) : undefined);
   if (lifecycle) {
     if (!lifecycle.admit) return { activated: false, reason: "Lifecycle lacks exact installation identity admission" };
     const admitted = await lifecycle.admit(identity);
@@ -383,6 +388,11 @@ export async function updateStatus(environment: ActivationEnvironment = {}) {
  * one a listing happened to put last is not keeping anything in particular.
  */
 export async function pruneVersions(root = updateRoot(), keep = 1) {
+  if (process.platform === "win32") {
+    // Origin pins or a process census cannot prove whole-tree quiescence. Never start recursive deletion.
+    return { removed: [] as string[], kept: await preparedVersions(root), supported: false,
+      reason: "Windows version cleanup is disabled until kernel-qualified whole-directory quiescence can be proved; all versions are retained" };
+  }
   return withUpdateLock(root, () => pruneVersionsUnlocked(root, keep));
 }
 
@@ -458,6 +468,9 @@ export type Feed = {
   download?: (url: string) => Promise<ArrayBuffer>;
   now?: () => number;
   maturationHours?: number;
+  /** Owned staging fixtures only; not public platform capability configuration. */
+  platform?: NodeJS.Platform;
+  desktopOverlay?: typeof fetchDesktopOverlay;
 };
 
 /**
@@ -528,6 +541,7 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
   requireVersion(candidate.version);
   const paths = layout(environment.root);
   const directory = join(paths.versions, candidate.version);
+  const windows = (feed.platform ?? process.platform) === "win32";
   // The same launcher name activation will look for, so a version cannot be "prepared" here and then
   // refused there as not prepared.
   if (await lstat(directory).catch(error => { if (error.code === "ENOENT") return null; throw error; })) {
@@ -535,6 +549,7 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
       const identity = await preparedIdentity(paths.root, candidate.version);
       if (identity.archiveIntegrity !== candidate.integrity)
         return { prepared: false, reason: "Existing version archive identity differs; migrate deliberately" };
+      if (windows) await validateDesktopPayload(directory, candidate.version, await desktopSourceDigest(directory));
     }
     catch (error) { return { prepared: false, reason: `Existing version identity is invalid: ${String(error)}` }; }
     return { prepared: true, version: candidate.version, directory, files: 0 };
@@ -563,16 +578,33 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
     const manifest = await Bun.file(join(staging, "package.json")).json();
     if (manifest.name !== "sbar-orbit" || manifest.version !== candidate.version)
       return { prepared: false, reason: "Archive package identity does not match the requested version" };
+    if (windows) {
+      const sourceDigest = await desktopSourceDigest(staging), desktopArchive = join(staging, "desktop.zip");
+      const desktop = await (feed.desktopOverlay ?? fetchDesktopOverlay)(candidate.version, desktopArchive, { maturationHours: feed.maturationHours, now: feed.now });
+      if (!desktop.available) return { prepared: false, reason: "The same-version Windows desktop artifact is absent or not mature; GUI and CLI activation deferred together" };
+      const isolated = join(staging, ".desktop-overlay");
+      await extractDesktopZip(desktopArchive, isolated); await rm(desktopArchive);
+      const overlay = await validateDesktopPayload(isolated, candidate.version, sourceDigest);
+      if (desktop.sourceRevision !== overlay.sourceRevision) return { prepared: false, reason: "Windows desktop artifact source revision differs from its release tag" };
+      await mergeDesktopOverlay(isolated, staging, overlay);
+      await rm(isolated, { recursive: true });
+    }
     const installed = await (environment.install ?? (async (target: string) => {
       // The running interpreter, not a bare "bun": a broker started by a service or an agent host has
       // its own PATH, which need not carry Bun. Same reason `src/install.ts` resolves it this way.
-      const child = Bun.spawn([bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
+      const child = Bun.spawn([windows ? join(target, DESKTOP_RUNTIME) : bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
       const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
       return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
     }))(staging);
     if (!installed.ok) return { prepared: false, reason: `preparing dependencies failed: ${installed.output}` };
-    await sealRelease(staging, candidate.version, process.env.ORBIT_BUN ?? process.execPath, candidate.integrity);
-    await rename(staging, directory);
+    if (windows) {
+      await rename(staging, directory);
+      await sealRelease(directory, candidate.version, join(directory, DESKTOP_RUNTIME), candidate.integrity);
+      await (await import("./windows-managed-install")).recordWindowsReleaseFiles(directory);
+    } else {
+      await sealRelease(staging, candidate.version, process.env.ORBIT_BUN ?? process.execPath, candidate.integrity);
+      await rename(staging, directory);
+    }
     return { prepared: true, version: candidate.version, directory, files: (await readdir(directory)).length };
   } finally { await rm(staging, { recursive: true, force: true }); }
 }
@@ -600,12 +632,12 @@ export async function setAutomaticUpdates(on: boolean, root = updateRoot(), time
 }
 
 async function systemdTimer(on: boolean) {
-  if (process.platform !== "linux")
-    return { ok: false, output: "Automatic update scheduling is currently supported only on Linux" };
+  if (!["linux", "win32"].includes(process.platform))
+    return { ok: false, output: "Automatic update scheduling requires an implemented lifecycle adapter" };
   if (on && !(await updatableInstall()).updatable)
     return { ok: false, output: "Run install --managed before enabling automatic updates" };
   try {
-    return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath() }).schedule(on);
+    return await managedLifecycle({ launcher: defaultLauncherPath(), socket: serviceSocketPath(), ...(process.platform === "win32" ? { windowsDesktopRoot: updateRoot() } : {}) }).schedule(on);
   }
   catch (error) { return { ok: false, output: error instanceof Error ? error.message.slice(0, 200) : "systemctl could not be started" }; }
 }
@@ -657,7 +689,9 @@ async function prepareManagedInstallUnlocked(source: string, options: {
   lifecycle?: ManagedLifecycle;
 } = {}) {
   if (!options.dryRun && !options.lifecycle && process.platform !== "linux")
-    throw new Error("Managed installation is currently supported only on Linux");
+    throw new Error(process.platform === "win32"
+      ? "Windows managed installation requires the complete desktop payload and central Windows Setup bootstrap, not source-only adoption"
+      : "Managed installation requires an implemented lifecycle adapter");
   const origin = await realpath(source);
   if (await lstat(join(origin, ".git")).catch(() => null))
     throw new Error("Use an extracted release or registry package for install --managed; keep source checkouts on git");

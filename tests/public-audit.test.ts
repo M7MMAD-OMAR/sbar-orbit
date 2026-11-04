@@ -40,6 +40,32 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
 });
 
 
+needsGitCheckout("a real staged publication fixture")("public catalog timestamps are not addresses, while real private addresses remain findings", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-audit-catalog-"));
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
+    const output = await new Response(child.stdout).text();
+    return { code: await child.exited, output };
+  };
+  expect((await run(["git", "init", "-q"])).code).toBe(0);
+  const catalog = "https://api.nuget.org/v3/catalog0/data/2026.10.23.06.50.10/microsoft.web.webview2.1.0.4314.35.json";
+  const command = [process.execPath, resolve("scripts/public-audit.ts")];
+  await writeFile(join(root, "README.md"), catalog);
+  expect((await run(["git", "add", "README.md"])).code).toBe(0);
+  expect((await run(command)).code).toBe(0);
+  for (const octets of [[10, 23, 6, 50], [192, 168, 2, 3], [172, 16, 20, 30], [172, 31, 0, 255]]) {
+    const address = octets.join(".");
+    for (const value of [address, "http://" + address + ":8080", "https://example.com/?host=" + address, "host." + address + ".example"]) {
+      await writeFile(join(root, "README.md"), catalog + "\n" + value);
+      expect((await run(["git", "add", "README.md"])).code).toBe(0);
+      const result = await run(command);
+      expect(result.code).toBe(1);
+      expect(result.output).toContain("private-network-address");
+      expect(result.output).not.toContain(address);
+    }
+  }
+});
+
 test("publication path policy keeps private directories excluded even for example filenames", () => {
   for (const path of [".private/.env.example", "output/.env.example", "docs/evidence/.env.example", ".git/config", ".env.production.env.example", "../README.md", "docs//README.md", "docs/../README.md"])
     expect(isPublicSourcePath(path)).toBe(false);
