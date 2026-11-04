@@ -39,7 +39,58 @@ function shim(root: string) {
   return ["@echo off", "@rem sbar-orbit-managed-shim", "@rem Target: " + join(root, "current/bin/sbar-orbit.cmd"),
     "@setlocal DisableDelayedExpansion", '@"' + join(root, "bin/Orbit.exe") + '" --cli "' + root + '" %*', "@exit /b %errorlevel%", ""].join("\r\n");
 }
+export const WINDOWS_INSTALL_PHASES = ["resources", "arguments", "payload", "root", "task", "copy", "seal", "bootstrap", "register", "start", "health", "schedule", "complete"] as const;
+export const WINDOWS_INSTALL_CODES = ["unknown", "platform-unsupported", "root-policy-refusal", "payload-policy-refusal", "integrity-refusal", "unknown-managed-root", "preference-invalid", "task-absence-unproven", "endpoint-present", "existing-managed-unhealthy", "task-register-failed", "broker-not-ready", "schedule-failed", "recovery-ownership-changed", "resource-refusal", "fs-access-denied", "fs-not-found", "fs-already-exists", "fs-no-space", "fs-busy", "fs-invalid"] as const;
+type WindowsInstallPhase = typeof WINDOWS_INSTALL_PHASES[number];
+type WindowsInstallCode = typeof WINDOWS_INSTALL_CODES[number];
+type InstallTrace = { phase: WindowsInstallPhase };
+const INSTALL_TRACE: unique symbol = Symbol("private installer diagnostic trace");
+const INSTALL_POLICY_CODES = new Map<string, WindowsInstallCode>([
+  ["The managed Windows installer requires Windows; source fixtures are not live acceptance", "platform-unsupported"],
+  ["Windows installation requires the normal per-user managed root", "root-policy-refusal"],
+  ["Installer source and managed destination must be separate", "root-policy-refusal"],
+  ["First install found unknown/unmanaged files; preserve them and migrate deliberately", "unknown-managed-root"],
+  ["An explicit automatic-update choice is required", "preference-invalid"],
+  ["Automatic-update preference is redirected", "preference-invalid"], ["Unknown automatic-update preference", "preference-invalid"],
+  ["Install an audited release payload, never copy a source checkout or owner workspace", "payload-policy-refusal"],
+  ["Installer payload contains unrecognized or private inputs", "payload-policy-refusal"], ["Installer payload is not a versioned Orbit release", "payload-policy-refusal"],
+  ["Installer must bundle its source verifier and offline production dependencies", "payload-policy-refusal"],
+  ["Installer entry count, depth or path bound exceeded", "payload-policy-refusal"], ["Installer payload contains a link or redirected input", "payload-policy-refusal"],
+  ["Installer payload exceeds its file or byte bound", "payload-policy-refusal"], ["Installer payload must contain only regular files", "payload-policy-refusal"],
+  ["Windows desktop payload is absent, incompatible or failed integrity validation", "integrity-refusal"],
+  ["Windows dependency inventory or exact tree failed integrity validation", "integrity-refusal"],
+  ["Windows runtime source failed integrity, consent or resource validation", "integrity-refusal"],
+  ["Same version has different shipped desktop identity", "integrity-refusal"],
+  ["First install requires proven absence of the per-user broker task; migrate existing mechanisms deliberately", "task-absence-unproven"],
+  ["First install found a broker endpoint; silence is not absence of active work", "endpoint-present"],
+  ["Existing managed install is not healthy and exactly admitted; recover deliberately", "existing-managed-unhealthy"],
+  ["Owned broker task registration failed; bootstrap recovery is required", "task-register-failed"],
+  ["Installed broker did not acknowledge the exact source/runtime identity; Windows IPC is not proven", "broker-not-ready"],
+  ["Automatic updater registration failed; bootstrap recovery is required", "schedule-failed"],
+  ["Bootstrap admission ownership changed", "recovery-ownership-changed"],
+  ["Insufficient available memory for a budgeted payload copy; close no owner processes automatically", "resource-refusal"],
+]);
+/** Fixed vocabulary only. Error details stay internal and never become CLI diagnostic fields. */
+export function windowsInstallFailure(phase: WindowsInstallPhase, error: unknown) {
+  let code: WindowsInstallCode = "unknown";
+  if (error instanceof Error) {
+    const owned = INSTALL_POLICY_CODES.get(error.message); if (owned) code = owned;
+    else if ("code" in error && typeof error.code === "string") {
+      if (["RESOURCE_LIMIT_REQUIRED", "RESOURCE_EXHAUSTED", "RESOURCE_STATUS_UNAVAILABLE"].includes(error.code)) code = "resource-refusal";
+      else { const errno = new Map<string, WindowsInstallCode>([["EACCES", "fs-access-denied"], ["EPERM", "fs-access-denied"], ["ENOENT", "fs-not-found"], ["EEXIST", "fs-already-exists"], ["ENOSPC", "fs-no-space"], ["EBUSY", "fs-busy"], ["EINVAL", "fs-invalid"]]); code = errno.get(error.code) ?? "unknown"; }
+    }
+  }
+  return { ok: false as const, diagnosticSchema: 1 as const, phase: WINDOWS_INSTALL_PHASES.includes(phase) ? phase : "arguments" as const, code, error: code };
+}
+/** Owned diagnostics wrapper: existing install API still rejects with its original error/message. */
+export async function diagnoseWindowsManagedInstall(payload: string, options: WindowsInstallOptions) {
+  const trace: InstallTrace = { phase: "payload" };
+  try { return { ok: true as const, result: await installWindowsManaged(payload, { ...options, [INSTALL_TRACE]: trace }) }; }
+  catch (error) { return windowsInstallFailure(trace.phase, error); }
+}
+
 export type WindowsInstallOptions = {
+  [INSTALL_TRACE]?: InstallTrace;
   root?: string; automaticUpdates: boolean;
   /** Owned fixture seams. Defaults call the actual account Task Scheduler and fixed broker socket. */
   platform?: NodeJS.Platform; run?: CommandRunner; sid?: string; socket?: string;
@@ -72,11 +123,14 @@ async function copyPayload(source: string, destination: string) {
   await cp(source, destination, { recursive: true, errorOnExist: true, force: false, dereference: false });
 }
 export async function installWindowsManaged(payload: string, options: WindowsInstallOptions) {
+  const trace: InstallTrace = options[INSTALL_TRACE] ?? { phase: "payload" }; trace.phase = "payload";
   if ((options.platform ?? process.platform) !== "win32") fail("The managed Windows installer requires Windows; source fixtures are not live acceptance");
   const root = resolve(options.root ?? managedUpdateRoot()), source = await canonicalDirectory(payload);
+  trace.phase = "root";
   if (options.platform === undefined && root !== resolve(managedUpdateRoot())) fail("Windows installation requires the normal per-user managed root");
   if (source === root || source.startsWith(root + sep) || root.startsWith(source + sep)) fail("Installer source and managed destination must be separate");
   if (typeof options.automaticUpdates !== "boolean") fail("An explicit automatic-update choice is required");
+  trace.phase = "payload";
   if (await exists(join(source, ".git"))) fail("Install an audited release payload, never copy a source checkout or owner workspace");
   const allowedInputs = new Set(["package.json", "bun.lock", "bunfig.toml", "bin", "src", "scripts", "desktop", "viewer", "docs", "skills", "experiments", "node_modules", "runtime", DESKTOP_MANIFEST, "SOURCE-COMMIT", "SOURCE-COMMIT.json", "runtime-source-receipt.json", "orbit-source-manifest.json", "AGENTS.md", "install.sh", "install.cmd", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]);
   if ((await readdir(source)).some(name => !allowedInputs.has(name))) fail("Installer payload contains unrecognized or private inputs");
@@ -84,8 +138,10 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
   if (manifest.name !== "sbar-orbit" || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(manifest.version)) fail("Installer payload is not a versioned Orbit release");
   await validateDesktopPayload(source, manifest.version, await desktopSourceDigest(source));
   for (const required of ["node_modules/@modelcontextprotocol/sdk/package.json", "src/windows-managed-install.ts"]) if (!(await lstat(join(source, required))).isFile()) fail("Installer must bundle its source verifier and offline production dependencies");
+  trace.phase = "task";
   const run = options.run ?? boundedCommand, sid = options.sid ?? await currentUserSid(), socket = options.socket ?? serviceSocketPath();
   if (!/^S-1-5-(?:[0-9]+-)*[0-9]+$/.test(sid)) fail("Invalid account SID");
+  trace.phase = "root";
   await mkdir(root, { recursive: true, mode: 0o700 }); await canonicalDirectory(root);
   return withUpdateLock(root, async () => {
     await requireUpdateAdmission(root);
@@ -94,8 +150,11 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
       if (selected.version !== manifest.version) fail("An existing managed install must stage and activate updates; never overwrite its running version");
       if (JSON.stringify(await validateDesktopPayload(source, manifest.version)) !== JSON.stringify(await validateDesktopPayload(selected.directory, selected.version))) fail("Same version has different shipped desktop identity");
       const lifecycle = options.lifecycle ?? managedLifecycle({ platform: "win32", launcher: join(root, "bin/sbar-orbit.cmd"), socket, sid: async () => sid, run, windowsDesktopRoot: root });
+      trace.phase = "task";
       const admitted = await lifecycle.admit!(selected.identity);
+      trace.phase = admitted.ok ? "health" : "task";
       if (!admitted.ok || !(await (options.healthy ?? (identity => healthy(identity, socket)))(selected.identity))) fail("Existing managed install is not healthy and exactly admitted; recover deliberately");
+      trace.phase = "complete";
       return { ...selected, reused: true, automaticUpdates: (await readFile(join(root, "automatic"), "utf8").catch(() => "")).trim() === "on" };
     }
     const names = await readdir(root);
@@ -105,21 +164,28 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
     const preference = preferenceInfo ? (await readFile(join(root, "automatic"), "utf8")).trim() : undefined;
     if (preference !== undefined && preference !== "on" && preference !== "off") fail("Unknown automatic-update preference");
     const automatic = preference === "off" ? false : options.automaticUpdates;
+    trace.phase = "task";
     await freshTaskAbsent(run, taskNameForUser(sid));
     if (await exists(socket)) fail("First install found a broker endpoint; silence is not absence of active work");
+    trace.phase = "root";
     const barrier = join(root, "activation-recovery.json"), owner = crypto.randomUUID();
     const handle = await open(barrier, "wx", 0o600);
     try { await handle.writeFile(JSON.stringify({ schema: 1, phase: "windows-bootstrap", owner, version: manifest.version })); await handle.sync(); } finally { await handle.close(); }
     const directory = join(root, "versions", manifest.version), launcher = join(root, "bin/sbar-orbit.cmd");
     let registered = false;
     try {
+      trace.phase = "copy";
       await mkdir(join(root, "versions")); await copyPayload(source, directory);
+      trace.phase = "seal";
       await sealRelease(directory, manifest.version, join(directory, DESKTOP_RUNTIME));
       await recordWindowsReleaseFiles(directory);
       await atomic(join(root, "current.txt"), directory);
+      trace.phase = "bootstrap";
       const selected = await selectWindowsBootstrap(root);
       await writeFile(launcher, shim(root), { flag: "wx", mode: 0o600 });
-      await freshTaskAbsent(run, taskNameForUser(sid));
+      trace.phase = "task";
+    await freshTaskAbsent(run, taskNameForUser(sid));
+      trace.phase = "register";
       const xml = join(root, ".bootstrap-" + owner + ".xml");
       const environment = { ORBIT_BUN: selected.runtime, ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_SOCKET: socket };
       await writeFile(xml, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(brokerTaskXml(launcher, sid, environment), "utf16le")]), { flag: "wx", mode: 0o600 });
@@ -128,9 +194,12 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
         if (!created.ok) fail("Owned broker task registration failed; bootstrap recovery is required");
         registered = true;
       } finally { await unlink(xml).catch(() => {}); }
+      trace.phase = "start";
       const started = await run(["schtasks.exe", "/Run", "/TN", taskNameForUser(sid)]);
+      trace.phase = started.ok ? "health" : "start";
       if (!started.ok || !(await (options.healthy ?? (identity => healthy(identity, socket)))(selected.identity))) fail("Installed broker did not acknowledge the exact source/runtime identity; Windows IPC is not proven");
       // Keep an existing explicit off preference. Initial on is an explicit installer choice.
+      trace.phase = "schedule";
       if (automatic) {
         const schedule = await (options.lifecycle ?? managedLifecycle({ platform: "win32", launcher, socket, sid: async () => sid, run, windowsDesktopRoot: root })).schedule(true);
         if (!schedule.ok) fail("Automatic updater registration failed; bootstrap recovery is required");
@@ -138,6 +207,7 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
       await atomic(join(root, "automatic"), automatic ? "on" : "off");
       const recorded = JSON.parse(await readFile(barrier, "utf8")); if (recorded.owner !== owner) fail("Bootstrap admission ownership changed");
       await unlink(barrier);
+      trace.phase = "complete";
       return { ...selected, launcher, automaticUpdates: automatic, reused: false };
     } catch (error) {
       // Never erase unknown state or announce success. Keep durable admission on every failed adoption.
@@ -265,8 +335,10 @@ async function verifyBrokerStartup(root: string) {
   return selected;
 }
 
-async function main() {
+async function main(trace: InstallTrace) {
+  trace.phase = "resources";
   await (await import("./resource-budget")).requireResourceBudget();
+  trace.phase = "arguments";
   const [command, ...args] = process.argv.slice(2), values = new Map<string, string>();
   if (args.length % 2) fail("Expected named installer arguments");
   for (let at = 0; at < args.length; at += 2) { const name = args[at]!, value = args[at + 1]!; if (!name.startsWith("--") || values.has(name)) fail("Invalid installer arguments"); values.set(name, value); }
@@ -277,6 +349,9 @@ async function main() {
     if (command === "uninstall") return uninstallWindowsManaged(values.get("--root")!);
   }
   if (command !== "install" || values.size !== 3 || !values.has("--payload") || !values.has("--root") || !["on", "off"].includes(values.get("--automatic-updates") ?? "")) fail("Usage: install --payload PATH --root ROOT --automatic-updates on|off; or verify-current --root ROOT");
-  return installWindowsManaged(values.get("--payload")!, { root: values.get("--root")!, automaticUpdates: values.get("--automatic-updates") === "on" });
+  return installWindowsManaged(values.get("--payload")!, { root: values.get("--root")!, automaticUpdates: values.get("--automatic-updates") === "on", [INSTALL_TRACE]: trace });
 }
-if (import.meta.main) main().then(result => console.log(JSON.stringify(result)), error => { console.log(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "Managed installation failed" })); process.exitCode = 1; });
+if (import.meta.main) {
+  const trace: InstallTrace = { phase: "resources" };
+  main(trace).then(result => console.log(JSON.stringify(result)), error => { console.log(JSON.stringify(windowsInstallFailure(trace.phase, error))); process.exitCode = 1; });
+}

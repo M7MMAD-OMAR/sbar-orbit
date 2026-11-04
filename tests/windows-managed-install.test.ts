@@ -1,4 +1,5 @@
 import { DEPENDENCY_INVENTORY, writeWindowsDependencyInventory } from "../src/windows-dependencies";
+import diagnosticVector from "./fixtures/windows-install-diagnostics-v1.json";
 import runtimeVector from "./fixtures/windows-runtime-source-v2.json";
 import { BUN_LICENSE_PATH, parseRuntimeSource, runtimeDescriptorId, RUNTIME_RECEIPT } from "../src/windows-runtime-source";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -9,7 +10,7 @@ import { tmpdir } from "node:os";
 import { deflateRawSync } from "node:zlib";
 import { desktopSourceDigest, DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME,
   extractDesktopZip, mergeDesktopOverlay, parseDesktopManifest, safeWindowsPayloadPath, validateDesktopPayload, validatePublicDesktopOverlay } from "../src/windows-desktop-update";
-import { admittedWindowsBootstrap, installWindowsManaged, recordWindowsReleaseFiles, selectWindowsBootstrap, verifyWindowsCurrent } from "../src/windows-managed-install";
+import { WINDOWS_INSTALL_PHASES, WINDOWS_INSTALL_CODES, windowsInstallFailure, diagnoseWindowsManagedInstall, admittedWindowsBootstrap, installWindowsManaged, recordWindowsReleaseFiles, selectWindowsBootstrap, verifyWindowsCurrent } from "../src/windows-managed-install";
 import { brokerTaskXml } from "../src/windows-autostart";
 import { taskOwned, windowsDesktopUpdateTaskXml, type CommandRunner, type ManagedLifecycle } from "../src/managed-lifecycle";
 import { releaseDigest, sealRelease } from "../src/managed-identity";
@@ -304,4 +305,41 @@ test("protocol-one bootstrap is never retained against a protocol-two candidate"
   const record = JSON.parse(await readFile(join(f.root, "windows-bootstrap.json"), "utf8")); record.bootstrapProtocol = 1;
   await put(f.root, "windows-bootstrap.json", JSON.stringify(record)); let touched = false;
   await expect(selectWindowsBootstrap(f.root, { replace: async () => { touched = true; } })).rejects.toThrow(); expect(touched).toBe(false);
+});
+
+test("fixed diagnostic vocabulary matches native consumer vector and excludes error details", () => {
+  expect(WINDOWS_INSTALL_PHASES.join("\n")).toBe(diagnosticVector.phases.join("\n")); expect(WINDOWS_INSTALL_CODES.join("\n")).toBe(diagnosticVector.codes.join("\n"));
+  const secret = "PRIVATE_OWNER_PATH_ACCOUNT_SENTINEL";
+  for (const error of [new Error(secret), { message: secret, stack: secret }, secret, Object.assign(new Error(secret), { code: "NOT_WHITELISTED" })]) {
+    const result = windowsInstallFailure("payload", error); expect(result).toEqual({ ok: false, diagnosticSchema: 1, phase: "payload", code: "unknown", error: "unknown" });
+    expect(JSON.stringify(result)).not.toContain(secret); expect(Object.keys(result).sort()).toEqual(["code", "diagnosticSchema", "error", "ok", "phase"]);
+  }
+  expect(windowsInstallFailure("copy", Object.assign(new Error(secret), { code: "ENOENT" })).code).toBe("fs-not-found");
+  expect(windowsInstallFailure("resources", Object.assign(new Error(secret), { code: "RESOURCE_LIMIT_REQUIRED" })).code).toBe("resource-refusal");
+});
+test("unknown-root failure has actual per-call root phase and preserves state and API message", async () => {
+  const f = await installFixture(); await mkdir(f.root); await put(f.root, "owner-work", "preserved");
+  const result = await diagnoseWindowsManagedInstall(f.directory, f.options);
+  const expected = { ok: false, diagnosticSchema: 1, phase: "root", code: "unknown-managed-root", error: "unknown-managed-root" } as const satisfies ReturnType<typeof windowsInstallFailure>;
+  expect(result).toEqual(expected); expect(JSON.stringify(expected)).toBe(JSON.stringify(diagnosticVector.examples[0])); expect(await readFile(join(f.root, "owner-work"), "utf8")).toBe("preserved");
+  await expect(installWindowsManaged(f.directory, f.options)).rejects.toThrow("First install found unknown/unmanaged files; preserve them and migrate deliberately");
+  expect(f.commands).toEqual([]); expect(JSON.stringify(result)).not.toContain(f.root);
+});
+test("actual owned recorder registration failure reports register phase without command output leakage", async () => {
+  const f = await installFixture(), secret = "PRIVATE_COMMAND_OUTPUT_ACCOUNT";
+  const result = await diagnoseWindowsManagedInstall(f.directory, { ...f.options, run: async (args, timeout) => args.includes("/Create") ? { ok: false, output: secret } : f.run(args, timeout) });
+  const expected = { ok: false, diagnosticSchema: 1, phase: "register", code: "task-register-failed", error: "task-register-failed" } as const satisfies ReturnType<typeof windowsInstallFailure>;
+  expect(result).toEqual(expected); expect(JSON.stringify(expected)).toBe(JSON.stringify(diagnosticVector.examples[2])); expect(JSON.stringify(result)).not.toContain(secret); expect(JSON.stringify(result)).not.toContain(f.root);
+  expect(await readFile(join(f.root, "activation-recovery.json"), "utf8")).toContain("windows-bootstrap");
+});
+test("failed start and failed health retain distinct measured phases with identical original guard", async () => {
+  const start = await installFixture();
+  const result = await diagnoseWindowsManagedInstall(start.directory, { ...start.options, run: async (args, timeout) => args.includes("/Run") ? { ok: false, output: "owned start refusal" } : start.run(args, timeout) });
+  expect(result).toMatchObject({ ok: false, phase: "start", code: "broker-not-ready" });
+  const health = await installFixture(false, false); expect(await diagnoseWindowsManagedInstall(health.directory, health.options)).toMatchObject({ ok: false, phase: "health", code: "broker-not-ready" });
+});
+test("parallel owned failures never share a global diagnostic phase", async () => {
+  const one = await installFixture(), two = await installFixture(); await mkdir(one.root); await put(one.root, "unknown", "preserved");
+  const results = await Promise.all([diagnoseWindowsManagedInstall(one.directory, one.options), diagnoseWindowsManagedInstall(two.directory, { ...two.options, run: async (args, timeout) => args.includes("/Create") ? { ok: false, output: "refused" } : two.run(args, timeout) })]);
+  expect(results[0]).toMatchObject({ phase: "root", code: "unknown-managed-root" }); expect(results[1]).toMatchObject({ phase: "register", code: "task-register-failed" });
 });

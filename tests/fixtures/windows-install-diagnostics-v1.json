@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "kind": "synthetic-diagnostic-conformance",
+  "phases": [
+    "resources",
+    "arguments",
+    "payload",
+    "root",
+    "task",
+    "copy",
+    "seal",
+    "bootstrap",
+    "register",
+    "start",
+    "health",
+    "schedule",
+    "complete"
+  ],
+  "codes": [
+    "unknown",
+    "platform-unsupported",
+    "root-policy-refusal",
+    "payload-policy-refusal",
+    "integrity-refusal",
+    "unknown-managed-root",
+    "preference-invalid",
+    "task-absence-unproven",
+    "endpoint-present",
+    "existing-managed-unhealthy",
+    "task-register-failed",
+    "broker-not-ready",
+    "schedule-failed",
+    "recovery-ownership-changed",
+    "resource-refusal",
+    "fs-access-denied",
+    "fs-not-found",
+    "fs-already-exists",
+    "fs-no-space",
+    "fs-busy",
+    "fs-invalid"
+  ],
+  "examples": [
+    {
+      "ok": false,
+      "diagnosticSchema": 1,
+      "phase": "root",
+      "code": "unknown-managed-root",
+      "error": "unknown-managed-root"
+    },
+    {
+      "ok": false,
+      "diagnosticSchema": 1,
+      "phase": "resources",
+      "code": "resource-refusal",
+      "error": "resource-refusal"
+    },
+    {
+      "ok": false,
+      "diagnosticSchema": 1,
+      "phase": "register",
+      "code": "task-register-failed",
+      "error": "task-register-failed"
+    }
+  ]
+}
