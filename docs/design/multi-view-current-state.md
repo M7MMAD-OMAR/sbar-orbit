@@ -2,6 +2,11 @@
 
 Status: documentation only, 4 November 2026. Audited checkout: `28f2609ad493`, containing the source `0c53` cohort. No runtime implementation, desktop operation, build, benchmark or new acceptance run was performed for this audit. Proposed names below are future design, not current interfaces.
 
+This is the preserved pre-implementation audit. Subsequent caller-cache and
+clipboard repairs, tests and compatibility limits are tracked in the
+[implementation ledger](multi-view-implementation.md). Source line links below
+refer to the audited baseline and may shift after implementation.
+
 ## 1. Authority and production entry path
 
 - The production broker constructs `DesktopSessions` in [ipc.ts:18-52](<../../src/ipc.ts#L18-L52>). [desktop-session.ts:1-2](<../../src/desktop-session.ts#L1-L2>) reexports `Sessions` from [session.ts](<../../src/session.ts>). This alias matters: the session implementation is live, not merely a fixture or experiment.

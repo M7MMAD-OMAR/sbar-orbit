@@ -1,5 +1,31 @@
 # Agent interface
 
+## Native operation identity and text limitations
+
+Opening, presentation and automatic workspace selection cache outcomes by the
+broker-resolved caller identity plus requestId, not a device-global requestId.
+Keep both unchanged to inquire about a possibly delivered operation. A different
+conversation is a different operation scope even if it uses the same requestId.
+Changed parameters within one scope conflict. These in-memory caches do not
+survive broker restart and do not provide durable exactly-once delivery.
+
+Agent opening and presentation over CLI, MCP or direct IPC require a verified
+caller with `ORBIT_CONVERSATION_ID` set to the actual host conversation. Process-only
+or unidentified callers are refused with `CONVERSATION_REQUIRED` before native
+work, because a later CLI process or restarted adapter cannot retain that identity. Read-only discovery is unchanged. The human owner credential
+continues to identify the same owner across CLI processes; agents must not use it.
+For both `native-open` and `native-present`, an explicit JSON requestId is
+preserved, otherwise `ORBIT_REQUEST_ID` or a generated ID is used. A generated new
+ID is not a safe way to retry uncertain delivery. Caller attribution remains
+cooperative same-user attribution, not a protected host-issued multi-view grant.
+
+Native direct text uses the active keymap and implemented stroke levels, not all
+physical keyboard/IME capabilities. Unrepresentable characters now return
+`TEXT_UNSUPPORTED` without attempting the unsafe clipboard replacement/restoration
+fallback or sending Ctrl+V. This intentionally removes that fallback capability;
+it does not restrict typeable text or explicit application Copy/Paste. No atomic
+clipboard-owner revision or coordinated clipboard transaction is claimed.
+
 ## Same-call post-action text readback
 
 Batch `orbit_act` supports `capture.format` of `image` (default), `text` or

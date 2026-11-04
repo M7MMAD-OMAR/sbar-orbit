@@ -1,12 +1,15 @@
 {
   "schema": 1,
-  "status": "design-only",
+  "status": "implementation-in-progress",
   "date": "2026-11-04",
   "branch": "main",
   "baselineCommit": "28f2609ad4939300e6746899074c8b0c03b93d36",
   "functionalCodeBaseline": "0c53b8e182817ff990e129414d11dc51523bff42",
-  "implementationPerformed": false,
-  "requiresFutureImplementationRequest": true,
+  "implementationPerformed": true,
+  "requiresFutureImplementationRequest": false,
+  "implementationLedger": "docs/design/multi-view-implementation.md",
+  "featureEnabled": false,
+  "passedPhaseGates": [],
   "plan": "docs/design/multi-view-plan.md",
   "documents": [
     "docs/design/multi-view-current-state.md",
@@ -67,6 +70,7 @@
       "id": "MV-00",
       "phase": "P0",
       "title": "Freeze actual capability, ingress and single-view baseline",
+      "implementationNote": "In progress: prerequisite caller-cache and clipboard repairs; exact ingress inventory and runtime qualification are not yet a passed P0 gate.",
       "dependsOn": [],
       "expectedWriteScopes": [
         "docs/design/multi-view-current-state.md",
@@ -79,7 +83,7 @@
         "Freeze supported exact adapter/app/build matrix, quiescence evidence and numeric limits before implementation",
         "Classify and prioritize caller-unqualified operation-ID maps and unconditional paste-clipboard restoration before multi-writer enablement"
       ],
-      "status": "planned",
+      "status": "in-progress",
       "runtimeAcceptance": false,
       "writeScopesAreProposed": true,
       "acceptanceEvidenceRequired": true,

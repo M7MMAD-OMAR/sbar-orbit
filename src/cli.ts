@@ -291,7 +291,8 @@ try {
       if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-open JSON|@FILE|-");
       const opening = (await import("./errors")).record(await actionDocument(verb));
       method = "native.open";
-      params = { ...opening, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID() };
+      params = { ...opening, requestId: Object.hasOwn(opening, "requestId")
+        ? opening.requestId : process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID() };
     }
     else if (command === "native-monitors") {
       if (verb !== undefined) throw new OrbitError("INVALID_REQUEST", "Use native-monitors without arguments");

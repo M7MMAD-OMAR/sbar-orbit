@@ -69,12 +69,14 @@ def failure_response(error, session_type):
     # Exactly HostError: its subclasses (TargetClosed, UnsupportedText) have their own fixed public text.
     classified = ((isinstance(error, (SessionError, NativeCompatibilityError)) and session_type is not NativeSession)
                   or type(error) is HostError)
-    capture_messages = {
+    fixed_messages = {
         "CAPTURE_UNAVAILABLE": str(CaptureUnavailable()),
         "CAPTURE_DEADLINE_EXCEEDED": str(CaptureDeadlineExceeded()),
         "CAPTURE_GEOMETRY_CHANGED": str(CaptureGeometryChanged()),
+        "TEXT_UNSUPPORTED": ("Native direct text cannot represent the requested text with this keymap; "
+                             "clipboard fallback is unavailable to preserve shared selections. No paste key was sent."),
     }
-    message = capture_messages.get(code) or (str(error)[:300] if classified else "Native request failed; see the private worker log")
+    message = fixed_messages.get(code) or (str(error)[:300] if classified else "Native request failed; see the private worker log")
     return {"ok": False, "error": {"code": code, "message": message}}
 
 

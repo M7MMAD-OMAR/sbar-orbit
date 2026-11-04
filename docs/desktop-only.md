@@ -57,6 +57,14 @@ selection-write exception. Resume refreshes the current shared selections.
 Pause does not revoke ordinary OS clipboard access or previously offered data;
 this is not a clipboard privacy boundary.
 
+Text not representable by the native direct-stroke implementation and current
+keymap is refused with `TEXT_UNSUPPORTED`
+before any clipboard fallback or paste key. Orbit does not temporarily replace and
+restore the shared selection: the available clipboard helpers cannot atomically
+prove ownership or preserve a newer owner copy. Typeable text and explicit
+application Copy/Paste key actions retain their ordinary shared-clipboard behavior.
+This is a capability limitation, not clipboard isolation or a language ban.
+
 ## After the compositor restarts
 
 A host plan and a loaded plugin belong to one compositor instance, so a Hyprland

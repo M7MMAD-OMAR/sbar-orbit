@@ -1,5 +1,10 @@
 # Web flows campaign
 
+Historical evidence only. The F5 clipboard save/restore fallback below was removed
+on 4 November 2026 because it cannot safely preserve an intervening owner copy.
+Current untypeable text refuses before clipboard access or a paste key; see the
+[current interface](agent-interface.md#native-operation-identity-and-text-limitations).
+
 Date: 29 October 2026. Host: Fedora 44, Hyprland 0.56.2, Wayland. Real MCP tools
 (`orbit_open`, `orbit_handoff`, `orbit_act` with `capture`, `orbit_observe`) driving
 original installed Chromium and Firefox windows opened as NEW windows on

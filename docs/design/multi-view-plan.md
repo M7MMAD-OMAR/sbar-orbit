@@ -1,6 +1,6 @@
-# Multi-view and multi-agent coordination: future implementation plan
+# Multi-view and multi-agent coordination: implementation plan
 
-Status: DESIGN ONLY. This document does not enable a feature, grant desktop authority, or establish runtime acceptance. Implementation is future work.
+Status: IMPLEMENTATION STARTED by owner request on 4 November 2026. Prerequisite safety repairs are in progress; multi-view remains unavailable and no phase gate has passed. This document grants no desktop authority and establishes no runtime acceptance. Track actual changes and remaining gates in the [implementation ledger](multi-view-implementation.md).
 
 Planning baseline: 4 November 2026, `main` documentation baseline `28f2609ad4939300e6746899074c8b0c03b93d36`; reviewed functional code baseline `0c53b8e182817ff990e129414d11dc51523bff42`. Source version `0.4.3` remains an unpublished candidate. The owner delegated actual Windows 11 testing to another machine. This planning task does not resume Windows implementation, CI or remote access.
 
@@ -11,7 +11,7 @@ Build toward **one conversation supervising several explicitly selected original
 - [Current-state audit](multi-view-current-state.md): existing code, exact integration points and evidence gaps.
 - [Safety specification](multi-view-safety.md): invariants, failure/recovery rules and adversarial acceptance.
 - [Primary-source comparison](../research/multi-view-platforms.md): competitor capabilities, limitations and adoption boundaries.
-- [Machine-readable work items](multi-view-work-items.json): dependencies, expected write scopes, deliverables and gates. Every item is planned, not implemented.
+- [Machine-readable work items](multi-view-work-items.json): dependencies, expected write scopes, deliverables and gates. Work-item and gate status is explicit; prerequisite repairs do not imply feature completion.
 - [Current product contract](../desktop-only.md) remains authoritative. [Acceptance evidence](../acceptance.md) and [Linux verification](../linux-verification-2026-11-04.md) do not establish this feature.
 
 ### What is and is not being proposed

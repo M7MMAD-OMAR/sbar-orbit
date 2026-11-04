@@ -265,6 +265,15 @@ export class Sessions {
       throw error;
     }
   }
+  // JSON tuple encoding cannot alias caller/request pairs containing delimiters.
+  // Caches belong to this broker instance, not a durable replay barrier across restarts.
+  private requireStableOperationScope(caller: Caller) {
+    if (caller.role !== "owner" && (!caller.verified || !caller.id.startsWith("conv:")))
+      throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID to the actual host conversation before opening or presenting; retries and reconnects must keep the same caller and requestId");
+  }
+  private operationKey(caller: Caller, requestId: string) {
+    return JSON.stringify([caller.id, requestId]);
+  }
   private noteOpened(caller: Caller, workspace: number) {
     if (!this.opened.some(entry => entry.callerId === caller.id && entry.workspace === workspace))
       this.opened.push({ callerId: caller.id, label: caller.label, workspace, at: Date.now() });
@@ -275,7 +284,8 @@ export class Sessions {
    * agent's windows over several workspaces.
    */
   private async allocateWorkspace(requestId: string, caller: Caller) {
-    const known = this.allocations.get(requestId);
+    const key = this.operationKey(caller, requestId);
+    const known = this.allocations.get(key);
     if (known !== undefined) return known;
     const monitors = record(await NativeBackend.monitors(this.native!));
     const shown = new Set<number>();
@@ -291,7 +301,7 @@ export class Sessions {
     for (const entry of this.opened) take(entry.callerId, entry.workspace);
     const workspace = allocateWorkspace({ pool: this.options.workspacePool ?? workspacePool(), own, used, shown });
     if (this.allocations.size >= 1024) this.allocations.delete(this.allocations.keys().next().value as string);
-    this.allocations.set(requestId, workspace);
+    this.allocations.set(key, workspace);
     this.noteOpened(caller, workspace);
     return workspace;
   }
@@ -687,6 +697,7 @@ export class Sessions {
     if (request.method === "session.live-leases")
       return { leases: [...this.sessions.values()].filter(session => session.state !== "closed").flatMap(session => session.backend.handoff?.appId ? [session.backend.handoff.appId] : []) };
     if (request.method === "native.open") {
+      this.requireStableOperationScope(caller);
       await requireUpdateAdmission(this.updateDirectory);
       if (this.updateLease && this.updateLease.expires > Date.now())
         throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
@@ -700,7 +711,8 @@ export class Sessions {
       const auto = params.workspace === undefined;
       const opening = parseNativeOpen({ workspace: auto ? 1 : params.workspace, applicationId: params.applicationId, ...(params.window === undefined ? {} : { window: params.window }) });
       const fingerprint = JSON.stringify(auto ? { ...opening, workspace: "auto" } : opening);
-      const previous = this.nativeOpens.get(requestId);
+      const key = this.operationKey(caller, requestId);
+      const previous = this.nativeOpens.get(key);
       if (previous) {
         if (previous.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Opening request identity conflicts");
         return previous.result;
@@ -718,11 +730,11 @@ export class Sessions {
         return auto && opened && typeof opened === "object" && !Array.isArray(opened) ? { ...opened, workspace: target.workspace, allocated: true } : opened;
       });
       this.creationTail = result.catch(() => {});
-      this.nativeOpens.set(requestId, { fingerprint, result });
+      this.nativeOpens.set(key, { fingerprint, result });
       this.creating.add(result);
       void result.then(() => this.creating.delete(result), () => this.creating.delete(result));
       void result.catch(error => {
-        if (error instanceof OrbitError && error.code === "APPROVAL_REQUIRED") this.nativeOpens.delete(requestId);
+        if (error instanceof OrbitError && error.code === "APPROVAL_REQUIRED") this.nativeOpens.delete(key);
       });
       return result;
     }
@@ -732,6 +744,7 @@ export class Sessions {
     }
     if (request.method === "native.monitors" || request.method === "native.present") {
       const presentation = request.method === "native.present";
+      if (presentation) this.requireStableOperationScope(caller);
       let requestId = "", selected: ReturnType<typeof parseNativePresentation> | undefined;
       if (presentation) {
         if (Object.keys(params).some(key => !["requestId", "workspace", "monitor"].includes(key)))
@@ -748,8 +761,9 @@ export class Sessions {
       if (!this.native) throw new OrbitError("UNSUPPORTED", "Native monitor control is not configured");
       if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
       const fingerprint = selected ? JSON.stringify(selected) : "";
+      const key = this.operationKey(caller, requestId);
       if (presentation) {
-        const previous = this.nativePresentations.get(requestId);
+        const previous = this.nativePresentations.get(key);
         if (previous) {
           if (previous.fingerprint !== fingerprint) throw new OrbitError("REQUEST_CONFLICT", "Presentation request identity conflicts");
           if (previous.result) return previous.result;
@@ -771,13 +785,13 @@ export class Sessions {
       });
       this.creationTail = result.catch(() => {});
       if (presentation) {
-        this.nativePresentations.set(requestId, { fingerprint, result });
+        this.nativePresentations.set(key, { fingerprint, result });
         void result.catch(error => {
-          if (this.nativePresentations.get(requestId)?.result !== result) return;
+          if (this.nativePresentations.get(key)?.result !== result) return;
           if (!dispatched || (error instanceof OrbitError && error.code === "PRESENTATION_NOT_READY"))
-            this.nativePresentations.set(requestId, { fingerprint });
+            this.nativePresentations.set(key, { fingerprint });
           else if (error instanceof OrbitError && ["APPROVAL_REQUIRED", "NATIVE_INCOMPATIBLE"].includes(error.code))
-            this.nativePresentations.delete(requestId);
+            this.nativePresentations.delete(key);
         });
       }
       this.creating.add(result);
