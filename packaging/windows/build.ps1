@@ -97,7 +97,8 @@ $sourcePackage = Get-Content (Join-Path $sourcePayload 'package.json') -Raw | Co
 if ($sourceReceipt.schema -ne 1 -or $sourceReceipt.sourceCommit -cne $env:GITHUB_SHA -or $sourceReceipt.version -cne $version -or $sourcePackage.name -cne 'sbar-orbit' -or $sourcePackage.version -cne $version) { throw 'Immutable selected registry directory provenance differs' }
 Push-Location $sourcePayload
 try { Run-Bounded @($bun,'install','--frozen-lockfile','--production','--ignore-scripts','--linker','hoisted') } finally { Pop-Location }
-Run-Bounded @($bun,'run','scripts/package-windows.ts',$sourcePayload,($build + '/published'),($build + '/Orbit.Launcher.exe'),($build + '/Orbit.RuntimeBootstrap.exe'),($build + '/artifacts'),$env:GITHUB_SHA,'--runtime-source',($build + '/runtime-source.json'))
+# The producer deliberately requires canonical absolute paths, not mixed slash spellings.
+Run-Bounded @($bun,'run','scripts/package-windows.ts',([IO.Path]::GetFullPath($sourcePayload)),([IO.Path]::GetFullPath((Join-Path $build 'published'))),([IO.Path]::GetFullPath((Join-Path $build 'Orbit.Launcher.exe'))),([IO.Path]::GetFullPath((Join-Path $build 'Orbit.RuntimeBootstrap.exe'))),([IO.Path]::GetFullPath((Join-Path $build 'artifacts'))),$env:GITHUB_SHA,'--runtime-source',([IO.Path]::GetFullPath((Join-Path $build 'runtime-source.json'))))
 $iscc = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6/ISCC.exe'
 if (-not (Test-Path -LiteralPath $iscc)) { throw 'Trusted runner Inno Setup compiler unavailable' }
 Run-Bounded @($iscc,('/DPayload=' + $build + '/artifacts/installer-payload'),('/DPackageVersion=' + $version),('/DArtifactOutput=' + $build + '/artifacts'),'packaging/windows/Orbit.iss')
