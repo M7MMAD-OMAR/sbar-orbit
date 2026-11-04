@@ -114,9 +114,9 @@ foreach ($variant in @(@('activation',$probe.versions.activation),@('rollback',$
   Add-VendorNotices "$build/$label-published"
   $stamp = Join-Path $build "$label-AssemblyInfo.cs"
   ('[assembly:System.Reflection.AssemblyInformationalVersion("' + $fixtureVersion + '")]') | Set-Content -Encoding utf8 $stamp
-  $host = Join-Path $build "$label-Orbit.Launcher.exe"
-  Run-Bounded (@($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/define:NETFRAMEWORK','/main:OrbitLauncher',('/out:' + $host)) + $nativeReferences + $nativeSources + @($stamp))
-  Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','prepare','--base',($build + '/artifacts/installer-payload'),'--gui',($build + '/' + $label + '-published'),'--launcher',$host,'--version',$fixtureVersion,'--destination',($build + '/' + $label + '-fixture'),'--evidence',$evidence,'--archive',$archive)
+  $fixtureLauncher = Join-Path $build "$label-Orbit.Launcher.exe"
+  Run-Bounded (@($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/define:NETFRAMEWORK','/main:OrbitLauncher',('/out:' + $fixtureLauncher)) + $nativeReferences + $nativeSources + @($stamp))
+  Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','prepare','--base',($build + '/artifacts/installer-payload'),'--gui',($build + '/' + $label + '-published'),'--launcher',$fixtureLauncher,'--version',$fixtureVersion,'--destination',($build + '/' + $label + '-fixture'),'--evidence',$evidence,'--archive',$archive)
 }
 function File-Fingerprint([string]$Path) { if (Test-Path -LiteralPath $Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash }; return 'absent' }
 function Shell-Snapshot {
