@@ -206,6 +206,72 @@ def _peerpidfd_option():
     _fail("UNSUPPORTED")
 
 
+_FIXED_ACK = b'\x00\x00\x00\x11{"v":1,"ok":true}'
+
+
+class _FrameReader:
+    """Bounded reader for trusted internal callbacks, not an isolation boundary.
+
+    Python private attributes do not prevent a trusted callback from inspecting
+    the underlying socket; never pass this object to untrusted code.
+    """
+    def __init__(self, connection, deadline, cancel):
+        self.__connection = connection
+        self.__deadline = deadline
+        self.__cancel = cancel
+        self.__active = True
+        self.__used = False
+        self.__complete = False
+
+    def _completed(self):
+        return self.__complete
+
+    def _invalidate(self):
+        self.__active = False
+        self.__connection = None
+
+    def read_request(self):
+        if not self.__active or self.__used:
+            _fail("INVALID")
+        self.__used = True
+        conn = self.__connection
+        def receive_exact(size):
+            data = bytearray()
+            while len(data) < size:
+                _check(self.__deadline, self.__cancel)
+                ready, _, _ = select.select([conn], [], [], min(0.05, max(0, self.__deadline - time.monotonic())))
+                _check(self.__deadline, self.__cancel)
+                if not ready:
+                    continue
+                try:
+                    part = conn.recv(size - len(data), socket.MSG_DONTWAIT)
+                except BlockingIOError:
+                    continue
+                if not part:
+                    _fail("INVALID")
+                data.extend(part)
+            return bytes(data)
+        length = struct.unpack(">I", receive_exact(4))[0]
+        if not 0 < length <= 4096:
+            _fail("INVALID")
+        payload = receive_exact(length)
+        # Client half-closes its write side. Reject every pipelined extra byte.
+        while True:
+            _check(self.__deadline, self.__cancel)
+            ready, _, _ = select.select([conn], [], [], min(0.05, max(0, self.__deadline - time.monotonic())))
+            _check(self.__deadline, self.__cancel)
+            if not ready:
+                continue
+            try:
+                extra = conn.recv(1, socket.MSG_DONTWAIT)
+            except BlockingIOError:
+                continue
+            if extra:
+                _fail("INVALID")
+            self.__complete = True
+            return payload
+
+
 class OwnedPeer:
     """One accepted peer. Caller owns listener; this owns only connection/pidfd."""
     def __init__(self, connection, pidfd, identity, socket_id, listener, listener_state,
@@ -273,6 +339,64 @@ class OwnedPeer:
                 # Retain only fixed codes, never an exception or traceback.
                 code = _safe_code(error.code) if type(error) is ReadPeerError else "UNKNOWN"
             finally:
+                self._running = False
+            _fail(code)
+
+    def exchange_one(self, stage, final_authorize, authority_lock):
+        """One bounded request and constant metadata reply, never an authority grant.
+
+        Both hooks are trusted and must be side-effect-free staging/checks. Owner
+        must use the same lock for all revocation. The final check and send hold
+        that lock; final_authorize must be synchronous, nonblocking and non-reentrant.
+        A successful send only means kernel acceptance, not atomic delivery. A
+        short or failed send is UNKNOWN and is never retried.
+        """
+        if os.getpid() != self._owner_pid:
+            _fail("IDENTITY")
+        with self._lock:
+            if (self._used or not callable(stage) or not callable(final_authorize)
+                    or type(authority_lock) is not type(threading.Lock())):
+                _fail("INVALID")
+            self._used = True
+            self._running = True
+            reader = _FrameReader(self._connection, self._deadline, self._cancel)
+            try:
+                self._verify()
+                try:
+                    staged = stage(self._identity, reader)
+                except BaseException:
+                    stage_failed = True
+                else:
+                    stage_failed = False
+                reader._invalidate()
+                if stage_failed or not reader._completed():
+                    _fail("UNKNOWN")
+                self._verify()
+                # Never hold the authority lock while awaiting peer input or stage.
+                # Short waits allow cancellation/deadline while revocation owns it.
+                acquired = False
+                try:
+                    while not acquired:
+                        _check(self._deadline, self._cancel)
+                        acquired = authority_lock.acquire(timeout=min(0.05, max(0, self._deadline - time.monotonic())))
+                    try:
+                        allowed = final_authorize(self._identity, staged)
+                    except BaseException:
+                        allowed = False
+                    if allowed is not True:
+                        _fail("UNKNOWN")
+                    self._verify()
+                    sent = self._connection.send(_FIXED_ACK, socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
+                    if sent != len(_FIXED_ACK):
+                        _fail("UNKNOWN")
+                    return True
+                finally:
+                    if acquired:
+                        authority_lock.release()
+            except BaseException as error:
+                code = _safe_code(error.code) if type(error) is ReadPeerError else "UNKNOWN"
+            finally:
+                reader._invalidate()
                 self._running = False
             _fail(code)
 

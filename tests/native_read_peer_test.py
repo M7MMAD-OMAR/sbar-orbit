@@ -333,6 +333,20 @@ class PeerTests(unittest.TestCase):
         self.assertNotIn("private", str(caught.exception))
         self.assertIsNone(caught.exception.__context__)
 
+    def test_exchange_never_acknowledges_incomplete_reader(self):
+        peer = self.require_peer()
+        with self.assertRaises(subject.ReadPeerError):
+            peer.exchange_one(lambda identity, reader: object(), lambda *_: True, threading.Lock())
+
+    def test_exchange_stage_exception_is_redacted(self):
+        peer = self.require_peer()
+        def stage(identity, reader): raise ValueError("private stage")
+        with self.assertRaises(subject.ReadPeerError) as caught:
+            peer.exchange_one(stage, lambda *_: True, threading.Lock())
+        self.assertEqual(caught.exception.code, "UNKNOWN")
+        self.assertIsNone(caught.exception.__context__)
+        self.assertNotIn("private", str(caught.exception))
+
     def test_callback_exception_is_redacted(self):
         peer = self.require_peer()
         def callback(_): raise ValueError("secret body")

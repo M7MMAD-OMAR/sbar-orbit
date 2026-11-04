@@ -9,7 +9,7 @@ import { join } from "node:path";
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ out, code }).toMatchObject({ out: "", code: 0 });
-  expect(err).toContain("Ran 25 tests");
+  expect(err).toContain("Ran 27 tests");
   expect(err).toContain("OK");
   expect(err).not.toContain("skipped");
 }, 15000);

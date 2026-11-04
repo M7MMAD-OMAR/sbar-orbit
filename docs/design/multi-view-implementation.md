@@ -672,9 +672,39 @@ configurations refuse. The helper is not wired into production IPC.
 
 The current Grim capture result still reports provider completion `UNKNOWN`.
 Frame `ready` or `failed` can describe one protocol request, but process exit or
-valid PNG alone does not prove provider or GPU drain. The private durable usage
-store remains unimplemented after review identified directory ancestry, crash
-marker and cleanup gaps. No phase gate is passed by these fixture results.
+valid PNG alone does not prove provider or GPU drain. At that point the private
+durable usage store remained unimplemented. No phase gate was passed by those
+fixture results.
 
 Final source suite: 869 pass, 5 skip, 0 fail, 16566 assertions across 81 files
 in 71.33 seconds. Strict TypeScript validation also passed.
+
+## 15. Owned handshake, storage and receipt fixtures
+
+The [private Unix handshake](../../src/native/read_channel_server.py) now uses
+the kernel-pinned accepted peer and exchanges one bounded request with a fixed,
+non-authoritative acknowledgement. Real owned child fixtures cover malformed and
+duplicate requests, slow clients, revoke/reapprove generations, partial writes and
+cleanup. Staging does not hold the owner authorization lock. Final peer checks do
+hold it and can block in OS calls; no hard off-latency or atomic delivery claim is
+made. This is not production ingress, a conversation grant or a defense against
+a hostile same-UID process.
+
+The dormant [Linux usage store](../../src/native/read_usage_store.py) uses pinned
+directory descriptors, an exclusive lock, a separately fsynced pending marker,
+atomic descriptor-relative rename and directory fsync. Its owned temporary-file
+fixtures cover failures and reconciliation, and all recovered records report
+`enabled: false` and unknown acknowledgement. These tests do not prove power-loss
+durability, prevent legacy writers from bypassing its lock, or wire it into the
+TypeScript coordinator. A new qualified owner/cohort and independent storage
+serialization remain required before use.
+
+The [receipt reader](../../src/native/reader_receipt.py) validates one bounded
+operation-bound binary record and writer EOF using an owned pipe fixture. It
+requires separately qualified helper identity and exclusive writer/FD provenance.
+No existing Grim output can manufacture such evidence, and a syntactically valid
+record alone proves neither compositor teardown nor GPU drain. The actual capture
+helper and production wiring are not implemented.
+
+Final source suite: 872 pass, 5 skip, 0 fail, 16578 assertions across 84 files
+in 71.95 seconds. Strict TypeScript validation passed.
