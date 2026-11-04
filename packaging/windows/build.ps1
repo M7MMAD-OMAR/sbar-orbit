@@ -135,17 +135,31 @@ New-Item -ItemType Directory $root -Force | Out-Null
 $sentinel = Join-Path $root 'owner-sentinel.txt'
 Set-Content -LiteralPath $sentinel -Value 'owned refusal fixture'
 $beforeSentinel = File-Fingerprint $sentinel; $beforeShell = Shell-Snapshot
-$refusal = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',('/BUNRUNTIMEARCHIVE="' + $archive + '"'),('/DIR="' + $root + '"')) -PassThru
-if (-not $refusal.WaitForExit(120000)) { $refusal.Kill($true); $refusal.WaitForExit(3000); throw 'Owned refusal installer exceeded deadline' }
+$refusalReport = Join-Path $evidence 'bootstrap-refusal.json'
+if (Test-Path -LiteralPath $refusalReport) { throw 'Refusal diagnostic already exists; preserve it' }
+$refusal = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',('/BUNRUNTIMEARCHIVE="' + $archive + '"'),('/BOOTSTRAPREPORT="' + $refusalReport + '"'),('/DIR="' + $root + '"')) -PassThru
+$refusalCompleted = $refusal.WaitForExit(120000)
+if (-not $refusalCompleted) { $refusal.Kill($true); $refusal.WaitForExit(3000) | Out-Null }
+$refusalExit = if ($refusal.HasExited) { $refusal.ExitCode } else { $null }
+New-Item -ItemType File -Path (Join-Path $evidence 'installer-refusal-result.json') -Value (@{schema=1;installerExitCode=$refusalExit;timedOut=(-not $refusalCompleted);helperReportPresent=(Test-Path -LiteralPath $refusalReport);contentFree=$true} | ConvertTo-Json) -ErrorAction Stop | Out-Null
+if (-not $refusalCompleted) { throw 'Owned refusal installer exceeded deadline' }
 if ($refusal.ExitCode -ne 7 -or (File-Fingerprint $sentinel) -ne $beforeSentinel -or (Shell-Snapshot) -ne $beforeShell -or (Test-Path (Join-Path $root 'current.txt'))) { throw 'Central refusal/shell evidence failed' }
-@{schema=1;exitCode=$refusal.ExitCode;sentinelPreserved=$true;shellSnapshotUnchanged=$true;currentAbsent=$true;temporaryDiagnosticsMayExist=$true} | ConvertTo-Json | Set-Content "$evidence/installer-refusal.json"
+$refusalNative = $null
+if (Test-Path -LiteralPath $refusalReport) { try { $refusalNative = Get-Content -LiteralPath $refusalReport -Raw | ConvertFrom-Json } catch { $refusalNative = $null } }
+@{schema=1;centralRefusalProven=($null -ne $refusalNative -and $refusalNative.centralEntered -and $refusalNative.centralReason -eq "unknown-managed-root");exitCode=$refusal.ExitCode;sentinelPreserved=$true;shellSnapshotUnchanged=$true;currentAbsent=$true;temporaryDiagnosticsMayExist=$true} | ConvertTo-Json | Set-Content "$evidence/installer-refusal.json"
 # Delete ONLY the exact sentinel created above, after its bytes and canonical parent are checked.
 if ([IO.Path]::GetFullPath($sentinel) -ne (Join-Path $root 'owner-sentinel.txt') -or (File-Fingerprint $sentinel) -ne $beforeSentinel) { throw 'Owned sentinel identity changed' }
 Remove-Item -LiteralPath $sentinel
 if (@(Get-ChildItem -LiteralPath $root -Force).Count -ne 0) { throw 'Refusal left unknown root state; preserve it and stop' }
 & "$PSScriptRoot/preflight.ps1"
-$installed = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=','/ACCEPTBUNRUNTIMEDOWNLOAD=1',('/DIR="' + $root + '"'),('/LOG="' + $build + '/install.log"')) -PassThru
-if (-not $installed.WaitForExit(120000)) { $installed.Kill($true); $installed.WaitForExit(3000); throw 'Owned installer exceeded deadline' }
+$installReport = Join-Path $evidence 'bootstrap-install.json'
+if (Test-Path -LiteralPath $installReport) { throw 'Install diagnostic already exists; preserve it' }
+$installed = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=','/ACCEPTBUNRUNTIMEDOWNLOAD=1',('/BOOTSTRAPREPORT="' + $installReport + '"'),('/DIR="' + $root + '"'),('/LOG="' + $build + '/install.log"')) -PassThru
+$installCompleted = $installed.WaitForExit(120000)
+if (-not $installCompleted) { $installed.Kill($true); $installed.WaitForExit(3000) | Out-Null }
+$installExit = if ($installed.HasExited) { $installed.ExitCode } else { $null }
+New-Item -ItemType File -Path (Join-Path $evidence 'installer-install-result.json') -Value (@{schema=1;installerExitCode=$installExit;timedOut=(-not $installCompleted);helperReportPresent=(Test-Path -LiteralPath $installReport);contentFree=$true} | ConvertTo-Json) -ErrorAction Stop | Out-Null
+if (-not $installCompleted) { throw 'Owned installer exceeded deadline' }
 if ($installed.ExitCode -ne 0) { throw "Owned installer failed: $($installed.ExitCode)" }
 Run-Bounded @((Join-Path $root 'bin/Orbit.exe'),'--cli',$root,'help')
 $smoke = Join-Path $build 'owned-gui-smoke'

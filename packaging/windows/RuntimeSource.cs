@@ -294,53 +294,98 @@ namespace Orbit.Shared
                 }
             }
         }
+        // Only fixed literals from our native policy checks are public diagnostic messages.
+        private static readonly HashSet<string> DiagnosticMessages = new HashSet<string>(new[] { "Bootstrap output bound exceeded", "Central bootstrap deadline exceeded", "Central bootstrap did not start", "Central managed admission refused", "Dependency bytes changed", "Dependency entry bound exceeded", "Dependency file count exceeded", "Dependency file missing", "Dependency file/directory case collision", "Dependency hard link refused", "Dependency inventory byte bound exceeded", "Dependency inventory grew beyond bound", "Dependency inventory is not canonical ASCII TSV", "Dependency ordering or case collision", "Dependency path invalid", "Dependency row invalid", "Descriptor runtime/notice differs", "Desktop bytes differ", "Desktop component missing", "Desktop file collision", "Desktop file set differs", "Desktop files invalid", "Desktop path invalid", "Desktop protocol or package identity differs", "Desktop regular file missing", "Desktop tree bound exceeded", "Exclusive private stage creation failed", "Expected strict runtime object", "Explicit update preference required", "Explicit upstream download consent or an exact official archive is required", "Hydrated fixture destination exists", "Hydration owner missing", "Invalid bootstrap mode", "Invalid bootstrap options", "Invalid prepared version", "Missing bootstrap argument", "Missing path root", "Missing prepared name", "Noncanonical path", "Official executable member missing", "Official runtime archive digest differs", "Offline source copy bound exceeded", "Prepared byte bound exceeded", "Prepared file bound exceeded", "Prepared file grew beyond bound", "Prepared metadata bound exceeded", "Prepared runtime bytes changed", "Prepared runtime/source seal is invalid", "Prepared source bound exceeded", "Prepared source bytes changed", "Prepared source incomplete", "Prepared version is not current", "Private cache origin invalid", "Private runtime file set differs", "Private runtime receipt differs", "Private runtime size differs", "Public package contains private runtime state", "Public payload byte bound exceeded", "Public payload contains renamed Bun bytes", "Public source bytes differ", "Redirected prepared path", "Required SDK dependency missing", "Runtime ZIP central bounds differ", "Runtime ZIP central record invalid", "Runtime ZIP central size differs", "Runtime ZIP data overlaps metadata", "Runtime ZIP depth exceeded", "Runtime ZIP descriptor differs", "Runtime ZIP disks unsupported", "Runtime ZIP entry unsupported", "Runtime ZIP expanded bound exceeded", "Runtime ZIP header discrepancy", "Runtime ZIP is truncated", "Runtime ZIP link refused", "Runtime ZIP local descriptor fields differ", "Runtime ZIP local header missing", "Runtime ZIP local size differs", "Runtime ZIP member differs", "Runtime ZIP member overlap", "Runtime ZIP metadata overlap", "Runtime ZIP names must be fixed ASCII", "Runtime ZIP tail missing", "Runtime acquisition deadline exceeded", "Runtime acquisition disk reserve unavailable", "Runtime acquisition memory reserve unavailable", "Runtime archive integrity differs", "Runtime archive response size differs", "Runtime archive stream missing", "Runtime digest invalid", "Runtime download exceeded pin", "Runtime executable digest/CRC differs", "Runtime executable size differs", "Runtime expanded size exceeded", "Runtime fields differ", "Runtime file bound exceeded", "Runtime file grew beyond bound", "Runtime integer missing", "Runtime integer out of bounds", "Runtime license source differs", "Runtime redirect bound exceeded", "Runtime redirect is not official HTTPS", "Runtime redirect missing", "Runtime source is not the fixed official release", "Runtime staging owner unknown", "Runtime string missing", "Source publisher annotation and desktop revision differ", "Supplied archive digest differs", "Supplied archive exceeded pin", "Supplied archive length differs", "Unexpected cache origin", "Unknown dependency file", "Unknown or empty dependency directory", "Unknown private stage input", "Unrecognized or private payload input", "Version escaped admitted root" }, StringComparer.Ordinal);
+        private static string CentralDiagnosticReason(string output)
+        {
+            try { var value = Parse(output); object error; if (value.TryGetValue("error", out error) && error is string)
+                { var text = (string)error; if (text == "First install found unknown/unmanaged files; preserve them and migrate deliberately") return "unknown-managed-root";
+                  if (text == "Managed root must be the default user root") return "managed-root-mismatch"; return "central-policy-or-operation-refusal"; }
+                return "central-json-result"; }
+            catch { return "central-non-json-result"; }
+        }
+        private static void Diagnostic(string path, string phase, int helperExitCode, bool centralEntered, object centralExitCode, string centralReason, Exception failure)
+        {
+            if (path == null) return;
+            try
+            {
+                PreparedRelease.NoRedirect(Path.GetDirectoryName(path));
+                var category = failure == null ? "none" : failure.GetType().Name;
+                if (!Regex.IsMatch(category, @"\A[A-Za-z0-9]{1,64}\z")) category = "Exception";
+                var message = failure == null ? "complete" : DiagnosticMessages.Contains(failure.Message) ? failure.Message : "Native operation failed; exception details remain private";
+                var body = Json.Serialize(new { schema = 1, phase = phase, helperExitCode = helperExitCode, centralEntered = centralEntered, centralExitCode = centralExitCode, centralReason = centralReason,
+                    exceptionCategory = category, exceptionCode = failure == null ? 0 : failure.HResult, message = message, contentFree = true });
+                if (Encoding.UTF8.GetByteCount(body) > 4096) throw new Exception("Diagnostic bound exceeded");
+                var sid = WindowsIdentity.GetCurrent().User; if (sid == null) return;
+                var acl = new FileSecurity(); acl.SetAccessRuleProtection(true, false); acl.SetOwner(sid); acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, AccessControlType.Allow));
+                using (var file = new FileStream(path, FileMode.CreateNew, FileSystemRights.Write, FileShare.Read, 4096, FileOptions.None, acl))
+                using (var writer = new StreamWriter(file, new UTF8Encoding(false))) writer.Write(body);
+            }
+            catch { Console.Error.WriteLine("Private bootstrap diagnostic could not be created exclusively; existing data was preserved."); }
+        }
         [STAThread] private static int Main(string[] argv)
         {
             string owned = null; HashSet<string> ownedFiles = null;
+            string report = null, phase = "arguments", centralReason = "not-started"; bool centralEntered = false; object centralExitCode = null;
             try
             {
                 if (argv.Length == 2 && argv[0] == "--conformance-dependencies") { PreparedRelease.VerifyDependencies(Path.GetFullPath(argv[1])); Console.Out.WriteLine("{\"ok\":true}"); return 0; }
                 if (argv.Length == 2 && argv[0] == "--conformance") { var vector = Parse(PreparedRelease.ReadSmall(Path.GetFullPath(argv[1]), 65536)); var descriptor = RuntimeDescriptor.Parse(vector.ContainsKey("runtimeSource") ? vector["runtimeSource"] : vector); if (vector.ContainsKey("receipt")) { var receipt = RuntimeDescriptor.Object(vector["receipt"]); descriptor.VerifyReceipt(receipt, RuntimeDescriptor.Text(receipt, "orbitVersion")); } Console.Out.WriteLine(descriptor.Id()); return 0; }
                 if (argv.Length < 3 || (argv[0] != "install" && argv[0] != "hydrate")) throw new Exception("Invalid bootstrap mode");
-                var args = new Dictionary<string, string>(StringComparer.Ordinal); for (var i = 1; i < argv.Length; i += 2) { if (i + 1 >= argv.Length || args.ContainsKey(argv[i]) || !new[] { "--payload", "--root", "--automatic-updates", "--archive", "--download-consent", "--destination" }.Contains(argv[i])) throw new Exception("Invalid bootstrap options"); args.Add(argv[i], argv[i + 1]); }
+                var args = new Dictionary<string, string>(StringComparer.Ordinal); for (var i = 1; i < argv.Length; i += 2) { if (i + 1 >= argv.Length || args.ContainsKey(argv[i]) || !new[] { "--payload", "--root", "--automatic-updates", "--archive", "--download-consent", "--destination", "--report" }.Contains(argv[i])) throw new Exception("Invalid bootstrap options"); args.Add(argv[i], argv[i + 1]); }
+                string requestedReport; report = args.TryGetValue("--report", out requestedReport) ? Path.GetFullPath(requestedReport) : Path.Combine(Path.GetTempPath(), "orbit-bootstrap-" + Guid.NewGuid().ToString("N") + ".json");
+                PreparedRelease.NoRedirect(Path.GetDirectoryName(report));
+                phase = "public-payload-validation";
                 var source = Path.GetFullPath(Required(args, "--payload")); var descriptorSource = DesktopPayload.Verify(source, true, Parse);
+                phase = "consent-validation";
                 string provided; var supplied = args.TryGetValue("--archive", out provided); string consent;
                 if (!supplied && (!args.TryGetValue("--download-consent", out consent) || consent != "accepted")) throw new Exception("Explicit upstream download consent or an exact official archive is required");
-                owned = FreshStage(); var payload = Path.Combine(owned, "payload"); CopyPublic(source, payload); DesktopPayload.Verify(payload, true, Parse);
+                phase = "private-staging"; owned = FreshStage(); var payload = Path.Combine(owned, "payload");
+                phase = "private-payload-copy"; CopyPublic(source, payload);
+                phase = "private-public-validation"; DesktopPayload.Verify(payload, true, Parse);
                 ownedFiles = new HashSet<string>(DesktopPayload.Files(owned, ""), StringComparer.Ordinal); ownedFiles.Add("bun-official.zip"); ownedFiles.Add("payload/runtime/bun.exe"); ownedFiles.Add("payload/runtime-source-receipt.json");
                 var archive = Path.Combine(owned, "bun-official.zip"); var deadline = Stopwatch.StartNew();
+                phase = supplied ? "provided-archive-copy" : "official-runtime-download";
                 if (supplied) CopyArchive(Path.GetFullPath(provided), archive, descriptorSource, deadline);
                 else Download(descriptorSource, archive, deadline);
+                phase = "runtime-archive-extraction";
                 Directory.CreateDirectory(Path.Combine(payload, "runtime")); Extract(archive, Path.Combine(payload, RuntimeDescriptor.Executable.Replace('/', Path.DirectorySeparatorChar)), descriptorSource, deadline);
                 var package = Parse(PreparedRelease.ReadSmall(Path.Combine(payload, "package.json"), 1048576)); var version = RuntimeDescriptor.Text(package, "version");
+                phase = "private-runtime-receipt";
                 using (var output = new StreamWriter(new FileStream(Path.Combine(payload, "runtime-source-receipt.json"), FileMode.CreateNew, FileAccess.Write, FileShare.None), new UTF8Encoding(false))) output.Write(Json.Serialize(descriptorSource.Receipt(version, supplied ? "provided-archive" : "upstream-download")));
-                DesktopPayload.Verify(payload, false, Parse);
+                phase = "complete-private-validation"; DesktopPayload.Verify(payload, false, Parse);
                 if (argv[0] == "hydrate")
                 {
                     var destination = Path.GetFullPath(Required(args, "--destination")); PreparedRelease.NoRedirect(Path.GetDirectoryName(destination));
                     if (!CreateDirectory(destination, IntPtr.Zero)) throw new Exception("Hydrated fixture destination exists");
                     var sid = WindowsIdentity.GetCurrent().User; if (sid == null) throw new Exception("Hydration owner missing");
                     var acl = new DirectorySecurity(); acl.SetAccessRuleProtection(true, false); acl.SetOwner(sid); acl.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow)); Directory.SetAccessControl(destination, acl);
-                    CopyPublic(payload, destination); DesktopPayload.Verify(destination, false, Parse); Console.Out.WriteLine(Json.Serialize(new { ok = true, payload = destination })); return 0;
+                    CopyPublic(payload, destination); DesktopPayload.Verify(destination, false, Parse); Diagnostic(report, "complete", 0, false, null, "not-started", null); Console.Out.WriteLine(Json.Serialize(new { ok = true, payload = destination })); return 0;
                 }
                 var root = Path.GetFullPath(Required(args, "--root")); var automatic = Required(args, "--automatic-updates"); if (automatic != "on" && automatic != "off") throw new Exception("Explicit update preference required");
                 var runtime = Path.Combine(payload, RuntimeDescriptor.Executable.Replace('/', Path.DirectorySeparatorChar)); var entry = Path.Combine(payload, "src", "windows-managed-install.ts");
                 var start = new ProcessStartInfo(runtime, Arguments(new[] { entry, "install", "--payload", payload, "--root", root, "--automatic-updates", automatic })) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = payload };
                 start.EnvironmentVariables["ORBIT_BUN"] = runtime;
+                phase = "central-install-start";
                 using (var child = Process.Start(start))
                 {
                     if (child == null) throw new Exception("Central bootstrap did not start");
+                    centralEntered = true; phase = "central-install-wait";
                     try
                     {
                         var stdout = System.Threading.Tasks.Task.Run(() => ReadBounded(child.StandardOutput)); var stderr = System.Threading.Tasks.Task.Run(() => ReadBounded(child.StandardError));
                         if (!child.WaitForExit(120000)) throw new Exception("Central bootstrap deadline exceeded");
-                        if (!System.Threading.Tasks.Task.WaitAll(new System.Threading.Tasks.Task[] { stdout, stderr }, 3000) || child.ExitCode != 0 || !Parse(stdout.Result).ContainsKey("ok") || !Object.Equals(Parse(stdout.Result)["ok"], true)) throw new Exception("Central managed admission refused");
+                        centralExitCode = child.ExitCode; phase = "central-install-result";
+                        if (!System.Threading.Tasks.Task.WaitAll(new System.Threading.Tasks.Task[] { stdout, stderr }, 3000)) throw new Exception("Central managed admission refused");
+                        centralReason = CentralDiagnosticReason(stdout.Result);
+                        if (child.ExitCode != 0 || !Parse(stdout.Result).ContainsKey("ok") || !Object.Equals(Parse(stdout.Result)["ok"], true)) throw new Exception("Central managed admission refused");
                     }
                     finally { if (!child.HasExited) global::OrbitLauncher.KillOwnedVerifierTree(child); }
                 }
+                Diagnostic(report, "complete", 0, centralEntered, centralExitCode, centralReason, null);
                 Console.Out.WriteLine("{\"ok\":true}"); return 0;
             }
-            catch (Exception) { Console.Error.WriteLine("Orbit runtime bootstrap refused or failed; no independent current/task changes were attempted. Inspect the fixed upstream pin, consent and resource prerequisites."); return 2; }
+            catch (Exception failure) { Diagnostic(report, phase, 2, centralEntered, centralExitCode, centralReason, failure); Console.Error.WriteLine("Orbit runtime bootstrap refused or failed; no independent current/task changes were attempted. Inspect the fixed upstream pin, consent and resource prerequisites."); return 2; }
             finally { if (owned != null && ownedFiles != null) { try { PreparedRelease.NoRedirect(owned); if (DesktopPayload.Files(owned, "").Any(path => !ownedFiles.Contains(path))) throw new Exception("Unknown private stage input"); Directory.Delete(owned, true); } catch { /* Preserve a private stage with unconfirmed entries rather than delete foreign state. */ } } }
         }
         private static string ReadBounded(StreamReader input)
