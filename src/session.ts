@@ -1098,6 +1098,12 @@ export class Sessions {
   private async dispatchRequest(value: unknown, caller: Caller, protectedReadChannel?: object): Promise<unknown> {
     const request = record(value);
     const params = request.params === undefined ? {} : record(request.params);
+    if (request.method === "views.owner-status") {
+      if (!caller.verified || caller.role !== "owner") throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
+      if (Object.keys(params).length !== 0) throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+      // No production read-view adapter or protected transport is qualified yet.
+      return { available: false, enabled: false, activeChannels: 0, readViews: 0 };
+    }
     if (typeof request.method === "string" && request.method.startsWith("views."))
       return this.dispatchReadView(request.method, params, Object.freeze({ ...caller }), protectedReadChannel);
     if (request.method === "applications.list") {

@@ -135,6 +135,50 @@ def read_sessions(client, with_presence=True):
     return sessions, ended
 
 
+def unavailable_read_views():
+    """Fresh metadata only. Unavailable is not an empty, enabled read grant."""
+    return {"available": False, "enabled": False, "activeChannels": 0, "readViews": 0}
+
+
+def normalize_read_views(payload):
+    """Accept only bounded owner-status counters, never content or transport fields."""
+    keys = {"available", "enabled", "activeChannels", "readViews"}
+    if type(payload) is not dict or set(payload) != keys:
+        return unavailable_read_views()
+    if type(payload["available"]) is not bool or type(payload["enabled"]) is not bool:
+        return unavailable_read_views()
+    if any(type(payload[key]) is not int or not 0 <= payload[key] <= 8 for key in ("activeChannels", "readViews")):
+        return unavailable_read_views()
+    if ((not payload["available"] and payload["enabled"])
+            or (not payload["available"] or not payload["enabled"]) and (payload["activeChannels"] or payload["readViews"])):
+        return unavailable_read_views()
+    return {key: payload[key] for key in ("available", "enabled", "activeChannels", "readViews")}
+
+
+def read_owner_view_status(client):
+    """Read-only metadata on the existing panel connection; old/denied brokers stay unavailable."""
+    try:
+        return normalize_read_views(client.call("views.owner-status", {}))
+    except Exception:
+        # Error messages can carry private worker data. None enters the status label.
+        return unavailable_read_views()
+
+
+def read_view_summary(payload, lang="en"):
+    status = normalize_read_views(payload)
+    arabic = lang == "ar"
+    prefix = "قراءات النوافذ المتعددة: " if arabic else "Multi-view reads: "
+    if not status["available"]:
+        return prefix + ("غير متاحة" if arabic else "Not available")
+    if not status["enabled"]:
+        return prefix + ("متوقفة" if arabic else "Off")
+    if not status["activeChannels"] and not status["readViews"]:
+        return prefix + ("مفعّلة، لا توجد قراءات نشطة" if arabic else "On, no active views")
+    channels, views = status["activeChannels"], status["readViews"]
+    return prefix + (f"نشطة: {channels} قنوات، {views} قراءات" if arabic
+                     else f"Active: {channels} channels, {views} views")
+
+
 def read_status(client, with_presence=True):
     """The open session list, and presence only when something is going to read it. The collapsed mark
     takes its colour from the list alone, so presence is one call per session that nobody sees."""

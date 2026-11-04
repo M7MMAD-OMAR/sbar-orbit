@@ -85,8 +85,8 @@ import cairo  # noqa: E402
 import math  # noqa: E402
 
 from panel_broker import (BrokerClient, BrokerError, broker_socket, build_report, claim_the_mark, command_socket_path,
-                           launcher_json, notify, read_journal, read_sessions, rpc, session_action,
-                           session_shape, stable_order)  # noqa: E402
+                           launcher_json, normalize_read_views, notify, read_journal, read_owner_view_status, read_sessions,
+                           read_view_summary, rpc, session_action, session_shape, stable_order, unavailable_read_views)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 from panel_sessions import SESSIONS_CSS, DetailPage, SessionList  # noqa: E402
@@ -248,6 +248,8 @@ class Panel(Gtk.Application):
         self.path = broker_socket()
         self.client = BrokerClient(self.path)
         self.sessions = []
+        self.read_views = unavailable_read_views()
+        self.read_views_generation = 0
         self.reachable = False
         self.expanded = False
         self.cards_stale = True
@@ -388,6 +390,13 @@ class Panel(Gtk.Application):
             self.scrollers[name] = (scroller, content)
             self.stack.add_named(scroller, name)
         self.plate.append(self.stack)
+        # Owner-only counters, not a viewer or an enable/capture control.
+        self.read_view_status_label = Gtk.Label(label=read_view_summary(self.read_views, self.language), wrap=True)
+        self.read_view_status_label.set_xalign(0.0)
+        self.read_view_status_label.set_margin_start(12)
+        self.read_view_status_label.set_margin_end(12)
+        self.read_view_status_label.add_css_class("orbit-dim")
+        self.plate.append(self.read_view_status_label)
         self.plate.append(self.footer())
 
         self.shell.append(self.mark)
@@ -869,8 +878,12 @@ class Panel(Gtk.Application):
         while not self.stopping:
             want_presence = self.expanded or GLib.get_monotonic_time() / 1e6 >= self.presence_due
             ended, journal = [], None
+            read_views = unavailable_read_views()
+            read_views_generation = self.read_views_generation
             try:
                 sessions, ended = read_sessions(self.client, want_presence)
+                if self.expanded:
+                    read_views = read_owner_view_status(self.client)
                 reachable = True
                 wanted = self.detail_id
                 if wanted is not None:
@@ -881,6 +894,7 @@ class Panel(Gtk.Application):
             except Exception:
                 self.client.close()
                 sessions, ended, reachable = [], [], False
+                read_views = unavailable_read_views()
             if want_presence:
                 self.presence_due = GLib.get_monotonic_time() / 1e6 + PRESENCE_WHILE_COLLAPSED_S
             elif sessions:
@@ -888,13 +902,16 @@ class Panel(Gtk.Application):
                 carried = {s.get("sessionId"): s.get("presence") for s in self.sessions}
                 for session in sessions:
                     session["presence"] = carried.get(session.get("sessionId"))
-            GLib.idle_add(self.apply_status, sessions, reachable, ended, journal)
+            GLib.idle_add(self.apply_status, sessions, reachable, ended, journal, read_views, read_views_generation)
             self.wake.wait(self.interval())
             self.wake.clear()
         self.client.close()
 
-    def apply_status(self, sessions, reachable, ended=(), journal=None):
+    def apply_status(self, sessions, reachable, ended=(), journal=None, read_views=None, read_views_generation=None):
         self.sessions, self.reachable, self.closed = sessions, reachable, list(ended)
+        current = self.expanded and read_views_generation == self.read_views_generation
+        self.read_views = normalize_read_views(read_views) if reachable and current else unavailable_read_views()
+        self.refresh_read_view_status()
         if journal is not None and journal[0] == self.detail_id:
             self.journal = journal[1]
         shape = (session_shape(sessions), reachable)
@@ -910,6 +927,13 @@ class Panel(Gtk.Application):
         except Exception as error:
             print(f"panel: could not render status: {error}", file=sys.stderr)
         return False
+
+    def refresh_read_view_status(self):
+        label = getattr(self, "read_view_status_label", None)
+        if label is not None:
+            message = read_view_summary(self.read_views, self.language)
+            if label.get_label() != message:
+                label.set_label(message)
 
     def announce(self):
         """A blink, and a notification when allowed, for each session or application that appeared."""
@@ -1130,6 +1154,10 @@ class Panel(Gtk.Application):
         if expanded == self.expanded and not (expanded and self.cards_stale):
             return
         self.expanded = expanded
+        self.read_views_generation += 1
+        # Never display a previously active summary while waiting for the next poll.
+        self.read_views = unavailable_read_views()
+        self.refresh_read_view_status()
         if not expanded:
             self.confirming = None
             self.show_list(reopen=False)

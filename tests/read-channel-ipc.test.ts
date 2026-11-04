@@ -196,3 +196,17 @@ linux("secrets never enter registry status real broker diagnostics or fixed refu
     expect(status).toMatchObject({ ok: true, result: { pending: 0, active: 1, quarantined: 0 } });
   } finally { await f.close(); }
 });
+
+linux("owner-only status reports unavailable without granting read authority", async () => {
+  const f = await fixture();
+  try {
+    const owner = await f.real("views.owner-status", {}, f.ownerHeaders);
+    expect(owner).toEqual({ ok: true, result: { available: false, enabled: false, activeChannels: 0, readViews: 0 } });
+    const agent = await f.real("views.owner-status", {}, f.headers());
+    expect(agent).toMatchObject({ ok: false, error: { code: "READ_VIEW_DENIED" } });
+    const spoof = await f.real("views.owner-status", { role: "owner" }, f.headers());
+    expect(spoof).toMatchObject({ ok: false, error: { code: "READ_VIEW_DENIED" } });
+    const extra = await f.real("views.owner-status", { enable: true }, f.ownerHeaders);
+    expect(extra).toMatchObject({ ok: false, error: { code: "READ_VIEW_INVALID" } });
+  } finally { await f.close(); }
+});

@@ -613,3 +613,35 @@ does not expose this controller and no feature gate passed.
 
 Final source verification: 833 pass, 5 skip, 0 fail, 16411 assertions across
 77 files in 71.21 seconds. Strict root TypeScript validation passed.
+
+## 13. Owner status and broker-owned usage fixture
+
+The ordinary broker provides owner-credential-only `views.owner-status`, with
+fixed unavailable, disabled and zero-count metadata. It opens no reader and
+exposes no identities or grants. The existing panel displays this state in English
+and Arabic while expanded, using its existing poll worker. Old brokers, denied
+requests, malformed metadata, disconnects and stale expansion generations all
+show unavailable. Display-free tests exercise actual panel methods; this is not
+a visual or native desktop acceptance test.
+
+The internal [usage coordinator](../../src/read-usage-coordinator.ts) makes an
+`off` fence synchronous before waiting for its injected store, limits queued
+work and returns unconfirmed on deadlines without claiming an unresolved write
+stopped. Store errors and uncertain outcomes remain sticky disabled. A real
+Sessions fixture uses the coordinator fence to deny an accepted read before the
+store acknowledgement; its notification callback is a no-op, so it does not
+prove immediate registry notification or reader/provider drain.
+
+The store is an injected durability contract, not an implementation of durable
+disk storage. Legacy CLI, MCP and session adapters still use independent
+unversioned preference files and can bypass it. The current DSH MCP plugin can
+share a registration and provides neither verified conversation identity nor an
+inherited protected descriptor. Never treat PID headers, a fixture epoch, a file
+watcher or a promise as equivalent to protected identity, off authority or drain.
+Each coordinator instance requires a fresh Sessions registry and exclusive
+qualified storage writer; numeric epochs alone can collide across restarts.
+Existing production read views remain unavailable until these and transport,
+provider-stop and original-app acceptance gates are actually established.
+
+Source verification after these changes: 865 pass, 5 skip, 0 fail, 16547
+assertions across 80 files in 70.74 seconds; strict TypeScript validation passed.

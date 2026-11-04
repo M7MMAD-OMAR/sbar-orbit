@@ -175,3 +175,107 @@ print(json.dumps({"found": found == token, "loose": loose, "junk": junk, "missin
     expect(result).toEqual({ found: true, loose: null, junk: null, missing: null, sent: true, not_sent: true });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test("owner read view status asks only bounded metadata and leaves capture and controls untouched", async () => {
+  const result = await python(`
+import json
+from panel_broker import read_owner_view_status
+class Client:
+    def __init__(self): self.calls = []
+    def call(self, method, params=None):
+        self.calls.append([method, params])
+        if method != "views.owner-status": raise AssertionError("Not metadata")
+        return {"available": False, "enabled": False, "activeChannels": 0, "readViews": 0}
+client = Client()
+print(json.dumps({"status": read_owner_view_status(client), "calls": client.calls}))
+`);
+  expect(result).toEqual({ status: { available: false, enabled: false, activeChannels: 0, readViews: 0 }, calls: [["views.owner-status", {}]] });
+});
+
+test("old broker denial and unreachable owner status never expose private errors or stale active counts", async () => {
+  const result = await python(`
+import json
+from panel_broker import BrokerError, read_owner_view_status
+class Client:
+    def __init__(self, failure): self.failure = failure
+    def call(self, method, params=None): raise self.failure
+errors = [BrokerError("private-token-and-PID-424242", "UNSUPPORTED"), BrokerError("private-owner-secret", "OWNER_REQUIRED"), OSError("private-socket-path")]
+print(json.dumps([read_owner_view_status(Client(error)) for error in errors]))
+`);
+  expect(result).toEqual(Array.from({ length: 3 }, () => ({ available: false, enabled: false, activeChannels: 0, readViews: 0 })));
+  expect(JSON.stringify(result)).not.toContain("private");
+});
+
+test("owner counter normalizer rejects extra secrets malformed types unsafe counts and inconsistent availability", async () => {
+  const result = await python(`
+import json
+from panel_broker import normalize_read_views, unavailable_read_views
+base = unavailable_read_views()
+cases = [None, [], {}, {**base, "token": "private-secret"}, {**base, "available": 1}, {**base, "enabled": "false"},
+         {**base, "activeChannels": True}, {**base, "readViews": -1}, {**base, "readViews": 9},
+         {**base, "activeChannels": 1.5}, {**base, "enabled": True}, {**base, "activeChannels": 1},
+         {**base, "available": True, "readViews": 1}]
+print(json.dumps([normalize_read_views(item) == base for item in cases]))
+`);
+  expect(result).toEqual(Array(13).fill(true));
+});
+
+test("read view summaries distinguish unavailable off no active views and qualified owner counters in English and Arabic", async () => {
+  const result = await python(`
+import json
+from panel_broker import read_view_summary
+states = [{"available": False, "enabled": False, "activeChannels": 0, "readViews": 0},
+          {"available": True, "enabled": False, "activeChannels": 0, "readViews": 0},
+          {"available": True, "enabled": True, "activeChannels": 0, "readViews": 0},
+          {"available": True, "enabled": True, "activeChannels": 2, "readViews": 3}]
+print(json.dumps({lang: [read_view_summary(item, lang) for item in states] for lang in ["en", "ar"]}))
+`);
+  expect(result.en).toEqual(["Multi-view reads: Not available", "Multi-view reads: Off", "Multi-view reads: On, no active views", "Multi-view reads: Active: 2 channels, 3 views"]);
+  expect(result.ar[0]).toContain("غير متاحة"); expect(result.ar[1]).toContain("متوقفة");
+  expect(result.ar[3]).toContain("2"); expect(result.ar[3]).toContain("3");
+  expect(JSON.stringify(result)).not.toMatch(/[٠-٩]/);
+});
+
+test("metadata status uses the ordinary owner credential header and agent refusal stays unavailable", async () => {
+  const result = await python(`
+import json
+from panel_broker import request_once, read_owner_view_status
+class Connection:
+    def __init__(self): self.headers = {}; self.request_body = None
+    def request(self, verb, target, body=None, headers=None): self.headers, self.request_body = headers, json.loads(body)
+    def getresponse(self):
+        owner = self.headers.get("X-Orbit-Owner") == "ab" * 32
+        class Reply:
+            def read(self, size):
+                return json.dumps({"ok": True, "result": {"available": False, "enabled": False, "activeChannels": 0, "readViews": 0}} if owner
+                                  else {"ok": False, "error": {"code": "OWNER_REQUIRED", "message": "private-agent-refusal"}}).encode()
+        return Reply()
+class Client:
+    def __init__(self, token): self.token, self.connection = token, Connection()
+    def call(self, method, params=None): return request_once(self.connection, method, params, self.token)
+owner, agent = Client("ab" * 32), Client(None)
+a, b = read_owner_view_status(owner), read_owner_view_status(agent)
+print(json.dumps({"owner": a, "agent": b, "sent": owner.connection.headers.get("X-Orbit-Owner") == "ab" * 32,
+                  "agentHasOwner": "X-Orbit-Owner" in agent.connection.headers, "body": owner.connection.request_body}))
+`);
+  expect(result.sent).toBe(true); expect(result.agentHasOwner).toBe(false);
+  expect(result.owner).toEqual(result.agent);
+  expect(result.body).toEqual({ method: "views.owner-status", params: {} });
+  expect(JSON.stringify(result)).not.toContain("private");
+});
+
+test("status normalization copies only metadata without mutating the broker payload or creating work", async () => {
+  const result = await python(`
+import json
+from unittest.mock import patch
+from panel_broker import normalize_read_views, read_owner_view_status
+payload = {"available": True, "enabled": True, "activeChannels": 1, "readViews": 2}
+class Client:
+    def call(self, method, params=None): return payload
+with patch("subprocess.Popen", side_effect=AssertionError("No worker")), patch("subprocess.run", side_effect=AssertionError("No capture")), patch("threading.Thread", side_effect=AssertionError("No thread")):
+    status = read_owner_view_status(Client())
+    status["readViews"] = 0
+print(json.dumps({"source": payload, "fresh": normalize_read_views(None) is not normalize_read_views(None)}))
+`);
+  expect(result).toEqual({ source: { available: true, enabled: true, activeChannels: 1, readViews: 2 }, fresh: true });
+});
