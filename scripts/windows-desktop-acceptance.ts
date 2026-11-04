@@ -81,6 +81,12 @@ async function inspectFailure(options: Map<string, string>) {
   check(runnerTemp && root === resolve(managedUpdateRoot()) && report.startsWith(resolve(runnerTemp) + sep) && report.endsWith(".json"), "Only the known hosted root and owned evidence report are inspectable");
   const parent = dirname(report), parentInfo = await lstat(parent);
   check(parentInfo.isDirectory() && !parentInfo.isSymbolicLink() && await realpath(parent) === parent && await missing(report), "Exclusive canonical inspector result required");
+  const ownershipSummary = (xml: string, sid: string) => {
+    const diagnostics = taskOwnershipDiagnostics(xml, join(root, "bin/sbar-orbit.cmd"), sid);
+    return { schema: 1, authoritative: diagnostics.authoritative === true, authoritativeEvaluated: diagnostics.authoritativeEvaluated === true,
+      checks: Object.fromEntries(TASK_OWNERSHIP_CHECK_KEYS.map(key => [key, diagnostics.checks[key] === true])),
+      settingsTagShapes: Object.fromEntries(TASK_OWNERSHIP_SETTING_TAGS.map(tag => [tag, Object.fromEntries(TASK_OWNERSHIP_SHAPE_KEYS.map(key => [key, diagnostics.settingsTagShapes[tag]?.[key] === true]))])) };
+  };
   const task: Record<string, unknown> = { queryCompleted: false, taskQueryStage: "sid", queryFailureKind: "unobserved", found: null, state: "unknown", lastTaskResult: null, lastRunTimeSeen: null, queryHResult: null, exactOwnership: false };
   const evidence: Record<string, unknown> = { schema: 1, kind: "owned-read-only-install-failure", contentFree: true, mutationsAttempted: false,
     expectedSourceIdentityValid: false, sourceIdentityResult: "unobserved", launchAdmission: "unobserved", recoveryBarrierPresent: false, task, socketPresent: null, endpoint: "unclassified", doctorIdentity: "unobserved", inspectorComplete: false };
@@ -112,6 +118,24 @@ async function inspectFailure(options: Map<string, string>) {
     try {
       task.taskQueryStage = "sid";
       const sid = await currentUserSid(), name = taskNameForUser(sid);
+      const qualificationCode = "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$WarningPreference='SilentlyContinue';$InformationPreference='SilentlyContinue';$result=@{qualificationCompleted=$false;allUserIdsResolvedCurrentSid=$null;userIdUnresolved=$null;userIdCountMatchesExpected=$null;runLevelLua=$null;allowHardTerminateRequested=$null;allowStartOnDemandRequested=$null;runOnlyIfNetworkAvailableRequested=$null;startWhenAvailableRequested=$null;enabledRequested=$null};try{$service=New-Object -ComObject 'Schedule.Service';$service.Connect();$task=$service.GetFolder([string][char]92).GetTask('__TASK__');$definition=$task.Definition;$level=$definition.Principal.RunLevel;if($null -ne $level -and (($level -is [int]) -or ($level -is [long]))){$result.runLevelLua=($level -eq 0)};$settings=$definition.Settings;$observed=$settings.AllowHardTerminate;if($null -ne $observed -and $observed -is [bool]){$result.allowHardTerminateRequested=($observed -eq $true)};$observed=$settings.AllowDemandStart;if($null -ne $observed -and $observed -is [bool]){$result.allowStartOnDemandRequested=($observed -eq $true)};$observed=$settings.RunOnlyIfNetworkAvailable;if($null -ne $observed -and $observed -is [bool]){$result.runOnlyIfNetworkAvailableRequested=($observed -eq $false)};$observed=$settings.StartWhenAvailable;if($null -ne $observed -and $observed -is [bool]){$result.startWhenAvailableRequested=($observed -eq $false)};$observed=$settings.Enabled;if($null -ne $observed -and $observed -is [bool]){$result.enabledRequested=($observed -eq $true)};$document=New-Object System.Xml.XmlDocument;$document.XmlResolver=$null;$document.LoadXml([string]$task.Xml);$references=$document.SelectNodes(\"//*[local-name()='UserId']\");$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$result.userIdCountMatchesExpected=($references.Count -eq 2);$all=($references.Count -eq 2);$unresolved=$false;foreach($reference in $references){try{$value=[string]$reference.InnerText;if($value.StartsWith('S-1-')){$resolved=[System.Security.Principal.SecurityIdentifier]::new($value)}else{$resolved=[System.Security.Principal.NTAccount]::new($value).Translate([System.Security.Principal.SecurityIdentifier])};if($resolved.Value -ne $current){$all=$false}}catch{$all=$false;$unresolved=$true}};$result.allUserIdsResolvedCurrentSid=$all;$result.userIdUnresolved=$unresolved;$result.qualificationCompleted=$true}catch{};$result|ConvertTo-Json -Compress".replace("__TASK__", name.replaceAll("'", "''"));
+      try {
+        const qualification = await boundedCommand(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(qualificationCode, "utf16le").toString("base64")], 10000);
+        const flags: Record<string, boolean | null> = {};
+        for (const key of ["qualificationCompleted", "allUserIdsResolvedCurrentSid", "userIdUnresolved", "userIdCountMatchesExpected", "runLevelLua", "allowHardTerminateRequested", "allowStartOnDemandRequested", "runOnlyIfNetworkAvailableRequested", "startWhenAvailableRequested", "enabledRequested"]) flags[key] = null;
+        if (qualification.ok) {
+          const value: unknown = JSON.parse(qualification.output);
+          if (value && typeof value === "object") for (const key of Object.keys(flags)) if (key in value) { const flag = (value as Record<string, unknown>)[key]; if (typeof flag === "boolean") flags[key] = flag; }
+        }
+        task.effectiveQualification = flags;
+      } catch { task.effectiveQualification = { qualificationCompleted: false }; }
+      try {
+        const actualXml = await boundedCommand(["schtasks.exe", "/Query", "/TN", name, "/XML"]);
+        task.schtasksInspection = { commandOk: actualXml.ok, outputEmpty: actualXml.output.trim().length === 0,
+          outputHasNul: actualXml.output.includes(String.fromCharCode(0)), outputHasUnicodeBom: actualXml.output.includes(String.fromCharCode(0xfeff)), outputStartsReplacement: actualXml.output.startsWith(String.fromCharCode(0xfffd)),
+          queryFailureKind: actualXml.ok ? "none" : actualXml.stopUnconfirmed === true ? "stop-unconfirmed" : actualXml.output === "Lifecycle command timed out" ? "timeout" : "failed",
+          ownership: ownershipSummary(actualXml.output, sid) };
+      } catch { task.schtasksInspection = { commandOk: false, queryFailureKind: "failed" }; }
       task.taskQueryStage = "command";
       const code = "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$WarningPreference='SilentlyContinue';$InformationPreference='SilentlyContinue';try{$service=New-Object -ComObject 'Schedule.Service';$service.Connect();$folder=$service.GetFolder([string][char]92);$task=$folder.GetTask('" + name.replaceAll("'", "''") + "');[pscustomobject]@{found=$true;state=[int]$task.State;lastTaskResult=[long]$task.LastTaskResult;lastRunTimeSeen=($task.LastRunTime.Year -gt 1900);xml=[string]$task.Xml;queryHResult=$null}|ConvertTo-Json -Compress -Depth 3}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};[pscustomobject]@{found=$null;state=0;lastTaskResult=$null;lastRunTimeSeen=$null;xml='';queryHResult=[int]$failure.HResult}|ConvertTo-Json -Compress}";
       const query = await boundedCommand(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(code, "utf16le").toString("base64")], 10000);
@@ -130,11 +154,9 @@ async function inspectFailure(options: Map<string, string>) {
             if (typeof data.lastTaskResult === "number" && Number.isSafeInteger(data.lastTaskResult) && data.lastTaskResult >= -2147483648 && data.lastTaskResult <= 4294967295) task.lastTaskResult = data.lastTaskResult;
             if (typeof data.lastRunTimeSeen === "boolean") task.lastRunTimeSeen = data.lastRunTimeSeen;
             if (typeof data.xml === "string" && data.xml.length <= 65536) {
-              const diagnostics = taskOwnershipDiagnostics(data.xml, join(root, "bin/sbar-orbit.cmd"), sid);
+              const diagnostics = ownershipSummary(data.xml, sid);
               task.exactOwnership = diagnostics.authoritative === true && diagnostics.authoritativeEvaluated === true;
-              task.taskOwnershipChecks = { schema: 1, authoritative: diagnostics.authoritative === true, authoritativeEvaluated: diagnostics.authoritativeEvaluated === true,
-                checks: Object.fromEntries(TASK_OWNERSHIP_CHECK_KEYS.map(key => [key, diagnostics.checks[key] === true])),
-                settingsTagShapes: Object.fromEntries(TASK_OWNERSHIP_SETTING_TAGS.map(tag => [tag, Object.fromEntries(TASK_OWNERSHIP_SHAPE_KEYS.map(key => [key, diagnostics.settingsTagShapes[tag]?.[key] === true]))])) };
+              task.taskOwnershipChecks = diagnostics;
             }
           }
           if (typeof data.queryHResult === "number" && Number.isSafeInteger(data.queryHResult) && data.queryHResult >= -2147483648 && data.queryHResult <= 2147483647) task.queryHResult = data.queryHResult;
@@ -161,6 +183,12 @@ async function inspectFailure(options: Map<string, string>) {
   if (Buffer.byteLength(text) > 8192 && task.taskOwnershipChecks && typeof task.taskOwnershipChecks === "object" && "settingsTagShapes" in task.taskOwnershipChecks) {
     delete task.taskOwnershipChecks.settingsTagShapes;
     task.settingsTagShapesOmittedForBound = true;
+    text = JSON.stringify(evidence) + "\n";
+  }
+  if (Buffer.byteLength(text) > 8192 && task.schtasksInspection && typeof task.schtasksInspection === "object" && "ownership" in task.schtasksInspection) {
+    const ownership = task.schtasksInspection.ownership;
+    if (ownership && typeof ownership === "object" && "settingsTagShapes" in ownership) delete ownership.settingsTagShapes;
+    task.schtasksSettingsTagShapesOmittedForBound = true;
     text = JSON.stringify(evidence) + "\n";
   }
   check(Buffer.byteLength(text) <= 8192, "Failure inspector output bound exceeded");
