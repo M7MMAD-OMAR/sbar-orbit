@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat, readdir, readlink, mkdir, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativeWorker } from "../src/native-worker";
+import { OrbitError } from "../src/errors";
 import { orbitActionSchema } from "../src/mcp";
 
 const enabled = process.platform === "linux" ? test : test.skip;
@@ -104,6 +105,46 @@ enabled("native launch uncertainty and plugin mismatch remain actionable across 
       code: "NATIVE_INCOMPATIBLE", message: expect.stringMatching(/plugin.*rebuild.*reload/i),
     });
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+enabled("unsupported text stays typed and content-free across actual framed worker replies", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "orbit-worker-text-unsupported-"));
+  // Inline owned fixture: only framed stdin/stdout, no native session or desktop imports.
+  const source = [
+    "import json, sys",
+    "for line in sys.stdin:",
+    "    request = json.loads(line)",
+    "    if request['method'] == 'execute':",
+    "        params = request['params']",
+    "        message = params['privateMessage'] + ': ' + params['args']['text']",
+    "        reply = {'ok': False, 'error': {'code': 'TEXT_UNSUPPORTED', 'message': message}}",
+    "    else:",
+    "        reply = {'ok': True, 'result': {'ready': True}}",
+    "    reply['requestId'] = request['requestId']",
+    "    print(json.dumps(reply), flush=True)",
+  ].join("\n");
+  try {
+    const worker = await NativeWorker.create(join(directory, "worker"), options, ["/usr/bin/python3", "-c", source]);
+    try {
+      for (const privateMessage of ["private-worker-secret: paste through the shared clipboard", "private-worker-secret 😀\n\u001b[31m"]) {
+        const secret = "private-request-secret-😀";
+        const failure: unknown = await worker.request("execute", {
+          action: "type", args: { text: secret }, privateMessage,
+        }).catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(OrbitError);
+        if (!(failure instanceof OrbitError)) throw new Error("Expected typed unsupported text refusal");
+        expect(failure.code).toBe("TEXT_UNSUPPORTED");
+        expect(failure.message).toBe("Nothing was typed: the native direct-stroke implementation or keyboard keymap cannot represent the requested text. Unsafe clipboard fallback is unavailable to preserve shared selections; no paste key was sent.");
+        const publicError = JSON.stringify({ code: failure.code, message: failure.message });
+        expect(publicError).not.toContain(secret);
+        expect(publicError).not.toContain("private-worker-secret");
+        expect(publicError).not.toContain("paste through the shared clipboard");
+        expect(publicError).not.toContain("no key in the seat keyboard layout");
+      }
+      // A recoverable refusal must not poison the framed channel.
+      expect(await worker.request("status", {})).toEqual({ ready: true });
+    } finally { await worker.close(); }
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 enabled("presentation readiness remains typed and actionable without private monitor details", async () => {

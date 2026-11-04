@@ -183,7 +183,7 @@ export class NativeWorker {
             CAPTURE_DEADLINE_EXCEEDED: "Native observation exceeded its capture deadline; inspect the current target before another observation",
             CAPTURE_GEOMETRY_CHANGED: "Native target geometry changed during capture; inspect the current target before another observation",
             TARGET_CLOSED: "The target window closed or was replaced, so nothing was delivered. Inspect native candidates for the current window before sending more.",
-            TEXT_UNSUPPORTED: "Nothing was typed: the text has a character with no key in the seat keyboard layout. Send the characters the active layouts can type, or paste through the shared clipboard.",
+            TEXT_UNSUPPORTED: "Nothing was typed: the native direct-stroke implementation or keyboard keymap cannot represent the requested text. Unsafe clipboard fallback is unavailable to preserve shared selections; no paste key was sent.",
             SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",
             OPENING_UNCERTAIN: "Application launch was attempted and delivery is uncertain. Inspect native candidates and reuse the same requestId; do not relaunch blindly.",
             NATIVE_INCOMPATIBLE: "Native plugin does not match this installation or compositor. Prepare the current compositor, rebuild and reload its matching plugin.",
