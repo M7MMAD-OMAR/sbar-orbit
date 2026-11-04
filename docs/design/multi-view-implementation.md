@@ -367,3 +367,56 @@ end-to-end queue/cancellation and retained-result ownership integration must
 precede feature admission. No real memory ceiling, reader drain, two-view
 qualification or new phase gate passed in this tranche. No native operation,
 shared broker restart, lease release or original-app change was performed.
+
+## 8. Owned cgroup leaf and durable reader debt
+
+[ReaderScope](../../src/native/reader_scope.py) adds a dormant Linux cgroup2
+primitive, not a grant or public process runner. It validates the actual pinned
+filesystem, creates an exclusive random child leaf, pins root/leaf inode/device
+identities and configures/readbacks helper memory/swap/task/CPU ceilings before
+admitting a retained own stopped subprocess. Parent controls and parent cgroup
+kill are never used by the primitive. The producer must be a trusted fixed reader
+bootstrap; a Popen object alone does not grant original-application authority.
+
+A private flock-protected append journal is bounded to 64 KiB. Intent is fsynced
+before mkdir, leaf identity/limits before admission and killing state before the
+kill write. Partial/torn, missing/replaced or unavailable scope state remains
+debt. Closing a handle drops local descriptors, not debt or resource credit.
+Recovery verifies the original boot/root/leaf identities and old owner birth
+death. It can report scopeEmpty but does not manufacture the former parent's
+rootReaped witness. Each object is single-operation, so late bound callbacks
+cannot retarget a newer generation through object reuse. The owner runtime must
+pin one root/journal pair per accounting domain rather than let clients create
+alternate journals or reinitialize a missing journal for an existing domain.
+An independent expected-journal identity belongs in that runtime registry; the
+low-level constructor still supports explicit first-file initialization.
+
+The [dated exact kernel report](../reader-scope-acceptance-2026-11-04.md) records
+5 real-kernel owned-fixture scenarios, including pre-admission coordinator death,
+root exit/EOF with a live descendant, separate root reap and durable orphan debt
+recovery. All passed with no cleanup errors; the fresh parent was removed and
+shared resource controls were unchanged. No desktop application, compositor,
+clipboard, original profile or other sessions were acted upon. The 32 MiB helper
+ceiling used in this probe is independent of the logical observation-buffer
+ledger and is not a global RSS/GPU/representation-memory measurement.
+
+Independent review caught a real probe-only pre-admission leak under coordinator
+timeout. The bootstrap now arms parent-death SIGKILL with a startup-race check
+before stopping, clearing it only after admission/resume. A new real owner-death
+fixture verified the repaired boundary. Follow-up review found no additional
+critical issue within the stated trusted-owner scope.
+
+[Fake-kernel tests](../../tests/native_reader_scope_test.py) cover 36 distinct
+cases without real cgroup writes/signals. The [mandatory wrapper](../../tests/native-reader-scope.test.ts)
+requires their exact count/no skips; help and invalid-argument guard fixtures
+preload spawn denial so regression cannot accidentally start a real helper.
+Final verifier: 619 pass, 5 skip, 0 fail, 12583 assertions across 67 files in 68.57
+seconds; final strict root typing exited 0. Actual kernel evidence and deterministic
+fixtures are explicitly separate layers.
+
+This primitive is not imported by production consumers. The fixed capture
+producer, bounded stream reading, deadline propagation, actual allocator/scratch
+admission, broker/TS/native integration and retained consumer-release tickets
+remain next work. Existing capture/a11y completion is not automatically a trusted
+scope receipt. No multi-view phase gate passed, no second view or new public
+permission was enabled, and source 0.4.3 remains an unpublished candidate.

@@ -1,0 +1,528 @@
+"""Deterministic fake-kernel fixtures, not actual cgroup or OS drain qualification."""
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from dataclasses import FrozenInstanceError
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.native import reader_scope as subject
+
+
+class FakeChild(subprocess.Popen):
+    """Retained Popen identity without launching, waiting for or signaling any process."""
+    def __init__(self, pid):
+        self.pid = pid
+        self.returncode = None
+        self._child_created = False
+        self.stdout = io.BytesIO()
+        self.stderr = io.BytesIO()
+
+
+class ReaderScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="orbit-reader-scope-fixture-")
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / "delegated"
+        self.root.mkdir(mode=0o700)
+        self.private = self.base / "private"
+        self.private.mkdir(mode=0o700)
+        self.journal = self.private / "debt.jsonl"
+        self.parent_controls = ("cgroup.kill", "cgroup.procs", "memory.max", "memory.swap.max", "pids.max", "cpu.max", "cgroup.subtree_control")
+        for name in self.parent_controls:
+            (self.root / name).write_text("shared-parent-untouched\n")
+        self.owner_pid = os.getpid()
+        self.processes = {self.owner_pid: {"pid": self.owner_pid, "start": 100, "parent": 1, "state": "R"}}
+        self.calls = []
+        self.synced_phases = []
+        self.scopes = []
+        self.leaf = None
+        self.kill_error = False
+        self.bad_readback = False
+        self.real_mkdir, self.real_rmdir = os.mkdir, os.rmdir
+        self.real_write, self.real_read, self.real_fsync = os.write, os.read, os.fsync
+        self.patch(subject, "_cgroup2", lambda fd: None)
+        self.patch(subject, "_proc_identity", self.identity)
+        self.patch(subject, "_boot_id", lambda: "00000000-0000-0000-0000-000000000001")
+        self.patch(os, "mkdir", self.mkdir)
+        self.patch(os, "rmdir", self.rmdir)
+        self.patch(os, "write", self.write)
+        self.patch(os, "read", self.read)
+        self.patch(os, "fsync", self.fsync)
+        self.no_kill = self.patch(os, "kill", side_effect=AssertionError("No fixture PID signals"))
+        self.no_killpg = self.patch(os, "killpg", side_effect=AssertionError("No fixture group signals"))
+        self.no_spawn = self.patch(subprocess.Popen, "__init__", side_effect=AssertionError("No fixture subprocesses"))
+        self.addCleanup(self.close_scopes)
+
+    def patch(self, target, name, value=None, **kwargs):
+        operation = patch.object(target, name, value, **kwargs) if value is not None else patch.object(target, name, **kwargs)
+        result = operation.start()
+        self.addCleanup(operation.stop)
+        return result
+
+    def identity(self, pid):
+        value = self.processes.get(pid)
+        return dict(value) if value is not None else None
+
+    def fdpath(self, fd):
+        return Path(os.readlink("/proc/self/fd/" + str(fd)))
+
+    def records(self):
+        if not self.journal.exists():
+            return []
+        return [json.loads(line) for line in self.journal.read_text().splitlines()]
+
+    def mkdir(self, path, mode=0o777, *, dir_fd=None):
+        if dir_fd is None or not str(path).startswith("orbit-reader-"):
+            return self.real_mkdir(path, mode, dir_fd=dir_fd)
+        parent = self.fdpath(dir_fd)
+        self.assertEqual(parent, self.root)
+        self.assertEqual(self.records()[-1]["phase"], "intent")
+        self.assertEqual(self.synced_phases[-1], "intent")
+        self.calls.append(("mkdir", str(path)))
+        self.real_mkdir(path, mode, dir_fd=dir_fd)
+        self.leaf = parent / path
+        for name, content in {"cgroup.type": "domain\n", "cgroup.events": "populated 0\nfrozen 0\n", "cgroup.procs": "",
+                              "cgroup.kill": "", "memory.max": "max\n", "memory.swap.max": "max\n",
+                              "pids.max": "max\n", "cpu.max": "max 100000\n"}.items():
+            (self.leaf / name).write_text(content)
+
+    def rmdir(self, path, *, dir_fd=None):
+        target = self.fdpath(dir_fd) / path if dir_fd is not None else Path(path)
+        if target.name.startswith("orbit-reader-"):
+            self.calls.append(("rmdir", str(target)))
+            for entry in target.iterdir():
+                entry.unlink()
+        return self.real_rmdir(path, dir_fd=dir_fd)
+
+    def write(self, fd, data):
+        target = self.fdpath(fd)
+        self.assertTrue(target.is_relative_to(self.base), "No fixture write outside owned temp root")
+        self.calls.append(("write", str(target)))
+        if target.parent.name.startswith("orbit-reader-"):
+            if target.name == "cgroup.kill" and self.kill_error:
+                raise OSError("owned fixture kill denied")
+            if target.name == "cgroup.procs":
+                record = self.records()[-1]
+                self.assertEqual(record["phase"], "admitting")
+                self.assertEqual(self.synced_phases[-1], "admitting")
+                self.assertIn("pinned", self.synced_phases)
+                self.assertIsNotNone(record["leaf_identity"])
+                self.assertEqual(record["process"][0], int(data))
+                (target.parent / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+        return self.real_write(fd, data)
+
+    def read(self, fd, size):
+        target = self.fdpath(fd)
+        self.calls.append(("read", str(target)))
+        if self.bad_readback and target.name == "memory.max":
+            return b"max\n"
+        return self.real_read(fd, size)
+
+    def fsync(self, fd):
+        target = self.fdpath(fd)
+        self.calls.append(("fsync", str(target)))
+        if target == self.journal:
+            self.synced_phases.append(self.records()[-1]["phase"])
+        return self.real_fsync(fd)
+
+    def scope(self, **kwargs):
+        result = subject.ReaderScope(self.root, self.journal, **kwargs)
+        self.scopes.append(result)
+        return result
+
+    def close_scopes(self):
+        for scope in reversed(self.scopes):
+            scope.close()
+        self.no_kill.assert_not_called()
+        self.no_killpg.assert_not_called()
+        self.no_spawn.assert_not_called()
+        for name in self.parent_controls:
+            self.assertEqual((self.root / name).read_text(), "shared-parent-untouched\n")
+
+    def prepared(self):
+        scope = self.scope()
+        scope.prepare()
+        return scope
+
+    def admitted(self):
+        scope = self.prepared()
+        child = FakeChild(424242)
+        self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
+        scope.admit(child)
+        return scope, child
+
+    def populated(self, value):
+        (self.leaf / "cgroup.events").write_text("populated " + str(value) + "\nfrozen 0\n")
+
+    def reaped(self, child):
+        child.returncode = 0
+        self.processes.pop(child.pid, None)
+
+    def assert_code(self, code, operation):
+        with self.assertRaises(subject.ReaderScopeError) as caught:
+            operation()
+        self.assertEqual(caught.exception.code, code)
+
+    def restart(self, scope):
+        scope.close()
+        self.processes[self.owner_pid]["start"] += 1
+        return self.scope()
+
+    def test_limits_defaults_are_frozen_and_separate_from_logical_buffer_budget(self):
+        limits = subject.ReaderLimits()
+        self.assertEqual((limits.memory_bytes, limits.pids, limits.cpu_quota, limits.cpu_period), (256 * 1024 * 1024, 32, 100000, 100000))
+        with self.assertRaises(FrozenInstanceError):
+            limits.pids = 100
+        self.assertEqual(subject.ReaderLimits(memory_bytes=1, pids=1, cpu_quota=1).cpu_period, 100000)
+
+    def test_limits_reject_invalid_and_wider_values(self):
+        for field, maximum in (("memory_bytes", 256 * 1024 * 1024), ("pids", 32), ("cpu_quota", 100000)):
+            for value in (0, -1, True, 1.5, "1", maximum + 1):
+                with self.subTest(field=field, value=value):
+                    self.assert_code("INVALID", lambda: subject.ReaderLimits(**{field: value}))
+        for period in (0, 50000, 200000, True):
+            self.assert_code("INVALID", lambda: subject.ReaderLimits(cpu_period=period))
+
+    def test_constructor_creates_only_private_idle_journal_no_leaf_or_worker(self):
+        scope = self.scope()
+        self.assertEqual(scope.status()["phase"], "idle")
+        self.assertFalse(scope.status()["hasDebt"])
+        self.assertIsNone(self.leaf)
+        self.assertEqual(self.journal.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.records()[-1]["phase"], "idle")
+
+    def test_non_cgroup_filesystem_fails_closed(self):
+        with patch.object(subject, "_cgroup2", side_effect=subject.ReaderScopeError("UNSUPPORTED", "fixture non-cgroup")):
+            self.assert_code("UNSUPPORTED", self.scope)
+        self.assertFalse(self.journal.exists())
+
+    def test_symlink_root_or_journal_is_never_followed(self):
+        link = self.base / "linked-root"
+        link.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaises((subject.ReaderScopeError, OSError)):
+            subject.ReaderScope(link, self.journal)
+        original = self.private / "original"
+        original.write_text("do-not-touch")
+        self.journal.symlink_to(original)
+        with self.assertRaises((subject.ReaderScopeError, OSError)):
+            self.scope()
+        self.assertEqual(original.read_text(), "do-not-touch")
+
+    def test_wrong_uid_or_nonprivate_journal_parent_refused(self):
+        with patch.object(os, "getuid", return_value=os.getuid() + 1):
+            self.assert_code("INVALID", self.scope)
+        self.private.chmod(0o755)
+        self.assert_code("INVALID", self.scope)
+
+    def test_second_live_guard_is_busy_and_cannot_truncate_journal(self):
+        self.scope()
+        before = self.journal.read_bytes()
+        self.assert_code("BUSY", self.scope)
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_prepare_orders_durable_intent_pin_limits_readback_before_admission(self):
+        scope = self.prepared()
+        self.assertEqual(scope.status()["phase"], "prepared")
+        self.assertEqual([record["phase"] for record in self.records()], ["idle", "intent", "pinned", "prepared"])
+        expected_limits = {"memory_bytes": 268435456, "pids": 32, "cpu_quota": 100000, "cpu_period": 100000, "swap_bytes": 0}
+        self.assertTrue(all(record["limits"] == expected_limits for record in self.records()))
+        for name, expected in (("memory.max", "268435456"), ("memory.swap.max", "0"), ("pids.max", "32"), ("cpu.max", "100000 100000")):
+            self.assertEqual((self.leaf / name).read_text().strip(), expected)
+            write = self.calls.index(("write", str(self.leaf / name)))
+            read = self.calls.index(("read", str(self.leaf / name)))
+            self.assertLess(write, read)
+        self.assertFalse(any(name == str(self.leaf / "cgroup.procs") for kind, name in self.calls if kind == "write"))
+
+    def test_limit_readback_failure_preserves_debt_and_forbids_admission(self):
+        scope = self.scope()
+        self.bad_readback = True
+        self.assert_code("UNSUPPORTED", scope.prepare)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assert_code("DEBT", lambda: scope.admit(FakeChild(424242)))
+        self.assert_code("DEBT", scope.prepare)
+
+    def test_admit_requires_retained_stopped_direct_child_not_raw_pid(self):
+        scope = self.prepared()
+        self.assert_code("INVALID", lambda: scope.admit(424242))
+        child = FakeChild(424242)
+        for state, parent, code in (("R", self.owner_pid, "INVALID"), ("T", self.owner_pid + 1, "INVALID")):
+            self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": parent, "state": state}
+            self.assert_code(code, lambda: scope.admit(child))
+        child.returncode = 0
+        self.assert_code("INVALID", lambda: scope.admit(child))
+        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
+
+    def test_birth_replacement_between_stamp_and_admission_never_writes_membership(self):
+        scope = self.prepared()
+        child = FakeChild(424242)
+        first = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
+        second = dict(first, start=201)
+        with patch.object(subject, "_proc_identity", side_effect=[first, second]):
+            self.assert_code("IDENTITY", lambda: scope.admit(child))
+        self.assertEqual(self.records()[-1]["phase"], "admitting")
+        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
+
+    def test_root_exit_does_not_prove_descendants_empty(self):
+        scope, child = self.admitted()
+        self.reaped(child)
+        self.assertFalse(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assertTrue(self.leaf.exists())
+
+    def test_pipe_eof_does_not_prove_descendants_empty(self):
+        scope, child = self.admitted()
+        child.stdout.close()
+        child.stderr.close()
+        self.assertFalse(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_empty_scope_without_root_reap_cannot_retire(self):
+        scope, child = self.admitted()
+        self.populated(0)
+        self.assertTrue(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertIsNone(child.returncode)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_wait_returncode_without_original_birth_disappearance_is_not_reap_proof(self):
+        scope, child = self.admitted()
+        child.returncode = 0
+        self.populated(0)
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_empty_and_separately_reaped_root_produce_distinct_retirement_receipt(self):
+        scope, child = self.admitted()
+        self.reaped(child)
+        self.populated(0)
+        receipt = scope.retire()
+        self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": True, "neverAdmitted": False, "recovered": False})
+        self.assertFalse(self.leaf.exists())
+        self.assertFalse(scope.status()["hasDebt"])
+        self.assertEqual(self.records()[-1]["phase"], "retired")
+
+    def test_never_admitted_empty_leaf_never_claims_root_reaped(self):
+        scope = self.prepared()
+        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": True, "recovered": False})
+
+    def test_kill_success_is_not_scope_empty_and_never_signals_shared_parent(self):
+        scope, child = self.admitted()
+        scope.kill()
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "1\n")
+        self.assertFalse(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assertEqual(self.records()[-1]["phase"], "killing")
+
+    def test_kill_error_retains_unknown_debt(self):
+        scope, child = self.admitted()
+        self.kill_error = True
+        with self.assertRaises((OSError, subject.ReaderScopeError)):
+            scope.kill()
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assert_code("UNKNOWN", scope.retire)
+
+    def test_malformed_or_oversize_events_do_not_clear_debt(self):
+        scope = self.prepared()
+        for text in ("", "frozen 0\n", "populated 2\n", "populated 0\npopulated 0\n", "populated nope\n", "x" * 65537):
+            (self.leaf / "cgroup.events").write_text(text)
+            self.assert_code("UNKNOWN", scope.retire)
+            self.assertTrue(scope.status()["hasDebt"])
+
+    def test_closed_scope_cannot_clear_debt_or_execute_late_calls(self):
+        scope, child = self.admitted()
+        before = self.journal.read_bytes()
+        scope.close()
+        for operation in (scope.kill, scope.retire, scope.prepare, lambda: scope.admit(child)):
+            self.assert_code("UNKNOWN", operation)
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_replaced_leaf_identity_never_kills_replacement(self):
+        scope, child = self.admitted()
+        original = self.root / "original-leaf-held"
+        self.leaf.rename(original)
+        self.leaf.mkdir(mode=0o700)
+        (self.leaf / "cgroup.kill").write_text("replacement-untouched")
+        self.assert_code("IDENTITY", scope.kill)
+        self.assert_code("IDENTITY", scope.retire)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "replacement-untouched")
+        self.assertNotEqual(self.records()[-1]["phase"], "retired")
+
+    def test_replaced_resource_root_never_kills_either_domain(self):
+        scope, child = self.admitted()
+        old = self.base / "original-root-held"
+        self.root.rename(old)
+        self.root.mkdir(mode=0o700)
+        for name in self.parent_controls:
+            (self.root / name).write_text("shared-parent-untouched\n")
+        self.assert_code("IDENTITY", scope.kill)
+        self.assertEqual((old / self.leaf.name / "cgroup.kill").read_text(), "")
+
+    def test_replaced_journal_inode_prevents_signaling(self):
+        scope, child = self.admitted()
+        old = self.private / "original-journal-held"
+        self.journal.rename(old)
+        self.journal.write_bytes(old.read_bytes())
+        self.journal.chmod(0o600)
+        self.assert_code("IDENTITY", scope.kill)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_restart_debt_blocks_reuse_and_live_owner_recovery(self):
+        scope, child = self.admitted()
+        scope.close()
+        replacement = self.scope()
+        self.assertTrue(replacement.status()["hasDebt"])
+        self.assert_code("DEBT", replacement.prepare)
+        self.assert_code("BUSY", replacement.recover)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_recovery_pins_original_leaf_but_never_claims_original_root_reaped(self):
+        scope, child = self.admitted()
+        replacement = self.restart(scope)
+        before = (self.leaf / "cgroup.kill").read_text()
+        replacement.recover()
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), before)
+        self.populated(0)
+        self.assert_code("UNKNOWN", replacement.retire)
+        self.reaped(child)
+        receipt = replacement.retire()
+        self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": False, "recovered": True})
+        self.assertFalse(replacement.status()["hasDebt"])
+
+    def test_recovery_missing_or_replaced_leaf_retains_debt_without_signals(self):
+        scope, child = self.admitted()
+        replacement = self.restart(scope)
+        old = self.root / "orphan-leaf-held"
+        self.leaf.rename(old)
+        with self.assertRaises((OSError, subject.ReaderScopeError)):
+            replacement.recover()
+        self.assertTrue(replacement.status()["hasDebt"])
+        self.assert_code("DEBT", replacement.recover)
+        replacement.close()
+        replacement = self.scope()
+        self.leaf.mkdir(mode=0o700)
+        (self.leaf / "cgroup.kill").write_text("replacement-untouched")
+        self.assert_code("IDENTITY", replacement.recover)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "replacement-untouched")
+
+    def test_inherited_supervisor_identity_cannot_signal_or_retire(self):
+        scope, child = self.admitted()
+        with patch.object(os, "getpid", return_value=self.owner_pid + 1):
+            self.assert_code("UNKNOWN", scope.kill)
+            self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_journal_size_and_torn_or_duplicate_records_are_not_empty_receipts(self):
+        scope = self.scope()
+        scope.close()
+        valid = self.journal.read_bytes()
+        for content in (b"", valid[:-1], b"x" * 65537, valid + valid, valid.replace(b'"v":1', b'"v":1,"v":1')):
+            self.journal.write_bytes(content)
+            self.assert_code("DEBT", self.scope)
+        self.journal.write_bytes(valid)
+        replacement = self.scope()
+        replacement.MAX_JOURNAL_BYTES = len(valid) + 100
+        self.assert_code("DEBT", replacement.prepare)
+        self.assertEqual(self.journal.read_bytes(), valid)
+
+    def test_pre_mkdir_intent_crash_cannot_be_adopted_or_silently_freed(self):
+        scope = self.scope()
+        with patch.object(os, "mkdir", side_effect=OSError("fixture mkdir denied")):
+            self.assert_code("UNKNOWN", scope.prepare)
+        self.assertEqual(self.records()[-1]["phase"], "intent")
+        self.assertIsNone(self.records()[-1]["leaf_identity"])
+        replacement = self.restart(scope)
+        self.assert_code("DEBT", replacement.prepare)
+        self.assert_code("UNKNOWN", replacement.recover)
+        self.assertTrue(replacement.status()["hasDebt"])
+
+    def test_retired_instance_is_single_operation_and_old_callbacks_cannot_hit_new_leaf(self):
+        scope = self.prepared()
+        old_kill, old_empty, old_retire = scope.kill, scope.empty, scope.retire
+        scope.retire()
+        self.assert_code("DEBT", scope.prepare)
+        scope.close()
+        replacement = self.scope()
+        replacement.prepare()
+        before = self.journal.read_bytes()
+        for callback in (old_kill, old_empty, old_retire):
+            self.assert_code("UNKNOWN", callback)
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+        self.assertEqual(replacement.status()["phase"], "prepared")
+
+    def test_pinned_root_fd_replacement_is_not_parent_signal_authority(self):
+        scope, child = self.admitted()
+        old_fd = scope._root_fd
+        scope._root_fd = os.open(self.private, os.O_RDONLY | os.O_DIRECTORY)
+        os.close(old_fd)
+        self.assert_code("IDENTITY", scope.kill)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_admission_journal_fsync_failure_never_writes_membership(self):
+        scope = self.prepared()
+        child = FakeChild(424242)
+        self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
+        def fail_sync(fd):
+            if self.fdpath(fd) == self.journal:
+                raise OSError("fixture durable admission failed")
+            return self.real_fsync(fd)
+        with patch.object(os, "fsync", side_effect=fail_sync):
+            with self.assertRaises((OSError, subject.ReaderScopeError)):
+                scope.admit(child)
+        self.assertEqual(self.records()[-1]["phase"], "admitting")
+        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
+        self.assert_code("UNKNOWN", scope.kill)
+
+    def test_deadline_or_unknown_control_error_cannot_clear_durable_debt(self):
+        scope, child = self.admitted()
+        def timeout(fd, data):
+            if self.fdpath(fd).name == "cgroup.kill":
+                raise TimeoutError("fixture cleanup deadline")
+            return self.write(fd, data)
+        with patch.object(os, "write", side_effect=timeout):
+            with self.assertRaises((TimeoutError, subject.ReaderScopeError)):
+                scope.kill()
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assert_code("UNKNOWN", scope.retire)
+        scope.close()
+        replacement = self.scope()
+        self.assertTrue(replacement.status()["hasDebt"])
+        self.assert_code("DEBT", replacement.prepare)
+
+    def test_unsafe_journal_permissions_and_hardlinks_fail_without_truncation(self):
+        scope = self.scope()
+        scope.close()
+        before = self.journal.read_bytes()
+        self.journal.chmod(0o644)
+        self.assert_code("IDENTITY", self.scope)
+        self.journal.chmod(0o600)
+        os.link(self.journal, self.private / "second-link")
+        self.assert_code("IDENTITY", self.scope)
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_original_root_pid_reuse_is_distinct_from_original_birth_liveness(self):
+        scope, child = self.admitted()
+        child.returncode = 0
+        self.processes[child.pid]["start"] += 1
+        self.populated(0)
+        receipt = scope.retire()
+        self.assertTrue(receipt["scopeEmpty"])
+        self.assertTrue(receipt["rootReaped"])
+        self.assertFalse(receipt["recovered"])
+
+
+if __name__ == "__main__":
+    unittest.main()
