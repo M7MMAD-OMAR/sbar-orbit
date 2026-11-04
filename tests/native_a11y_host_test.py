@@ -284,34 +284,27 @@ class HostTests(unittest.TestCase):
             "host=a11y_host.A11yHost(" + repr(self.directory.name) + ")\n"
             "host.observe(os.getpid(),'owned')\nprint(host._process.pid,flush=True)\ntime.sleep(60)\n")
         parent = subprocess.Popen(["/usr/bin/python3", "-I", str(driver)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        child_pid, child_start = None, None
+        child_fd = None
         try:
             import select
             self.assertTrue(select.select([parent.stdout], [], [], 3)[0])
             child_pid = int(parent.stdout.readline())
-            child_start = Path("/proc", str(child_pid), "stat").read_text().rsplit(")", 1)[1].split()[19]
+            # The live parent retains this child; pin it before killing the parent.
+            # pidfd readiness proves original-root exit without racy /proc text reads.
+            child_fd = os.pidfd_open(child_pid)
+            self.assertFalse(select.select([child_fd], [], [], 0)[0], "Owned helper exited before parent death")
             parent.kill(); parent.wait(timeout=1)
-            deadline = time.monotonic() + 2
-            while time.monotonic() < deadline:
-                try:
-                    state = Path("/proc", str(child_pid), "stat").read_text().rsplit(")", 1)[1].split()[0]
-                except FileNotFoundError:
-                    break
-                if state == "Z": break
-                time.sleep(0.02)
-            else:
-                self.fail("Owned fixture helper survived parent death")
+            self.assertTrue(select.select([child_fd], [], [], 2)[0], "Owned fixture helper survived parent death")
         finally:
             if parent.poll() is None: parent.kill()
             parent.wait(timeout=1)
             parent.stdout.close()
-            if child_pid is not None and child_start is not None:
+            if child_fd is not None:
                 try:
-                    current = Path("/proc", str(child_pid), "stat").read_text().rsplit(")", 1)[1].split()
-                    if current[19] == child_start and current[0] != "Z":
-                        os.kill(child_pid, signal.SIGKILL)
-                except (ProcessLookupError, FileNotFoundError):
-                    pass
+                    try: signal.pidfd_send_signal(child_fd, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                finally:
+                    os.close(child_fd)
 
 
 if __name__ == "__main__":
