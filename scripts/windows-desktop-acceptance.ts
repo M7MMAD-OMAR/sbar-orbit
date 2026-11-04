@@ -1,7 +1,9 @@
 /** Hosted Windows CI only. Real OS/IPC/task/health; unpublished offline activation fixtures, not feed eligibility. */
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { constants } from "node:fs";
+import { copyExclusiveTree } from "./package-windows";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -123,7 +125,7 @@ async function prepare(options: Map<string, string>) {
   await regularTree(base); await regularTree(gui); await assertPE(join(gui, "Orbit.Desktop.exe")); await assertPE(launcher);
   await mkdir(output);
   const omitted = new Set(["SOURCE-COMMIT.json", "SOURCE-COMMIT", "orbit-release-identity.json", "windows-release-files.json"]);
-  await cp(base, output, { recursive: true, force: false, errorOnExist: true, filter: path => !omitted.has(relative(base, path).split(sep).join("/")) });
+  await copyExclusiveTree(base, output, { exclude: omitted });
   const annotation: Record<string, unknown>[] = [];
   for (const name of ["SOURCE-COMMIT.json", "SOURCE-COMMIT"]) if (!(await missing(join(base, name)))) {
     const bytes = await readFile(join(base, name));
@@ -134,10 +136,11 @@ async function prepare(options: Map<string, string>) {
   const oldGui = join(output, "desktop/windows-app");
   check(oldGui.startsWith(output + sep) && oldGui !== output && !(await lstat(oldGui)).isSymbolicLink(), "Owned fixture GUI replacement escaped destination");
   await rm(oldGui, { recursive: true });
-  await cp(gui, oldGui, { recursive: true, force: false, errorOnExist: true });
-  await cp(launcher, join(output, DESKTOP_LAUNCHER));
-  await cp(join(base, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), join(output, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"));
-  await cp(join(base, DEPENDENCY_INVENTORY), join(output, DEPENDENCY_INVENTORY));
+  await mkdir(oldGui);
+  await copyExclusiveTree(gui, oldGui, { pathPrefix: "desktop/windows-app" });
+  await copyFile(launcher, join(output, DESKTOP_LAUNCHER), constants.COPYFILE_EXCL);
+  await copyFile(join(base, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), join(output, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), constants.COPYFILE_EXCL);
+  await copyFile(join(base, DEPENDENCY_INVENTORY), join(output, DEPENDENCY_INVENTORY), constants.COPYFILE_EXCL);
   const intentionalFailure = version === versions.rollback;
   if (intentionalFailure) {
     const path = join(output, "src/cli.ts"), original = await readFile(path, "utf8");
@@ -177,7 +180,7 @@ async function stage(payload: string, root: string, baseVersion: string) {
   const destination = join(root, "versions", version);
   await withUpdateLock(root, async () => {
     await requireUpdateAdmission(root); check(await missing(destination), "Prepared CI version already exists; no overwrite or deletion");
-    await cp(payload, destination, { recursive: true, force: false, errorOnExist: true });
+    await mkdir(destination); await copyExclusiveTree(payload, destination);
     await sealRelease(destination, version, join(destination, DESKTOP_RUNTIME), null);
     await recordWindowsReleaseFiles(destination);
   });

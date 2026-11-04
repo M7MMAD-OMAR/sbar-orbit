@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { prepareWindowsPayload, auditPublicWindowsPayload, windowsDesktopArtifactName, windowsOverlayPath, WINDOWS_MANIFEST } from "../scripts/package-windows";
+import { prepareWindowsPayload, auditPublicWindowsPayload, copyExclusiveTree, windowsDesktopArtifactName, windowsOverlayPath, WINDOWS_MANIFEST } from "../scripts/package-windows";
 import { desktopSourceDigest, parseDesktopManifest, validateDesktopPayload, validatePublicDesktopOverlay } from "../src/windows-desktop-update";
 import { fixtureVersions } from "../scripts/windows-desktop-acceptance";
 import { parseRuntimeSource, runtimeDescriptorId } from "../src/windows-runtime-source";
@@ -34,6 +34,28 @@ async function fixture() {
   await writeFile(bun, runtimeVector.runtimeBytes); await writeFile(launcher, "MZ-owned-launcher-fixture"); await writeFile(bootstrap, "MZ-owned-framework-bootstrap-fixture");
   return { root, source, publishedDesktop, output, bun, launcher, bootstrap, runtimeSource: parseRuntimeSource(runtimeVector.runtimeSource), sourceRevision: "a".repeat(40) };
 }
+
+test("exclusive tree copy merges existing owned directories but never overwrites a file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-exclusive-copy-"));
+  const first = join(root, "first"), second = join(root, "second"), collision = join(root, "collision"), output = join(root, "output");
+  try {
+    for (const path of [first, second, collision]) await mkdir(join(path, "nested"), { recursive: true });
+    await mkdir(output);
+    await writeFile(join(first, "nested/a.txt"), "first");
+    await writeFile(join(first, "skip.txt"), "excluded");
+    await writeFile(join(second, "nested/b.txt"), "second");
+    await writeFile(join(collision, "nested/a.txt"), "must-not-overwrite");
+    await writeFile(join(output, "owner-marker.txt"), "preserve");
+    await copyExclusiveTree(first, output, { exclude: new Set(["skip.txt"]) });
+    await copyExclusiveTree(second, output);
+    expect(await readFile(join(output, "nested/a.txt"), "utf8")).toBe("first");
+    expect(await readFile(join(output, "nested/b.txt"), "utf8")).toBe("second");
+    expect(await Bun.file(join(output, "skip.txt")).exists()).toBe(false);
+    await expect(copyExclusiveTree(collision, output)).rejects.toThrow();
+    expect(await readFile(join(output, "nested/a.txt"), "utf8")).toBe("first");
+    expect(await readFile(join(output, "owner-marker.txt"), "utf8")).toBe("preserve");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("Windows artifact names and overlay paths cannot escape or collide with source", () => {
   expect(windowsDesktopArtifactName("9.9.9")).toBe("sbar-orbit-9.9.9-windows-x64-desktop.zip");

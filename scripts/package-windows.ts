@@ -1,5 +1,6 @@
-import { cp, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { copyFile, lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { desktopSourceDigest, parseDesktopManifest, safeWindowsPayloadPath, validatePublicDesktopOverlay, windowsFileDigest, MAX_EXPANDED_BYTES, MAX_ZIP_BYTES } from "../src/windows-desktop-update";
 import { parseRuntimeSource, runtimeDescriptorId, type RuntimeSourceV2 } from "../src/windows-runtime-source";
 import { requireResourceBudget } from "../src/resource-budget";
@@ -27,6 +28,30 @@ async function regularFiles(root: string, directory = "", depth = 0): Promise<st
   }
   return output.sort();
 }
+/** Merge only directory containers; every file remains an exclusive fresh copy. */
+export async function copyExclusiveTree(source: string, target: string, options: { exclude?: ReadonlySet<string>; pathPrefix?: string } = {}) {
+  for (const root of [source, target]) {
+    const info = await lstat(root);
+    if (!isAbsolute(root) || resolve(root) !== root || !info.isDirectory() || info.isSymbolicLink() || await realpath(root) !== root) throw new Error("Canonical regular Windows copy roots required");
+  }
+  const files = await regularFiles(source); let bytes = 0;
+  for (const path of files) {
+    if (options.exclude?.has(path.split("/")[0] ?? "")) continue;
+    safeWindowsPayloadPath(options.pathPrefix ? options.pathPrefix + "/" + path : path);
+    const input = join(source, path), output = join(target, path), info = await lstat(input);
+    bytes += info.size;
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024 || bytes > 1024 * 1024 * 1024) throw new Error("Windows copy input exceeds regular payload bounds");
+    await mkdir(dirname(output), { recursive: true });
+    for (let parent = dirname(output);; parent = dirname(parent)) {
+      const directory = await lstat(parent);
+      if (!directory.isDirectory() || directory.isSymbolicLink() || await realpath(parent) !== resolve(parent)) throw new Error("Redirected Windows copy destination refused");
+      if (parent === target) break;
+      if (!parent.startsWith(target + sep) || dirname(parent) === parent) throw new Error("Windows copy destination escapes payload");
+    }
+    await copyFile(input, output, constants.COPYFILE_EXCL);
+  }
+}
+
 /** Audit public source/GUI/dependencies, never a hydrated private directory. */
 export async function auditPublicWindowsPayload(root: string, value: RuntimeSourceV2) {
   const source = parseRuntimeSource(value), files = await regularFiles(root);
@@ -67,10 +92,11 @@ export async function prepareWindowsPayload(options: WindowsPackageOptions) {
   const sourceDigest = await desktopSourceDigest(source), overlay = join(options.output, "overlay"), merged = join(options.output, "installer-payload");
   await mkdir(options.output, { recursive: true }); await mkdir(overlay); await mkdir(merged);
   await mkdir(join(overlay, "desktop/windows-app"), { recursive: true });
-  await cp(options.publishedDesktop, join(overlay, "desktop/windows-app"), { recursive: true, errorOnExist: true, force: false });
-  await cp(options.launcher, join(overlay, "desktop/windows-app/Orbit.Launcher.exe"), { errorOnExist: true, force: false });
-  await cp(options.bootstrap, join(overlay, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), { errorOnExist: true, force: false });
-  await cp(join(source, "node_modules"), join(overlay, "node_modules"), { recursive: true, errorOnExist: true, force: false });
+  await copyExclusiveTree(options.publishedDesktop, join(overlay, "desktop/windows-app"));
+  await copyFile(options.launcher, join(overlay, "desktop/windows-app/Orbit.Launcher.exe"), constants.COPYFILE_EXCL);
+  await copyFile(options.bootstrap, join(overlay, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), constants.COPYFILE_EXCL);
+  await mkdir(join(overlay, "node_modules"));
+  await copyExclusiveTree(join(source, "node_modules"), join(overlay, "node_modules"), { pathPrefix: "node_modules" });
   await writeWindowsDependencyInventory(overlay);
   const paths = (await regularFiles(overlay)).filter(path => path.startsWith("desktop/windows-app/"));
   for (const required of ["desktop/windows-app/Orbit.Desktop.exe", "desktop/windows-app/Orbit.Desktop.dll", "desktop/windows-app/Orbit.Launcher.exe", "desktop/windows-app/Orbit.RuntimeBootstrap.exe", "desktop/windows-app/ui/index.html", "desktop/windows-app/notices/bun/LICENSE.md", DEPENDENCY_INVENTORY])
@@ -85,7 +111,7 @@ export async function prepareWindowsPayload(options: WindowsPackageOptions) {
   const manifest = parseDesktopManifest({ schema: 2, bootstrapProtocol: 2, version: pkg.version, platform: "win32", arch: "x64", sourceRevision: options.sourceRevision, sourceDigest, runtimeSource, files }, pkg.version);
   await writeFile(join(overlay, WINDOWS_MANIFEST), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx" });
   await validatePublicDesktopOverlay(overlay, pkg.version, sourceDigest);
-  await cp(source, merged, { recursive: true, force: false, errorOnExist: true, filter: path => relative(source, path).split(sep)[0] !== "node_modules" }); await cp(overlay, merged, { recursive: true, force: false, errorOnExist: true });
+  await copyExclusiveTree(source, merged, { exclude: new Set(["node_modules"]) }); await copyExclusiveTree(overlay, merged);
   const overlayAudit = await auditPublicWindowsPayload(overlay, runtimeSource), installerAudit = await auditPublicWindowsPayload(merged, runtimeSource);
   return { version: pkg.version, overlay, merged, artifact: join(options.output, artifactName), manifest, bytes: total, overlayAudit, installerAudit };
 }
