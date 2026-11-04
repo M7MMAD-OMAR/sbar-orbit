@@ -1,0 +1,344 @@
+{
+  "schema": 1,
+  "version": "0.4.2",
+  "sourceCommit": "364e13d72acf90c2f72ad7fcdf2c3e949e7e9f7d",
+  "checkedAtUtc": "2026-11-04T00:14:22.741Z",
+  "checkedAtLocal": "4:14 AM, 4 November 2026, Asia/Dubai",
+  "status": "Published GitHub/npm and deployed site independently observed; runtime activation not performed",
+  "hostedVerification": {
+    "runId": 41740475716,
+    "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41740475716",
+    "sourceAndWorkflowCommit": "364e13d72acf90c2f72ad7fcdf2c3e949e7e9f7d",
+    "defaultSuite": {
+      "passed": 366,
+      "skipped": 5,
+      "failed": 0,
+      "total": 371
+    },
+    "packaging": {
+      "passed": 13,
+      "failed": 0
+    },
+    "website": {
+      "passed": 8,
+      "failed": 0
+    },
+    "archiveSmokePassed": true,
+    "nativeAcceptance": false
+  },
+  "deployment": {
+    "reportedBy": "lead",
+    "worker": "sbar-orbit-site",
+    "domain": "https://orbit.sbarah.com/",
+    "versionId": "6e071643-d88a-4326-9bc7-163fa5380f70",
+    "workersDevUrl": null
+  },
+  "browser": {
+    "method": "Normal built-in browser, fresh isolated BrowserContext, no storage/profile copied, explicit owned page and URL assertions, context closed in finally",
+    "sharedActiveTabAttemptDiscarded": true,
+    "english": {
+      "url": "https://orbit.sbarah.com/",
+      "lang": "en",
+      "dir": "ltr",
+      "computedDirection": "ltr",
+      "canonical": "https://orbit.sbarah.com/",
+      "version": "0.4.2",
+      "releaseLinks": [
+        {
+          "text": "Release 0.4.2",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.4.2"
+        },
+        {
+          "text": "Source archive",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz"
+        },
+        {
+          "text": "Source SHA-256",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz.sha256"
+        },
+        {
+          "text": "Installable package (.tgz)",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz"
+        },
+        {
+          "text": "Package SHA-256",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz.sha256"
+        }
+      ],
+      "installerLinks": [],
+      "automaticNotice": true,
+      "unsupportedWindows": true,
+      "cloudflareBeaconScript": true
+    },
+    "englishStatus": 200,
+    "arabic": {
+      "url": "https://orbit.sbarah.com/ar",
+      "lang": "ar",
+      "dir": "rtl",
+      "computedDirection": "rtl",
+      "canonical": "https://orbit.sbarah.com/ar/",
+      "version": "0.4.2",
+      "releaseLinks": [
+        {
+          "text": "الإصدار 0.4.2",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.4.2"
+        },
+        {
+          "text": "أرشيف المصدر",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz"
+        },
+        {
+          "text": "بصمة المصدر SHA-256",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz.sha256"
+        },
+        {
+          "text": "حزمة التثبيت (.tgz)",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz"
+        },
+        {
+          "text": "بصمة الحزمة SHA-256",
+          "href": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz.sha256"
+        }
+      ],
+      "installerLinks": [],
+      "automaticNotice": true,
+      "unsupportedWindows": true,
+      "cloudflareBeaconScript": true
+    },
+    "arabicStatus": 200,
+    "notFound": {
+      "status": 404,
+      "title": "Page not found | Sbar Orbit",
+      "canonical": null
+    },
+    "screenshots": [
+      {
+        "locale": "en",
+        "path": "/tmp/orbit-site-0.4.2-en-isolated-20261104.jpg",
+        "sha256": "f62ba62c3231319624ca0503549af3dc58ddd689e59438eefa34ca3fd6dd5e67",
+        "bytes": 12841,
+        "inspected": true,
+        "subject": "Public deployed release/download panel"
+      },
+      {
+        "locale": "ar",
+        "path": "/tmp/orbit-site-0.4.2-ar-isolated-20261104.jpg",
+        "sha256": "840811340fb426220598306d340e9a09399a589f303212737ebf53cd5ec26a11",
+        "bytes": 12459,
+        "inspected": true,
+        "subject": "Public deployed release/download panel"
+      }
+    ],
+    "unexpectedJavaScriptErrors": 0,
+    "expectedConsoleErrors": [
+      {
+        "kind": "console-error",
+        "url": "https://orbit.sbarah.com/release-missing-0.4.2-isolated-20261104",
+        "message": "Failed to load resource: the server responded with a status of 404 ()"
+      }
+    ],
+    "assetHeadChecks": [
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz",
+        "status": 200,
+        "length": 4974645
+      },
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz.sha256",
+        "status": 200,
+        "length": 97
+      },
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz",
+        "status": 200,
+        "length": 966843
+      },
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz.sha256",
+        "status": 200,
+        "length": 87
+      }
+    ],
+    "publishedChecksumFiles": [
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2-source.tar.gz.sha256",
+        "status": 200,
+        "text": "b57c29beb9b92096f739b4eb8f5af2403c52704346447ead11156e123dc947cc  sbar-orbit-0.4.2-source.tar.gz"
+      },
+      {
+        "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.2/sbar-orbit-0.4.2.tgz.sha256",
+        "status": 200,
+        "text": "996f42c652ab19d21397c8d81b07f5ca1d9125380dd07faf905911d2a7fd4c52  sbar-orbit-0.4.2.tgz"
+      }
+    ],
+    "network": [
+      {
+        "url": "https://orbit.sbarah.com/",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-YMGkzxo-.css",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/images/native-workspaces.svg",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/brand/logo.png",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/fonts/dm-sans-latin.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-ZtIrxKx6.js",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/cdn-cgi/rum",
+        "status": 204
+      },
+      {
+        "url": "https://orbit.sbarah.com/favicon.svg",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/ar/",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-ZtIrxKx6.js",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-YMGkzxo-.css",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/images/native-workspaces.svg",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/brand/logo.png",
+        "status": 304
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-symbols-wght-normal-BJ6p-EzA.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-latin-wght-normal-BQEJrIpl.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-arabic-wght-normal-BhzieyvS.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/fonts/dm-sans-latin.woff2",
+        "status": 304
+      },
+      {
+        "url": "https://orbit.sbarah.com/cdn-cgi/rum",
+        "status": 204
+      },
+      {
+        "url": "https://orbit.sbarah.com/favicon.svg",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/release-missing-0.4.2-isolated-20261104",
+        "status": 404
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-ZtIrxKx6.js",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/index-YMGkzxo-.css",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-arabic-wght-normal-BhzieyvS.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-symbols-wght-normal-BJ6p-EzA.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/assets/noto-sans-arabic-latin-wght-normal-BQEJrIpl.woff2",
+        "status": 200
+      },
+      {
+        "url": "https://orbit.sbarah.com/fonts/dm-sans-latin.woff2",
+        "status": 304
+      },
+      {
+        "url": "https://orbit.sbarah.com/cdn-cgi/rum",
+        "status": 204
+      },
+      {
+        "url": "https://orbit.sbarah.com/favicon.svg",
+        "status": 200
+      }
+    ]
+  },
+  "npm": {
+    "status": 200,
+    "version": "0.4.2",
+    "latestStatus": 200,
+    "latestVersion": "0.4.2",
+    "integrity": "sha512-H4Dmssnuv4lzzQZjnWIcV8R71UJaDUf9GlQ9Ku+I2dMk/8bMB2hTTvKy3yZIVPyh574sCLRknN+Tf5Il3a142w==",
+    "publishedAtUtc": "2026-11-03T23:51:43.946Z",
+    "publishedAtLocal": "3:51 AM, 4 November 2026, Asia/Dubai",
+    "tarball": "https://registry.npmjs.org/sbar-orbit/-/sbar-orbit-0.4.2.tgz",
+    "archiveRoundTrip": {
+      "verifiedBy": "lead",
+      "bytes": 966843,
+      "sha256": "996f42c652ab19d21397c8d81b07f5ca1d9125380dd07faf905911d2a7fd4c52",
+      "matchesGitHubAndHostedArtifact": true
+    },
+    "cacheBoundary": "SDK web_fetch previously returned stale 0.4.1 metadata and 404 for 0.4.2. Fresh browser HTTP with cache bypass returned 200/current 0.4.2 and matching integrity. Original publication succeeded; a later duplicate attempt was refused by immutable registry."
+  },
+  "automaticUpdates": {
+    "feed": "npm registry",
+    "maturationHours": 72,
+    "earliestMatureAtUtc": "2026-11-06T23:51:43.946Z",
+    "earliestMatureAtLocal": "3:51 AM, 7 November 2026, Asia/Dubai",
+    "eligibilityIsNotActivation": true,
+    "requiresManagedLinuxAndOptIn": true,
+    "noOwnerServiceOrPluginActivationPerformed": true
+  },
+  "windows": {
+    "release042NativeControl": "unsupported",
+    "installerExeOrMsiLinksObserved": 0,
+    "developmentManualPrune": {
+      "supported": false,
+      "reason": "Windows version cleanup is disabled until kernel-qualified whole-directory quiescence can be proved; all versions are retained",
+      "shippingStatus": "Windows updater development, not a released 0.4.2 capability",
+      "automaticPrune": false
+    }
+  },
+  "warnings": [
+    {
+      "kind": "telemetry-discrepancy",
+      "observed": "English/Arabic DOM contains a Cloudflare beacon script; normal requests to https://orbit.sbarah.com/cdn-cgi/rum returned 204.",
+      "sourceClaimAtObservation": "website/README.md line 3 said Cloudflare Workers serves static assets, with no application backend or analytics.",
+      "action": "Analytics/account settings and deployed assets were not changed. With lead approval, the README was subsequently corrected to distinguish no custom repository analytics code from the observed Cloudflare beacon. Do not repeat a no-analytics/no-telemetry claim as verified deployment behavior."
+    },
+    {
+      "kind": "canonical-normalization",
+      "observed": "Arabic navigation from /ar/ settled on /ar; canonical remains https://orbit.sbarah.com/ar/ and status is 200."
+    }
+  ],
+  "notVerified": [
+    "Windows real install/update/native control",
+    "Current owner managed activation or automatic timer delivery",
+    "New semantic writes or public refs",
+    "An 80% performance improvement",
+    "Publisher authenticity from unsigned checksum files"
+  ]
+}

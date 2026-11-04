@@ -1,6 +1,6 @@
 # Sbar Orbit website
 
-A static landing site built with React, TanStack Router and Vite. The production build includes prerendered HTML, local fonts and a native workspace diagram. Cloudflare Workers serves static assets, with no application backend or analytics.
+A static landing site built with React, TanStack Router and Vite. The production build includes prerendered HTML, local fonts and a native workspace diagram. Cloudflare Workers serves static assets with no application backend or custom analytics code in this repository. Cloudflare can inject a configured Web Analytics beacon: live verification on 4 November 2026 observed that beacon and `/cdn-cgi/rum` responses with status 204. Do not describe the deployed site as having no analytics; account-level analytics settings were not changed by that verification.
 
 Live site: https://orbit.sbarah.com/
 
