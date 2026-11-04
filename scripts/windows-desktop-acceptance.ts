@@ -17,7 +17,7 @@ import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, deskt
 import { boundedCommand } from "../src/lifecycle-command";
 import { DEPENDENCY_INVENTORY } from "../src/windows-dependencies";
 import { registeredTaskXml, currentUserSid, taskNameForUser } from "../src/windows-autostart";
-import { taskOwned } from "../src/managed-lifecycle";
+import { taskOwnershipDiagnostics, TASK_OWNERSHIP_CHECK_KEYS, TASK_OWNERSHIP_SETTING_TAGS, TASK_OWNERSHIP_SHAPE_KEYS } from "../src/managed-lifecycle";
 import { serviceSocketPath } from "../src/service";
 import { requireResourceBudget } from "../src/resource-budget";
 import { parseRuntimeSource, materializeWindowsRuntime } from "../src/windows-runtime-source";
@@ -129,7 +129,13 @@ async function inspectFailure(options: Map<string, string>) {
             task.state = typeof data.state === "number" ? states.get(data.state) ?? "unknown" : "unknown";
             if (typeof data.lastTaskResult === "number" && Number.isSafeInteger(data.lastTaskResult) && data.lastTaskResult >= -2147483648 && data.lastTaskResult <= 4294967295) task.lastTaskResult = data.lastTaskResult;
             if (typeof data.lastRunTimeSeen === "boolean") task.lastRunTimeSeen = data.lastRunTimeSeen;
-            if (typeof data.xml === "string" && data.xml.length <= 65536) task.exactOwnership = taskOwned(data.xml, join(root, "bin/sbar-orbit.cmd"), sid);
+            if (typeof data.xml === "string" && data.xml.length <= 65536) {
+              const diagnostics = taskOwnershipDiagnostics(data.xml, join(root, "bin/sbar-orbit.cmd"), sid);
+              task.exactOwnership = diagnostics.authoritative === true && diagnostics.authoritativeEvaluated === true;
+              task.taskOwnershipChecks = { schema: 1, authoritative: diagnostics.authoritative === true, authoritativeEvaluated: diagnostics.authoritativeEvaluated === true,
+                checks: Object.fromEntries(TASK_OWNERSHIP_CHECK_KEYS.map(key => [key, diagnostics.checks[key] === true])),
+                settingsTagShapes: Object.fromEntries(TASK_OWNERSHIP_SETTING_TAGS.map(tag => [tag, Object.fromEntries(TASK_OWNERSHIP_SHAPE_KEYS.map(key => [key, diagnostics.settingsTagShapes[tag]?.[key] === true]))])) };
+            }
           }
           if (typeof data.queryHResult === "number" && Number.isSafeInteger(data.queryHResult) && data.queryHResult >= -2147483648 && data.queryHResult <= 2147483647) task.queryHResult = data.queryHResult;
           task.taskQueryStage = "complete";
@@ -151,7 +157,12 @@ async function inspectFailure(options: Map<string, string>) {
     }
     evidence.inspectorComplete = true;
   } catch { /* Keep the primary installer failure; the partial record contains no private exception text. */ }
-  const text = JSON.stringify(evidence, null, 2) + "\n";
+  let text = JSON.stringify(evidence) + "\n";
+  if (Buffer.byteLength(text) > 8192 && task.taskOwnershipChecks && typeof task.taskOwnershipChecks === "object" && "settingsTagShapes" in task.taskOwnershipChecks) {
+    delete task.taskOwnershipChecks.settingsTagShapes;
+    task.settingsTagShapesOmittedForBound = true;
+    text = JSON.stringify(evidence) + "\n";
+  }
   check(Buffer.byteLength(text) <= 8192, "Failure inspector output bound exceeded");
   await writeFile(report, text, { flag: "wx", mode: 0o600 });
 }

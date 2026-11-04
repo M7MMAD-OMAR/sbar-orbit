@@ -99,6 +99,71 @@ export function windowsDesktopUpdateTaskXml(launcher: string, sid: string, envir
     .replace(/<Arguments>[\s\S]*?<\/Arguments>/, "<Arguments>" + escape(action.arguments) + "</Arguments>");
 }
 
+export const TASK_OWNERSHIP_UNIQUE_TAGS = ["Description", "LogonType", "RunLevel", "Command", "Arguments", "Settings", "Triggers", "Principals", "MultipleInstancesPolicy", "AllowHardTerminate", "AllowStartOnDemand", "ExecutionTimeLimit", "RunOnlyIfNetworkAvailable", "StartWhenAvailable"] as const;
+export const TASK_OWNERSHIP_VALUE_TAGS = ["MultipleInstancesPolicy", "AllowHardTerminate", "Enabled", "AllowStartOnDemand", "ExecutionTimeLimit", "RunOnlyIfNetworkAvailable", "StartWhenAvailable"] as const;
+export const TASK_OWNERSHIP_SETTING_TAGS = ["MultipleInstancesPolicy", "DisallowStartIfOnBatteries", "StopIfGoingOnBatteries", "AllowHardTerminate", "StartWhenAvailable", "RunOnlyIfNetworkAvailable", "IdleSettings", "Duration", "WaitTimeout", "StopOnIdleEnd", "RestartOnIdle", "AllowStartOnDemand", "Enabled", "Hidden", "RunOnlyIfIdle", "WakeToRun", "ExecutionTimeLimit", "Priority", "UseUnifiedSchedulingEngine", "DisallowStartOnRemoteAppSession", "Volatile", "RestartOnFailure", "Interval", "Count", "DeleteExpiredTaskAfter", "MaintenanceSettings", "Period", "Deadline", "Exclusive", "Compatibility"] as const;
+export const TASK_OWNERSHIP_SHAPE_KEYS = ["present", "single", "selfClosing", "expectedEqual", "valueTrue", "valueFalse", "knownSafeValue"] as const;
+export const TASK_OWNERSHIP_CHECK_KEYS = ["argumentEnvelope", "environmentSequence", "environmentKeysKnown", "environmentNoDuplicates", "environmentValuesSafe", "environmentPathsAbsolute", "environmentSchema", "runtimePresent", "runtimePathCanonical", "invocationExact", "diagnosticBundleComplete", "diagnosticAdmissionExact", "diagnosticLauncherScopeExact", "expectedConstructed", "descriptionExact", "principalSidExact", "logonTypeExact", "runLevelExact", "actionCommandExact", "actionArgumentsExact", "actionPairExact", "uniqueFields", "singleExec", "singlePrincipal", "singleActions", "taskRootExact", "actionsContextExact", "actionsExact", "triggersExact", "principalsExact", "settingsExact", "settingsValuesExact", "settingsUnknownTagPresent", ...TASK_OWNERSHIP_UNIQUE_TAGS.map(tag => "unique" + tag), ...TASK_OWNERSHIP_VALUE_TAGS.map(tag => "setting" + tag + "Exact")] as const;
+/** Observation only. Never substitute any diagnostic flag for the unchanged taskOwned gate. */
+export function taskOwnershipDiagnostics(xml: string, launcher: string, sid: string) {
+  const checks: Record<string, boolean> = Object.fromEntries(TASK_OWNERSHIP_CHECK_KEYS.map(key => [key, false]));
+  let authoritative = false, authoritativeEvaluated = false;
+  try { authoritative = taskOwned(xml, launcher, sid); authoritativeEvaluated = true; } catch { /* Unknown remains non-authoritative. */ }
+  const argumentsText = value(xml, "Arguments"); checks.argumentEnvelope = argumentsText.startsWith("/c ");
+  let remaining = checks.argumentEnvelope ? argumentsText.slice(3) : "";
+  const recorded: Record<string, string> = {}, paths = new Set(["ORBIT_BUN", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "ORBIT_SOCKET", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]);
+  const diagnosticNames = ["GITHUB_ACTIONS", "ORBIT_TEST_NATIVE", "ORBIT_TEST_INSTALLED_STARTUP_ROOT", "ORBIT_TEST_INSTALLED_STARTUP_BINDING"];
+  checks.environmentSequence = checks.environmentKeysKnown = checks.environmentNoDuplicates = checks.environmentValuesSafe = checks.environmentPathsAbsolute = true;
+  while (remaining.startsWith('set "')) {
+    const match = /^set "([A-Z_][A-Z0-9_]*)=([^"\r\n\0%]*)" && /.exec(remaining);
+    if (!match || !match[1] || match[2] === undefined) { checks.environmentSequence = checks.environmentValuesSafe = false; break; }
+    const key = match[1], datum = match[2];
+    if (recorded[key] !== undefined) checks.environmentNoDuplicates = false;
+    if (!paths.has(key) && !diagnosticNames.includes(key) && key !== "ORBIT_MANAGED_ENV_SCHEMA") checks.environmentKeysKnown = false;
+    if (paths.has(key) && (!win32.isAbsolute(datum) || !datum)) checks.environmentPathsAbsolute = false;
+    recorded[key] = datum; remaining = remaining.slice(match[0].length);
+  }
+  checks.environmentSchema = recorded.ORBIT_MANAGED_ENV_SCHEMA === "1"; checks.runtimePresent = !!recorded.ORBIT_BUN;
+  checks.runtimePathCanonical = !!recorded.ORBIT_BUN && win32.isAbsolute(recorded.ORBIT_BUN) && win32.resolve(recorded.ORBIT_BUN) === recorded.ORBIT_BUN;
+  checks.invocationExact = remaining === '"' + launcher + '" serve --managed-socket';
+  const diagnosticPresent = diagnosticNames.some(key => recorded[key] !== undefined);
+  checks.diagnosticBundleComplete = !diagnosticPresent || !!recorded.ORBIT_TEST_INSTALLED_STARTUP_ROOT && diagnosticNames.every(key => recorded[key] !== undefined);
+  checks.diagnosticAdmissionExact = checks.diagnosticLauncherScopeExact = !diagnosticPresent;
+  if (diagnosticPresent && checks.diagnosticBundleComplete) {
+    const root = recorded.ORBIT_TEST_INSTALLED_STARTUP_ROOT!;
+    try { checks.diagnosticAdmissionExact = admitInstalledStartup(recorded, { platform: "win32", runtime: join(root, "package/src/installed-startup-diagnostic.ts") }) === root; } catch {}
+    try { checks.diagnosticLauncherScopeExact = realpathSync(launcher).startsWith(realpathSync(join(root, "prefix")) + win32.sep); } catch {}
+  }
+  let expected = "";
+  try { expected = brokerTaskXml(launcher, sid, recorded, true); checks.expectedConstructed = true; } catch {}
+  const exact = (tag: string) => checks.expectedConstructed === true && value(xml, tag) === value(expected, tag);
+  const users = [...xml.matchAll(/<UserId>([^<]*)<\/UserId>/g)].map(match => decode(match[1] ?? ""));
+  checks.descriptionExact = value(xml, "Description") === TASK_DESCRIPTION;
+  checks.principalSidExact = users.length > 0 && users.every(user => user === sid);
+  checks.logonTypeExact = value(xml, "LogonType") === "InteractiveToken"; checks.runLevelExact = value(xml, "RunLevel") === "LeastPrivilege";
+  checks.actionCommandExact = exact("Command"); checks.actionArgumentsExact = exact("Arguments"); checks.actionPairExact = checks.expectedConstructed === true && taskActionMatches(xml, expected);
+  for (const tag of TASK_OWNERSHIP_UNIQUE_TAGS) checks["unique" + tag] = (xml.match(new RegExp("<" + tag + "(?:\\s[^>]*)?>", "g"))?.length ?? 0) === 1;
+  checks.uniqueFields = TASK_OWNERSHIP_UNIQUE_TAGS.every(tag => checks["unique" + tag]);
+  checks.singleExec = (xml.match(/<Exec>/g)?.length ?? 0) === 1; checks.singlePrincipal = (xml.match(/<Principal\b/g)?.length ?? 0) === 1; checks.singleActions = (xml.match(/<Actions\b/g)?.length ?? 0) === 1;
+  checks.taskRootExact = /<Task version="1.4" xmlns="http:\/\/schemas.microsoft.com\/windows\/2004\/02\/mit\/task">/.test(xml);
+  checks.actionsContextExact = /<Actions Context="Author">/.test(xml);
+  const section = (input: string, name: string) => new RegExp("<" + name + ">([\\s\\S]*?)</" + name + ">").exec(input)?.[1]?.replace(/>\s+</g, "><").trim();
+  const action = (input: string) => /<Actions Context="Author">([\s\S]*?)<\/Actions>/.exec(input)?.[1]?.replace(/>\s+</g, "><").trim();
+  checks.actionsExact = checks.expectedConstructed === true && action(xml) === action(expected);
+  for (const name of ["Triggers", "Principals", "Settings"]) checks[name.toLowerCase() + "Exact"] = checks.expectedConstructed === true && section(xml, name) === section(expected, name);
+  for (const tag of TASK_OWNERSHIP_VALUE_TAGS) checks["setting" + tag + "Exact"] = exact(tag);
+  checks.settingsValuesExact = TASK_OWNERSHIP_VALUE_TAGS.every(tag => checks["setting" + tag + "Exact"]);
+  const settings = /<Settings>([\s\S]*?)<\/Settings>/.exec(xml)?.[1] ?? "";
+  checks.settingsUnknownTagPresent = [...settings.matchAll(/<\/?([A-Za-z][A-Za-z0-9]*)\b/g)].some(match => !TASK_OWNERSHIP_SETTING_TAGS.some(tag => tag === match[1]));
+  const settingsTagShapes: Record<string, Record<string, boolean>> = {};
+  for (const tag of TASK_OWNERSHIP_SETTING_TAGS) {
+    const count = (settings.match(new RegExp("<" + tag + "(?:\\s[^>]*)?\\s*/?>", "g"))?.length ?? 0), content = value(settings, tag);
+    settingsTagShapes[tag] = { present: count > 0, single: count === 1, selfClosing: new RegExp("<" + tag + "(?:\\s[^>]*)?\\s*/>").test(settings), expectedEqual: exact(tag),
+      valueTrue: content === "true", valueFalse: content === "false", knownSafeValue: ["true", "false", "IgnoreNew", "PT0S", "PT20M", "PT72H", "PT10M", "PT1H", "7"].includes(content) };
+  }
+  return { schema: 1 as const, authoritative, authoritativeEvaluated, checks, settingsTagShapes };
+}
+
 export function taskOwned(xml: string, launcher: string, sid: string, updater = false, desktopUpdater = false) {
   if (desktopUpdater && (!updater || value(xml, "Description") !== NATIVE_UPDATE_DESCRIPTION)) return false;
   if (updater && value(xml, "Description") === NATIVE_UPDATE_DESCRIPTION) {

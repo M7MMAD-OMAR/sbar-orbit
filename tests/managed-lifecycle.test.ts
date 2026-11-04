@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { activateLocal } from "../src/local-install";
 import { activateVersion, currentVersion, prepareManagedInstall, updatableInstall } from "../src/update";
 import { brokerTaskXml } from "../src/windows-autostart";
-import { managedLifecycle, updateAgentPlist, updateTaskXml, boundedCommand, type CommandRunner } from "../src/managed-lifecycle";
+import { taskOwnershipDiagnostics, taskOwned, TASK_OWNERSHIP_CHECK_KEYS, TASK_OWNERSHIP_SETTING_TAGS, TASK_OWNERSHIP_SHAPE_KEYS, managedLifecycle, updateAgentPlist, updateTaskXml, boundedCommand, type CommandRunner } from "../src/managed-lifecycle";
 import { BROKER_LABEL, brokerAgentPlist, launchAgentPath } from "../src/macos-autostart";
 import { installService } from "../src/service";
 import { fixtureRoot } from "./platform-support";
@@ -417,4 +417,30 @@ test("lifecycle timeout waits for confirmed delayed command exit before resolvin
     expect(result.ok).toBe(false);
     expect(exited).toBe(true);
   } finally { spawn.mockRestore(); await exit; }
+});
+
+test("task ownership diagnostics preserve the authoritative predicate for owned foreign and malformed fixtures", () => {
+  const sid = "S-1-5-21-1000", launcher = "C:\\Orbit\\bin\\sbar-orbit.cmd";
+  const xml = brokerTaskXml(launcher, sid, { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: "C:\\Orbit\\versions\\1.2.3\\runtime\\bun.exe" }, true);
+  for (const candidate of [xml, "", xml.replace(sid, "S-1-5-21-9999"), xml.replace("InteractiveToken", "Password"), xml.replace("LeastPrivilege", "HighestAvailable"), xml.replace("cmd.exe", "evil.exe"), xml.replace("serve --managed-socket", "serve --wrong"), xml.replace("ORBIT_MANAGED_ENV_SCHEMA=1", "ORBIT_MANAGED_ENV_SCHEMA=9"), xml.replace("<Settings>", "<Settings><PrivateUnknownSetting>PRIVATE_OWNER_PAYLOAD</PrivateUnknownSetting>"), xml.replace("<Enabled>true</Enabled>", "<Enabled>false</Enabled>"), xml.replace("</Actions>", "</Actions><Actions Context=\"Author\"><Exec/></Actions>")]) {
+    const result = taskOwnershipDiagnostics(candidate, launcher, sid);
+    expect(result.authoritativeEvaluated).toBe(true); expect(result.authoritative).toBe(taskOwned(candidate, launcher, sid));
+    expect(Object.keys(result.checks).sort().join("\n")).toBe([...TASK_OWNERSHIP_CHECK_KEYS].sort().join("\n"));
+    expect(Object.keys(result.settingsTagShapes).sort().join("\n")).toBe([...TASK_OWNERSHIP_SETTING_TAGS].sort().join("\n"));
+    expect(Object.values(result.checks).every(flag => typeof flag === "boolean")).toBe(true);
+    for (const shape of Object.values(result.settingsTagShapes)) {
+      expect(Object.keys(shape).sort().join("\n")).toBe([...TASK_OWNERSHIP_SHAPE_KEYS].sort().join("\n")); expect(Object.values(shape).every(flag => typeof flag === "boolean")).toBe(true);
+    }
+    const report = JSON.stringify(result); expect(report).not.toContain(launcher); expect(report).not.toContain(sid); expect(report).not.toContain("PRIVATE_OWNER_PAYLOAD"); expect(report).not.toContain("PrivateUnknownSetting"); expect(Buffer.byteLength(report)).toBeLessThan(7000);
+  }
+  const owned = taskOwnershipDiagnostics(xml, launcher, sid); expect(owned.authoritative).toBe(true); expect(owned.checks.settingsExact).toBe(true); expect(owned.checks.invocationExact).toBe(true);
+});
+test("task diagnostic categories distinguish outer rejection and scheduler settings shape without granting permission", () => {
+  const sid = "S-1-5-21-1000", launcher = "C:\\Orbit\\bin\\sbar-orbit.cmd", xml = brokerTaskXml(launcher, sid, { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: "C:\\Orbit\\versions\\1.2.3\\runtime\\bun.exe" }, true);
+  const outer = taskOwnershipDiagnostics(xml.replace("ORBIT_MANAGED_ENV_SCHEMA=1", "ORBIT_MANAGED_ENV_SCHEMA=9"), launcher, sid);
+  expect(outer.authoritative).toBe(false); expect(outer.checks.environmentSchema).toBe(false);
+  const settings = taskOwnershipDiagnostics(xml.replace("<Settings>", "<Settings><UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine><IdleSettings/><PrivateUnknownSetting>PRIVATE_DATA</PrivateUnknownSetting>"), launcher, sid);
+  expect(settings.authoritative).toBe(false); expect(settings.checks.settingsExact).toBe(false); expect(settings.checks.settingsUnknownTagPresent).toBe(true);
+  expect(settings.settingsTagShapes.UseUnifiedSchedulingEngine).toMatchObject({ present: true, single: false, valueTrue: true, knownSafeValue: true }); expect(settings.settingsTagShapes.IdleSettings).toMatchObject({ present: true, selfClosing: true });
+  expect(JSON.stringify(settings)).not.toContain("PRIVATE_DATA"); expect(JSON.stringify(settings)).not.toContain("PrivateUnknownSetting");
 });
