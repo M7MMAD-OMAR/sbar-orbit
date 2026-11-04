@@ -10,8 +10,9 @@ export function managedUpdateRoot() {
   const versions = dirname(dirname(source));
   if (dirname(source).match(/[/\\]versions[/\\]\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/) && versions.endsWith("versions"))
     return dirname(versions);
+  // Windows ordinary state/workspaces share the application base, never this sealed runtime child.
   if (process.platform === "win32")
-    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit");
+    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "managed");
   return join(process.env.XDG_DATA_HOME || join(homedir(), ".local/share"), "sbar-orbit");
 }
 

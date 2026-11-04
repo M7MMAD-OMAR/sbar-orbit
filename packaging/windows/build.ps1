@@ -23,6 +23,12 @@ if ($Phase -eq 'Probe') {
   Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $build 'bun')
   if (-not (Test-Path -LiteralPath $bun)) { throw 'Pinned Bun layout missing' }
   Run-Bounded @($bun,'install','--frozen-lockfile','--ignore-scripts','--linker','hoisted')
+  $versionOutput = @(Run-Bounded @($bun,'--version'))
+  $actualBunVersion = ($versionOutput | Select-Object -Last 1).ToString().Trim()
+  if ($actualBunVersion -ne $pins.bun.version) { throw 'Verified official Bun archive reports another version' }
+  New-Item -ItemType Directory -Path (Join-Path $build 'artifacts') | Out-Null
+  $member = [IO.Path]::GetRelativePath((Join-Path $build 'bun'), $bun).Replace('\','/')
+  @{schema=1;upstream='oven-sh/bun';version=$actualBunVersion;platform='win32';arch='x64';archiveUrl=$pins.bun.url;archiveSha256=$pins.bun.sha256;archiveMember=$member;exeSha256=(Get-FileHash -LiteralPath $bun -Algorithm SHA256).Hash.ToLowerInvariant();exeBytes=(Get-Item -LiteralPath $bun).Length;runtimeRelativePath='runtime/bun.exe';publicationReadiness=$false;runtimePayloadUploaded=$false} | ConvertTo-Json | Set-Content (Join-Path $build 'artifacts/upstream-runtime.build.json')
   # A real production IPC bind/client roundtrip fails here BEFORE any SDK download/restore.
   Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','probe','--report',($evidence + '/ipc-probe.json'))
   return

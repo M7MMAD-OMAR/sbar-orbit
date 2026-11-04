@@ -40,7 +40,7 @@ export { launcherName } from "./runtime-command";
 /** Where the launcher this install runs from is expected to live, per platform. */
 export function defaultLauncherPath() {
   if (process.platform === "win32")
-    return join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "sbar-orbit", "bin", "sbar-orbit.cmd");
+    return join(managedUpdateRoot(), "bin", "sbar-orbit.cmd");
   return join(homedir(), ".local/bin/sbar-orbit");
 }
 

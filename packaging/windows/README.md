@@ -20,6 +20,8 @@ No signing certificate exists. Application and installer are unsigned and SmartS
 
 Asset sbar-orbit-VERSION-windows-x64-desktop.zip contains only desktop/windows-app/**, runtime/bun.exe and desktop-manifest.json. Protocol 1 records the exact source revision/digest and every overlay file hash. The packager imports updater validation, not a competing manifest policy. The npm artifact remains source, never a fictional GUI binary.
 
+On Windows the managed runtime root is %LOCALAPPDATA%/sbar-orbit/managed. Ordinary preferences, diagnostics, WebView state and workspaces stay in the parent application data area. Existing parent data is neither treated as a prepared runtime nor deleted; unknown contents or tasks in the new managed namespace still refuse admission. Linux layout and prepared-source-derived custom roots are unchanged.
+
 The installer merges audited same-commit npm source, frozen offline production dependencies and the overlay. Only the central bootstrap owns admission, tasks, managed file installation and current pointer changes. Missing/incompatible GUI assets must defer the entire update, never activate CLI alone.
 
 Stable Orbit.exe resolves the current canonical version and runtime hash, then invokes that verified version's central verifier before GUI/CLI launch. It never uses PATH Bun or an inherited old runtime pin. MCP preserves inherited streams.

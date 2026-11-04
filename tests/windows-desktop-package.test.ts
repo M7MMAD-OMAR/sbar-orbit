@@ -115,6 +115,7 @@ test("desktop source explicitly declares native GUI, fixed bridge, prerequisites
   expect(installer).toContain("dontcopy noencryption");
   expect(installer).not.toContain("ssPostInstall");
   expect(installer).toContain("UninstallFilesDir={localappdata}");
+  expect(installer).toContain("DefaultDirName={localappdata}\\sbar-orbit\\managed");
   const acceptance = await readFile(join(import.meta.dir, "../scripts/windows-desktop-acceptance.ts"), "utf8");
   const build = await readFile(join(import.meta.dir, "../packaging/windows/build.ps1"), "utf8");
   expect(acceptance).toContain('process.env.GITHUB_ACTIONS === "true"');

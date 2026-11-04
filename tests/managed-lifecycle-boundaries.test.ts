@@ -6,6 +6,7 @@ import { Sessions } from "../src/session";
 import { NativeBackend } from "../src/hyprland";
 import { OrbitError } from "../src/errors";
 import { activateVersion, currentVersion } from "../src/update";
+import { managedUpdateRoot } from "../src/update-admission";
 import { installService, serviceUnit, serviceUnitDrift } from "../src/service";
 import { brokerAgentPlist } from "../src/macos-autostart";
 import { fixtureRoot } from "./platform-support";
@@ -33,8 +34,8 @@ for (const state of ["expired lease", "successor broker", "unknown storage"]) {
       }
       if (state === "unknown storage") await fs.writeFile(join(root, "data"), "not a directory");
       else {
-        await fs.mkdir(join(root, "data", "sbar-orbit"), { recursive: true });
-        await fs.writeFile(join(root, "data", "sbar-orbit", "activation-recovery.json"), '{"phase":"pending"}');
+        await fs.mkdir(managedUpdateRoot(), { recursive: true });
+        await fs.writeFile(join(managedUpdateRoot(), "activation-recovery.json"), '{"phase":"pending"}');
       }
       await expect(sessions.dispatch({ method: "session.create", params: { backend: "unsupported" } }))
         .rejects.toMatchObject({ code: "PROFILE_BUSY" });
@@ -59,8 +60,8 @@ test("durable admission refuses native.open without executing its implementation
     calls++; throw new OrbitError("UNSUPPORTED", "fixture sentinel, no native execution");
   });
   try {
-    await fs.mkdir(join(root, "data", "sbar-orbit"), { recursive: true });
-    await fs.writeFile(join(root, "data", "sbar-orbit", "activation-recovery.json"), '{"phase":"pending"}');
+    await fs.mkdir(managedUpdateRoot(), { recursive: true });
+    await fs.writeFile(join(managedUpdateRoot(), "activation-recovery.json"), '{"phase":"pending"}');
     await expect(sessions.dispatch({ method: "native.open", params: { requestId: "blocked", workspace: 4, argv: ["fixture"] } }))
       .rejects.toMatchObject({ code: "PROFILE_BUSY" });
     expect(calls).toBe(0);

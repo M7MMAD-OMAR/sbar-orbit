@@ -238,7 +238,7 @@ export function managedLifecycle(options: {
       }
     } else return refused("No managed identity admission exists for this platform");
     const recordedRoot = platform === "win32"
-      ? win32.join(recorded.LOCALAPPDATA || win32.join(recorded.USERPROFILE || home, "AppData", "Local"), "sbar-orbit")
+      ? win32.join(recorded.LOCALAPPDATA || win32.join(recorded.USERPROFILE || home, "AppData", "Local"), "sbar-orbit", ...(options.windowsDesktopRoot ? ["managed"] : []))
       : join(recorded.XDG_DATA_HOME || join(recorded.HOME || home, ".local/share"), "sbar-orbit");
     if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || recorded.ORBIT_BUN !== expectedRuntime ||
       resolve(recordedRoot) !== identity.root || (recorded.ORBIT_SOCKET && recorded.ORBIT_SOCKET !== options.socket))
