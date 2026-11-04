@@ -8,9 +8,9 @@ for (const locale of ['en', 'ar'] as const) {
   let page = template.replace('<html lang="en">', `<html lang="${locale}" dir="${locale === 'ar' ? 'rtl' : 'ltr'}">`).replace('</head>', `${alternates}</head>`);
   if (locale === 'ar') {
     page = page.replace(/<title>.*?<\/title>/, '<title>صبار أوربت | تطبيقات أصلية على سطح المكتب المحدد</title>')
-      .replace(/(<meta name="description" content=")[^"]+/, '$1فتح التطبيقات الأصلية على Fedora 44 مع Hyprland. الإدخال والتقاط الشاشة ما زالا موقوفين. لا توجد آليات تشغيل للأنظمة الأخرى. مشروع مفتوح المصدر.')
+      .replace(/(<meta name="description" content=")[^"]+/, '$1افتح تطبيقاتك الأصلية على Fedora 44 مع Hyprland. يبدأ الإدخال والتقاط الشاشة بتسليم صريح، وتحتاج كل مهمة إلى التحقق من نتيجتها. لا توجد آليات تشغيل للأنظمة الأخرى. مشروع مفتوح المصدر.')
       .replace(/(<meta property="og:title" content=")[^"]+/, '$1تطبيقات أصلية على سطح المكتب المحدد.')
-      .replace(/(<meta property="og:description" content=")[^"]+/, '$1فتح التطبيقات الأصلية على Fedora 44 مع Hyprland. الإدخال والتقاط الشاشة ما زالا موقوفين.')
+      .replace(/(<meta property="og:description" content=")[^"]+/, '$1افتح تطبيقاتك الأصلية على Fedora 44 مع Hyprland. يبدأ الإدخال والتقاط الشاشة بتسليم صريح، وتحتاج كل مهمة إلى التحقق من نتيجتها.')
       .replace('property="og:url" content="https://orbit.sbarah.com/"', 'property="og:url" content="https://orbit.sbarah.com/ar/"')
       .replace('rel="canonical" href="https://orbit.sbarah.com/"', 'rel="canonical" href="https://orbit.sbarah.com/ar/"');
   }

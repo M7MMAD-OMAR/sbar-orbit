@@ -136,3 +136,12 @@ test('Arabic copy and metadata contain no vocalization marks or long dashes', as
   const texts = [Object.values(arabic).join(' '), renderToString(<App locale="ar" />), await Bun.file(new URL('../scripts/prerender.tsx', import.meta.url)).text()];
   for (const text of texts) expect(text).not.toMatch(/[\u064b-\u0652\u0670\u2013\u2014]/u);
 });
+
+test("English and Arabic metadata describe explicit handoff without an obsolete hold", async () => {
+  const en = await Bun.file(new URL("../index.html", import.meta.url)).text();
+  const prerender = await Bun.file(new URL("../scripts/prerender.tsx", import.meta.url)).text();
+  expect(en).not.toContain("Input and capture remain on hold");
+  expect(en.match(/Input and capture use explicit handoff/g)).toHaveLength(2);
+  expect(prerender).not.toContain("الإدخال والتقاط الشاشة ما زالا موقوفين");
+  expect(prerender.match(/يبدأ الإدخال والتقاط الشاشة بتسليم صريح/g)).toHaveLength(2);
+});
