@@ -95,6 +95,10 @@ smokes. Hosted absence of native prerequisites may return preflight exit 1, but
 only with matching valid JSON; module/parser failures are not ignored. These
 smokes establish no desktop/native acceptance or real installation.
 
+The [4 November 2026 hosted evidence](ci-verification-2026-11-04.md) records a
+successful exact-commit run and independently checked artifact bytes, without
+publication or native acceptance.
+
 On complete success, download these separately named workflow artifacts:
 
 - `release-VERSION-FULL40HEXCOMMIT`: exactly the two versioned archives, each
