@@ -61,8 +61,11 @@ default while another task is editing runtime modules.
 
 [The build-only hosted workflow](../.github/workflows/package-release.yml) accepts
 a complete lowercase `source_ref` and matching root-package `version`. Dispatch the
-workflow from reviewed main; it checks out the supplied source commit separately
-from the workflow commit. It publishes no release, tag, registry package or website
+workflow from reviewed main; it rejects other dispatch refs and checks that both the
+workflow commit and supplied source commit are independently ancestors of main.
+The source checkout is separate from the workflow commit. These ancestry checks do
+not prove human review or a passing CI run; those remain release prerequisites.
+It publishes no release, tag, registry package or website
 and receives no publishing/Cloudflare secrets. Official checkout/setup/upload
 actions are pinned to resolved commit IDs; Bun is pinned to 1.3.14.
 
