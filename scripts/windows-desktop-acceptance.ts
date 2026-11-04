@@ -9,13 +9,15 @@ import { startBroker, call } from "../src/ipc";
 import { managedUpdateRoot, requireUpdateAdmission } from "../src/update-admission";
 import { withUpdateLock } from "../src/update-lock";
 import { sealRelease } from "../src/managed-identity";
-import { activateVersion, currentVersion, pruneVersions } from "../src/update";
+import { currentVersion, pruneVersions } from "../src/update";
 import { admittedWindowsBootstrap, recordWindowsReleaseFiles, verifyWindowsCurrent } from "../src/windows-managed-install";
 import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, desktopSourceDigest, parseDesktopManifest, validateDesktopPayload, windowsFileDigest } from "../src/windows-desktop-update";
 import { boundedCommand } from "../src/lifecycle-command";
+import { DEPENDENCY_INVENTORY } from "../src/windows-dependencies";
 import { registeredTaskXml } from "../src/windows-autostart";
 import { serviceSocketPath } from "../src/service";
 import { requireResourceBudget } from "../src/resource-budget";
+import { parseRuntimeSource, materializeWindowsRuntime } from "../src/windows-runtime-source";
 
 const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 const fail = (message: string): never => { throw new Error(message); };
@@ -134,6 +136,8 @@ async function prepare(options: Map<string, string>) {
   await rm(oldGui, { recursive: true });
   await cp(gui, oldGui, { recursive: true, force: false, errorOnExist: true });
   await cp(launcher, join(output, DESKTOP_LAUNCHER));
+  await cp(join(base, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"), join(output, "desktop/windows-app/Orbit.RuntimeBootstrap.exe"));
+  await cp(join(base, DEPENDENCY_INVENTORY), join(output, DEPENDENCY_INVENTORY));
   const intentionalFailure = version === versions.rollback;
   if (intentionalFailure) {
     const path = join(output, "src/cli.ts"), original = await readFile(path, "utf8");
@@ -144,9 +148,13 @@ async function prepare(options: Map<string, string>) {
   const files: { path: string; sha256: string }[] = [];
   for (const path of await regularTree(output)) if (path.startsWith("desktop/windows-app/") || path === DESKTOP_RUNTIME)
     files.push({ path, sha256: await windowsFileDigest(join(output, path)) });
-  const manifest = parseDesktopManifest({ schema: 1, bootstrapProtocol: 1, version, platform: "win32", arch: "x64", sourceRevision,
+  const runtimeSource = parseRuntimeSource((await json(join(base, DESKTOP_MANIFEST))).runtimeSource);
+  files.push({ path: DESKTOP_RUNTIME, sha256: runtimeSource.executableSha256 });
+  const manifest = parseDesktopManifest({ schema: 2, bootstrapProtocol: 2, version, platform: "win32", arch: "x64", sourceRevision, runtimeSource,
     sourceDigest: await desktopSourceDigest(output), files }, version);
-  await save(join(output, DESKTOP_MANIFEST), manifest); await validateDesktopPayload(output, version, manifest.sourceDigest);
+  await save(join(output, DESKTOP_MANIFEST), manifest);
+  await materializeWindowsRuntime(output, runtimeSource, { orbitVersion: version, managedRoot: resolve(managedUpdateRoot()), downloadAllowed: false, providedArchive: resolve(required(options, "--archive")) });
+  await validateDesktopPayload(output, version, manifest.sourceDigest);
   const beforeLauncher = await windowsFileDigest(join(base, DESKTOP_LAUNCHER)), fixtureLauncher = await windowsFileDigest(join(output, DESKTOP_LAUNCHER));
   check(beforeLauncher !== fixtureLauncher, "Real separately compiled fixture host must differ to exercise mapped-host sharing");
   const record = { schema: 1, kind: "owned-offline-fixture", publicRelease: false, feedVerified: false, automaticSelection: false,
@@ -199,7 +207,11 @@ async function runAcceptance(options: Map<string, string>) {
     result.mcp = { pid, started: before?.created, image: "bin/Orbit.exe", initialized: true, serverInfo: client.getServerVersion(),
       actualBunChildren: adapterProcesses.map(child => ({ pid: child.pid, started: child.created })) };
     await save(join(evidence, "progress.json"), result);
-    const activation = await activateVersion(candidate, { root });
+    const activationHost = join(initial.directory, DESKTOP_LAUNCHER); await assertPE(activationHost);
+    const activationCommand = await boundedCommand([activationHost, "--cli", root, "update", "activate", candidate], 120000);
+    check(activationCommand.ok, "Real versioned native activation process failed");
+    const activation: Record<string, unknown> = JSON.parse(activationCommand.output);
+    result.activationRoute = { nativeVersionedHost: true, currentImage: DESKTOP_LAUNCHER, bareBun: false };
     check(activation.activated === true, "Real default activation did not succeed: " + JSON.stringify(activation));
     const selected = await verifyWindowsCurrent(root);
     check(selected.version === candidate && await currentVersion(root) === candidate && selected.runtime === join(root, "versions", candidate, DESKTOP_RUNTIME) && selected.desktopPath === join(root, "versions", candidate, DESKTOP_EXE), "GUI, CLI, runtime and current pointer did not advance coherently");
@@ -233,7 +245,9 @@ async function runAcceptance(options: Map<string, string>) {
     }
     result.ownedAdapterTreeExited = true;
     result.mcpStderrBytes = stderrBytes;
-    const failed = await activateVersion(rollback, { root });
+    const rollbackCommand = await boundedCommand([join(root, "versions", candidate, DESKTOP_LAUNCHER), "--cli", root, "update", "activate", rollback], 120000);
+    const failed: Record<string, unknown> = JSON.parse(rollbackCommand.output);
+    check(!rollbackCommand.ok, "Failing rollback fixture unexpectedly returned native activation success");
     check(!failed.activated && "rolledBack" in failed && failed.rolledBack === true && failed.rollbackHealthy === true, "Real failing broker did not cause a confirmed healthy rollback");
     const restored = await verifyWindowsCurrent(root), repaired = await admittedWindowsBootstrap(root);
     check(restored.version === candidate && repaired.version === candidate && await windowsFileDigest(stable) === await windowsFileDigest(join(restored.directory, DESKTOP_LAUNCHER)), "After old client exit the admitted native host was not repaired to the current healthy payload");

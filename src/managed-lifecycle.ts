@@ -81,22 +81,36 @@ export function updateTaskXml(launcher: string, sid: string, environment: Record
     .replace("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>", "<ExecutionTimeLimit>PT20M</ExecutionTimeLimit>");
 }
 
-function directUpdateInvocation(runtime: string) {
-  const directory = win32.dirname(win32.dirname(runtime));
-  return `"${runtime}" "${win32.join(directory, "scripts/limited.ts")}" "${runtime}" "${win32.join(directory, "src/cli.ts")}" update run`;
+const NATIVE_UPDATE_DESCRIPTION = UPDATE_DESCRIPTION + " (native schema 2)";
+function nativeUpdateAction(launcher: string, runtime: string) {
+  const root = win32.dirname(win32.dirname(launcher)), directory = win32.dirname(win32.dirname(runtime));
+  if (!win32.isAbsolute(runtime) || runtime !== win32.resolve(runtime) || /["%\r\n\0]/.test(runtime + launcher)
+      || launcher !== win32.join(root, "bin/sbar-orbit.cmd") || win32.dirname(directory) !== win32.join(root, "versions")
+      || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(win32.basename(directory)) || runtime !== win32.join(directory, "runtime/bun.exe")) throw new Error("Missing exact versioned native updater identity");
+  return { command: win32.join(directory, "desktop/windows-app/Orbit.Launcher.exe"), arguments: '--cli "' + root + '" update run' };
 }
-
-/** Direct pinned Bun avoids holding the stable native launcher open during its own update. */
+/** Versioned native pre-TS verification without holding the stable bootstrap image mapped. */
 export function windowsDesktopUpdateTaskXml(launcher: string, sid: string, environment: Record<string, string>) {
-  const contents = updateTaskXml(launcher, sid, environment, true);
-  const original = value(contents, "Arguments"), suffix = `"${launcher}" update run`;
-  if (!environment.ORBIT_BUN || !original.endsWith(suffix)) throw new Error("Missing exact desktop updater runtime");
+  if (!environment.ORBIT_BUN) throw new Error("Missing desktop updater runtime");
+  const action = nativeUpdateAction(launcher, environment.ORBIT_BUN), contents = updateTaskXml(launcher, sid, environment, true);
   const escape = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
-  const replaced = original.slice(0, -suffix.length) + directUpdateInvocation(environment.ORBIT_BUN);
-  return contents.replace(`<Arguments>${escape(original)}</Arguments>`, `<Arguments>${escape(replaced)}</Arguments>`);
+  return contents.replace(UPDATE_DESCRIPTION, NATIVE_UPDATE_DESCRIPTION)
+    .replace(/<Command>[^<]*<\/Command>/, "<Command>" + escape(action.command) + "</Command>")
+    .replace(/<Arguments>[\s\S]*?<\/Arguments>/, "<Arguments>" + escape(action.arguments) + "</Arguments>");
 }
 
-export function taskOwned(xml: string, launcher: string, sid: string, updater = false) {
+export function taskOwned(xml: string, launcher: string, sid: string, updater = false, desktopUpdater = false) {
+  if (desktopUpdater && (!updater || value(xml, "Description") !== NATIVE_UPDATE_DESCRIPTION)) return false;
+  if (updater && value(xml, "Description") === NATIVE_UPDATE_DESCRIPTION) {
+    const command = value(xml, "Command"), directory = win32.dirname(win32.dirname(win32.dirname(command)));
+    const runtime = win32.join(directory, "runtime/bun.exe");
+    try {
+      const action = nativeUpdateAction(launcher, runtime);
+      if (command !== action.command || value(xml, "Arguments") !== action.arguments) return false;
+      const expected = windowsDesktopUpdateTaskXml(launcher, sid, { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: runtime });
+      return canonicalTaskOwned(xml, expected, sid, NATIVE_UPDATE_DESCRIPTION);
+    } catch { return false; }
+  }
   // Decode a single canonical action. Never inherit values from the updater.
   const argumentsText = value(xml, "Arguments");
   let remaining = argumentsText.startsWith("/c ") ? argumentsText.slice(3) : "";
@@ -113,9 +127,8 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
     recorded[key] = datum;
     remaining = remaining.slice(match[0].length);
   }
-  const directUpdater = updater && recorded.ORBIT_BUN !== undefined && remaining === directUpdateInvocation(recorded.ORBIT_BUN);
   if (recorded.ORBIT_MANAGED_ENV_SCHEMA !== "1" || !recorded.ORBIT_BUN
-      || (!directUpdater && remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`)) return false;
+      || (remaining !== `"${launcher}" ${updater ? "update run" : "serve --managed-socket"}`)) return false;
   if ([...diagnostics].some(key => recorded[key] !== undefined)) {
     const root = recorded.ORBIT_TEST_INSTALLED_STARTUP_ROOT;
     if (!root || [...diagnostics].some(key => recorded[key] === undefined)) return false;
@@ -125,9 +138,13 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
       if (!realpathSync(launcher).startsWith(prefix + win32.sep)) return false;
     } catch { return false; }
   }
-  const expected = updater ? directUpdater ? windowsDesktopUpdateTaskXml(launcher, sid, recorded) : updateTaskXml(launcher, sid, recorded, true) : brokerTaskXml(launcher, sid, recorded, true);
+  const expected = updater ? updateTaskXml(launcher, sid, recorded, true) : brokerTaskXml(launcher, sid, recorded, true);
+  return canonicalTaskOwned(xml, expected, sid, updater ? UPDATE_DESCRIPTION : TASK_DESCRIPTION);
+}
+
+function canonicalTaskOwned(xml: string, expected: string, sid: string, description: string) {
   const users = [...xml.matchAll(/<UserId>([^<]*)<\/UserId>/g)].map(match => decode(match[1] ?? ""));
-  return value(xml, "Description") === (updater ? UPDATE_DESCRIPTION : TASK_DESCRIPTION)
+  return value(xml, "Description") === description
     && users.length > 0 && users.every(user => user === sid)
     && value(xml, "LogonType") === "InteractiveToken" && value(xml, "RunLevel") === "LeastPrivilege"
     && taskActionMatches(xml, expected)
@@ -144,6 +161,7 @@ export function taskOwned(xml: string, launcher: string, sid: string, updater = 
     })
     && ["MultipleInstancesPolicy", "AllowHardTerminate", "Enabled", "AllowStartOnDemand", "ExecutionTimeLimit", "RunOnlyIfNetworkAvailable", "StartWhenAvailable"]
       .every(key => value(xml, key) === value(expected, key));
+
 }
 
 /** Uses only this account's installed mechanism. Tests may supply a command recorder. */
@@ -372,7 +390,7 @@ export function managedLifecycle(options: {
           `@(Get-ScheduledTask -ErrorAction Stop | Where-Object TaskName -eq '${task}').Count`]);
         if (!enumerated.ok || enumerated.output.trim() !== "0") return existing;
       }
-      if (existing.ok && !taskOwned(existing.output, options.launcher, sid, true))
+      if (existing.ok && !taskOwned(existing.output, options.launcher, sid, true, !!options.windowsDesktopRoot))
         return refused("Update task ownership or configuration differs; inspect it before changing scheduling");
       if (!on) return existing.ok ? run(["schtasks.exe", "/Delete", "/TN", task, "/F"]) : { ok: true, output: "" };
       const path = join(dirname(options.launcher), `.orbit-update-${crypto.randomUUID()}.xml`);

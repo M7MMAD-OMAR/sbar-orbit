@@ -27,7 +27,7 @@ internal sealed record ReleaseContext(string SourceRoot, string Runtime, string 
             PreparedRelease.NoRedirect(path);
         using var manifest = JsonDocument.Parse(ReadSmallFile(Path.Combine(source, "desktop-manifest.json")));
         var root = manifest.RootElement;
-        if (root.GetProperty("schema").GetInt32() != 1 || root.GetProperty("bootstrapProtocol").GetInt32() != 1 || root.GetProperty("version").GetString() != version ||
+        if (root.GetProperty("schema").GetInt32() != 2 || root.GetProperty("bootstrapProtocol").GetInt32() != 2 || root.GetProperty("version").GetString() != version ||
             root.GetProperty("platform").GetString() != "win32" || root.GetProperty("arch").GetString() != "x64")
             throw new InvalidOperationException("Desktop payload identity invalid");
         var runtimeEntry = root.GetProperty("files").EnumerateArray().Single(entry => entry.GetProperty("path").GetString() == "runtime/bun.exe");
@@ -62,7 +62,7 @@ internal sealed record ReleaseContext(string SourceRoot, string Runtime, string 
             if (child.ExitCode != 0) throw new InvalidOperationException("Managed verifier refused");
             using var response = JsonDocument.Parse(await stdout);
             var answer = response.RootElement;
-            if (!answer.GetProperty("ok").GetBoolean() || answer.GetProperty("bootstrapProtocol").GetInt32() != 1 ||
+            if (!answer.GetProperty("ok").GetBoolean() || answer.GetProperty("bootstrapProtocol").GetInt32() != 2 ||
                 answer.GetProperty("version").GetString() != Version ||
                 !SamePath(answer, "root", ManagedRoot) || !SamePath(answer, "directory", SourceRoot) ||
                 !SamePath(answer, "runtime", Runtime) || !SamePath(answer, "cliPath", Path.Combine(SourceRoot, "src", "cli.ts")) ||

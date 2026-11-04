@@ -35,8 +35,14 @@ internal static class OrbitLauncher
             if (!String.Equals(Path.GetDirectoryName(selected), versions, StringComparison.OrdinalIgnoreCase) ||
                 !Regex.IsMatch(Path.GetFileName(selected), @"^[0-9]+[.][0-9]+[.][0-9]+(?:-[a-zA-Z0-9.-]+)?$")) throw new Exception("Managed pointer is outside its versions directory");
             NoRedirect(selected);
+            string image = Canonical(Process.GetCurrentProcess().MainModule.FileName); NoRedirect(image);
+            string stableImage = Path.Combine(root, "bin", "Orbit.exe");
+            string versionedImage = Path.Combine(selected, "desktop", "windows-app", "Orbit.Launcher.exe");
+            if (!String.Equals(image, stableImage, StringComparison.OrdinalIgnoreCase) && !String.Equals(image, versionedImage, StringComparison.OrdinalIgnoreCase)) throw new Exception("Native image is not the admitted current version or stable host");
+            // Versioned updater image is itself inside the current prepared seal and descriptor.
             var seal = PreparedRelease.Attest(root, selected, Path.GetFileName(selected), ParseSeal);
             string runtime = seal.Runtime;
+            DesktopPayload.Verify(selected, false, text => Object(text));
             string entry = Path.Combine(selected, "src", "windows-managed-install.ts");
             NoRedirect(Path.Combine(selected, "src")); NoRedirect(entry);
             bool brokerStartup = cli && args.Length == 4 && args[2] == "serve" && args[3] == "--managed-socket";
@@ -51,7 +57,7 @@ internal static class OrbitLauncher
                 !String.Equals(Text(verified, "runtime"), runtime, StringComparison.OrdinalIgnoreCase) ||
                 !String.Equals(Text(verified, "desktopPath"), desktop, StringComparison.OrdinalIgnoreCase) ||
                 !String.Equals(Text(verified, "cliPath"), cliPath, StringComparison.OrdinalIgnoreCase)) throw new Exception("Verified launch paths differ");
-            if (!verified.ContainsKey("bootstrapProtocol") || Convert.ToInt32(verified["bootstrapProtocol"]) != 1) throw new Exception("Bootstrap protocol is incompatible");
+            if (!verified.ContainsKey("bootstrapProtocol") || Convert.ToInt32(verified["bootstrapProtocol"]) != 2) throw new Exception("Bootstrap protocol is incompatible");
             if (maintenance)
             {
                 Console.Out.WriteLine(Json.Serialize(Verify(runtime, entry, root, selected, "prepare-uninstall")));
@@ -114,7 +120,7 @@ internal static class OrbitLauncher
         }
     }
 
-    private static void KillOwnedVerifierTree(Process child)
+    internal static void KillOwnedVerifierTree(Process child)
     {
         var deadline = Stopwatch.StartNew();
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "taskkill.exe"),

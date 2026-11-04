@@ -6,6 +6,8 @@
   "webView2": {
     "version": "1.0.4314.35",
     "sha512": "cOaiVqP3BmQHMnxGpZzANM22tUXgycrisyJHjIGNzIaMsm8iXj7Kx+ceYg+RbYwJtzT009qfcFTocvVLY+ekMw==",
+    "nugetContentHash": "x5MFf2W03xueU1mMNvivXfHSsQ+ODo7vJ36qw/dLtU5Gs+8d7+7N7zzmNNDoT3ffosmcvZNBtUnlzyiDUuBkSQ==",
+    "hashEvidence": { "run": 41755860193, "rawArchiveBytes": 9818548, "signedContentHashDistinctFromRawArchive": true, "freshLockedRestoreVerified": true },
     "metadata": "https://api.nuget.org/v3/catalog0/data/2026.10.23.06.50.10/microsoft.web.webview2.1.0.4314.35.json"
   },
   "bun": {
@@ -13,6 +15,21 @@
     "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
     "sha256": "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5"
   },
+  "runtimeSource": {
+    "kind": "bun-official-zip",
+    "version": "1.4.4",
+    "platform": "win32",
+    "arch": "x64",
+    "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
+    "archiveSha256": "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5",
+    "archiveBytes": 54731706,
+    "archiveEntry": "bun-windows-x64/bun.exe",
+    "executablePath": "runtime/bun.exe",
+    "executableSha256": "cb1d8e6564e655e49d30cead359750a1cbbd12f42651caa4b62244d7bd93c244",
+    "executableBytes": 115281496,
+    "license": { "url": "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md", "sha256": "362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd" }
+  },
+  "runtimeSourceEvidence": { "run": 41752689533, "artifact": 13287067000, "archiveSizeSource": "Official release asset metadata with the same verified archive digest; CI rechecks exact length" },
   "architecture": "x64",
   "authenticode": "unsigned"
 }

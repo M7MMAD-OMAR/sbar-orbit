@@ -28,7 +28,7 @@ if ($Phase -eq 'Probe') {
   if ($actualBunVersion -ne $pins.bun.version) { throw 'Verified official Bun archive reports another version' }
   New-Item -ItemType Directory -Path (Join-Path $build 'artifacts') | Out-Null
   $member = [IO.Path]::GetRelativePath((Join-Path $build 'bun'), $bun).Replace('\','/')
-  @{schema=1;upstream='oven-sh/bun';version=$actualBunVersion;platform='win32';arch='x64';archiveUrl=$pins.bun.url;archiveSha256=$pins.bun.sha256;archiveMember=$member;exeSha256=(Get-FileHash -LiteralPath $bun -Algorithm SHA256).Hash.ToLowerInvariant();exeBytes=(Get-Item -LiteralPath $bun).Length;runtimeRelativePath='runtime/bun.exe';publicationReadiness=$false;runtimePayloadUploaded=$false} | ConvertTo-Json | Set-Content (Join-Path $build 'artifacts/upstream-runtime.build.json')
+  @{schema=1;upstream='oven-sh/bun';version=$actualBunVersion;platform='win32';arch='x64';archiveUrl=$pins.bun.url;archiveSha256=$pins.bun.sha256;archiveBytes=(Get-Item -LiteralPath $archive).Length;archiveMember=$member;exeSha256=(Get-FileHash -LiteralPath $bun -Algorithm SHA256).Hash.ToLowerInvariant();exeBytes=(Get-Item -LiteralPath $bun).Length;runtimeRelativePath='runtime/bun.exe';publicationReadiness=$false;runtimePayloadUploaded=$false} | ConvertTo-Json | Set-Content (Join-Path $build 'artifacts/upstream-runtime.build.json')
   # A real production IPC bind/client roundtrip fails here BEFORE any SDK download/restore.
   Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','probe','--report',($evidence + '/ipc-probe.json'))
   return
@@ -40,19 +40,34 @@ $root = [IO.Path]::GetFullPath($probe.root)
 if (Test-Path -LiteralPath $root) { throw 'Default production root appeared after probe; preserve it and refuse' }
 $disk = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($build))
 if ($disk.AvailableFreeSpace -lt 4GB) { throw 'Owned build disk reserve unavailable; nothing will be deleted to make room' }
+$compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+if (-not (Test-Path -LiteralPath $compiler)) { throw 'Windows .NET Framework compiler unavailable' }
+$nativeSources = @((Join-Path $PSScriptRoot 'OrbitLauncher.cs'),(Join-Path $PSScriptRoot 'PreparedRelease.cs'),(Join-Path $PSScriptRoot 'RuntimeSource.cs'))
+$nativeReferences = @('/r:System.Core.dll','/r:System.Web.Extensions.dll','/r:System.Windows.Forms.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll')
+Run-Bounded (@($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/define:NETFRAMEWORK','/main:OrbitLauncher',('/out:' + (Join-Path $build 'Orbit.Launcher.exe'))) + $nativeReferences + $nativeSources)
+Run-Bounded (@($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/define:NETFRAMEWORK','/main:Orbit.Shared.RuntimeBootstrap',('/out:' + (Join-Path $build 'Orbit.RuntimeBootstrap.exe'))) + $nativeReferences + $nativeSources)
+$vector = Get-Content tests/fixtures/windows-runtime-source-v2.json -Raw | ConvertFrom-Json
+$vector | ConvertTo-Json -Depth 8 | Set-Content "$build/runtime-conformance.json"
+$conformance = @(Run-Bounded @((Join-Path $build 'Orbit.RuntimeBootstrap.exe'),'--conformance',($build + '/runtime-conformance.json')))
+if (($conformance | Select-Object -Last 1).ToString().Trim() -ne $vector.descriptorId) { throw 'Native/Node descriptor conformance failed' }
+$dependencyVectorRoot = Join-Path $build 'dependency-conformance'
+New-Item -ItemType Directory -Path (Join-Path $dependencyVectorRoot 'node_modules/@modelcontextprotocol/sdk') -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $dependencyVectorRoot 'desktop/windows-app') -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $dependencyVectorRoot 'node_modules/@modelcontextprotocol/sdk/index.js'), "owned synthetic SDK fixture" + [char]10, [Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $dependencyVectorRoot 'node_modules/@modelcontextprotocol/sdk/package.json'), '{}', [Text.UTF8Encoding]::new($false))
+Copy-Item -LiteralPath 'tests/fixtures/windows-dependencies-v1.tsv' -Destination (Join-Path $dependencyVectorRoot 'desktop/windows-app/dependency-files.tsv')
+Run-Bounded @((Join-Path $build 'Orbit.RuntimeBootstrap.exe'),'--conformance-dependencies',$dependencyVectorRoot)
+$pins.runtimeSource | ConvertTo-Json -Depth 8 | Set-Content "$build/runtime-source.json"
 Push-Location desktop/windows
 try {
   Run-Bounded @('dotnet','restore','Orbit.Desktop.csproj','--locked-mode','--runtime','win-x64','--disable-parallel')
   Run-Bounded @('dotnet','publish','Orbit.Desktop.csproj','-c','Release','-r','win-x64','--self-contained','true','--no-restore','--maxcpucount:2',('-p:Version=' + $version),('-p:PublishDir=' + $build + '/published/'))
 } finally { Pop-Location }
-$compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-if (-not (Test-Path -LiteralPath $compiler)) { throw 'Windows .NET Framework compiler unavailable' }
-Run-Bounded @($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/r:System.Core.dll','/r:System.Web.Extensions.dll','/r:System.Windows.Forms.dll',('/out:' + $build + '/Orbit.Launcher.exe'),'packaging/windows/OrbitLauncher.cs','packaging/windows/PreparedRelease.cs')
 # Bundle actual vendor license/notice files. Missing terms are a release-blocking gap, not Orbit Apache coverage.
 $nuget = $env:NUGET_PACKAGES
 if (-not $nuget) { $nuget = Join-Path $env:USERPROFILE '.nuget/packages' }
 function Add-VendorNotices([string]$Published) {
-  $notices = Join-Path $Published 'third-party-notices'
+  $notices = Join-Path $Published 'notices'
   New-Item -ItemType Directory -Force $notices | Out-Null
   $inventory = @()
   foreach ($entry in @(@('DotNetCore',('microsoft.netcore.app.runtime.win-x64/' + $pins.dotnetRuntime)),@('DotNetDesktop',('microsoft.windowsdesktop.app.runtime.win-x64/' + $pins.dotnetRuntime)),@('WebView2',('microsoft.web.webview2/' + $pins.webView2.version)))) {
@@ -67,11 +82,11 @@ function Add-VendorNotices([string]$Published) {
       $inventory += @{vendor=$entry[0];file=[IO.Path]::GetRelativePath($Published,$destination);sha256=(Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant();source=$entry[1]}
     }
   }
-  $bunNotice = Join-Path $notices 'Bun/LICENSE.md'
+  $bunNotice = Join-Path $notices 'bun/LICENSE.md'
   New-Item -ItemType Directory -Force (Split-Path $bunNotice) | Out-Null
   Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md' -OutFile $bunNotice
   if ((Get-FileHash $bunNotice -Algorithm SHA256).Hash.ToLowerInvariant() -ne '362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd') { throw 'Pinned upstream Bun notice digest differs' }
-  $inventory += @{vendor='Bun';file='third-party-notices/Bun/LICENSE.md';sha256='362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd';source='bun-v1.4.4/LICENSE.md'}
+  $inventory += @{vendor='Bun';file='notices/bun/LICENSE.md';sha256='362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd';source='bun-v1.4.4/LICENSE.md'}
   @{schema=1;files=$inventory;orbitLicenseDoesNotCoverVendors=$true;redistributionReview='required: Bun statically linked JavaScriptCore/WebCore LGPL2 relinking/source obligations and Microsoft WebView2 SDK/runtime terms'} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Published 'vendor-notice-inventory.json')
 }
 Add-VendorNotices "$build/published"
@@ -82,7 +97,7 @@ New-Item -ItemType Directory "$build/source" | Out-Null
 Run-Bounded @('tar.exe','-xf',$archives[0].FullName,'-C',($build + '/source'))
 Push-Location "$build/source/package"
 try { Run-Bounded @($bun,'install','--frozen-lockfile','--production','--ignore-scripts','--linker','hoisted') } finally { Pop-Location }
-Run-Bounded @($bun,'run','scripts/package-windows.ts',($build + '/source/package'),($build + '/published'),$bun,($build + '/Orbit.Launcher.exe'),($build + '/artifacts'),$env:GITHUB_SHA)
+Run-Bounded @($bun,'run','scripts/package-windows.ts',($build + '/source/package'),($build + '/published'),($build + '/Orbit.Launcher.exe'),($build + '/Orbit.RuntimeBootstrap.exe'),($build + '/artifacts'),$env:GITHUB_SHA,'--runtime-source',($build + '/runtime-source.json'))
 $iscc = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6/ISCC.exe'
 if (-not (Test-Path -LiteralPath $iscc)) { throw 'Trusted runner Inno Setup compiler unavailable' }
 Run-Bounded @($iscc,('/DPayload=' + $build + '/artifacts/installer-payload'),('/DPackageVersion=' + $version),('/DArtifactOutput=' + $build + '/artifacts'),'packaging/windows/Orbit.iss')
@@ -99,8 +114,8 @@ foreach ($variant in @(@('activation',$probe.versions.activation),@('rollback',$
   $stamp = Join-Path $build "$label-AssemblyInfo.cs"
   ('[assembly:System.Reflection.AssemblyInformationalVersion("' + $fixtureVersion + '")]') | Set-Content -Encoding utf8 $stamp
   $host = Join-Path $build "$label-Orbit.Launcher.exe"
-  Run-Bounded @($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/r:System.Core.dll','/r:System.Web.Extensions.dll','/r:System.Windows.Forms.dll',('/out:' + $host),'packaging/windows/OrbitLauncher.cs','packaging/windows/PreparedRelease.cs',$stamp)
-  Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','prepare','--base',($build + '/artifacts/installer-payload'),'--gui',($build + '/' + $label + '-published'),'--launcher',$host,'--version',$fixtureVersion,'--destination',($build + '/' + $label + '-fixture'),'--evidence',$evidence)
+  Run-Bounded (@($compiler,'/nologo','/optimize+','/target:winexe','/platform:x64','/define:NETFRAMEWORK','/main:OrbitLauncher',('/out:' + $host)) + $nativeReferences + $nativeSources + @($stamp))
+  Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','prepare','--base',($build + '/artifacts/installer-payload'),'--gui',($build + '/' + $label + '-published'),'--launcher',$host,'--version',$fixtureVersion,'--destination',($build + '/' + $label + '-fixture'),'--evidence',$evidence,'--archive',$archive)
 }
 function File-Fingerprint([string]$Path) { if (Test-Path -LiteralPath $Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash }; return 'absent' }
 function Shell-Snapshot {
@@ -119,7 +134,7 @@ New-Item -ItemType Directory $root -Force | Out-Null
 $sentinel = Join-Path $root 'owner-sentinel.txt'
 Set-Content -LiteralPath $sentinel -Value 'owned refusal fixture'
 $beforeSentinel = File-Fingerprint $sentinel; $beforeShell = Shell-Snapshot
-$refusal = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',('/DIR="' + $root + '"')) -PassThru
+$refusal = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',('/BUNRUNTIMEARCHIVE="' + $archive + '"'),('/DIR="' + $root + '"')) -PassThru
 if (-not $refusal.WaitForExit(120000)) { $refusal.Kill($true); $refusal.WaitForExit(3000); throw 'Owned refusal installer exceeded deadline' }
 if ($refusal.ExitCode -ne 7 -or (File-Fingerprint $sentinel) -ne $beforeSentinel -or (Shell-Snapshot) -ne $beforeShell -or (Test-Path (Join-Path $root 'current.txt'))) { throw 'Central refusal/shell evidence failed' }
 @{schema=1;exitCode=$refusal.ExitCode;sentinelPreserved=$true;shellSnapshotUnchanged=$true;currentAbsent=$true;temporaryDiagnosticsMayExist=$true} | ConvertTo-Json | Set-Content "$evidence/installer-refusal.json"
@@ -128,7 +143,7 @@ if ([IO.Path]::GetFullPath($sentinel) -ne (Join-Path $root 'owner-sentinel.txt')
 Remove-Item -LiteralPath $sentinel
 if (@(Get-ChildItem -LiteralPath $root -Force).Count -ne 0) { throw 'Refusal left unknown root state; preserve it and stop' }
 & "$PSScriptRoot/preflight.ps1"
-$installed = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=',('/DIR="' + $root + '"'),('/LOG="' + $build + '/install.log"')) -PassThru
+$installed = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=','/ACCEPTBUNRUNTIMEDOWNLOAD=1',('/DIR="' + $root + '"'),('/LOG="' + $build + '/install.log"')) -PassThru
 if (-not $installed.WaitForExit(120000)) { $installed.Kill($true); $installed.WaitForExit(3000); throw 'Owned installer exceeded deadline' }
 if ($installed.ExitCode -ne 0) { throw "Owned installer failed: $($installed.ExitCode)" }
 Run-Bounded @((Join-Path $root 'bin/Orbit.exe'),'--cli',$root,'help')
@@ -146,6 +161,27 @@ try {
   if (-not $rejectedGui.WaitForExit(45000)) { $rejectedGui.Kill($true); $rejectedGui.WaitForExit(3000); throw 'Changed-source GUI refusal timed out' }
   if ($rejectedGui.ExitCode -eq 0 -or (Test-Path -LiteralPath $sentinel)) { throw 'Direct GUI executed changed verifier before source attestation' }
 } finally { [IO.File]::WriteAllBytes($verifier, $originalVerifier) }
+# Change ONLY a dependency, not any manifest/sealed source. The new native inventory guard must refuse it.
+$dependency = Join-Path $root "versions/$version/node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js"
+if (-not (Test-Path -LiteralPath $dependency)) { throw 'Real installed SDK ESM dependency entry missing' }
+$originalDependency = [IO.File]::ReadAllBytes($dependency)
+$dependencySentinel = Join-Path $build 'dependency-should-not-execute.txt'
+$dependencyJson = ConvertTo-Json -Compress $dependencySentinel
+$dependencyManifestPath = Join-Path $root "versions/$version/desktop-manifest.json"
+$dependencySealPath = Join-Path $root "versions/$version/orbit-release-identity.json"
+$dependencyManifestBefore = File-Fingerprint $dependencyManifestPath; $dependencySealBefore = File-Fingerprint $dependencySealPath
+try {
+  $alteredDependency = [Text.Encoding]::UTF8.GetBytes('await Bun.write(' + $dependencyJson + ', "unsafe"); process.exit(78);' + [Environment]::NewLine + [Text.Encoding]::UTF8.GetString($originalDependency))
+  [IO.File]::WriteAllBytes($dependency, $alteredDependency)
+  $routes = @(@((Join-Path $root 'bin/Orbit.exe'),'--cli',('"' + $root + '"'),'mcp'),@((Join-Path $root "versions/$version/desktop/windows-app/Orbit.Launcher.exe"),'--cli',('"' + $root + '"'),'update','run'),@($gui,'--smoke-output',('"' + $build + '/rejected-dependency-gui"')))
+  foreach ($route in $routes) {
+    $rejectedDependency = Start-Process -FilePath $route[0] -ArgumentList $route[1..($route.Length - 1)] -PassThru
+    if (-not $rejectedDependency.WaitForExit(45000)) { $rejectedDependency.Kill($true); $rejectedDependency.WaitForExit(3000); throw 'Dependency tamper refusal timed out' }
+    if ($rejectedDependency.ExitCode -eq 0 -or (Test-Path -LiteralPath $dependencySentinel)) { throw 'Native MCP, versioned updater or direct GUI executed changed dependencies' }
+  }
+} finally { [IO.File]::WriteAllBytes($dependency, $originalDependency) }
+if ((File-Fingerprint $dependencyManifestPath) -ne $dependencyManifestBefore -or (File-Fingerprint $dependencySealPath) -ne $dependencySealBefore) { throw 'Dependency sentinel changed manifest or source seal unexpectedly' }
+@{schema=1;dependencyOnlyChanged=$true;manifestUnchanged=$true;sourceSealUnchanged=$true;mcpNativeRefused=$true;versionedUpdaterNativeRefused=$true;directGuiNativeRefused=$true;sentinelExecuted=$false} | ConvertTo-Json | Set-Content (Join-Path $evidence 'dependency-attestation.json')
 $process = Start-Process -FilePath $gui -ArgumentList @('--smoke-output', ('"' + $smoke + '"')) -PassThru
 if (-not $process.WaitForExit(60000)) { $process.Kill($true); $process.WaitForExit(3000); throw 'Owned GUI smoke exceeded deadline' }
 if ($process.ExitCode -ne 0) { throw "Owned GUI failed: $($process.ExitCode)" }

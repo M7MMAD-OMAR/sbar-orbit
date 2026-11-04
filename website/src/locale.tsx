@@ -2,6 +2,17 @@ import { createContext, useContext } from 'react';
 export type Locale = 'en' | 'ar';
 export const LocaleContext = createContext<Locale>('en');
 export const arabic: Record<string, string> = {
+  "Automatic updates require a managed installation and explicit opt-in, with a 72-hour release delay and safe idle activation.": "التحديث التلقائي يتطلب تثبيتا مدارا وتفعيله صراحة، مع انتظار 72 ساعة بعد نشر الإصدار وتفعيل آمن عند الخمول.",
+  "Windows x64 companion, unsigned.": "تطبيق Windows مرافق لمعمارية x64، دون توقيع رقمي.",
+  "Download Windows companion": "تنزيل تطبيق Windows المرافق",
+  "Installer SHA-256": "بصمة المثبت SHA-256",
+  "Companion UI, MCP/CLI and opt-in updates only. Native control of original Windows applications is unsupported.": "واجهة مرافقة وربط عبر MCP أو سطر الأوامر وتحديثات اختيارية فقط. التحكم الأصلي بتطبيقات Windows غير مدعوم.",
+  "Setup downloads a pinned private Bun runtime directly from its official publisher only with your explicit consent. Bun is not bundled; global PATH and application profiles are not modified.": "ينزل المثبت نسخة Bun خاصة ومحددة مباشرة من ناشرها الرسمي، بعد موافقتك الصريحة فقط. لا يتضمن المثبت Bun ولا يغير PATH العام أو ملفات تعريف تطبيقاتك.",
+  "An existing WebView2 Runtime is required. Setup clearly refuses if it is missing and does not silently install it.": "يلزم وجود WebView2 Runtime مسبقا. يرفض المثبت بوضوح إذا كان غير موجود ولا يثبته خفية.",
+  "This installer is unsigned. Verify the release and SHA-256 before running it; keep security protections enabled.": "هذا المثبت دون توقيع رقمي. تحقق من الإصدار وبصمة SHA-256 قبل تشغيله، وأبق وسائل الحماية مفعلة.",
+  "Development checkout commands, not the Windows companion installer:": "أوامر نسخة التطوير، وليست مثبت تطبيق Windows المرافق:",
+  "Windows source setup": "إعداد مصدر Windows",
+  "For source checkout commands, Bun and a shared resource budget are required. Native opening currently requires Hyprland. See the": "لأوامر نسخة التطوير، تحتاج إلى Bun وحد مشترك للموارد. يتطلب الفتح الأصلي حاليا Hyprland. راجع",
   "Sbar Orbit home": "صفحة صبار أوربت الرئيسية",
   "Main navigation": "التنقل الرئيسي",
   "Why Orbit": "لماذا أوربت؟",

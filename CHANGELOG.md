@@ -11,6 +11,9 @@ and stable native launcher. A coherent GUI/CLI/Bun payload updates through the e
 selection plus a same-version verified GitHub desktop overlay, with owned-task admission, exact health,
 rollback/recovery and preserved off preferences. Stable native MCP configuration avoids version-pinned
 Bun paths; a mapped compatible bootstrap can be retained without closing its clients.
+Public schema-2 artifacts omit Bun and acquire the exact private upstream runtime with installer
+consent. Windows overlays carry sealed production dependencies, with native verification before
+TypeScript; this execution gate and the revised installer still require real v2 Windows acceptance.
 
 Windows pruning is disabled before any deletion: all versions remain until kernel-qualified
 whole-directory quiescence is available. First adoption refuses unknown/unmanaged state; guarded

@@ -1,0 +1,54 @@
+{
+  "kind": "synthetic-conformance-only-not-official-binary",
+  "runtimeBytes": "owned synthetic runtime fixture\n",
+  "licenseBytes": "owned synthetic runtime license fixture\n",
+  "runtimeSource": {
+    "kind": "bun-official-zip",
+    "version": "1.4.4",
+    "platform": "win32",
+    "arch": "x64",
+    "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
+    "archiveSha256": "11d4776fed26ab9684670627807a2b00c382241d93c3f3f04349c3446a51050d",
+    "archiveBytes": 1234,
+    "archiveEntry": "bun-windows-x64/bun.exe",
+    "executablePath": "runtime/bun.exe",
+    "executableSha256": "1175bfa5047639f0151dbdad3dfbd92dfd43721073e06e9e5b6eb86b09f77302",
+    "executableBytes": 32,
+    "license": {
+      "url": "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md",
+      "sha256": "e5f891461f4886a6037fe65ae22833a2b28df560971bc6706a3b22006adf6fe3"
+    }
+  },
+  "orderedValues": [
+    "bun-official-zip",
+    "1.4.4",
+    "win32",
+    "x64",
+    "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
+    "11d4776fed26ab9684670627807a2b00c382241d93c3f3f04349c3446a51050d",
+    "1234",
+    "bun-windows-x64/bun.exe",
+    "runtime/bun.exe",
+    "1175bfa5047639f0151dbdad3dfbd92dfd43721073e06e9e5b6eb86b09f77302",
+    "32",
+    "https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md",
+    "e5f891461f4886a6037fe65ae22833a2b28df560971bc6706a3b22006adf6fe3"
+  ],
+  "canonical": "16:bun-official-zip5:1.4.45:win323:x6479:https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip64:11d4776fed26ab9684670627807a2b00c382241d93c3f3f04349c3446a51050d4:123423:bun-windows-x64/bun.exe15:runtime/bun.exe64:1175bfa5047639f0151dbdad3dfbd92dfd43721073e06e9e5b6eb86b09f773022:3267:https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md64:e5f891461f4886a6037fe65ae22833a2b28df560971bc6706a3b22006adf6fe3",
+  "descriptorId": "7bd1cbe94fa1110df731ea0c0dbb03a2a5be210bb531761c810ddf532dbea9ac",
+  "receipt": {
+    "schema": 2,
+    "descriptorId": "7bd1cbe94fa1110df731ea0c0dbb03a2a5be210bb531761c810ddf532dbea9ac",
+    "orbitVersion": "0.0.0-fixture.1",
+    "runtimeVersion": "1.4.4",
+    "executablePath": "runtime/bun.exe",
+    "executableSha256": "1175bfa5047639f0151dbdad3dfbd92dfd43721073e06e9e5b6eb86b09f77302",
+    "executableBytes": 32,
+    "archiveSha256": "11d4776fed26ab9684670627807a2b00c382241d93c3f3f04349c3446a51050d",
+    "archiveBytes": 1234,
+    "sourceUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
+    "archiveEntry": "bun-windows-x64/bun.exe",
+    "acquisition": "provided-archive",
+    "cacheOriginVersion": null
+  }
+}

@@ -1,85 +1,106 @@
-# Windows desktop candidate
+# Windows runtime delivery v2 candidate
 
-This source builds a real WinForms/WebView2 window, native tray menu, Start Menu shortcut, thin native launcher and per-user Inno Setup EXE. It is not a renamed source archive and does not implement Windows application control.
+This source builds a real WinForms/WebView2 management window, tray menu, native launcher
+and per-user Inno Setup installer. Windows original-application control is unsupported.
+Source fixtures are not compiled Windows acceptance. Private protocol-1 runs established
+actual Windows IPC and SDK setup, then exposed a NuGet hash mismatch before compilation.
+They do not establish a GUI/installer success or protocol-2 acceptance.
 
-## Evidence and resources
+## No Bun in public payloads
 
-Source and tiny packaging tests are not Windows acceptance. The manual workflow must restore locked packages, compile both EXEs, create and install the installer into its disposable runner root, and actually show the owned window. Evidence consists of the native handle/visibility report and screenshot of its own WebView surface, not another application or personal browser.
+Protocol 2 uses desktop manifest schema 2. Public desktop ZIPs contain GUI/native helpers,
+UI and vendor notices plus the manifest, with exactly the expected runtime/bun.exe hole.
+Public Setup contains audited source, frozen production dependencies and that public GUI
+payload. It contains neither Bun nor its archive, including renamed copies or a Bun-compiled
+bootstrap. The packager accepts a descriptor, not a private runtime path. It hashes all
+public inputs and rejects known runtime/archive bytes, archive containers and large
+non-thin EXEs. Public staging and complete private validation are separate operations.
 
-Heavy runner steps perform fresh CIM memory/CPU checks, use the existing Bun budget wrapper and limit .NET and compression parallelism to two. Reserve failure stops work, never kills unrelated processes. Local builds need a fresh preflight and Lead slot. A workflow is not proof of execution.
+The .NET Framework C#5 initial helper runs without Bun. Setup requires an explicit download
+checkbox, /ACCEPTBUNRUNTIMEDOWNLOAD=1, or an explicit /BUNRUNTIMEARCHIVE=PATH matching the
+official pin. There is no descriptor boolean that grants consent. Normal launcher, GUI,
+MCP and connector configuration paths never acquire a runtime or search PATH for one.
 
-## Prerequisites and trust
+The helper verifies public source/GUI bytes, then downloads only the reconstructed official
+Bun release over bounded HTTPS redirects, or copies the explicitly supplied official ZIP.
+Archive and executable lengths and hashes, ZIP metadata/CRC/member/path/overlap bounds and
+one five-minute acquisition deadline are enforced. Extraction writes only the pinned member
+to a fresh private ACL-restricted stage. A descriptor-bound receipt is created and the full
+private payload is checked before starting the verified Bun and central managed installer.
+The helper never independently writes current or registers tasks. Unknown staging entries
+are preserved rather than recursively cleaned. A failed acquisition cannot partially activate.
 
-Pinned official metadata: .NET SDK 10.0.403, runtime 10.0.14, Microsoft.Web.WebView2 1.0.4314.35 with official NuGet SHA-512, and Bun 1.4.4 with GitHub archive SHA-256. Metadata URLs are in build-pins.json. The thin launcher uses the Windows .NET Framework compiler/runtime; the build runner must provide Inno Setup. The versioned GUI is .NET self-contained.
+## Managed namespace and compatibility
 
-WebView2 Evergreen must already be installed. Its documented Microsoft registry identity is checked. Missing runtime causes a friendly refusal, not a silent download or browser profile copy. WebView state belongs only to this application.
+The Windows runtime root is %LOCALAPPDATA%/sbar-orbit/managed. Preferences, diagnostics,
+WebView data and workspaces remain in the parent application data area. Unknown managed
+root contents and preexisting tasks still refuse admission. Linux layout and prepared-source
+custom-root derivation are unchanged. No profile is copied and no unrelated process is killed.
 
-No signing certificate exists. Application and installer are unsigned and SmartScreen may warn. Hashes protect integrity inside the release-feed trust boundary, not independent publisher authenticity or same-user compromise.
+Schema 2 requires bootstrap protocol 2. Private protocol-1 hosts cannot parse it and must
+not be retained or silently upgraded across that boundary. Fresh public v2 adoption or an
+explicit idle migration is required. Same-protocol-2 sharing violations can retain the
+admitted old native host without closing idle MCP. The single current pointer still moves
+source, GUI, CLI and verified runtime together. Windows pruning remains disabled before
+any deletion, irrespective of origin metadata or a process census.
 
-## Managed update contract
+The public overlay also carries the exact publisher Windows production node_modules tree,
+including all licenses and data. Its canonical SHA-256 TAB path LF dependency-files.tsv
+is inside the hashed/sealed GUI prefix. Native shared C#5 validation checks that exact tree
+before every Bun execution, including direct GUI and the current versioned native updater
+host. Changed, missing, extra, redirected, hard-linked or case-conflicting files and unknown
+empty directories refuse startup. Updates copy the validated bundle, never reinstall Windows
+dependencies nondeterministically. Linux seal format and installation are unchanged.
 
-Asset sbar-orbit-VERSION-windows-x64-desktop.zip contains only desktop/windows-app/**, runtime/bun.exe and desktop-manifest.json. Protocol 1 records the exact source revision/digest and every overlay file hash. The packager imports updater validation, not a competing manifest policy. The npm artifact remains source, never a fictional GUI binary.
+Both native launcher and GUI attest the prepared source/runtime seal before executing any
+TypeScript. Central current validation follows; stale GUI context refuses actions until a
+normal user relaunch. Acquisition is separate from ordinary launch. Background updates do
+not open or focus windows. An open old GUI can remain until user relaunch.
 
-On Windows the managed runtime root is %LOCALAPPDATA%/sbar-orbit/managed. Ordinary preferences, diagnostics, WebView state and workspaces stay in the parent application data area. Existing parent data is neither treated as a prepared runtime nor deleted; unknown contents or tasks in the new managed namespace still refuse admission. Linux layout and prepared-source-derived custom roots are unchanged.
+## Pinned tools and distinct NuGet hashes
 
-The installer merges audited same-commit npm source, frozen offline production dependencies and the overlay. Only the central bootstrap owns admission, tasks, managed file installation and current pointer changes. Missing/incompatible GUI assets must defer the entire update, never activate CLI alone.
+The source pins .NET SDK 10.0.403, self-contained runtime 10.0.14, WebView2 SDK 1.0.4314.35
+and official Bun 1.4.4. WebView2's raw signed NUPKG SHA-512 is not its signed NuGet content
+hash. Actual isolated SDK verification and fresh locked restores in run 41755860193 qualified
+both independently: build-pins retains the raw catalog hash and a separate nugetContentHash.
+Production restore always remains locked with signature/hash verification enabled.
 
-Stable Orbit.exe resolves the current canonical version and runtime hash, then invokes that verified version's central verifier before GUI/CLI launch. It never uses PATH Bun or an inherited old runtime pin. MCP preserves inherited streams.
+The production Bun descriptor uses actual private CI executable hash/size/member metadata,
+plus the matching official archive hash and size. The separate shared synthetic conformance
+fixture is never a production binary pin. Native and Node descriptor IDs use the same 13
+ordered UTF-8 length-prefixed values, and receipts do not grant consent or capability.
 
-Compatible protocol-1 GUI/CLI payload updates can activate automatically together. They never focus/open a new window or replace an existing window. A running old GUI may remain until normal user relaunch. Permanent bootstrap replacement is not silently automatic: an incompatible future protocol defers and requires an admitted installer upgrade.
+WebView2 Evergreen remains an explicit prerequisite. Missing runtime causes a friendly
+refusal, not a silent global download. Application and installer are unsigned; there is no
+publisher certificate or signing claim. Hash checks establish integrity within the reviewed
+release/upstream trust boundary, not independent publisher authentication.
 
-The uninstall registration lives outside the managed root. Verified current code prepares an external maintenance copy; after the thin launcher exits, only that central copy removes admitted owned files/tasks. Refusal never kills a shared broker or bypasses active work.
+## Hosted acceptance and publication gates
 
-## Publication
+Only a dedicated hosted Windows CI account may run the acceptance driver. It refuses an
+existing managed root and performs an actual private IPC/client doctor roundtrip before SDK
+download. Memory/CPU/disk preflights and existing capped Bun jobs guard heavy steps. .NET
+builds and compression use at most two workers. No local build is implied by these sources.
 
-Public Actions artifacts contain only content-free reports, manifests and owned GUI screenshots. Setup EXEs, desktop ZIPs and bundled Bun payloads stay inside the disposable runner until vendor redistribution review clears. Runtime verification and publication readiness are separate; publicationReadiness remains false even when actual runtime checks pass. There is no invented download URL or claim that reliability-only 0.4.2 contains Windows EXEs. A follow-up requires actual Windows acceptance, vendor clearance and an honest signing status.
+The job compiles actual native helpers and compares native descriptor/receipt conformance
+against the shared Node fixture. Public packaging is audited before Setup compilation.
+The refusal fixture uses its exact supplied archive, while successful Setup exercises
+explicitly consented native upstream download. Actual compiled Orbit.exe MCP stdio is
+initialized and kept open across production activation with no OS/SID/task/health recorders.
+Two real compiled private next-patch fixtures distinguish offline activation/rollback from
+public NPM/GitHub maturity or automatic feed-selection E2E evidence. Old MCP PID/start/Bun
+children, broker doctor, native window/surface screenshot, healthy rollback, host repair
+under the production stop barrier and actual outside-root uninstaller are checked.
+Conversation off is never overridden or repaired by the fixture.
 
-## Hosted compiled acceptance, not public-feed E2E
+Public Actions uploads remain metadata/manifests and owned GUI screenshots only. Setup EXEs,
+ZIPs and private runtime payloads are never uploaded while publicationReadiness is false.
+A runtimeVerified verdict is separate from public readiness. No hypothetical Windows download
+URL or claim that reliability-only 0.4.2 contains native Windows artifacts is made.
 
-The dedicated hosted Windows job first downloads the pinned Bun ZIP, verifies its digest,
-installs frozen source dependencies under the existing budget and performs a production
-Windows IPC bind plus client doctor roundtrip. This happens before setup-dotnet downloads
-an SDK. Failure stops the job. GITHUB_ACTIONS and Windows are required, and any preexisting
-normal managed root is preserved and refuses the run. The root is computed by the actual
-managedUpdateRoot API, not an assumed path or test platform override.
-
-After real native builds, the installer refusal fixture checks the exact owned sentinel,
-current pointer and shell/task snapshots. It then installs into the actual normal account
-root. Two separately compiled next-patch prerelease GUI/native-host variants are explicitly
-unpublished CI fixtures. Original publisher annotation bytes and hashes are preserved only
-in outside evidence; no fake publisher receipt, source commit, public version or feed is
-created. Fixture annotations are omitted from their runtime roots. The overlay source digest
-binds the actual changed package/assembly metadata. The rollback-only variant explicitly
-contains a sealed broker-start failure. These are offline activation fixtures, not 72-hour
-registry eligibility, automatic selection or public GitHub/NPM delivery evidence.
-
-The acceptance program initializes and pings the actual compiled stable Orbit.exe MCP
-transport, records its real OS PID/image/start time, and keeps that exact initialized stdin
-stream open across production activateVersion with defaults only. It checks actual task and
-broker health, one current GUI/CLI/runtime version, mapped compatible host retention and old
-source retention. The new GUI must really show its owned window and capture its own WebView
-surface. Windows pruning remains disabled and removes nothing. After the old client exits,
-a production failure/healthy-rollback cycle stops the broker under the normal barrier before
-verifying host repair. There is no manual task kill, fake SID, lifecycle recorder or injected
-health success. Finally the actual installed outside-root uninstaller and its maintenance
-script must remove only their admitted owned files/tasks and preserve user data.
-
-Maintenance module closure is audited in the actual NPM payload. Relative runtime imports
-must exist and must not refer to excluded packaging files. The installer-only PowerShell
-maintenance file is explicitly installed outside the managed root and verified there before
-uninstall. It is not assumed to exist inside the NPM package.
-
-## Third-party redistribution gate
-
-The hosted build inventories and bundles actual license/notice files from the pinned .NET
-Core/Desktop runtime and WebView2 NuGet packs, plus the digest-pinned upstream Bun 1.4.4
-LICENSE.md. Missing vendor terms stop the build. These files are included in the overlay
-manifest under the GUI third-party-notices tree. Orbit's license does not cover these vendors.
-
-This inventory is not a declaration that every redistribution obligation has been satisfied.
-[Bun's upstream terms](https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md)
-state that Bun itself is MIT licensed but statically links LGPL-2 JavaScriptCore/WebCore and
-describe relinking/source obligations. Review corresponding source/object/relinking delivery
-and Microsoft WebView2 SDK/runtime terms before public redistribution. Candidate build
-metadata deliberately marks that review pending. No actual Windows acceptance, signing or
-vendor-compliance completion is claimed until the required evidence exists.
+.NET/WebView2/dependency notices are inventoried from actual pinned package output and bundled;
+missing terms stop the build. Bun's pinned upstream license text is delivered under the GUI
+notices/bun directory, without redistributing its engine. Orbit's license does not cover
+vendors, and direct acquisition does not certify all other redistribution conditions. Public
+binary delivery stays blocked until actual v2 acceptance and the vendor/no-runtime inspection
+have passed. No fabricated source offer, profile substitute or native-control claim is made.

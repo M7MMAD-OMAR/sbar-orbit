@@ -11,7 +11,8 @@ import { preparedIdentity, pointerVersion, sealRelease, releaseDigest, sameBroke
 import { requireUpdateAdmission } from "./update-admission";
 import { managedUpdateRoot } from "./update-admission";
 import { managedTarget } from "./managed-entry";
-import { DESKTOP_RUNTIME, desktopSourceDigest, extractDesktopZip, fetchDesktopOverlay, mergeDesktopOverlay, validateDesktopPayload } from "./windows-desktop-update";
+import { DESKTOP_RUNTIME, desktopSourceDigest, extractDesktopZip, fetchDesktopOverlay, mergeDesktopOverlay, validateDesktopPayload, validatePublicDesktopOverlay } from "./windows-desktop-update";
+import { materializeWindowsRuntime } from "./windows-runtime-source";
 import { bunExecutable, launcherName } from "./runtime-command";
 
 /**
@@ -584,19 +585,24 @@ async function prepareVersionUnlocked(candidate: Candidate, feed: Feed = {}, env
       if (!desktop.available) return { prepared: false, reason: "The same-version Windows desktop artifact is absent or not mature; GUI and CLI activation deferred together" };
       const isolated = join(staging, ".desktop-overlay");
       await extractDesktopZip(desktopArchive, isolated); await rm(desktopArchive);
-      const overlay = await validateDesktopPayload(isolated, candidate.version, sourceDigest);
+      const overlay = await validatePublicDesktopOverlay(isolated, candidate.version, sourceDigest);
       if (desktop.sourceRevision !== overlay.sourceRevision) return { prepared: false, reason: "Windows desktop artifact source revision differs from its release tag" };
       await mergeDesktopOverlay(isolated, staging, overlay);
+      const cached = await currentVersion(paths.root);
+      await materializeWindowsRuntime(staging, overlay.runtimeSource, { orbitVersion: candidate.version, managedRoot: resolve(paths.root), cachedVersions: cached ? [cached] : [], downloadAllowed: true });
+      await validateDesktopPayload(staging, candidate.version, sourceDigest);
       await rm(isolated, { recursive: true });
     }
-    const installed = await (environment.install ?? (async (target: string) => {
-      // The running interpreter, not a bare "bun": a broker started by a service or an agent host has
-      // its own PATH, which need not carry Bun. Same reason `src/install.ts` resolves it this way.
-      const child = Bun.spawn([windows ? join(target, DESKTOP_RUNTIME) : bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
-      const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-      return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
-    }))(staging);
-    if (!installed.ok) return { prepared: false, reason: `preparing dependencies failed: ${installed.output}` };
+    if (!windows) {
+      const installed = await (environment.install ?? (async (target: string) => {
+        // The running interpreter, not a bare "bun": a broker started by a service or an agent host has
+        // its own PATH, which need not carry Bun. Same reason `src/install.ts` resolves it this way.
+        const child = Bun.spawn([windows ? join(target, DESKTOP_RUNTIME) : bunExecutable(), "install", "--frozen-lockfile", "--ignore-scripts"], { cwd: target, stdout: "pipe", stderr: "pipe" });
+        const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+        return { ok: code === 0, output: `${output}${errors}`.trim().split("\n").slice(-2).join(" ").slice(0, 300) };
+      }))(staging);
+      if (!installed.ok) return { prepared: false, reason: `preparing dependencies failed: ${installed.output}` };
+    }
     if (windows) {
       await rename(staging, directory);
       await sealRelease(directory, candidate.version, join(directory, DESKTOP_RUNTIME), candidate.integrity);

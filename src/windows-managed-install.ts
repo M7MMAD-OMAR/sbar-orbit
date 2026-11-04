@@ -78,7 +78,7 @@ export async function installWindowsManaged(payload: string, options: WindowsIns
   if (source === root || source.startsWith(root + sep) || root.startsWith(source + sep)) fail("Installer source and managed destination must be separate");
   if (typeof options.automaticUpdates !== "boolean") fail("An explicit automatic-update choice is required");
   if (await exists(join(source, ".git"))) fail("Install an audited release payload, never copy a source checkout or owner workspace");
-  const allowedInputs = new Set(["package.json", "bun.lock", "bunfig.toml", "bin", "src", "scripts", "desktop", "viewer", "docs", "skills", "experiments", "node_modules", "runtime", DESKTOP_MANIFEST, "SOURCE-COMMIT", "SOURCE-COMMIT.json", "orbit-source-manifest.json", "AGENTS.md", "install.sh", "install.cmd", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]);
+  const allowedInputs = new Set(["package.json", "bun.lock", "bunfig.toml", "bin", "src", "scripts", "desktop", "viewer", "docs", "skills", "experiments", "node_modules", "runtime", DESKTOP_MANIFEST, "SOURCE-COMMIT", "SOURCE-COMMIT.json", "runtime-source-receipt.json", "orbit-source-manifest.json", "AGENTS.md", "install.sh", "install.cmd", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]);
   if ((await readdir(source)).some(name => !allowedInputs.has(name))) fail("Installer payload contains unrecognized or private inputs");
   const manifest = await boundedJson(join(source, "package.json"), 1024 * 1024);
   if (manifest.name !== "sbar-orbit" || typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(manifest.version)) fail("Installer payload is not a versioned Orbit release");
@@ -218,7 +218,7 @@ export async function uninstallWindowsManaged(root: string, options: Omit<Window
       inventories.push({ directory, files: actual });
     }
     const bootstrap = await boundedJson(join(root, BOOTSTRAP), 4096);
-    if (bootstrap.schema !== 1 || bootstrap.launcherDigest !== digest(await readFile(join(root, "bin/Orbit.exe"))) || await readFile(launcher, "utf8") !== shim(root)) fail("Installed launcher ownership changed");
+    if (bootstrap.schema !== 2 || bootstrap.launcherDigest !== digest(await readFile(join(root, "bin/Orbit.exe"))) || await readFile(launcher, "utf8") !== shim(root)) fail("Installed launcher ownership changed");
     const stopped = await lifecycle.stop!(); if (!stopped.ok) fail("Owned broker task stop was not confirmed; admission remains closed");
     await noInstalledProcesses(root, run, false);
     const disabled = await lifecycle.schedule(false); if (!disabled.ok) fail("Owned updater removal was not confirmed");

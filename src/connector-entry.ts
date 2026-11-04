@@ -1,3 +1,4 @@
+import { parseRuntimeReceipt, RUNTIME_RECEIPT } from "./windows-runtime-source";
 import { version } from "../package.json";
 import { preparedIdentitySync } from "./managed-identity";
 import { createHash } from "node:crypto";
@@ -60,9 +61,11 @@ function nativeWindowsConnector(source: string) {
   if (source !== join(root, "current")) preparedIdentitySync(root, basename(source));
   const selectedVersion = basename(target), selected = preparedIdentitySync(root, selectedVersion);
   if (selected.runtime !== join(target, DESKTOP_RUNTIME)) refuse();
-  parseDesktopManifest(json(join(target, DESKTOP_MANIFEST)), selectedVersion);
+  const selectedManifest = parseDesktopManifest(json(join(target, DESKTOP_MANIFEST)), selectedVersion);
+  if (selected.runtimeDigest !== selectedManifest.runtimeSource.executableSha256) refuse();
+  parseRuntimeReceipt(json(join(target, RUNTIME_RECEIPT)), selectedManifest.runtimeSource, selectedVersion);
   const bootstrap = json(join(root, "windows-bootstrap.json"));
-  if (bootstrap.schema !== 1 || bootstrap.bootstrapProtocol !== 1 || typeof bootstrap.version !== "string" || !/^[a-f0-9]{64}$/.test(bootstrap.launcherDigest)) refuse();
+  if (bootstrap.schema !== 2 || bootstrap.bootstrapProtocol !== 2 || typeof bootstrap.version !== "string" || !/^[a-f0-9]{64}$/.test(bootstrap.launcherDigest)) refuse();
   const origin = join(root, "versions", bootstrap.version);
   preparedIdentitySync(root, bootstrap.version);
   const manifest = parseDesktopManifest(json(join(origin, DESKTOP_MANIFEST)), bootstrap.version);

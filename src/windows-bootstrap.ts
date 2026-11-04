@@ -40,7 +40,7 @@ export async function verifyWindowsCurrent(root: string, options: { internalTran
   const identity = await preparedIdentity(root, version);
   if (identity.runtime !== join(directory, DESKTOP_RUNTIME)) fail("Windows release must use its verified versioned runtime");
   await validateDesktopPayload(directory, version, await desktopSourceDigest(directory));
-  return { ok: true as const, bootstrapProtocol: 1 as const, version, root, directory,
+  return { ok: true as const, bootstrapProtocol: 2 as const, version, root, directory,
     desktopPath: join(directory, DESKTOP_EXE), runtime: identity.runtime, cliPath: join(directory, "src/cli.ts"),
     mcpPath: join(directory, "src/mcp.ts"), connectorPath: join(directory, "src/connector-config.ts"), identity: { ...identity, root, directory } };
 }
@@ -51,7 +51,7 @@ export async function verifyWindowsCurrent(root: string, options: { internalTran
 export async function admittedWindowsBootstrap(root: string) {
   root = await canonicalDirectory(root);
   const record = await boundedJson(join(root, BOOTSTRAP), 4096);
-  if (record.schema !== 1 || record.bootstrapProtocol !== 1 || typeof record.version !== "string" || typeof record.launcherDigest !== "string" || !/^[a-f0-9]{64}$/.test(record.launcherDigest)) fail("Unknown stable bootstrap provenance");
+  if (record.schema !== 2 || record.bootstrapProtocol !== 2 || typeof record.version !== "string" || typeof record.launcherDigest !== "string" || !/^[a-f0-9]{64}$/.test(record.launcherDigest)) fail("Unknown stable bootstrap provenance");
   await preparedIdentity(root, record.version);
   const origin = join(root, "versions", record.version);
   const manifest = await validateDesktopPayload(origin, record.version, await desktopSourceDigest(origin));
@@ -59,7 +59,7 @@ export async function admittedWindowsBootstrap(root: string) {
   if (!info.isFile() || info.isSymbolicLink() || await realpath(executable) !== executable
       || manifest.files.find(file => file.path === DESKTOP_LAUNCHER)?.sha256 !== record.launcherDigest
       || await windowsFileDigest(executable) !== record.launcherDigest) fail("Stable bootstrap differs from its sealed published origin");
-  return { version: record.version as string, launcherDigest: record.launcherDigest as string, bootstrapProtocol: 1 as const };
+  return { version: record.version as string, launcherDigest: record.launcherDigest as string, bootstrapProtocol: 2 as const };
 }
 
 export async function selectWindowsBootstrap(root: string, options: { replace?: (path: string, bytes: Buffer) => Promise<void> } = {}) {
@@ -75,13 +75,13 @@ export async function selectWindowsBootstrap(root: string, options: { replace?: 
     catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (!admitted || !["EACCES", "EPERM", "EBUSY"].includes(code ?? "")) throw error;
-      // Idle MCP can hold this PE mapped. Keep the admitted protocol-1 host and origin.
+      // Idle MCP can hold this PE mapped. Keep the admitted protocol-2 host and origin.
       // The single current pointer still advances GUI, CLI and runtime. Never force-close.
       const still = await admittedWindowsBootstrap(root);
       if (still.version !== admitted.version || still.launcherDigest !== admitted.launcherDigest) throw error;
       return { ...selected, bootstrapVersion: still.version, bootstrapRetained: true };
     }
   }
-  await atomic(join(root, BOOTSTRAP), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version: selected.version, launcherDigest: expected }) + "\n");
+  await atomic(join(root, BOOTSTRAP), JSON.stringify({ schema: 2, bootstrapProtocol: 2, version: selected.version, launcherDigest: expected }) + "\n");
   return { ...selected, bootstrapVersion: selected.version, bootstrapRetained: false };
 }

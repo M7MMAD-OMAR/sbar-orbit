@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { renderToString } from 'react-dom/server';
 import App from '../src/App';
 import { arabic } from '../src/locale';
-import { release } from '../src/release';
+import { release, releaseForVersion } from '../src/release';
 import { version } from '../../package.json';
 
 test('release links use the runtime package version in both prerendered languages', () => {
@@ -20,11 +20,55 @@ test('release links use the runtime package version in both prerendered language
       expect(html).toContain(`href="${url}"`);
     expect(html).toContain(`<bdi dir="ltr">${version}</bdi>`);
     expect(html).not.toContain('/releases/latest');
-    expect(html).not.toContain('.exe');
+    if (release.windowsCompanion) {
+      expect(html).toContain(`href="${release.windowsCompanion.installer}"`);
+      expect(html).toContain(`href="${release.windowsCompanion.checksum}"`);
+    } else expect(html).not.toContain('.exe');
     expect(html).not.toContain('.msi');
     expect(html).toContain(locale === 'ar' ? 'نسخة التطوير' : 'Development checkout');
     expect(html).toContain(locale === 'ar' ? 'مع انتظار 72 ساعة' : '72-hour release delay');
     expect(html).toContain(locale === 'ar' ? 'لا توجد آلية فتح على Windows' : 'Windows, macOS and other Linux compositors have no opening adapter.');
+  }
+});
+
+test('Windows companion availability is explicit, never inferred from a version threshold', () => {
+  for (const historicalOrUnapproved of ['0.4.2', '0.4.4', '0.5.0', '1.0.0', '0.4.3-rc.1'])
+    expect(releaseForVersion(historicalOrUnapproved).windowsCompanion).toBeNull();
+  const companion = releaseForVersion('0.4.3').windowsCompanion;
+  expect(companion).not.toBeNull();
+  expect(companion?.name).toBe('SbarOrbit-0.4.3-windows-x64-setup.exe');
+  expect(companion?.installer).toBe('https://github.com/M7MMAD-OMAR/sbar-orbit/releases/download/v0.4.3/SbarOrbit-0.4.3-windows-x64-setup.exe');
+  expect(companion?.checksum).toBe(companion?.installer + '.sha256');
+  expect(companion?.signing).toBe('unsigned');
+  expect(companion?.nativeApplicationControl).toBe('unsupported');
+});
+
+test('both languages preserve source-only 0.4.2 and gate future Windows links without module mocks', () => {
+  for (const selectedVersion of ['0.4.2', '0.4.3', '0.4.4']) for (const locale of ['en', 'ar'] as const) {
+    const info = releaseForVersion(selectedVersion);
+    const html = renderToString(<App locale={locale} releaseInfo={info} />);
+    for (const url of [info.url, info.source, info.sourceChecksum, info.package, info.packageChecksum])
+      expect(html).toContain('href="' + url + '"');
+    expect(html).toContain('<bdi dir="ltr">' + selectedVersion + '</bdi>');
+    if (info.windowsCompanion) {
+      expect(html).toContain('href="' + info.windowsCompanion.installer + '"');
+      expect(html).toContain('href="' + info.windowsCompanion.checksum + '"');
+      expect(html).toContain(locale === 'ar' ? 'دون توقيع رقمي' : 'unsigned');
+      expect(html).toContain(locale === 'ar' ? 'التحكم الأصلي بتطبيقات Windows غير مدعوم' : 'Native control of original Windows applications is unsupported.');
+      expect(html).toContain(locale === 'ar' ? 'بعد موافقتك الصريحة فقط' : 'only with your explicit consent');
+      expect(html).toContain(locale === 'ar' ? 'لا يتضمن المثبت Bun' : 'Bun is not bundled');
+      expect(html).toContain('WebView2 Runtime');
+      expect(html).toContain(locale === 'ar' ? 'ولا يثبته خفية' : 'does not silently install it');
+      expect(html).toContain(locale === 'ar' ? 'وأبق وسائل الحماية مفعلة' : 'keep security protections enabled');
+      expect(html).toContain(locale === 'ar' ? 'أوامر نسخة التطوير' : 'Development checkout commands');
+    } else {
+      expect(html).not.toContain('.exe');
+      expect(html).not.toContain('windows-companion');
+      expect(html).toContain(locale === 'ar' ? 'هذه حزم مصدر' : 'These are source packages');
+    }
+    expect(html).not.toContain('update-overlay.zip');
+    expect(html).not.toContain('.msi');
+    expect(html).not.toContain('/releases/latest');
   }
 });
 

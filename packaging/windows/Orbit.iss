@@ -43,6 +43,13 @@ Name: "automaticupdates"; Description: "Enable automatic GUI and CLI payload upd
 [Run]
 Filename: "{app}\bin\Orbit.exe"; Parameters: "--launch-current ""{app}"""; Description: "Open Orbit"; Flags: postinstall nowait skipifsilent unchecked
 [Code]
+var RuntimeConsent: TInputOptionWizardPage;
+procedure InitializeWizard();
+begin
+  RuntimeConsent := CreateInputOptionPage(wpSelectTasks, 'Private Bun runtime', 'Bun is not bundled in this installer', 'Orbit needs Bun 1.4.4 from the official oven-sh GitHub release, downloaded privately and hash-checked. Bun includes third-party terms: https://github.com/oven-sh/bun/blob/bun-v1.4.4/LICENSE.md . No global installation or browser profile changes. Select download explicitly, or supply /BUNRUNTIMEARCHIVE=PATH to the exact official ZIP.', False, False);
+  RuntimeConsent.Add('I consent to downloading the pinned official Bun runtime into private staging');
+  RuntimeConsent.Values[0] := False;
+end;
 function Quote(Value: String): String;
 begin
   Result := '"' + Value + '"';
@@ -62,17 +69,21 @@ begin
     Result := MsgBox('This Orbit installer is unsigned. It does not claim a verified publisher. Windows native application control is not supported yet; this package installs the native management window, CLI and safe update infrastructure. Continue?', mbConfirmation, MB_YESNO) = IDYES;
 end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var Runtime, Entry, Arguments, Automatic: String; ExitCode: Integer;
+var Helper, Arguments, Automatic, Archive, Consent: String; ExitCode: Integer;
 begin
   Result := '';
   try
+    Archive := ExpandConstant('{param:BUNRUNTIMEARCHIVE|}');
+    Consent := '';
+    if Archive <> '' then Consent := ' --archive ' + Quote(Archive)
+    else if (WizardSilent() and (ExpandConstant('{param:ACCEPTBUNRUNTIMEDOWNLOAD|0}') = '1')) or ((not WizardSilent()) and RuntimeConsent.Values[0]) then Consent := ' --download-consent accepted'
+    else begin Result := 'Explicit Bun download consent or a matching official archive is required. No runtime is bundled and no implicit download will occur.'; exit; end;
     ExtractTemporaryFiles('{tmp}\orbit-offline-payload\*');
-    Runtime := ExpandConstant('{tmp}\orbit-offline-payload\runtime\bun.exe');
-    Entry := ExpandConstant('{tmp}\orbit-offline-payload\src\windows-managed-install.ts');
+    Helper := ExpandConstant('{tmp}\orbit-offline-payload\desktop\windows-app\Orbit.RuntimeBootstrap.exe');
     Automatic := 'off';
     if WizardIsTaskSelected('automaticupdates') then Automatic := 'on';
-    Arguments := Quote(Entry) + ' install --payload ' + Quote(ExpandConstant('{tmp}\orbit-offline-payload')) + ' --root ' + Quote(ExpandConstant('{app}')) + ' --automatic-updates ' + Automatic;
-    if not Exec(Runtime, Arguments, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
+    Arguments := 'install --payload ' + Quote(ExpandConstant('{tmp}\orbit-offline-payload')) + ' --root ' + Quote(ExpandConstant('{app}')) + ' --automatic-updates ' + Automatic + Consent;
+    if not Exec(Helper, Arguments, '', SW_HIDE, ewWaitUntilTerminated, ExitCode) or (ExitCode <> 0) then
       Result := 'The central managed installer refused or failed before shell registration. Temporary extraction and diagnostics may exist. No independent pointer/task changes were attempted.';
   except
     Result := 'Orbit could not prepare the verified offline payload. Inspect setup diagnostics; no shell registration was committed.';

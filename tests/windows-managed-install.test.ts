@@ -1,3 +1,6 @@
+import { DEPENDENCY_INVENTORY, writeWindowsDependencyInventory } from "../src/windows-dependencies";
+import runtimeVector from "./fixtures/windows-runtime-source-v2.json";
+import { BUN_LICENSE_PATH, parseRuntimeSource, runtimeDescriptorId, RUNTIME_RECEIPT } from "../src/windows-runtime-source";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -5,7 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { deflateRawSync } from "node:zlib";
 import { desktopSourceDigest, DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME,
-  extractDesktopZip, mergeDesktopOverlay, parseDesktopManifest, safeWindowsPayloadPath, validateDesktopPayload } from "../src/windows-desktop-update";
+  extractDesktopZip, mergeDesktopOverlay, parseDesktopManifest, safeWindowsPayloadPath, validateDesktopPayload, validatePublicDesktopOverlay } from "../src/windows-desktop-update";
 import { admittedWindowsBootstrap, installWindowsManaged, recordWindowsReleaseFiles, selectWindowsBootstrap, verifyWindowsCurrent } from "../src/windows-managed-install";
 import { brokerTaskXml } from "../src/windows-autostart";
 import { taskOwned, windowsDesktopUpdateTaskXml, type CommandRunner, type ManagedLifecycle } from "../src/managed-lifecycle";
@@ -27,9 +30,15 @@ async function payload() {
     "src/windows-managed-install.ts": "owned central source fixture", "node_modules/@modelcontextprotocol/sdk/package.json": "{}",
   })) await put(directory, path, bytes);
   const sourceDigest = await desktopSourceDigest(directory);
-  const files = [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME].map(path => ({ path, sha256: sha("owned fixture " + path) }));
+  const files = [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME, BUN_LICENSE_PATH].map(path => ({ path, sha256: sha("owned fixture " + path) }));
   for (const file of files) await put(directory, file.path, "owned fixture " + file.path);
-  const manifest = { schema: 1, bootstrapProtocol: 1, version, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, files };
+  await mkdir(join(directory, "node_modules/@modelcontextprotocol/sdk"), { recursive: true });
+  await writeFile(join(directory, "node_modules/@modelcontextprotocol/sdk/package.json"), "{}");
+  const dependencyInventory = await writeWindowsDependencyInventory(directory);
+  files.push({ path: DEPENDENCY_INVENTORY, sha256: dependencyInventory.sha256 });
+  const runtimeSource = parseRuntimeSource({ ...runtimeVector.runtimeSource, executableSha256: files.find(file => file.path === DESKTOP_RUNTIME)!.sha256, executableBytes: (await readFile(join(directory, DESKTOP_RUNTIME))).length, license: { ...runtimeVector.runtimeSource.license, sha256: files.find(file => file.path === BUN_LICENSE_PATH)!.sha256 } });
+  await writeFile(join(directory, RUNTIME_RECEIPT), JSON.stringify({ ...runtimeVector.receipt, orbitVersion: version, executableSha256: runtimeSource.executableSha256, executableBytes: runtimeSource.executableBytes, descriptorId: runtimeDescriptorId(runtimeSource) }));
+  const manifest = { schema: 2, bootstrapProtocol: 2, version, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, runtimeSource, files };
   await put(directory, DESKTOP_MANIFEST, JSON.stringify(manifest));
   return { directory, manifest };
 }
@@ -64,8 +73,8 @@ describe("bounded Windows path and manifest contract", () => {
   }
   test("requires complete explicit same-version coherent manifest", async () => {
     const { manifest } = await payload();
-    expect(parseDesktopManifest(manifest, version).bootstrapProtocol).toBe(1);
-    for (const patch of [{ version: "other" }, { bootstrapProtocol: 2 }, { platform: "linux" }, { sourceDigest: "unknown" }, { sourceRevision: "main" }, { extra: true }, { files: manifest.files.slice(0, 2) }])
+    expect(parseDesktopManifest(manifest, version).bootstrapProtocol).toBe(2);
+    for (const patch of [{ schema: 1, bootstrapProtocol: 1 }, { version: "other" }, { bootstrapProtocol: 3 }, { platform: "linux" }, { sourceDigest: "unknown" }, { sourceRevision: "main" }, { extra: true }, { files: manifest.files.slice(0, 2) }])
       expect(() => parseDesktopManifest({ ...manifest, ...patch }, version)).toThrow();
     expect(() => parseDesktopManifest({ ...manifest, files: [...manifest.files, { ...manifest.files[0]!, path: manifest.files[0]!.path.toUpperCase() }] }, version)).toThrow();
   });
@@ -92,36 +101,36 @@ describe("bounded Windows path and manifest contract", () => {
 
 describe("ZIP32 quarantined extraction", () => {
   test("stored and deflated data extract under one fresh canonical stage", async () => {
-    const { destination } = await unpack([{ name: DESKTOP_RUNTIME, method: 8 }, { name: DESKTOP_EXE }]);
-    expect(await readFile(join(destination, DESKTOP_RUNTIME), "utf8")).toBe("owned fixture");
+    const { destination } = await unpack([{ name: DESKTOP_LAUNCHER, method: 8 }, { name: DESKTOP_EXE }]);
+    expect(await readFile(join(destination, DESKTOP_LAUNCHER), "utf8")).toBe("owned fixture");
   });
   for (const [label, entries] of [
     ["casefold duplicate", [{ name: DESKTOP_EXE }, { name: DESKTOP_EXE.toUpperCase() }]],
     ["casefold directory", [{ name: "desktop/windows-app/a.dll" }, { name: "Desktop/windows-app/b.dll" }]],
     ["source collision path", [{ name: "src/cli.ts" }]], ["traversal", [{ name: "desktop/windows-app/../../outside" }]],
-    ["symlink type", [{ name: DESKTOP_RUNTIME, external: 0xa000 << 16 }]],
-    ["reparse flag", [{ name: DESKTOP_RUNTIME, external: 0x400 }]],
-    ["overlap", [{ name: DESKTOP_RUNTIME }, { name: DESKTOP_RUNTIME + ".bad", offset: 0 }]],
-    ["ZIP64 local extra", [{ name: DESKTOP_RUNTIME, localExtra: Buffer.from([1, 0, 0, 0]) }]],
+    ["symlink type", [{ name: DESKTOP_LAUNCHER, external: 0xa000 << 16 }]],
+    ["reparse flag", [{ name: DESKTOP_LAUNCHER, external: 0x400 }]],
+    ["overlap", [{ name: DESKTOP_LAUNCHER }, { name: DESKTOP_LAUNCHER + ".bad", offset: 0 }]],
+    ["ZIP64 local extra", [{ name: DESKTOP_LAUNCHER, localExtra: Buffer.from([1, 0, 0, 0]) }]],
   ] as [string, ZipEntry[]][]) test(label, async () => { await expect(unpack(entries)).rejects.toThrow(); });
   test("overlapping valid local frames are rejected before any output file is written", async () => {
     const nested = zip([{ name: DESKTOP_EXE }]);
     const body = nested.subarray(0, nested.readUInt32LE(nested.length - 6));
     const directory = await temporary(), archive = join(directory, "overlap.zip"), output = join(directory, "out");
-    await writeFile(archive, zip([{ name: DESKTOP_RUNTIME, bytes: body }, { name: DESKTOP_EXE, offset: 30 + Buffer.byteLength(DESKTOP_RUNTIME) }]));
+    await writeFile(archive, zip([{ name: DESKTOP_LAUNCHER, bytes: body }, { name: DESKTOP_EXE, offset: 30 + Buffer.byteLength(DESKTOP_LAUNCHER) }]));
     await expect(extractDesktopZip(archive, output)).rejects.toThrow();
     expect(await readdir(output)).toEqual([]);
   });
   test("directory entries count toward the bounded archive entry budget", async () => {
-    await expect(unpack(Array.from({ length: 4353 }, (_, index) => ({ name: "desktop/windows-app/d-" + index + "/", bytes: Buffer.alloc(0) })))).rejects.toThrow();
+    await expect(unpack(Array.from({ length: 20001 }, (_, index) => ({ name: "desktop/windows-app/d-" + index + "/", bytes: Buffer.alloc(0) })))).rejects.toThrow();
   });
   test("declared too many entries or malformed local headers refuse before writes", async () => {
-    await expect(unpack([{ name: DESKTOP_RUNTIME }], bytes => bytes.writeUInt16LE(5000, bytes.length - 12))).rejects.toThrow();
-    await expect(unpack([{ name: DESKTOP_RUNTIME }], bytes => bytes.writeUInt32LE(0, 0))).rejects.toThrow();
+    await expect(unpack([{ name: DESKTOP_LAUNCHER }], bytes => bytes.writeUInt16LE(5000, bytes.length - 12))).rejects.toThrow();
+    await expect(unpack([{ name: DESKTOP_LAUNCHER }], bytes => bytes.writeUInt32LE(0, 0))).rejects.toThrow();
   });
   test("existing destination and a redirected destination ancestor are refused", async () => {
     const directory = await temporary(), archive = join(directory, "a.zip"), destination = join(directory, "existing");
-    await writeFile(archive, zip([{ name: DESKTOP_RUNTIME }])); await mkdir(destination);
+    await writeFile(archive, zip([{ name: DESKTOP_LAUNCHER }])); await mkdir(destination);
     await expect(extractDesktopZip(archive, destination)).rejects.toThrow();
     const redirect = join(directory, "redirect"); await symlink(destination, redirect, process.platform === "win32" ? "junction" : "dir");
     await expect(extractDesktopZip(archive, join(redirect, "out"))).rejects.toThrow();
@@ -130,7 +139,8 @@ describe("ZIP32 quarantined extraction", () => {
   test("verified overlay merge is exclusive and cannot replace source files", async () => {
     const { directory, manifest } = await payload(); const source = await temporary();
     const parsed = parseDesktopManifest(manifest, version);
-    await mergeDesktopOverlay(directory, source, parsed); await validateDesktopPayload(source, version, manifest.sourceDigest);
+    await mergeDesktopOverlay(directory, source, parsed); await validatePublicDesktopOverlay(source, version, manifest.sourceDigest);
+    await expect(validateDesktopPayload(source, version, manifest.sourceDigest)).rejects.toThrow();
     await expect(mergeDesktopOverlay(directory, source, parsed)).rejects.toThrow();
   });
 });
@@ -194,22 +204,28 @@ describe("central fresh Windows installation with owned OS recorders", () => {
   });
 });
 
-test("dedicated automatic task uses exact versioned Bun, not a locked native host", () => {
+test("desktop updater task uses exact sealed versioned native host, never bare Bun or stable bootstrap", () => {
   const sid = "S-1-5-21-1000", launcher = "C:\\Orbit\\bin\\sbar-orbit.cmd";
   const environment = { ORBIT_MANAGED_ENV_SCHEMA: "1", ORBIT_BUN: "C:\\Orbit\\versions\\1.2.3\\runtime\\bun.exe" };
   const xml = windowsDesktopUpdateTaskXml(launcher, sid, environment);
-  expect(taskOwned(xml, launcher, sid, true)).toBe(true);
-  expect(xml).toContain("scripts\\limited.ts"); expect(xml).toContain("src\\cli.ts");
-  expect(xml).not.toContain("&quot;" + launcher + "&quot; update run");
+  expect(taskOwned(xml, launcher, sid, true, true)).toBe(true);
+  expect(xml).toContain("<Command>C:\\Orbit\\versions\\1.2.3\\desktop\\windows-app\\Orbit.Launcher.exe</Command>");
+  expect(xml).toContain("--cli &quot;C:\\Orbit&quot; update run");
+  expect(xml).not.toContain("scripts\\limited.ts"); expect(xml).not.toContain("src\\cli.ts");
+  expect(xml).not.toContain("<Command>cmd.exe</Command>"); expect(xml).not.toContain("<Command>" + environment.ORBIT_BUN);
+  expect(taskOwned(xml.replace("Orbit.Launcher.exe</Command>", "Other.exe</Command>"), launcher, sid, true, true)).toBe(false);
+  expect(taskOwned(xml.replace("--cli", "--wrong"), launcher, sid, true, true)).toBe(false);
   expect(taskOwned(brokerTaskXml(launcher, sid, environment, true), launcher, sid)).toBe(true);
 });
-
 async function nextCandidate(root: string) {
   const source = await payload(), nextVersion = "0.0.0-fixture.2";
   await put(source.directory, "package.json", JSON.stringify({ name: "sbar-orbit", version: nextVersion }));
-  const files = [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME].map(path => ({ path, sha256: sha("next owned fixture " + path) }));
+  const files = [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME, BUN_LICENSE_PATH].map(path => ({ path, sha256: sha("next owned fixture " + path) }));
   for (const file of files) await put(source.directory, file.path, "next owned fixture " + file.path);
-  await put(source.directory, DESKTOP_MANIFEST, JSON.stringify({ ...source.manifest, version: nextVersion, sourceRevision: "b".repeat(40), sourceDigest: await desktopSourceDigest(source.directory), files }));
+  files.push({ path: DEPENDENCY_INVENTORY, sha256: source.manifest.files.find(file => file.path === DEPENDENCY_INVENTORY)!.sha256 });
+  const runtimeSource = parseRuntimeSource({ ...runtimeVector.runtimeSource, executableSha256: files.find(file => file.path === DESKTOP_RUNTIME)!.sha256, executableBytes: (await readFile(join(source.directory, DESKTOP_RUNTIME))).length, license: { ...runtimeVector.runtimeSource.license, sha256: files.find(file => file.path === BUN_LICENSE_PATH)!.sha256 } });
+  await put(source.directory, RUNTIME_RECEIPT, JSON.stringify({ ...runtimeVector.receipt, orbitVersion: nextVersion, descriptorId: runtimeDescriptorId(runtimeSource), executableSha256: runtimeSource.executableSha256, executableBytes: runtimeSource.executableBytes }));
+  await put(source.directory, DESKTOP_MANIFEST, JSON.stringify({ ...source.manifest, version: nextVersion, sourceRevision: "b".repeat(40), sourceDigest: await desktopSourceDigest(source.directory), runtimeSource, files }));
   const directory = join(root, "versions", nextVersion); await cp(source.directory, directory, { recursive: true });
   await sealRelease(directory, nextVersion, join(directory, DESKTOP_RUNTIME)); await recordWindowsReleaseFiles(directory);
   await writeFile(join(root, "current.txt"), directory); return { directory, version: nextVersion };
@@ -238,7 +254,7 @@ test("sharing fallback never accepts a tampered old host or incompatible protoco
   const fixture = await installFixture(); await installWindowsManaged(fixture.directory, fixture.options); await nextCandidate(fixture.root);
   await expect(selectWindowsBootstrap(fixture.root, { replace: async path => { await writeFile(path, "foreign image"); throw Object.assign(new Error("denied"), { code: "EPERM" }); } })).rejects.toThrow();
   const another = await installFixture(); await installWindowsManaged(another.directory, another.options); const next = await nextCandidate(another.root);
-  const manifestPath = join(next.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(manifestPath, "utf8")); manifest.bootstrapProtocol = 2; await writeFile(manifestPath, JSON.stringify(manifest));
+  const manifestPath = join(next.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(manifestPath, "utf8")); manifest.bootstrapProtocol = 3; await writeFile(manifestPath, JSON.stringify(manifest));
   let touched = false; await expect(selectWindowsBootstrap(another.root, { replace: async () => { touched = true; } })).rejects.toThrow(); expect(touched).toBe(false);
 });
 test.skipIf(process.platform !== "win32")("real Windows deny-delete handle retains compatible host without closing the holder (not MCP E2E)", async () => {
@@ -252,4 +268,40 @@ test.skipIf(process.platform !== "win32")("real Windows deny-delete handle retai
     const selected = await selectWindowsBootstrap(fixture.root); expect(selected.bootstrapRetained).toBe(true); expect(selected.version).toBe(next.version);
     expect((await admittedWindowsBootstrap(fixture.root)).version).toBe(version);
   } finally { if (handle && Number(handle) >= 0 && Number(handle) <= Number.MAX_SAFE_INTEGER) api.symbols.CloseHandle(handle); api.close(); }
+});
+
+test("public GUI overlay permits exactly the runtime hole while full validation refuses it", async () => {
+  const f = await payload(), output = await temporary(); await mergeDesktopOverlay(f.directory, output, parseDesktopManifest(f.manifest, version));
+  expect((await validatePublicDesktopOverlay(output, version, f.manifest.sourceDigest)).schema).toBe(2);
+  await expect(validateDesktopPayload(output, version, f.manifest.sourceDigest)).rejects.toThrow();
+  await put(output, DESKTOP_RUNTIME, "owned fixture " + DESKTOP_RUNTIME);
+  await expect(validatePublicDesktopOverlay(output, version)).rejects.toThrow();
+});
+test("public overlay rejects renamed Bun bytes and any extra missing GUI file", async () => {
+  const f = await payload();
+  expect(() => parseDesktopManifest({ ...f.manifest, files: [...f.manifest.files, { path: "desktop/windows-app/renamed.exe", sha256: f.manifest.runtimeSource.executableSha256 }] }, version)).toThrow();
+  const output = await temporary(); await mergeDesktopOverlay(f.directory, output, parseDesktopManifest(f.manifest, version));
+  await rm(join(output, DESKTOP_EXE)); await expect(validatePublicDesktopOverlay(output, version)).rejects.toThrow();
+});
+test("public overlay refuses unrelated nested desktop paths and source-root extras", async () => {
+  const f = await payload(), output = await temporary(); await mergeDesktopOverlay(f.directory, output, parseDesktopManifest(f.manifest, version));
+  await put(output, "desktop/untracked/bun.exe", "untracked fixture"); await expect(validatePublicDesktopOverlay(output, version)).rejects.toThrow();
+  await rm(join(output, "desktop/untracked"), { recursive: true }); await put(output, "src/extra.ts", "not overlay");
+  await expect(validatePublicDesktopOverlay(output, version)).rejects.toThrow();
+});
+test("public ZIP rejects a bundled runtime before writing any file", async () => {
+  const directory = await temporary(), archive = join(directory, "bundled.zip"), out = join(directory, "out");
+  await writeFile(archive, zip([{ name: DESKTOP_EXE }, { name: DESKTOP_RUNTIME }])); await expect(extractDesktopZip(archive, out)).rejects.toThrow();
+  expect(await readdir(out)).toEqual([]);
+});
+test("complete payload cannot omit or forge its private runtime receipt", async () => {
+  const f = await payload(); await rm(join(f.directory, RUNTIME_RECEIPT)); await expect(validateDesktopPayload(f.directory, version)).rejects.toThrow();
+  await put(f.directory, RUNTIME_RECEIPT, JSON.stringify({ ...runtimeVector.receipt, orbitVersion: "wrong" }));
+  await expect(validateDesktopPayload(f.directory, version)).rejects.toThrow();
+});
+test("protocol-one bootstrap is never retained against a protocol-two candidate", async () => {
+  const f = await installFixture(); await installWindowsManaged(f.directory, f.options);
+  const record = JSON.parse(await readFile(join(f.root, "windows-bootstrap.json"), "utf8")); record.bootstrapProtocol = 1;
+  await put(f.root, "windows-bootstrap.json", JSON.stringify(record)); let touched = false;
+  await expect(selectWindowsBootstrap(f.root, { replace: async () => { touched = true; } })).rejects.toThrow(); expect(touched).toBe(false);
 });

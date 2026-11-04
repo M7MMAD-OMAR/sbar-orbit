@@ -1,3 +1,7 @@
+import { DEPENDENCY_INVENTORY, parseWindowsDependencies, writeWindowsDependencyInventory } from "../src/windows-dependencies";
+import { deflateRawSync } from "node:zlib";
+import runtimeVector from "./fixtures/windows-runtime-source-v2.json";
+import { BUN_LICENSE_PATH, parseRuntimeSource, runtimeDescriptorId, RUNTIME_RECEIPT } from "../src/windows-runtime-source";
 import { activateLocal } from "../src/local-install";
 import { releaseFixture } from "./managed-release-fixture";
 import { test, expect } from "bun:test";
@@ -29,13 +33,19 @@ async function preparedWindows(root: string, version: string) {
   await releaseFixture(directory, version, false);
   const sourceDigest = await desktopSourceDigest(directory);
   const files = [];
-  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME]) {
+  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME, BUN_LICENSE_PATH]) {
     const bytes = `owned Windows pointer fixture: ${path}`;
     await mkdir(dirname(join(directory, path)), { recursive: true });
     await writeFile(join(directory, path), bytes);
     files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
   }
-  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, files }));
+  await mkdir(join(directory, "node_modules/@modelcontextprotocol/sdk"), { recursive: true });
+  await writeFile(join(directory, "node_modules/@modelcontextprotocol/sdk/package.json"), "{}");
+  const dependencyInventory = await writeWindowsDependencyInventory(directory);
+  files.push({ path: DEPENDENCY_INVENTORY, sha256: dependencyInventory.sha256 });
+  const runtimeSource = parseRuntimeSource({ ...runtimeVector.runtimeSource, executableSha256: files.find(file => file.path === DESKTOP_RUNTIME)!.sha256, executableBytes: (await readFile(join(directory, DESKTOP_RUNTIME))).length, license: { ...runtimeVector.runtimeSource.license, sha256: files.find(file => file.path === BUN_LICENSE_PATH)!.sha256 } });
+  await writeFile(join(directory, RUNTIME_RECEIPT), JSON.stringify({ ...runtimeVector.receipt, orbitVersion: version, executableSha256: runtimeSource.executableSha256, executableBytes: runtimeSource.executableBytes, descriptorId: runtimeDescriptorId(runtimeSource) }));
+  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 2, bootstrapProtocol: 2, version, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, runtimeSource, files }));
   await sealRelease(directory, version, join(directory, DESKTOP_RUNTIME));
   return directory;
 }
@@ -571,5 +581,46 @@ test("turning updates off during preparation prevents automatic activation", asy
     expect(await currentVersion(root)).toBe(current);
     expect(await preparedVersions(root)).toContain(next);
     expect(restarted).toBe(false);
+  } finally { await close(); }
+});
+function crc(bytes: Buffer) { let value = 0xffffffff; for (const byte of bytes) { value ^= byte; for (let index = 0; index < 8; index++) value = value >>> 1 ^ (value & 1 ? 0xedb88320 : 0); } return (value ^ 0xffffffff) >>> 0; }
+type ZipEntry = { name: string; bytes?: Buffer; external?: number; method?: number; offset?: number; localExtra?: Buffer };
+function desktopFixtureZip(entries: ZipEntry[]) {
+  const locals: Buffer[] = [], central: Buffer[] = []; let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name), bytes = entry.bytes ?? Buffer.from("owned fixture"), method = entry.method ?? 0;
+    const compressed = method === 8 ? deflateRawSync(bytes) : bytes, extra = entry.localExtra ?? Buffer.alloc(0);
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(method, 8); local.writeUInt32LE(crc(bytes), 14); local.writeUInt32LE(compressed.length, 18); local.writeUInt32LE(bytes.length, 22);
+    local.writeUInt16LE(name.length, 26); local.writeUInt16LE(extra.length, 28);
+    const record = Buffer.alloc(46); record.writeUInt32LE(0x02014b50); record.writeUInt16LE(20, 4); record.writeUInt16LE(20, 6);
+    record.writeUInt16LE(0x800, 8); record.writeUInt16LE(method, 10); record.writeUInt32LE(crc(bytes), 16); record.writeUInt32LE(compressed.length, 20); record.writeUInt32LE(bytes.length, 24);
+    record.writeUInt16LE(name.length, 28); record.writeUInt32LE((entry.external ?? 0) >>> 0, 38); record.writeUInt32LE(entry.offset ?? offset, 42);
+    locals.push(local, name, extra, compressed); central.push(record, name); offset += local.length + name.length + extra.length + compressed.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
+test("Windows preparation uses exact sealed overlay dependencies and never invokes a reinstall callback", async () => {
+  const { root, close } = await fixture();
+  try {
+    const current = await preparedWindows(root, "1.0.0"), paths = layout(root);
+    if (process.platform === "win32") await writeFile(paths.current + ".txt", current); else await symlink(current, paths.current);
+    const publisher = join(root, "publisher"); await mkdir(publisher);
+    const published = await preparedWindows(publisher, "1.0.1"), manifest = JSON.parse(await readFile(join(published, DESKTOP_MANIFEST), "utf8"));
+    const dependencies = parseWindowsDependencies(await readFile(join(published, DEPENDENCY_INVENTORY), "utf8"));
+    const entries: ZipEntry[] = [];
+    for (const path of [...manifest.files.filter((file: { path: string }) => file.path !== DESKTOP_RUNTIME).map((file: { path: string }) => file.path), ...dependencies.map(file => file.path), DESKTOP_MANIFEST])
+      entries.push({ name: path, bytes: await readFile(join(published, path)), method: 8 });
+    const desktop = desktopFixtureZip(entries), bytes = await Bun.file(await packFixture(root, "1.0.1")).arrayBuffer();
+    const integrity = "sha512-" + createHash("sha512").update(Buffer.from(bytes)).digest("base64");
+    const source = { ...feed({ "1.0.1": { publishedAt: "2026-09-01T00:00:00Z", bytes, integrity } }), platform: "win32" as const,
+      desktopOverlay: async (_version: string, destination: string) => { await writeFile(destination, desktop); return { available: true as const, assetDigest: "sha256:" + createHash("sha256").update(desktop).digest("hex"), sourceRevision: "a".repeat(40) }; } };
+    const found = await checkForUpdate("1.0.0", source); let installs = 0;
+    const result = await prepareVersion(found.eligible!, source, { root, install: async () => { installs++; throw new Error("Windows must not reinstall verified bundled dependencies"); } });
+    expect(result).toMatchObject({ prepared: true, version: "1.0.1" }); expect(installs).toBe(0);
+    expect(await readFile(join(paths.versions, "1.0.1/node_modules/@modelcontextprotocol/sdk/package.json"), "utf8")).toBe("{}");
+    expect(await currentVersion(root)).toBe("1.0.0");
   } finally { await close(); }
 });

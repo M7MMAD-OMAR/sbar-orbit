@@ -31,11 +31,31 @@ languages link the exact GitHub version tag, source archive, installable `.tgz` 
 their SHA-256 files. Development checkout commands remain separately labelled.
 The website does not fetch a moving latest version at runtime.
 
-Before deploying a version bump, publish and verify all 4 linked release assets
-from that exact reviewed source revision. Do not deploy dead future-version links.
-There is no Windows executable installer link or new native Windows support claim.
-Registry publication and managed Linux opt-in are separate from website deployment;
-a new registry version still waits 72 hours before automatic-update eligibility.
+The deployed 0.4.2 site remains source/package-only. Source prepares a future
+0.4.3 Windows companion through an explicit release allowlist, not a version
+threshold. Other versions, including 0.4.2, cannot inherit a Windows link merely
+from a version bump. The descriptor is not proof of publication.
+
+Before deploying a version bump, publish and independently verify every linked
+asset from the exact reviewed source revision. Preserve the four source/package
+archives and SHA-256 links. When the Windows companion is explicitly configured,
+also verify `SbarOrbit-VERSION-windows-x64-setup.exe` and its `.sha256` with live
+HTTP 200 and matching downloaded bytes. A raw update-overlay ZIP is not a usable
+installer download. Do not deploy dead future links or this candidate build before
+Windows CI, redistribution review and actual release assets are verified by the lead.
+
+The source candidate describes an unsigned Windows x64 companion UI with MCP/CLI
+and opt-in updates, not native control of original Windows applications. Setup
+requires an existing WebView2 Runtime and refuses clearly if it is missing. With
+explicit consent, it downloads a pinned private Bun runtime directly from the
+official publisher; Bun is not bundled and global PATH/application profiles are
+not modified. Checksums are not publisher signatures. Keep security protections
+enabled. Source checkout commands remain distinct from the companion installer.
+
+Registry publication and explicit managed-install opt-in are separate from website
+deployment. Automatic eligibility still has a 72-hour maturation floor, and
+preparation does not promise immediate activation; the safe idle boundary applies.
+No 0.4.3 deployment or publication is performed by these source changes.
 
 ```sh
 bun run scripts/limited.ts bun run --cwd website deploy:check

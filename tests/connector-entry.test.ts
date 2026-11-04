@@ -1,3 +1,6 @@
+import { DEPENDENCY_INVENTORY, writeWindowsDependencyInventory } from "../src/windows-dependencies";
+import runtimeVector from "./fixtures/windows-runtime-source-v2.json";
+import { BUN_LICENSE_PATH, parseRuntimeSource, runtimeDescriptorId, RUNTIME_RECEIPT } from "../src/windows-runtime-source";
 import { version } from "../package.json";
 import { expect, test } from "bun:test";
 import { join, dirname } from "node:path";
@@ -65,18 +68,24 @@ test("generated adapter environment carries the current release for host cache i
 async function nativeFixture(root: string, release = "1.2.3") {
   const directory = join(root, "versions", release); await releaseFixture(directory, release, false);
   const sourceDigest = await desktopSourceDigest(directory), files = [];
-  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME]) {
+  for (const path of [DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_RUNTIME, BUN_LICENSE_PATH]) {
     const bytes = "owned native connector fixture " + release + " " + path;
     await mkdir(dirname(join(directory, path)), { recursive: true }); await writeFile(join(directory, path), bytes);
     files.push({ path, sha256: createHash("sha256").update(bytes).digest("hex") });
   }
-  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version: release, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, files }));
+  await mkdir(join(directory, "node_modules/@modelcontextprotocol/sdk"), { recursive: true });
+  await writeFile(join(directory, "node_modules/@modelcontextprotocol/sdk/package.json"), "{}");
+  const dependencyInventory = await writeWindowsDependencyInventory(directory);
+  files.push({ path: DEPENDENCY_INVENTORY, sha256: dependencyInventory.sha256 });
+  const runtimeSource = parseRuntimeSource({ ...runtimeVector.runtimeSource, executableSha256: files.find(file => file.path === DESKTOP_RUNTIME)!.sha256, executableBytes: (await readFile(join(directory, DESKTOP_RUNTIME))).length, license: { ...runtimeVector.runtimeSource.license, sha256: files.find(file => file.path === BUN_LICENSE_PATH)!.sha256 } });
+  await writeFile(join(directory, RUNTIME_RECEIPT), JSON.stringify({ ...runtimeVector.receipt, orbitVersion: release, executableSha256: runtimeSource.executableSha256, executableBytes: runtimeSource.executableBytes, descriptorId: runtimeDescriptorId(runtimeSource) }));
+  await writeFile(join(directory, DESKTOP_MANIFEST), JSON.stringify({ schema: 2, bootstrapProtocol: 2, version: release, platform: "win32", arch: "x64", sourceRevision: "a".repeat(40), sourceDigest, runtimeSource, files }));
   await sealRelease(directory, release, join(directory, DESKTOP_RUNTIME)); return { directory, files };
 }
 async function installedNativeFixture() {
   const root = await fixtureRoot("orbit-native-connector-"), fixture = await nativeFixture(root);
   await mkdir(join(root, "bin")); await copyFile(join(fixture.directory, DESKTOP_LAUNCHER), join(root, "bin/Orbit.exe"));
-  await writeFile(join(root, "windows-bootstrap.json"), JSON.stringify({ schema: 1, bootstrapProtocol: 1, version: "1.2.3", launcherDigest: fixture.files.find(file => file.path === DESKTOP_LAUNCHER)!.sha256 }));
+  await writeFile(join(root, "windows-bootstrap.json"), JSON.stringify({ schema: 2, bootstrapProtocol: 2, version: "1.2.3", launcherDigest: fixture.files.find(file => file.path === DESKTOP_LAUNCHER)!.sha256 }));
   await writeFile(join(root, "current.txt"), fixture.directory); return { root, ...fixture };
 }
 test("validated native Windows MCP stays stable with or without --no-launcher", async () => {
@@ -107,7 +116,7 @@ test("native MCP entry refuses recovery admission and incompatible bootstrap pro
     await writeFile(join(fixture.root, "activation-recovery.json"), "{}");
     expect(() => connectorEntry({ source: fixture.directory, platform: "win32" })).toThrow();
     await rm(join(fixture.root, "activation-recovery.json"));
-    const path = join(fixture.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(path, "utf8")); manifest.bootstrapProtocol = 2;
+    const path = join(fixture.directory, DESKTOP_MANIFEST), manifest = JSON.parse(await readFile(path, "utf8")); manifest.bootstrapProtocol = 3;
     await writeFile(path, JSON.stringify(manifest)); expect(() => connectorEntry({ source: fixture.directory, platform: "win32" })).toThrow();
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });

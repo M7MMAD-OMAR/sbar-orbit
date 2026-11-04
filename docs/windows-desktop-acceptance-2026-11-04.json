@@ -43,6 +43,31 @@
         "archiveSha256": "546c69f16ed0f1310fcd44f9e5de8aaac89d4f6d366c1e67aaaec4672e78823d",
         "containsProductBinaries": false
       }
+    },
+    {
+      "id": 41756559477,
+      "sourceCommit": "451ac18e23e5a470d24757e80c0d01e9889d9496",
+      "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41756559477",
+      "result": "failed",
+      "completed": [
+        "real default Windows IPC",
+        "production locked NuGet restore",
+        "dotnet GUI compilation and publish"
+      ],
+      "failedAt": "Framework thin-launcher compiler CS1504 resolved source basenames against repository root, not packaging/windows; v2 build now uses absolute source paths",
+      "guiCompiled": true,
+      "visibleGuiRan": false,
+      "installerRan": false,
+      "nativeLauncherCompiled": false,
+      "warnings": [
+        "MSB3277 WindowsBase/Wpf assembly mismatch was nonfatal; not suppressed"
+      ],
+      "artifact": {
+        "id": 13288188066,
+        "sha256": "f171f28398e613f01466c1d40c9f1c11951a2602dbc8a1c86ef519b49d2965ff",
+        "bytes": 937,
+        "metadataOnly": true
+      }
     }
   ],
   "runtimeReceipt": {
@@ -88,5 +113,21 @@
     "rootLockCorrection": "Only contentHash corrected to the measured canonical hash; exact version, locked restore, raw archive pin and signature checks retained",
     "guiCompiled": false,
     "installerRan": false
+  },
+  "nugetGreenVerification": {
+    "runId": 41756555859,
+    "sourceCommit": "451ac18e23e5a470d24757e80c0d01e9889d9496",
+    "status": "verified",
+    "stage": "complete",
+    "canonicalMatchesSignature": true,
+    "cacheMatchesRaw": true,
+    "freshLockedRepeat": true,
+    "lockUnchanged": true,
+    "artifact": {
+      "id": 13287988624,
+      "sha256": "bbc34bf60c938b4bcf143c65296b4682fcba696e95150e6454998e35f6bb39ad",
+      "bytes": 3521,
+      "metadataOnly": true
+    }
   }
 }
