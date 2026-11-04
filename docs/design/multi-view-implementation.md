@@ -645,3 +645,36 @@ provider-stop and original-app acceptance gates are actually established.
 
 Source verification after these changes: 865 pass, 5 skip, 0 fail, 16547
 assertions across 80 files in 70.74 seconds; strict TypeScript validation passed.
+
+## 14. Synchronous fixture revocation and owned peer qualification
+
+A trusted optional usage-revocation subscription now connects the coordinator
+to the existing protected Sessions registry. For the exact conversation, `off`
+fences and invalidates grants synchronously before the store acknowledgement;
+other conversations are unaffected. Reentrant binding is refused. Shutdown
+disables the registry before invoking unsubscribe, and protected dispatch cannot
+reactivate it. The integration fixture covers retained leases, in-flight capture
+and unknown drain, which remains charged. Without the optional subscription,
+only the existing synchronous `usageCurrent` fence applies. This does not connect
+legacy CLI/MCP off or qualify any production enrollment.
+
+The dormant [Linux peer qualifier](../../src/native/read_peer.py) accepts only an
+owned, private, nonblocking Unix listener and obtains kernel `SO_PEERCRED` plus
+`SO_PEERPIDFD`; no process claim from a request body is accepted. It pins and
+checks the peer PID/birth, socket and listener around a one-shot trusted staging
+callback. The owned child/socket fixture covers 25 Python cases without skips
+on this kernel, including resource cleanup, peer death, callback errors and
+concurrent close. This establishes the connection creator for that fixture, not
+the current sender after descriptor transfer, a DSH conversation, or protection
+from hostile processes of the same UID. Listener path checks are sampled and
+cannot rule out a temporary rename-and-restore race. Unsupported kernel/namespace
+configurations refuse. The helper is not wired into production IPC.
+
+The current Grim capture result still reports provider completion `UNKNOWN`.
+Frame `ready` or `failed` can describe one protocol request, but process exit or
+valid PNG alone does not prove provider or GPU drain. The private durable usage
+store remains unimplemented after review identified directory ancestry, crash
+marker and cleanup gaps. No phase gate is passed by these fixture results.
+
+Final source suite: 869 pass, 5 skip, 0 fail, 16566 assertions across 81 files
+in 71.33 seconds. Strict TypeScript validation also passed.

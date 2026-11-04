@@ -6,6 +6,7 @@ import { internalCaller, type Caller } from "../src/caller";
 import { NativeBackend } from "../src/hyprland";
 import { Sessions, type SessionOptions, type SessionReadViewsOptions } from "../src/session";
 import { ReadUsageCoordinator } from "../src/read-usage-coordinator";
+import { ReadResourceBudget } from "../src/multi-view-read-budget";
 import { decide, type SessionPolicy } from "../src/policy";
 import type { ReadChannelRegistry } from "../src/read-channel-registry";
 import type { ReadCaptureContext, ReadObservationLease, ReadRecipient, ReadViewBackend } from "../src/multi-view-views";
@@ -30,7 +31,7 @@ const triggered = (signal: Promise<unknown>, outcome: Promise<unknown>) => Promi
 })]);
 const agent = (pid: number, start: string, id: string): Caller => ({ id, label: "display-only", role: "agent", kind: "adapter", verified: true, pid, start });
 
-async function fixture(configured = true, sharedConversation = false, dynamicChannels = false, usageFactory?: (conversation: object) => Pick<SessionReadViewsOptions, "usageCurrent" | "usageVersion">) {
+async function fixture(configured = true, sharedConversation = false, dynamicChannels = false, usageFactory?: (conversation: object, other: object) => Pick<SessionReadViewsOptions, "usageCurrent" | "usageVersion" | "bindUsageRevocation">) {
   const root = await mkdtemp(join(tmpdir(), "orbit-read-broker-fixture-"));
   const owner = { ...internalCaller }, ownerIdentity = {}, ownerChannel = {}, channelA = {}, channelB = {}, connectorChannel = {}, approvalKey = {};
   const a = agent(4001, "101", "conv:fixture-a"), b = agent(4002, "102", sharedConversation ? "conv:fixture-a" : "conv:fixture-b");
@@ -63,7 +64,7 @@ async function fixture(configured = true, sharedConversation = false, dynamicCha
       state.usageCalls++;
       if (state.usageHook) await state.usageHook();
       return { conversation, epoch: state.epoch, enabled: state.enabled };
-    }, now: () => state.now, ...(usageFactory ? usageFactory(recipientA.conversation) : {}) };
+    }, now: () => state.now, ...(usageFactory ? usageFactory(recipientA.conversation, recipientB.conversation) : {}) };
   const options: SessionOptions = { alive: () => true, ...(configured ? { readViews } : {}) };
   const sessions = new Sessions(root, undefined, undefined, { planPath: "/fixture/host.json", controlDirectory: join(root, "control") }, join(root, "update"), options);
   const legacyObserve = mock(async () => { throw new Error("No legacy/native reader fallback"); });
@@ -741,22 +742,103 @@ test("broker lease reserves delivery scratch only while usage and channel remain
 
 test("coordinator off fences an accepted broker read before durable acknowledgement", async () => {
   const authority = {}, gate = deferred<void>();
-  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke: () => {},
+  let listener: ((conversation: object) => void) | undefined;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke: key => { if (!listener) throw new Error(); listener(key); },
     store: { commit: async (_conversation, record) => { if (!record.enabled) await gate.promise; } } });
   let conversation!: object;
+  const budgets: ReadResourceBudget[] = [];
+  const reserveOriginal = ReadResourceBudget.prototype.reserve;
+  const reserve = spyOn(ReadResourceBudget.prototype, "reserve").mockImplementation(function (this: ReadResourceBudget, view, cost) {
+    budgets.push(this); return reserveOriginal.call(this, view, cost);
+  });
   const f = await fixture(true, false, false, identity => {
     conversation = identity; coordinator.register(authority, identity);
-    return { usageVersion: coordinator.usageVersion, usageCurrent: coordinator.usageCurrent };
+    return { usageVersion: coordinator.usageVersion, usageCurrent: coordinator.usageCurrent,
+      bindUsageRevocation: callback => { listener = callback; return () => { listener = undefined; }; } };
   });
   try {
     await coordinator.on(authority, conversation); await f.enable();
-    const enrolled = await f.enroll(), captureGate = deferred<void>(); f.state.captureGate = captureGate.promise;
-    const outcome = rejection(f.read(enrolled.views[0]!.id)); await triggered(f.started.promise, outcome);
+    const enrolled = await f.enroll();
+    const lease = await f.read(enrolled.views[0]!.id);
+    const captureGate = deferred<void>(); f.state.captureGate = captureGate.promise; f.state.unknown = true;
+    const secondStarted = deferred<void>();
+    f.capture.mockImplementationOnce(async context => {
+      secondStarted.resolve(); await captureGate.promise;
+      context.lifecycle.unknownDrain(); return new Uint8Array([1, 2, 3]);
+    });
+    const outcome = rejection(f.read(enrolled.views[1]!.id));
+    await triggered(secondStarted.promise, outcome);
     let acknowledged = false; const off = coordinator.off(authority, conversation).then(() => { acknowledged = true; });
-    expect(acknowledged).toBe(false); captureGate.resolve();
+    expect(acknowledged).toBe(false);
+    expect((f.sessions as unknown as { readKeys: Map<string, { grant?: string }> }).readKeys.get("a")?.grant).toBeUndefined();
+    expect(() => lease.bytes).toThrow();
+    captureGate.resolve();
     expect(await outcome).toMatchObject({ code: "READ_VIEW_DENIED" });
+    lease.release();
+    expect(budgets[0]?.status()).toMatchObject({ captureOccupied: true, quarantined: 1, bytes: 16 });
     expect(acknowledged).toBe(false); gate.resolve(); await off; expect(acknowledged).toBe(true);
     await coordinator.on(authority, conversation);
     await expect(f.read(enrolled.views[0]!.id)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+  } finally { gate.resolve(); reserve.mockRestore(); await f.close(); }
+});
+
+test("coordinator revokes only its exact protected conversation", async () => {
+  const authority = {}, gate = deferred<void>();
+  let listener: ((key: object) => void) | undefined, a!: object, b!: object;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority,
+    onRevoke: key => { if (!listener) throw new Error(); listener(key); },
+    store: { commit: async (_key, record) => { if (!record.enabled) await gate.promise; } } });
+  const f = await fixture(true, false, false, (first, second) => {
+    a = first; b = second; coordinator.register(authority, a); coordinator.register(authority, b);
+    return { usageVersion: coordinator.usageVersion, usageCurrent: coordinator.usageCurrent,
+      bindUsageRevocation: callback => { listener = callback; return () => { listener = undefined; }; } };
+  });
+  try {
+    await coordinator.on(authority, a); await coordinator.on(authority, b); await f.enable();
+    const first = await f.enroll();
+    const second = await f.enroll([{ sessionId: f.foreign.sessionId, appId: "app-3", windowId: "window-3", formats: ["image"] }], "b");
+    const leaseA = await f.read(first.views[0]!.id), leaseB = await f.read(second.views[0]!.id, f.b, f.channelB);
+    const off = coordinator.off(authority, a);
+    expect(() => leaseA.bytes).toThrow(); expect([...leaseB.bytes]).toEqual([1, 2, 3]);
+    const keys = (f.sessions as unknown as { readKeys: Map<string, { grant?: string }> }).readKeys;
+    expect(keys.get("a")?.grant).toBeUndefined(); expect(keys.get("b")?.grant).toBeDefined();
+    gate.resolve(); await off; leaseA.release(); leaseB.release();
   } finally { gate.resolve(); await f.close(); }
+});
+
+test("subscription initialization reentry refuses and releases the binding", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-read-bind-"));
+  let saved: ((key: object) => void) | undefined, cleanup = 0;
+  const config: SessionReadViewsOptions = { ownerIdentity: {}, ownerChannel: {}, channels: [],
+    backend: { admissionReady: () => true, recipientCurrent: () => true, bindingCurrent: () => true,
+      prepare: () => { throw new Error(); } }, liveProcess: () => true,
+    usageVersion: async conversation => ({ conversation, epoch: 1, enabled: false }), usageCurrent: () => false,
+    bindUsageRevocation: callback => {
+      saved = callback; try { callback({}); } catch { /* Binding cannot ignore this failure. */ }
+      return () => { cleanup++; };
+    } };
+  try {
+    expect(() => new Sessions(root, undefined, undefined, undefined, undefined, { readViews: config })).toThrow();
+    expect(cleanup).toBe(1); expect(() => saved?.({})).not.toThrow();
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("shutdown fences protected reentry even when unsubscribe throws", async () => {
+  let saved: ((key: object) => void) | undefined, calls = 0, during: Promise<unknown> | undefined;
+  let runDuringClose: (() => Promise<unknown>) | undefined;
+  const f = await fixture(true, false, false, () => ({
+    usageVersion: async conversation => ({ conversation, epoch: 1, enabled: true }), usageCurrent: () => true,
+    bindUsageRevocation: callback => { saved = callback; return () => {
+      calls++; during = settle(runDuringClose!()); callback({}); throw new Error("private");
+    }; },
+  }));
+  try {
+    await f.enable(); const enrolled = await f.enroll(); const lease = await f.read(enrolled.views[0]!.id);
+    runDuringClose = () => f.call("views.enable", { enabled: true });
+    await f.sessions.close();
+    expect(calls).toBe(1); expect(await during).toMatchObject({ ok: false });
+    expect(() => lease.bytes).toThrow(); lease.release();
+    expect(() => saved?.({})).not.toThrow();
+    await expect(f.call("views.enable", { enabled: true })).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+  } finally { await f.close(); }
 });

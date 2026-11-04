@@ -81,6 +81,9 @@ export interface SessionReadViewsOptions {
   usageVersion(conversation: object): Promise<{ conversation: object; epoch: number; enabled: boolean }>;
   /** Synchronous owner-managed revocation fence, checked at every final byte access. */
   usageCurrent(conversation: object, epoch: number): boolean;
+  /** Trusted fixture-only registration. The callback must be called synchronously on
+   * coordinator revocation and is not a stop, delivery or durable-off receipt. */
+  bindUsageRevocation?(listener: (conversation: object) => void): () => void;
   now?: () => number;
 }
 interface BrokerReadChannel {
@@ -174,6 +177,8 @@ export class Sessions {
   private readKeys = new Map<string, BrokerReadChannel>();
   private readBindings = new WeakMap<object, BrokerReadBinding>();
   private readConfig?: SessionReadViewsOptions;
+  private readUsageUnbind?: () => void;
+  private readUsageListenerActive = false;
   private readCanonical = new WeakMap<Session, WeakMap<object, object>>();
   private readTransportRegistry?: ReadChannelRegistry;
   private readConnectorChannel?: object;
@@ -189,7 +194,8 @@ export class Sessions {
   private initializeReadViews(config: SessionReadViewsOptions) {
     if (!config.ownerIdentity || typeof config.ownerIdentity !== "object" || !config.ownerChannel
         || typeof config.ownerChannel !== "object" || !Array.isArray(config.channels) || config.channels.length > 8
-        || typeof config.liveProcess !== "function" || typeof config.usageVersion !== "function" || typeof config.usageCurrent !== "function")
+        || typeof config.liveProcess !== "function" || typeof config.usageVersion !== "function" || typeof config.usageCurrent !== "function"
+        || config.bindUsageRevocation !== undefined && typeof config.bindUsageRevocation !== "function")
       throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
     this.readConfig = Object.freeze({ ...config });
     for (const input of config.channels) {
@@ -227,6 +233,37 @@ export class Sessions {
       this.readConnectorChannel = dynamic.connectorChannel;
       this.readTransportRegistry = new ReadChannelRegistry({ ownerAuthority: this.readAuthority, ownerIdentity: config.ownerIdentity,
         processCurrent: dynamic.processCurrent, now: config.now, onRevoke: resolved => this.dropReadChannel(resolved) });
+    }
+    if (config.bindUsageRevocation) {
+      let initializing = true, attempted = false;
+      // Unsubscribe failure cannot leave a callback retaining the Sessions instance.
+      let target: Sessions | undefined = this;
+      const listener = (conversation: object) => {
+        if (initializing) { attempted = true; throw new OrbitError("READ_VIEW_DENIED", "Read view request refused"); }
+        const current = target;
+        if (!current || !current.readUsageListenerActive || current.shuttingDown) return;
+        if (!conversation || typeof conversation !== "object" || Array.isArray(conversation))
+          throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+        current.revokeReadConversation(conversation);
+      };
+      let unbind: unknown;
+      try {
+        unbind = config.bindUsageRevocation(listener);
+        if (typeof unbind !== "function" || attempted) throw new Error();
+        const cleanup = unbind as () => void;
+        this.readUsageUnbind = () => { target = undefined; cleanup(); };
+        this.readUsageListenerActive = true;
+        initializing = false;
+      } catch {
+        initializing = false;
+        this.readUsageListenerActive = false;
+        target = undefined;
+        try { if (typeof unbind === "function") unbind(); } catch { /* Refuse without reviving partial binding. */ }
+        this.readRegistry?.setEnabled(this.readAuthority, false);
+        this.readTransportRegistry?.close(this.readAuthority);
+        this.readChannels.clear(); this.readKeys.clear(); this.readConfig = undefined;
+        throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+      }
     }
   }
   private readChannelCurrent(entry: BrokerReadChannel): boolean {
@@ -272,12 +309,14 @@ export class Sessions {
       && window.width === value.width && window.height === value.height && decide(session.policy, "observe").outcome === "allow";
   }
   private readOwner(caller: Caller, channel: object | undefined) {
+    if (this.shuttingDown) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
     if (!this.readRegistry || !this.readConfig || channel === undefined)
       throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
     if (!caller.verified || caller.role !== "owner" || channel !== this.readConfig.ownerChannel)
       throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
   }
   private readRecipient(caller: Caller, channel: object | undefined): BrokerReadChannel {
+    if (this.shuttingDown) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
     if (!this.readRegistry || !this.readConfig || channel === undefined)
       throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
     const entry = this.readChannels.get(channel);
@@ -323,6 +362,7 @@ export class Sessions {
   }
   private async dispatchReadView(method: string, params: Record<string, unknown>, caller: Caller, channel: object | undefined): Promise<unknown> {
     if (!this.readRegistry || !this.readConfig || !channel) throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
+    if (this.shuttingDown) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
     const registry = this.readRegistry;
     try {
       if (method.startsWith("views.channel.")) {
@@ -1348,8 +1388,13 @@ export class Sessions {
       failed: mine.flatMap((session, index) => results[index]?.status === "rejected" ? [{ sessionId: session.id, taskName: session.taskName }] : []) };
   }
   async close() {
+    this.readUsageListenerActive = false;
+    if (this.readUsageUnbind) this.shuttingDown = true;
+    const unbind = this.readUsageUnbind;
+    this.readUsageUnbind = undefined;
     this.readTransportRegistry?.close(this.readAuthority);
     this.readRegistry?.setEnabled(this.readAuthority, false);
+    try { unbind?.(); } catch { /* The guard is already closed; never reactivate it. */ }
     this.callers.stop();
     for (const session of this.sessions.values()) if (session.orphan?.timer) clearTimeout(session.orphan.timer);
     this.shuttingDown = true;
