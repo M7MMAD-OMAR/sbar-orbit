@@ -297,3 +297,73 @@ across 65 files in 68.64 seconds after platform-safe guard registration. Manual-
 the default suite. Strict root typing passed before live use; the actual native
 run and source fixtures are separate evidence layers. No release, site deploy,
 new public multi-view tool, remote device or extra seat was enabled.
+
+## 7. Dormant read reservation lifecycle kernel
+
+[ReadResourceBudget](../../src/multi-view-read-budget.ts) is an internal, dormant
+accounting kernel. No production module imports or constructs it, and importing
+or constructing it creates no timer, worker, queue, model, native action or
+authority grant. Its logical domain defaults to 32 MiB, each view to 16 MiB,
+8 views across 4 conversation keys, 2 views per conversation, 2 live entries per
+view and 32 references per retained entry. Overrides may only narrow caps.
+These are bounded logical accounting parameters, not measured RSS guarantees
+or proof that existing consumers obey them.
+
+Opaque frozen object identities are private to one instance. Forged, cloned,
+cross-instance or stale handles cannot reserve/recover its credit. Strict data-
+property snapshots reject accessors, unknown fields, symbols, coercions and
+nonfinite/unsafe values. Reentrant proxy inspection is completed before current
+view revocation and capture admission are checked. Private limits remain binding
+even if a caller shadows the public limits getter. Errors contain no raw labels,
+targets, request contents or caller-provided fields.
+
+A reservation charges the peak scratch-plus-result overlap and occupies the
+instance capture slot before work starts. Before-start cancellation can release
+credit because no owned work was admitted. After start, cancellation suppresses
+delivery but retains occupancy; unknown stop additionally quarantines it. Only
+the trusted per-operation lifecycle callback may report quiescence. A late
+completion after cancellation/quarantine discards the result; it cannot revive
+old delivery or free a newer reservation. No timeout/TTL/response flag forces
+credit release and there is no public force-release method.
+
+Known-quiescent successful work can transfer to one retained reference, releasing
+only reserved scratch credit. Retain/release tracks shared immutable ownership,
+not deep copies: all external references remain charged after view revocation
+until explicitly released. The aggregate counter requires balanced internal
+calls; it is not a per-consumer idempotent release ticket. Delivery integration
+must deduplicate each consumer release and must never expose reservation handles
+as recipient authority. Additional copies need separate prior allocation
+reservations. A view cannot be disposed/reused until revoked and empty. Metadata
+entry/reference caps prevent tiny declared allocations growing unbounded maps.
+The kernel does not implement freshness, latest-value coalescing, fair queueing,
+host identity, frame allocation, process supervision or durable crash recovery.
+
+[Deterministic tests](../../tests/multi-view-read-budget.test.ts) cover strict
+limits, aggregate byte overlap, capture admission, reference-held revocation,
+unknown stop, late/stale callbacks, forged handles, descriptor reentrancy and
+limit-shadow resistance. Independent static review found no definite accounting
+defect, but caught weak low-bit LCG transition coverage. The fixture now uses a
+mixed-bit generator, seeded real lifecycle transitions and explicit coverage
+assertions for all 8 operations and all 5 phases, in addition to 1000-step byte/
+reference/capture conservation checks. Focused final tests: 22 pass, 0 fail,
+9065 assertions. The final complete default verifier passed 616 tests, skipped
+5 platform cases, failed 0, and executed 12572 assertions across 66 files in
+68.33 seconds. Final strict root typing exited 0. The default verifier includes
+the new fixture with its missing-file guard.
+
+The [owned-reader drain audit](multi-view-reader-drain.md) identifies the next
+required adapter work. Current capture and cold accessibility cleanup do not
+prove descendant termination; cold capture_output is collected before slicing.
+The warm helper can reap a root after TERM without proving its remaining group
+empty. Shared resource slice membership, EOF, a passive acknowledgement or a
+resolved NativeWorker promise are not owned scope-empty receipts. Raw/raster
+crop, base64/JSON/parse copies, retained replies, helper baseline memory and
+external original-app/provider work are distinct domains. No guessed overhead
+multiplier or compressed PNG length proves their peak.
+
+Accordingly **the kernel is not wired to existing helper completion or public
+requests**. A generation-bound owned supervisor, pre-allocation enforcement,
+end-to-end queue/cancellation and retained-result ownership integration must
+precede feature admission. No real memory ceiling, reader drain, two-view
+qualification or new phase gate passed in this tranche. No native operation,
+shared broker restart, lease release or original-app change was performed.
