@@ -736,3 +736,30 @@ root-domain quarantine, child lifetime and lost-ack handling remain unqualified.
 Final default suite: 873 pass, 5 skip, 0 fail, 16582 assertions across 85
 files in 75.44 seconds. The separately compiled helper fixture passed all 13
 Python cases; it is not an original-app or compositor acceptance.
+
+## 17. Synthetic compositor and reader deadline fence
+
+The fixed helper was compiled and exercised against a private synthetic Wayland
+server using real SHM and generated protocol code. Ten owned scenarios covered
+READY pixels and receipt, FAILED, invalid constraints, early/late duplicate and
+malformed identifiers, incomplete first-frame damage, disconnected server, missing
+terminal event and withheld post-destroy sync. The server observed capture-related
+destroy requests and a subsequent sync request; when the response was withheld,
+the helper emitted no image or receipt. The ready fixture checked a 1x1 RGB PNG
+and the exact operation-bound receipt. This is synthetic protocol evidence, not
+acceptance of a real compositor, GPU quiescence or proof of continuous target
+liveness after proxy destruction. The focused test requires installed Wayland
+protocol development tools and is not part of the default portable suite.
+
+The [reader orchestration](../../src/native/reader_process.py) now checks the
+absolute deadline and cancellation again after its trusted guard returns. Four
+fixtures cover guards that become stale before scope work and after scope retirement.
+The attempted fixed-helper launch was not shipped: the existing mutable bootstrap
+path is not qualified as a protected executable, and failure to acquire a pidfd
+before admission can leave a stopped owned child with unknown cleanup. The helper
+remains disconnected from production; no phase gate or original-app acceptance
+is claimed. The TypeScript-to-Python durable store bridge was likewise deferred.
+
+Final default suite: 873 pass, 5 skip, 0 fail, 16582 assertions across 85 files
+in 75.08 seconds. The ten synthetic compositor cases and thirteen helper cases
+were run separately and passed on the local toolchain.

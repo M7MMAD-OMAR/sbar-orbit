@@ -11,7 +11,8 @@
  * The parent must independently revalidate target binding before delivery.
  * READY receipt describes frame terminal/teardown/sync independently of PNG
  * success; the parent must separately validate PNG, exit, scope and binding.
- * Constraint updates are refused; no resize/retry/fallback is attempted.
+ * Constraint updates are refused; no resize/retry/fallback is attempted. A
+ * full-frame damage rectangle is required, so valid split damage is refused.
  * List destruction without stop/finished is legal cleanup but does not claim
  * list-finished acknowledgment. Frame/session/source/buffer destructor requests
  * are ordered before sync; wl_shm and registry destruction are local proxies,
@@ -46,7 +47,7 @@
 struct window {
     struct ext_foreign_toplevel_handle_v1 *handle;
     char identifier[33];
-    bool done, closed, identifier_seen;
+    bool done, closed, identifier_seen, invalid;
 };
 struct state {
     struct wl_display *display;
@@ -213,9 +214,9 @@ static void handle_title(void *d, struct ext_foreign_toplevel_handle_v1 *h, cons
 static void handle_app(void *d, struct ext_foreign_toplevel_handle_v1 *h, const char *v) { (void)d; (void)h; (void)v; }
 static void handle_id(void *data, struct ext_foreign_toplevel_handle_v1 *h, const char *value) {
     (void)h; struct window *w = data;
-    if (w->identifier_seen || !value) { w->closed = true; return; }
+    if (w->identifier_seen || !value) { w->invalid = true; return; }
     size_t length = strnlen(value, 33);
-    if (!length || length > 32) { w->closed = true; return; }
+    if (!length || length > 32) { w->invalid = true; return; }
     w->identifier_seen = true; memcpy(w->identifier, value, length + 1);
 }
 static const struct ext_foreign_toplevel_handle_v1_listener handle_listener = {
@@ -263,7 +264,8 @@ static void frame_transform(void *data, struct ext_image_copy_capture_frame_v1 *
 static void frame_damage(void *data, struct ext_image_copy_capture_frame_v1 *f, int32_t x, int32_t y, int32_t w, int32_t h) {
     (void)f; struct state *s = data;
     if (x < 0 || y < 0 || w <= 0 || h <= 0 || (uint64_t)x + w > s->width || (uint64_t)y + h > s->height) s->error = true;
-    s->damage_seen = true;
+    if (x == 0 && y == 0 && w == (int32_t)s->width && h == (int32_t)s->height)
+        s->damage_seen = true;
 }
 static void frame_time(void *data, struct ext_image_copy_capture_frame_v1 *f, uint32_t hi, uint32_t lo, uint32_t ns) {
     (void)f; (void)hi; (void)lo; struct state *s = data;
@@ -350,6 +352,19 @@ static int write_all(int fd, const uint8_t *data, size_t length, int64_t deadlin
     }
     return 0;
 }
+static bool unique_target(struct state *s, struct window *selected) {
+    unsigned matches = 0;
+    for (unsigned i = 0; i < s->count; ++i) {
+        struct window *w = &s->windows[i];
+        /* Partial properties leave the identity set unknown, not unique. */
+        if (!w->closed && (w->invalid || !w->done || !w->identifier_seen)) return false;
+        if (!w->closed && !strcmp(w->identifier, s->target)) {
+            if (w != selected) return false;
+            ++matches;
+        }
+    }
+    return matches == 1 && selected && !selected->closed;
+}
 static int capture(struct state *s) {
     /* No diagnostic text is emitted: libwayland debug may contain titles. */
     wl_log_set_handler_client(wayland_log);
@@ -369,14 +384,14 @@ static int capture(struct state *s) {
             target = w;
         }
     }
-    if (!target) return -1;
+    if (!target || !unique_target(s, target)) return -1;
     s->selected = target;
     s->source = ext_foreign_toplevel_image_capture_source_manager_v1_create_source(s->source_manager, target->handle);
     if (!s->source) return -1;
     s->session = ext_image_copy_capture_manager_v1_create_session(s->copy_manager, s->source, 0);
     if (!s->session) return -1;
     ext_image_copy_capture_session_v1_add_listener(s->session, &session_listener, s);
-    if (pump(s, &s->constraints) || target->closed || allocate(s)) return -1;
+    if (pump(s, &s->constraints) || !unique_target(s, target) || allocate(s)) return -1;
     s->frame = ext_image_copy_capture_session_v1_create_frame(s->session);
     if (!s->frame) return -1;
     ext_image_copy_capture_frame_v1_add_listener(s->frame, &frame_listener, s);
@@ -384,7 +399,7 @@ static int capture(struct state *s) {
     ext_image_copy_capture_frame_v1_damage_buffer(s->frame, 0, 0, (int32_t)s->width, (int32_t)s->height);
     ext_image_copy_capture_frame_v1_capture(s->frame);
     if (pump(s, &s->terminal)) return -1;
-    if (target->closed) s->post_ready_error = true;
+    if (!unique_target(s, target)) s->post_ready_error = true;
     return s->error ? -1 : 0;
 }
 static void destroy_objects(struct state *s) {
@@ -422,7 +437,7 @@ int main(int argc, char **argv) {
     if (s.display) {
         /* Sample queued events while target and session listeners still exist. */
         if (terminal_observed && sync_round(&s)) terminal_observed = false;
-        if (s.selected && s.selected->closed) terminal_observed = false;
+        if (!s.selected || !unique_target(&s, s.selected)) terminal_observed = false;
         destroy_objects(&s);
         if (terminal_observed && sync_round(&s) == 0) {
             if (s.ready && (s.post_ready_error || encode(&s, &output))) status = -1;

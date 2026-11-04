@@ -63,6 +63,13 @@ def _check(deadline, cancel, guard):
         _fail("BINDING")
     if valid is not True:
         _fail("BINDING")
+    # A trusted guard can consume the remaining budget or revoke via cancellation.
+    # Its True return never bypasses the same absolute deadline/cancel boundary.
+    after_guard = time.monotonic()
+    if not _finite(after_guard) or after_guard >= deadline:
+        _fail("DEADLINE")
+    if cancel is not None and cancel.is_set():
+        _fail("CANCELLED")
 
 
 def _environment(runtime, display):
@@ -143,6 +150,9 @@ def capture_reader(scope, *, target, width, height, runtime_dir, wayland_display
     callback. Scope, environment and geometry must originate in protected owner
     state. No production caller is enabled by this module. Deadline checks are
     cooperative: Popen, filesystem, journal and kernel calls may block beyond it.
+    Guard callbacks are trusted non-reentrant staging checks. Final delivery must
+    recheck binding/permission under the same owner authority lock as revocation;
+    this function return is not atomic future permission or provider-stop proof.
     """
     now = time.monotonic()
     if (sys.platform != "linux" or type(scope) is not ReaderScope

@@ -320,6 +320,38 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(self.events.count("retire"), 1)
         self.assertNotIn("scope-kill", self.events)
 
+    def test_guard_true_after_consuming_deadline_refuses_before_scope_work(self):
+        def guard():
+            self.now = 103.0
+            return True
+        self.failure("DEADLINE", guard=guard)
+        self.assertEqual(self.events, [])
+
+    def test_guard_true_after_cancellation_refuses_before_scope_work(self):
+        def guard():
+            self.cancel.set()
+            return True
+        self.failure("CANCELLED", guard=guard)
+        self.assertEqual(self.events, [])
+
+    def test_final_guard_true_after_deadline_never_returns_retired_capture(self):
+        def guard():
+            if self.scope.retired:
+                self.now = 103.0
+            return True
+        self.failure("DEADLINE", guard=guard)
+        self.assertEqual(self.events.count("retire"), 1)
+        self.assertNotIn("scope-kill", self.events)
+
+    def test_final_guard_true_after_cancel_never_returns_retired_capture(self):
+        def guard():
+            if self.scope.retired:
+                self.cancel.set()
+            return True
+        self.failure("CANCELLED", guard=guard)
+        self.assertEqual(self.events.count("retire"), 1)
+        self.assertNotIn("scope-kill", self.events)
+
     def test_scope_retire_failure_never_delivers(self):
         self.scope.fail = "retire"
         self.failure()
