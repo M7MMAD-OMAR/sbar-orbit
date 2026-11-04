@@ -763,3 +763,27 @@ is claimed. The TypeScript-to-Python durable store bridge was likewise deferred.
 Final default suite: 873 pass, 5 skip, 0 fail, 16582 assertions across 85 files
 in 75.08 seconds. The ten synthetic compositor cases and thirteen helper cases
 were run separately and passed on the local toolchain.
+
+## 18. Protected storage root pin
+
+The dormant [usage store](../../src/native/read_usage_store.py) accepts an
+owner-supplied, preopened root descriptor. It duplicates the descriptor with
+close-on-exec and compares its identity with the protected directory chain before
+creating the lock or writing state. The caller retains its original descriptor;
+subsequent caller close or reuse cannot rebind the store-owned pin. Every later
+operation rechecks the pin, directory chain and lock, and integrity failure poisons
+the store. Thirty-six owned filesystem cases passed locally, including mismatch,
+reuse, busy lock, cleanup and a rename immediately after the pre-mutation check.
+
+The path and descriptor are trusted and must remain stable during duplication.
+Checks are sampled, not a defense against hostile same-UID rename/restore or
+mount manipulation. If a rename races after the last pre-lock check, a lock may
+be created in the originally pinned directory before the operation refuses; the
+replacement is not written. This is not yet connected to the coordinator or old
+CLI/MCP writers, and no durable off acknowledgement or release gate is claimed.
+
+Strict root-reap proof remains unresolved: `Popen.wait` can synthesize success
+after `ECHILD`, and pidfd acquisition and numeric cgroup admission can race an
+external reaper. Do not treat the present root return code as qualified drain.
+The default suite after the root-pin change passed 873 tests, skipped 5 and
+failed 0, with 16582 assertions across 85 files in 74.17 seconds.

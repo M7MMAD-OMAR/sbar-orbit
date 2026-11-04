@@ -1,4 +1,5 @@
 """Real owned HOME-child filesystem fixtures. No desktop, cgroup or helper processes."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,8 @@ class UsageStoreTests(unittest.TestCase):
         self.key, self.other_key = "a" * 64, "b" * 64
         self.entries = ((self.first, self.key), (self.second, self.other_key))
         self.stores = []
+        self.owner_fds = set()
+        self.addCleanup(self.close_owner_fds)
         self.addCleanup(self.close_stores)
         self.real_open, self.real_fsync = os.open, os.fsync
         self.real_rename, self.real_unlink, self.real_close = os.rename, os.unlink, os.close
@@ -35,8 +38,22 @@ class UsageStoreTests(unittest.TestCase):
             except subject.ReadUsageStoreError:
                 pass
 
+    def owner_fd(self, path):
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        self.owner_fds.add(fd)
+        return fd
+
+    def close_owner(self, fd):
+        os.close(fd)
+        self.owner_fds.remove(fd)
+
+    def close_owner_fds(self):
+        for fd in tuple(self.owner_fds):
+            self.close_owner(fd)
+
     def store(self, **kwargs):
-        result = subject.ReadUsageStore(str(kwargs.get("root", self.root)), kwargs.get("entries", self.entries))
+        extra = {"expected_root_fd": kwargs["expected_root_fd"]} if "expected_root_fd" in kwargs else {}
+        result = subject.ReadUsageStore(str(kwargs.get("root", self.root)), kwargs.get("entries", self.entries), **extra)
         self.stores.append(result)
         return result
 
@@ -330,6 +347,205 @@ class UsageStoreTests(unittest.TestCase):
         self.code("DENIED", lambda: store.commit(object(), {"private": "secret"}))
         store.commit(self.first, self.value(enabled=False))
         self.assertEqual(store.read_evidence(self.first)["state"], "recorded-off")
+
+
+    def test_expected_root_pin_matches_before_mutation_and_keeps_caller_owned_fd(self):
+        owner = self.owner_fd(self.root)
+        expected = subject._identity(owner)
+        store = self.store(expected_root_fd=owner)
+        self.assertNotEqual(store._expected_fd, owner)
+        self.assertEqual(subject._identity(store._expected_fd), expected)
+        self.assertTrue(fcntl.fcntl(store._expected_fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC)
+        store.commit(self.first, self.value(enabled=False))
+        store.close()
+        self.assertEqual(subject._identity(owner), expected)
+        self.assertEqual(json.loads(self.path().read_bytes())["enabled"], False)
+
+    def test_borrowed_root_fd_can_close_and_reuse_without_rebinding_owned_pin(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        pinned = subject._identity(store._expected_fd)
+        self.close_owner(owner)
+        foreign = self.base / "foreign-root"
+        foreign.mkdir(mode=0o700)
+        reused = self.owner_fd(foreign)
+        self.assertEqual(subject._identity(store._expected_fd), pinned)
+        store.commit(self.first, self.value())
+        self.assertEqual(list(foreign.iterdir()), [])
+        self.assertIs(store.read_evidence(self.first)["enabled"], False)
+        self.assertNotEqual(subject._identity(reused), pinned)
+
+    def test_mismatched_expected_root_rejects_before_namespace_lock_or_fsync(self):
+        other = self.base / "other-root"
+        other.mkdir(mode=0o700)
+        owner = self.owner_fd(other)
+        with patch.object(subject.ReadUsageStore, "_namespace", side_effect=AssertionError("no namespace before FD match")) as namespace, patch.object(os, "fsync") as sync:
+            self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=owner))
+        namespace.assert_not_called()
+        sync.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(list(other.iterdir()), [])
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
+
+    def test_expected_fd_invalid_types_never_coerce_or_mutate(self):
+        calls = []
+        class Descriptor:
+            def __index__(_self):
+                calls.append(1)
+                return 0
+        for value in (True, False, -1, 0, 1, 2, 1.5, "3", 2147483648, Descriptor()):
+            self.code("INVALID", lambda: self.store(expected_root_fd=value))
+        self.assertEqual(calls, [])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_closed_or_non_directory_expected_fd_cannot_create_lock(self):
+        fd = self.owner_fd(self.root)
+        self.close_owner(fd)
+        self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=fd))
+        regular = self.base / "regular-fixture"
+        regular.write_bytes(b"unchanged")
+        file_fd = self.owner_fd(regular)
+        self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=file_fd))
+        self.assertEqual(regular.read_bytes(), b"unchanged")
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_path_replaced_before_constructor_cannot_mutate_new_or_original_root(self):
+        owner = self.owner_fd(self.root)
+        old = self.base / "old-root"
+        self.root.rename(old)
+        self.root.mkdir(mode=0o700)
+        self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=owner))
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(list(old.iterdir()), [])
+        self.assertEqual(subject._identity(owner), (old.stat().st_dev, old.stat().st_ino))
+
+    def test_matching_fd_does_not_allow_a_symlink_in_the_supplied_root_path(self):
+        owner = self.owner_fd(self.root)
+        alias = self.base / "root-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.code("UNCONFIRMED", lambda: self.store(root=alias, expected_root_fd=owner))
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
+
+    def test_owned_expected_pin_replacement_poison_is_global_and_never_rebinds(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        other = self.base / "foreign-root"
+        other.mkdir(mode=0o700)
+        foreign = self.owner_fd(other)
+        pin = store._expected_fd
+        os.dup2(foreign, pin, inheritable=False)  # Replace only the store's own test FD.
+        self.code("UNCONFIRMED", lambda: store.commit(self.first, self.value()))
+        self.code("UNCONFIRMED", lambda: store.commit(self.second, self.value()))
+        self.assertEqual(list(other.iterdir()), [])
+        self.assertFalse(self.path().exists())
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
+        self.assertTrue(stat.S_ISDIR(os.fstat(foreign).st_mode))
+
+    def test_expected_pin_permission_change_rejects_before_any_record_write(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        os.chmod(self.root, 0o755)  # Only this fixture-owned root, never HOME.
+        try:
+            self.code("UNCONFIRMED", lambda: store.commit(self.first, self.value()))
+        finally:
+            os.chmod(self.root, 0o700)
+        self.code("UNCONFIRMED", lambda: store.commit(self.second, self.value()))
+        self.assertFalse(self.path().exists())
+
+    def test_expected_pin_cleanup_failure_closes_other_owned_fds_not_callers(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        pin = store._expected_fd
+        owned = [store._lock, pin, *reversed(store._pins)]
+        calls = []
+        def close(fd):
+            calls.append(fd)
+            self.real_close(fd)
+            if fd == pin:
+                raise OSError("owned fixture expected pin close failed")
+        with patch.object(os, "close", side_effect=close):
+            self.code("UNCONFIRMED", store.close)
+        self.assertEqual(calls, owned)
+        self.assertNotIn(owner, calls)
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
+
+
+    def test_root_rename_during_constructor_scan_is_detected_before_lock_mutation(self):
+        owner = self.owner_fd(self.root)
+        original = self.base / "original-root"
+        real_namespace = subject.ReadUsageStore._namespace
+        changed = False
+        def scan(store):
+            nonlocal changed
+            real_namespace(store)
+            if not changed:
+                changed = True
+                self.root.rename(original)
+                self.root.mkdir(mode=0o700)
+        with patch.object(subject.ReadUsageStore, "_namespace", scan), patch.object(os, "fsync") as sync:
+            self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=owner))
+        sync.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(list(original.iterdir()), [])
+        self.assertEqual(subject._identity(owner), (original.stat().st_dev, original.stat().st_ino))
+
+
+    def test_caller_owned_fd_numeric_reuse_cannot_rebind_store_expected_pin(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        original_identity = subject._identity(store._expected_fd)
+        foreign = self.base / "foreign-reused-root"
+        foreign.mkdir(mode=0o700)
+        foreign_fd = self.owner_fd(foreign)
+        # Replace only a descriptor this fixture still exclusively owns, not a
+        # free number that another subsystem could have acquired after close.
+        os.dup2(foreign_fd, owner, inheritable=False)
+        self.assertEqual(subject._identity(owner), subject._identity(foreign_fd))
+        self.assertNotEqual(subject._identity(owner), original_identity)
+        store.commit(self.first, self.value(enabled=False))
+        self.assertEqual(subject._identity(store._expected_fd), original_identity)
+        self.assertEqual(list(foreign.iterdir()), [])
+        self.assertEqual(json.loads(self.path().read_bytes())["enabled"], False)
+
+    def test_rename_after_prelock_guard_confines_lock_to_original_and_refuses(self):
+        owner = self.owner_fd(self.root)
+        original = self.base / "post-guard-original"
+        real_guard = subject.ReadUsageStore._root_guard
+        changed = False
+        def guard(store):
+            nonlocal changed
+            real_guard(store)
+            if not changed:
+                changed = True
+                self.root.rename(original)
+                self.root.mkdir(mode=0o700)
+        with patch.object(subject.ReadUsageStore, "_root_guard", guard):
+            self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=owner))
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual({entry.name for entry in original.iterdir()}, {subject.ReadUsageStore.LOCK})
+        self.assertEqual(subject._identity(owner), (original.stat().st_dev, original.stat().st_ino))
+        self.assertFalse((original / (self.key + ".json")).exists())
+
+    def test_expected_fd_survives_busy_and_unknown_namespace_constructor_cleanup(self):
+        owner = self.owner_fd(self.root)
+        store = self.store(expected_root_fd=owner)
+        store.commit(self.first, self.value(enabled=False))
+        before = self.path().read_bytes()
+        fd_count = len(os.listdir("/proc/self/fd"))
+        self.code("BUSY", lambda: self.store(expected_root_fd=owner))
+        self.assertEqual(len(os.listdir("/proc/self/fd")), fd_count)
+        self.assertEqual(self.path().read_bytes(), before)
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
+        store.close()
+        unknown = self.root / "unknown-owner-fixture"
+        unknown.write_bytes(b"preserve")
+        fd_count = len(os.listdir("/proc/self/fd"))
+        self.code("UNCONFIRMED", lambda: self.store(expected_root_fd=owner))
+        self.assertEqual(len(os.listdir("/proc/self/fd")), fd_count)
+        self.assertEqual(unknown.read_bytes(), b"preserve")
+        self.assertEqual(self.path().read_bytes(), before)
+        self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
 
 
 if __name__ == "__main__":

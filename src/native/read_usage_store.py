@@ -5,6 +5,13 @@ Records are reconciliation evidence, NEVER restored enablement or acknowledgemen
 Fresh coordinator instances must invalidate old Sessions/grants. Same-UID hostile
 writers, mount changes and filesystem power-loss behavior require separate scope.
 All filesystem calls are synchronous; timeout does not cancel a blocked syscall.
+The owner must keep the root/ancestors stable during operations: a rename after
+validation can leave writes in the original pinned directory before refusal,
+never authorize a replacement path. Expected-root caller FDs must remain
+exclusively owned until duplication completes; same-inode OFD ABA is not proven
+by inode samples. After duplication the caller may close/reuse its original.
+Store-owned private descriptors must not be externally closed or replaced;
+violating that trusted in-process ownership can make numeric FD cleanup unsafe.
 """
 import json
 import os
@@ -125,13 +132,19 @@ class ReadUsageStore:
     MAX_BYTES = 256
     LOCK = ".read-usage.lock"
 
-    def __init__(self, root, entries):
+    def __init__(self, root, entries, *, expected_root_fd=None):
         self._mutex = threading.RLock()
         self._busy = self._closed = self._broken = False
         self._pid = os.getpid()
         self._pins, self._lock = [], None
+        self._expected_fd = None
+        self._expected_identity = None
         self._entries = []
         if sys.platform != "linux" or fcntl is None or not all(operation in os.supports_dir_fd for operation in (os.open, os.stat, os.rename, os.unlink)):
+            _fail("UNSUPPORTED")
+        if expected_root_fd is not None and (type(expected_root_fd) is not int or not 3 <= expected_root_fd <= 2147483647):
+            _fail("INVALID")
+        if expected_root_fd is not None and not hasattr(fcntl, "F_DUPFD_CLOEXEC"):
             _fail("UNSUPPORTED")
         if type(root) is not str:
             _fail("INVALID")
@@ -155,9 +168,26 @@ class ReadUsageStore:
         self._allowed = {self.LOCK} | {key + suffix for key in keys for suffix in (".json", ".pending", ".writing")}
         failure = None
         try:
+            if expected_root_fd is not None:
+                # The caller owns this process-local FD, not a numeric identity
+                # transferable through JSON. Pin an independent CLOEXEC duplicate.
+                _directory(os.fstat(expected_root_fd), final=True)
+                expected = _identity(expected_root_fd)
+                duplicate = fcntl.fcntl(expected_root_fd, fcntl.F_DUPFD_CLOEXEC, 3)
+                if type(duplicate) is not int or duplicate < 3:
+                    _fail()
+                self._expected_fd = duplicate
+                _directory(os.fstat(self._expected_fd), final=True)
+                if _identity(self._expected_fd) != expected or _identity(expected_root_fd) != expected:
+                    _fail()
+                self._expected_identity = expected
             self._pins = _chain(raw)
             self._identities = tuple(_identity(fd) for fd in self._pins)
+            # This comparison precedes namespace scans, lock creation and fsync.
+            if self._expected_fd is not None and self._identities[-1] != self._expected_identity:
+                _fail()
             self._namespace()
+            self._root_guard()  # Recheck the full path/pin binding before the first mutation.
             self._lock = os.open(self.LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
                                  0o600, dir_fd=self._pins[-1])
             self._file(self._lock)
@@ -171,8 +201,8 @@ class ReadUsageStore:
             self._guard()
         except BaseException as error:
             self._closed = True
-            cleaned = _close_fds([self._lock, *reversed(self._pins)])
-            self._lock, self._pins = None, []
+            cleaned = _close_fds([self._lock, self._expected_fd, *reversed(self._pins)])
+            self._lock, self._expected_fd, self._pins = None, None, []
             failure = error.code if cleaned and isinstance(error, ReadUsageStoreError) else "UNCONFIRMED"
         if failure is not None:
             raise ReadUsageStoreError(failure) from None
@@ -208,13 +238,14 @@ class ReadUsageStore:
             if not _close_fds([fd]):
                 _fail()
 
-    def _guard(self):
-        if self._closed:
-            _fail("CLOSED")
-        if self._broken or os.getpid() != self._pid:
-            _fail()
+    def _root_guard(self):
         current = []
         try:
+            if self._expected_fd is not None:
+                _directory(os.fstat(self._expected_fd), final=True)
+                if (_identity(self._expected_fd) != self._expected_identity
+                        or self._expected_identity != self._identities[-1]):
+                    _fail()
             current = _chain(self._root_path)
             if tuple(_identity(fd) for fd in current) != self._identities:
                 _fail()
@@ -222,15 +253,22 @@ class ReadUsageStore:
                 _directory(os.fstat(fd), final=index == len(self._pins) - 1)
                 if _identity(fd) != self._identities[index]:
                     _fail()
+        finally:
+            if not _close_fds(reversed(current)):
+                _fail()
+
+    def _guard(self):
+        if self._closed:
+            _fail("CLOSED")
+        if self._broken or os.getpid() != self._pid:
+            _fail()
+        try:
+            self._root_guard()
             self._named(self.LOCK, self._lock_identity)
             self._namespace()
         except BaseException:
             self._broken = True
             _fail()
-        finally:
-            if not _close_fds(reversed(current)):
-                self._broken = True
-                _fail()
 
     def _entry(self, conversation):
         for item, key, state in self._entries:
@@ -368,8 +406,8 @@ class ReadUsageStore:
         if self._closed:
             return
         self._closed = True
-        fds, self._pins = [self._lock, *reversed(self._pins)], []
-        self._lock = None
+        fds, self._pins = [self._lock, self._expected_fd, *reversed(self._pins)], []
+        self._lock = self._expected_fd = None
         if not _close_fds(fds):
             _fail()
 
