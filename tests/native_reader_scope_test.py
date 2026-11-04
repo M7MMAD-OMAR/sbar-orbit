@@ -1,4 +1,5 @@
 """Deterministic fake-kernel fixtures, not actual cgroup or OS drain qualification."""
+import fcntl
 import io
 import json
 import os
@@ -34,6 +35,8 @@ class ReaderScopeTests(unittest.TestCase):
         self.private = self.base / "private"
         self.private.mkdir(mode=0o700)
         self.journal = self.private / "debt.jsonl"
+        self.initialized = False
+        (self.root / "cgroup.events").write_text("populated 0\nfrozen 0\n")
         self.parent_controls = ("cgroup.kill", "cgroup.procs", "memory.max", "memory.swap.max", "pids.max", "cpu.max", "cgroup.subtree_control")
         for name in self.parent_controls:
             (self.root / name).write_text("shared-parent-untouched\n")
@@ -131,11 +134,17 @@ class ReaderScopeTests(unittest.TestCase):
         target = self.fdpath(fd)
         self.calls.append(("fsync", str(target)))
         if target == self.journal:
-            self.synced_phases.append(self.records()[-1]["phase"])
+            records = self.records()
+            if records:
+                self.synced_phases.append(records[-1]["phase"])
         return self.real_fsync(fd)
 
     def scope(self, **kwargs):
+        # Only the fixture's first successful open explicitly initializes its fresh domain.
+        # A later missing file never implicitly opts back into initialization.
+        kwargs.setdefault("initialize", not self.initialized)
         result = subject.ReaderScope(self.root, self.journal, **kwargs)
+        self.initialized = True
         self.scopes.append(result)
         return result
 
@@ -522,6 +531,270 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(receipt["scopeEmpty"])
         self.assertTrue(receipt["rootReaped"])
         self.assertFalse(receipt["recovered"])
+
+    def test_default_missing_journal_refuses_without_creating_file_or_leaf(self):
+        self.assert_code("DEBT", lambda: self.scope(initialize=False))
+        self.assertFalse(self.journal.exists())
+        self.assertIsNone(self.leaf)
+        self.assertFalse(any(kind == "mkdir" for kind, _ in self.calls))
+
+    def test_initialize_flag_requires_literal_boolean(self):
+        for value in (0, 1, "true", None, [], {}):
+            self.assert_code("INVALID", lambda: self.scope(initialize=value))
+        self.assertFalse(self.journal.exists())
+
+    def test_explicit_initialization_never_overwrites_existing_idle_or_debt(self):
+        scope = self.scope(initialize=True)
+        before = self.journal.read_bytes()
+        with self.assertRaises(subject.ReaderScopeError):
+            self.scope(initialize=True)
+        self.assertEqual(self.journal.read_bytes(), before)
+        scope.prepare()
+        before = self.journal.read_bytes()
+        scope.close()
+        self.assert_code("DEBT", lambda: self.scope(initialize=True))
+        self.assertEqual(self.journal.read_bytes(), before)
+        replacement = self.scope(initialize=False)
+        self.assertTrue(replacement.status()["hasDebt"])
+
+    def test_missing_expected_journal_after_debt_is_not_implicitly_reinitialized(self):
+        scope, child = self.admitted()
+        scope.close()
+        self.journal.unlink()
+        self.assert_code("DEBT", self.scope)
+        self.assert_code("DEBT", lambda: self.scope(initialize=True))
+        self.assertFalse(self.journal.exists())
+        self.assertTrue(self.leaf.exists())
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_fresh_initialization_refuses_recursively_populated_root(self):
+        (self.root / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+        self.assert_code("DEBT", lambda: self.scope(initialize=True))
+        self.assertIsNone(self.leaf)
+        if self.journal.exists():
+            self.assertNotIn(b'"phase":"idle"', self.journal.read_bytes())
+
+    def test_fresh_initialization_refuses_orphan_leaf_even_when_events_say_empty(self):
+        orphan = self.root / ("orbit-reader-" + "a" * 32)
+        orphan.mkdir(mode=0o700)
+        (orphan / "cgroup.kill").write_text("orphan-untouched")
+        self.assert_code("DEBT", lambda: self.scope(initialize=True))
+        self.assertEqual((orphan / "cgroup.kill").read_text(), "orphan-untouched")
+
+    def test_fresh_initialization_refuses_any_child_domain_not_only_owned_name(self):
+        (self.root / "other-owner-domain").mkdir(mode=0o700)
+        self.assert_code("DEBT", lambda: self.scope(initialize=True))
+        self.assertFalse(any(kind == "write" and name.startswith(str(self.root)) for kind, name in self.calls))
+
+    def test_fresh_initialization_rejects_unavailable_or_malformed_root_population(self):
+        (self.root / "cgroup.events").write_text("populated 0\npopulated 1\n")
+        with self.assertRaises(subject.ReaderScopeError):
+            self.scope(initialize=True)
+        self.assertIsNone(self.leaf)
+
+    def test_idle_checkpoint_preserves_inode_lock_flags_and_exclusive_guard(self):
+        scope = self.scope()
+        before_stat = self.journal.stat()
+        before_flags = fcntl.fcntl(scope._journal_fd, fcntl.F_GETFL)
+        before_fdflags = fcntl.fcntl(scope._journal_fd, fcntl.F_GETFD)
+        scope.checkpoint()
+        after_stat = self.journal.stat()
+        self.assertEqual((before_stat.st_dev, before_stat.st_ino), (after_stat.st_dev, after_stat.st_ino))
+        self.assertEqual(fcntl.fcntl(scope._journal_fd, fcntl.F_GETFL), before_flags)
+        self.assertEqual(fcntl.fcntl(scope._journal_fd, fcntl.F_GETFD), before_fdflags)
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual((self.records()[0]["phase"], self.records()[0]["sequence"]), ("idle", 0))
+        self.assertFalse(scope.status()["hasDebt"])
+        self.assert_code("BUSY", self.scope)
+        scope.close()
+        reopened = self.scope()
+        self.assertFalse(reopened.status()["hasDebt"])
+
+    def test_healthy_operations_exceed_64k_equivalent_history_while_checkpoint_stays_bounded(self):
+        total_history = 0
+        scope = self.scope()
+        original_inode = self.journal.stat().st_ino
+        for _ in range(64):
+            scope.prepare()
+            receipt = scope.retire()
+            self.assertTrue(receipt["scopeEmpty"])
+            total_history += self.journal.stat().st_size
+            scope.checkpoint()
+            self.assertEqual(self.journal.stat().st_ino, original_inode)
+            self.assertLess(self.journal.stat().st_size, 4096)
+            self.assertEqual(len(self.records()), 1)
+            self.assertFalse(scope.status()["hasDebt"])
+            self.assert_code("DEBT", scope.prepare)
+            scope.close()
+            scope = self.scope(initialize=False)
+        self.assertGreater(total_history, 65536)
+
+    def test_checkpoint_never_erases_active_or_unknown_kill_debt(self):
+        scope, child = self.admitted()
+        before = self.journal.read_bytes()
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        scope.kill()
+        before = self.journal.read_bytes()
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_checkpoint_never_erases_intent_without_pinned_leaf_identity(self):
+        scope = self.scope()
+        with patch.object(os, "mkdir", side_effect=OSError("fixture intent interruption")):
+            self.assert_code("UNKNOWN", scope.prepare)
+        before = self.journal.read_bytes()
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_checkpoint_never_erases_unfinished_recovery(self):
+        scope, child = self.admitted()
+        replacement = self.restart(scope)
+        replacement.recover()
+        before = self.journal.read_bytes()
+        self.assert_code("DEBT", replacement.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertTrue(replacement.status()["hasDebt"])
+
+    def test_retired_checkpoint_preserves_single_operation_and_old_callback_refusal(self):
+        scope = self.prepared()
+        old_kill, old_retire = scope.kill, scope.retire
+        scope.retire()
+        scope.checkpoint()
+        self.assert_code("DEBT", scope.prepare)
+        self.assert_code("DEBT", scope.recover)
+        scope.close()
+        replacement = self.scope()
+        replacement.prepare()
+        before = self.journal.read_bytes()
+        self.assert_code("UNKNOWN", old_kill)
+        self.assert_code("UNKNOWN", old_retire)
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_checkpoint_requires_root_still_empty_and_without_child_directories(self):
+        scope = self.scope()
+        before = self.journal.read_bytes()
+        (self.root / "cgroup.events").write_text("populated 1\n")
+        with self.assertRaises(subject.ReaderScopeError):
+            scope.checkpoint()
+        self.assertEqual(self.journal.read_bytes(), before)
+        (self.root / "cgroup.events").write_text("populated 0\n")
+        (self.root / "unrelated-child").mkdir(mode=0o700)
+        with self.assertRaises(subject.ReaderScopeError):
+            scope.checkpoint()
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_checkpoint_completed_truncate_then_storage_failure_reopens_as_debt(self):
+        scope = self.scope()
+        original = os.ftruncate
+        failed = False
+        def truncate_then_fail(fd, length):
+            nonlocal failed
+            result = original(fd, length)
+            if not failed and self.fdpath(fd) == self.journal:
+                failed = True
+                raise OSError("fixture failure after truncate")
+            return result
+        with patch.object(os, "ftruncate", side_effect=truncate_then_fail):
+            self.assert_code("UNKNOWN", scope.checkpoint)
+        self.assert_code("UNKNOWN", scope.status)
+        scope.close()
+        self.assert_code("DEBT", self.scope)
+
+    def test_checkpoint_partial_write_is_torn_not_a_restart_permission(self):
+        scope = self.scope()
+        original_truncate = os.ftruncate
+        truncations = 0
+        def fail_cleanup_truncate(fd, length):
+            nonlocal truncations
+            if self.fdpath(fd) == self.journal:
+                truncations += 1
+                if truncations > 1:
+                    raise OSError("fixture invalidation storage unavailable")
+            return original_truncate(fd, length)
+        failed = False
+        def prefix_then_fail(fd, data):
+            nonlocal failed
+            if self.fdpath(fd) == self.journal and not failed:
+                failed = True
+                self.real_write(fd, data[:max(1, len(data) // 2)])
+                raise OSError("fixture partial checkpoint write")
+            return self.write(fd, data)
+        with patch.object(os, "write", side_effect=prefix_then_fail), patch.object(os, "ftruncate", side_effect=fail_cleanup_truncate):
+            self.assert_code("UNKNOWN", scope.checkpoint)
+        self.assertGreater(len(self.journal.read_bytes()), 0)
+        self.assertFalse(self.journal.read_bytes().endswith(b"\n"))
+        self.assert_code("UNKNOWN", scope.status)
+        scope.close()
+        self.assert_code("DEBT", self.scope)
+
+    def test_checkpoint_fsync_failure_invalidates_if_storage_allows_cleanup(self):
+        scope = self.scope()
+        failed = False
+        def fail_once(fd):
+            nonlocal failed
+            if self.fdpath(fd) == self.journal and not failed:
+                failed = True
+                raise OSError("fixture checkpoint sync failure")
+            return self.fsync(fd)
+        with patch.object(os, "fsync", side_effect=fail_once):
+            self.assert_code("UNKNOWN", scope.checkpoint)
+        self.assert_code("UNKNOWN", scope.status)
+        scope.close()
+        self.assert_code("DEBT", self.scope)
+
+    def test_checkpoint_powerloss_after_truncate_leaves_no_autoreset_on_reopen(self):
+        scope = self.scope()
+        original = os.ftruncate
+        class SimulatedPowerLoss(BaseException):
+            pass
+        def crash_after_truncate(fd, length):
+            original(fd, length)
+            if self.fdpath(fd) == self.journal:
+                raise SimulatedPowerLoss()
+        with patch.object(os, "ftruncate", side_effect=crash_after_truncate):
+            with self.assertRaises(SimulatedPowerLoss):
+                scope.checkpoint()
+        scope.close()
+        self.assert_code("DEBT", self.scope)
+
+    def test_checkpoint_closed_inherited_and_replaced_journal_guards(self):
+        scope = self.scope()
+        before = self.journal.read_bytes()
+        with patch.object(os, "getpid", return_value=self.owner_pid + 1):
+            self.assert_code("UNKNOWN", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        original = self.private / "checkpoint-original-journal"
+        self.journal.rename(original)
+        self.journal.write_bytes(before)
+        self.journal.chmod(0o600)
+        self.assert_code("IDENTITY", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        scope.close()
+        self.assert_code("UNKNOWN", scope.checkpoint)
+
+    def test_full_journal_with_unresolved_work_cannot_be_checkpointed_or_evicted(self):
+        scope, child = self.admitted()
+        before = self.journal.read_bytes()
+        scope.MAX_JOURNAL_BYTES = len(before)
+        self.assert_code("DEBT", scope.kill)
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+
+    def test_checkpoint_replaced_resource_root_does_not_truncate_journal(self):
+        scope = self.scope()
+        before = self.journal.read_bytes()
+        self.root.rename(self.base / "original-checkpoint-root")
+        self.root.mkdir(mode=0o700)
+        (self.root / "cgroup.events").write_text("populated 0\n")
+        for name in self.parent_controls:
+            (self.root / name).write_text("shared-parent-untouched\n")
+        self.assert_code("IDENTITY", scope.checkpoint)
+        self.assertEqual(self.journal.read_bytes(), before)
 
 
 if __name__ == "__main__":

@@ -152,8 +152,10 @@ class ReaderScope:
     MAX_JOURNAL_BYTES = 65536
     _PHASES = {"idle", "intent", "pinned", "prepared", "admitting", "admitted", "killing", "recovery", "retired"}
 
-    def __init__(self, root, journal, *, limits=ReaderLimits()):
+    def __init__(self, root, journal, *, limits=ReaderLimits(), initialize=False):
         self._mutex = threading.RLock()
+        if type(initialize) is not bool:
+            _fail("INVALID", "Reader journal initialization must be an explicit boolean")
         if type(limits) is not ReaderLimits:
             _fail("INVALID", "Reader limits must be ReaderLimits")
         self.root = Path(root)
@@ -182,23 +184,26 @@ class ReaderScope:
             self._journal_dir = _directory(os.fspath(self.journal.parent), private=True)
             self._journal_dir_identity = _identity(self._journal_dir)
             flags = os.O_RDWR | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
-            created = False
-            try:
-                self._journal_fd = os.open(self.journal.name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=self._journal_dir)
-                created = True
-            except FileExistsError:
-                self._journal_fd = os.open(self.journal.name, flags, dir_fd=self._journal_dir)
+            if initialize:
+                self._root_no_work()
+                try:
+                    self._journal_fd = os.open(self.journal.name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=self._journal_dir)
+                except FileExistsError:
+                    _fail("DEBT", "Explicit reader initialization cannot replace an existing journal")
+            else:
+                try:
+                    self._journal_fd = os.open(self.journal.name, flags, dir_fd=self._journal_dir)
+                except FileNotFoundError:
+                    _fail("DEBT", "Expected reader journal is missing; initialization is not implicit")
             self._journal_identity = _identity(self._journal_fd)
             self._validate_journal()
             try:
                 fcntl.flock(self._journal_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 _fail("BUSY", "Reader journal already has an active owner")
-            if created:
-                self._record = {"v": 1, "sequence": -1, "phase": "idle", "boot": self._boot,
-                                "root": self._root_identity, "owner": self._owner, "leaf": None,
-                                "leaf_identity": None, "process": None, "recovered": False,
-                                "limits": self._limits_record()}
+            if initialize:
+                self._root_no_work()
+                self._record = self._initial_record()
                 self._append("idle")
                 os.fsync(self._journal_dir)
             else:
@@ -208,6 +213,53 @@ class ReaderScope:
         except BaseException:
             self.close()
             raise
+
+    def _initial_record(self):
+        return {"v": 1, "sequence": -1, "phase": "idle", "boot": self._boot,
+                "root": self._root_identity, "owner": self._owner, "leaf": None,
+                "leaf_identity": None, "process": None, "recovered": False,
+                "limits": self._limits_record()}
+
+    @staticmethod
+    def _populated(text):
+        fields = {}
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) != 2 or parts[0] in fields or not parts[1].isdigit():
+                _fail("UNKNOWN", "Reader populated state is invalid")
+            fields[parts[0]] = int(parts[1])
+        if fields.get("populated") not in (0, 1):
+            _fail("UNKNOWN", "Reader populated state is unavailable")
+        return fields["populated"]
+
+    def _root_no_work(self):
+        """Read the trusted root only, never configure or kill this parent."""
+        fd = _directory(os.fspath(self.root))
+        try:
+            _cgroup2(fd)
+            if _identity(fd) != self._root_identity or _identity(self._root_fd) != self._root_identity:
+                _fail("IDENTITY", "Reader resource root changed")
+        finally:
+            os.close(fd)
+        events = os.open("cgroup.events", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                         dir_fd=self._root_fd)
+        try:
+            _cgroup2(events)
+            info = os.fstat(events)
+            if not stat.S_ISREG(info.st_mode) or info.st_dev != self._root_identity[0]:
+                _fail("IDENTITY", "Reader root events identity is invalid")
+            data = os.read(events, 65537)
+            if len(data) > 65536 or self._populated(data.decode("ascii")) != 0:
+                _fail("DEBT", "Reader initialization or checkpoint requires an empty resource root")
+        finally:
+            os.close(events)
+        with os.scandir(self._root_fd) as entries:
+            for count, entry in enumerate(entries):
+                if count >= 4096:
+                    _fail("DEBT", "Reader resource root enumeration exceeds its bound")
+                mode = entry.stat(follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                    _fail("DEBT", "Reader resource root contains an existing child or alias")
 
     @property
     def limits(self):
@@ -433,16 +485,9 @@ class ReaderScope:
     @_serialized
     def empty(self):
         """Recursive kernel populated state only, never root-reap or result ownership."""
-        fields = {}
-        for line in self._control("cgroup.events").splitlines():
-            parts = line.split()
-            if len(parts) != 2 or parts[0] in fields or not parts[1].isdigit():
-                _fail("UNKNOWN", "Reader populated state is invalid")
-            fields[parts[0]] = int(parts[1])
-        if fields.get("populated") not in (0, 1):
-            _fail("UNKNOWN", "Reader populated state is unavailable")
+        populated = self._populated(self._control("cgroup.events"))
         self._guard(leaf=True)
-        return fields["populated"] == 0
+        return populated == 0
 
     @_serialized
     def kill(self):
@@ -509,6 +554,41 @@ class ReaderScope:
         self._child = None
         return {"scopeEmpty": True, "rootReaped": root_reaped,
                 "neverAdmitted": self._record["process"] is None, "recovered": self._recovered}
+
+    @_serialized
+    def checkpoint(self):
+        """Bound healthy history on the SAME locked inode, never clear active debt.
+
+        The instance's single-operation flag is deliberately not reset. A crash
+        leaving empty/torn storage refuses reopen. A fully persisted idle record
+        describes only this already-proven no-work state, not active work.
+        """
+        self._guard()
+        if self._record["phase"] not in ("idle", "retired") or self._leaf_fd is not None or self._child is not None:
+            _fail("DEBT", "Reader checkpoint cannot discard unresolved scope ownership")
+        self._root_no_work()
+        # Keep the original flock and inode; never rename or replace the lock file.
+        try:
+            fcntl.flock(self._journal_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            _fail("BUSY", "Reader journal lock is unavailable for checkpoint")
+        self._guard()
+        try:
+            os.ftruncate(self._journal_fd, 0)
+            self._record = self._initial_record()
+            self._append("idle")
+            self._validate_journal()
+        except BaseException:
+            self._poisoned = True
+            # Even a failed fsync after writing complete JSON must not look like
+            # success on an ordinary reopen. If storage rejects invalidation as
+            # well, durable failure marking cannot be guaranteed; never claim it.
+            try:
+                os.ftruncate(self._journal_fd, 0)
+                os.fsync(self._journal_fd)
+            except BaseException:
+                pass
+            raise
 
     @_serialized
     def status(self):

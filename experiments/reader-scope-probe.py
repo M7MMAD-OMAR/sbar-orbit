@@ -115,7 +115,7 @@ def bootstrap_owner():
     while True: signal.pause()
 
 def orphan_owner(root, journal):
-    scope = ReaderScope(Path(root), Path(journal), limits=LIMITS)
+    scope = ReaderScope(Path(root), Path(journal), limits=LIMITS, initialize=True)
     scope.prepare()
     process = spawn("root")
     try:
@@ -183,7 +183,7 @@ def run():
             os.close(bootstrap_fd)
         reports.append({"scenario": "owner-death-before-admission", "bootstrapReaped": True, "parentDeathSignal": "SIGKILL"})
 
-        scope = ReaderScope(root, artifacts / "empty.jsonl", limits=LIMITS); scopes.append(scope)
+        scope = ReaderScope(root, artifacts / "empty.jsonl", limits=LIMITS, initialize=True); scopes.append(scope)
         scope.prepare()
         if not scope.empty(): raise RuntimeError("Fresh leaf is populated")
         receipt = scope.retire()
@@ -192,7 +192,7 @@ def run():
         reports.append({"scenario": "never-admitted-single-use", "receipt": receipt})
         scope.close()
 
-        scope = ReaderScope(root, artifacts / "descendant.jsonl", limits=LIMITS); scopes.append(scope)
+        scope = ReaderScope(root, artifacts / "descendant.jsonl", limits=LIMITS, initialize=True); scopes.append(scope)
         scope.prepare()
         process = spawn("descendant"); roots.append(process)
         scope.admit(process); resume(process)
@@ -206,7 +206,7 @@ def run():
         reports.append({"scenario": "root-exit-and-eof-with-live-term-ignoring-descendant", "refusalBeforeKill": refusal, "receipt": receipt})
         scope.close()
 
-        scope = ReaderScope(root, artifacts / "root.jsonl", limits=LIMITS); scopes.append(scope)
+        scope = ReaderScope(root, artifacts / "root.jsonl", limits=LIMITS, initialize=True); scopes.append(scope)
         scope.prepare()
         process = spawn("root"); roots.append(process)
         scope.admit(process); resume(process)
@@ -232,6 +232,29 @@ def run():
         if not receipt["scopeEmpty"] or not receipt["recovered"] or receipt["rootReaped"]: raise RuntimeError("Recovery manufactured old-parent root reap")
         reports.append({"scenario": "owner-death-durable-debt-and-exact-recovery", "refusalBeforeRecovery": refusal, "receipt": receipt})
         scope.close()
+        checkpoint_journal = artifacts / "checkpoint.jsonl"
+        cumulative_history = 0
+        maximum_checkpoint = 0
+        journal_identity = None
+        for index in range(64):
+            scope = ReaderScope(root, checkpoint_journal, limits=LIMITS, initialize=index == 0)
+            scopes.append(scope)
+            scope.prepare(); scope.retire()
+            before = checkpoint_journal.stat()
+            cumulative_history += before.st_size
+            current_identity = (before.st_dev, before.st_ino)
+            if journal_identity is None: journal_identity = current_identity
+            if current_identity != journal_identity: raise RuntimeError("Checkpoint replaced the journal inode")
+            scope.checkpoint()
+            after = checkpoint_journal.stat()
+            maximum_checkpoint = max(maximum_checkpoint, after.st_size)
+            if (after.st_dev, after.st_ino) != journal_identity or after.st_size >= 4096:
+                raise RuntimeError("Checkpoint identity/size bound failed")
+            expect_refusal(scope.prepare, {"DEBT"})
+            scope.close()
+        if cumulative_history <= ReaderScope.MAX_JOURNAL_BYTES: raise RuntimeError("Checkpoint fixture did not cross history capacity")
+        reports.append({"scenario": "same-inode-healthy-checkpoint", "cycles": 64, "cumulativeHistoryBytes": cumulative_history,
+                        "maximumCheckpointBytes": maximum_checkpoint, "inodePreserved": True})
         success = True
     finally:
         for scope in scopes:

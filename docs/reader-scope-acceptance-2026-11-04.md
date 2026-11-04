@@ -6,6 +6,10 @@
 below. This is an owned-process/kernel test, not an original-application
 capture, GPU-memory measurement, general process sandbox or phase-gate pass.
 
+Subsequent [explicit initialization/checkpoint evidence](reader-journal-acceptance-2026-11-04.md)
+updates the implementation. This report retains its earlier exact source and
+5-case measured scope; it is not retroactive evidence for later changes.
+
 ## Measured host and boundary
 
 - Linux `7.2.15-200.fc44.x86_64`, x86_64, Python 3.14.8, actual cgroup2 fstatfs.

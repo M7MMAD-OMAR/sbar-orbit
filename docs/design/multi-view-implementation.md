@@ -420,3 +420,56 @@ admission, broker/TS/native integration and retained consumer-release tickets
 remain next work. Existing capture/a11y completion is not automatically a trusted
 scope receipt. No multi-view phase gate passed, no second view or new public
 permission was enabled, and source 0.4.3 remains an unpublished candidate.
+
+## 9. Explicit journal lifecycle and bounded reader output
+
+[ReaderScope](../../src/native/reader_scope.py) now defaults to existing journals
+only; missing state refuses DEBT. Fresh setup must explicitly initialize under
+protected owner runtime, with EXCL/no-overwrite and recursively empty/no-child
+root checks. This flag is not client authority. Checkpoint compacts only known
+idle/retired state after original root/journal validation and exclusive ownership,
+with no helper or leaf retained. The same inode/flock and single-operation object
+flag survive. Partial/empty/torn checkpoint storage refuses; current failure
+poisons the instance and attempts same-inode invalidation. Complete valid old
+retired/new idle images after crash describe only already-proved no work. No
+algorithm can infer successful fsync or guarantee fault marking on failed storage.
+
+The [new dated kernel report](../reader-journal-acceptance-2026-11-04.md) reran
+the prior 5 scenarios and 64 healthy create/retire/checkpoint cycles: 106368
+cumulative pre-checkpoint bytes, 291-byte maximum post-checkpoint record, unchanged
+inode, no object reuse, no cleanup errors, fresh parent removed, shared controls
+unchanged. No original application/desktop/clipboard operation was performed.
+Helper cgroup ceilings are charge limits, not global RSS, migration recharging,
+GPU/provider completion or observed peak-memory evidence.
+
+The separate [reader pipe utility](../../src/native/reader_pipe.py) consumes
+dedicated unconsumed binary pipes from a trusted owned root. It creates no
+process, signal, grant or runtime subscription. Distinct FIFO identity prevents
+aliases splitting stdout/stderr accounting. Nonblocking selector reads have
+strict lower-only 1 MiB/16 KiB byte bounds and at most one unappended overflow
+sentinel; the absolute deadline/cancellation path includes root waiting, result
+conversion and final cleanup. Errors carry fixed content-free messages, not
+output or commands. EOF/root status is explicitly not a scope-empty receipt.
+
+Output fixtures cover 49 controlled cases and 2 finite isolated stdlib children
+for actual binary pipe/selector interoperability and overflow. Journal fixtures
+now cover 58 cases. Exact counts/no skips are required by the wrappers, and all
+are included in the default verifier. Independent static review found no
+actionable defect within the trusted-owner/dedicated-pipe contract.
+
+Initial full verification exposed an existing accessibility parent-death fixture
+race: the worker disappeared while its proc text was being read, producing ESRCH
+rather than ENOENT. The fixture now pins the original worker with a pidfd while
+its parent retains it, requires it alive before parent death, waits on original
+process-exit readiness and uses only that pinned handle for cleanup. This is a
+stronger root-only witness, not warm-helper descendant/GPU drain qualification.
+No production accessibility implementation or assertions were skipped.
+
+These modules remain dormant and unimported by production consumers. Fixed
+capture bootstrap, scope-plus-stream producer integration, external provider
+completion, allocator/cache/queue ownership, owner-issued enrollment and status
+UI remain unfinished. No multi-view gate passed or feature was enabled.
+
+Final verification for tranche 9: 620 pass, 5 skip, 0 fail, 12587 assertions across
+68 files in 68.64 seconds; final strict root typing passed. All 109 journal/output
+Python cases and their wrappers remained mandatory. No release or site deploy.
