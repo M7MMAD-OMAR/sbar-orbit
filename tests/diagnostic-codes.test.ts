@@ -46,6 +46,10 @@ async function thrownCodes(): Promise<Set<string>> {
  * identify their real runtime producer. Unused codes belong in neither set.
  */
 const listedButNeverThrown = new Map<string, string>([
+  ["READ_VIEW_LIMIT", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
+  ["READ_VIEW_BUSY", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
+  ["READ_VIEW_UNCONFIRMED", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
+  ["READ_VIEW_BACKEND", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
   ["APPLICATION_BUSY", "Raised by Python ApplicationLeaseConflict in native/session_worker.py and forwarded dynamically by NativeWorker.receive"],
   ["CAPTURE_UNAVAILABLE", "Raised by Python CaptureUnavailable and mapped in native/session_worker.py, forwarded dynamically by NativeWorker.receive"],
   ["CAPTURE_DEADLINE_EXCEEDED", "Raised by Python CaptureDeadlineExceeded and mapped in native/session_worker.py, forwarded dynamically by NativeWorker.receive"],

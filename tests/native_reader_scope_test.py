@@ -797,5 +797,253 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before)
 
 
+    def spawn_reserved(self, *, state="R"):
+        scope = self.prepared()
+        scope.reserve_spawn()
+        child = FakeChild(424242)
+        self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": state}
+        return scope, child
+
+    def test_spawn_intent_is_durable_v2_without_rewriting_old_v1_records(self):
+        scope = self.prepared()
+        original = self.journal.read_bytes()
+        self.assertTrue(all(record["v"] == 1 for record in self.records()))
+        scope.reserve_spawn()
+        self.assertTrue(self.journal.read_bytes().startswith(original))
+        last = self.records()[-1]
+        self.assertEqual((last["v"], last["phase"], last["spawn_pending"], last["process"]),
+                         (2, "spawn_intent", True, None))
+        self.assertEqual(self.synced_phases[-1], "spawn_intent")
+        self.assertTrue(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_spawn_reservation_is_once_and_not_a_public_no_child_receipt(self):
+        scope, _child = self.spawn_reserved()
+        self.assert_code("DEBT", scope.reserve_spawn)
+        self.assertFalse(hasattr(scope, "spawn_failed"))
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertIsNone(self.records()[-1]["process"])
+
+    def test_owner_death_before_spawn_keeps_uncertain_intent_permanently(self):
+        scope = self.prepared()
+        scope.reserve_spawn()  # A crash cannot prove whether Popen was entered.
+        reopened = self.restart(scope)
+        self.assert_code("UNKNOWN", reopened.recover)
+        self.assert_code("DEBT", reopened.prepare)
+        self.assert_code("DEBT", reopened.checkpoint)
+        reopened.close()
+        again = self.scope()
+        self.assert_code("UNKNOWN", again.recover)
+        self.assertTrue(self.records()[-1]["spawn_pending"])
+        self.assertTrue(self.leaf.exists())
+
+    def test_possible_child_created_before_bind_remains_debt_after_owner_loss(self):
+        scope, child = self.spawn_reserved()
+        self.assertIn(child.pid, self.processes)
+        reopened = self.restart(scope)
+        self.assert_code("UNKNOWN", reopened.recover)
+        self.assertTrue(self.records()[-1]["spawn_pending"])
+        self.assertIsNone(self.records()[-1]["process"])
+        self.assertFalse(any(event == ("write", str(self.leaf / "cgroup.procs")) for event in self.calls))
+
+    def test_empty_kill_after_unbound_spawn_preserves_pending_marker_on_restart(self):
+        scope, _child = self.spawn_reserved()
+        scope.kill()
+        self.assertEqual(self.records()[-1]["phase"], "killing")
+        self.assertTrue(self.records()[-1]["spawn_pending"])
+        self.assertTrue(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assert_code("DEBT", scope.reserve_spawn)
+        reopened = self.restart(scope)
+        self.assert_code("UNKNOWN", reopened.recover)
+        self.assertTrue(self.leaf.exists())
+
+    def test_running_child_binds_before_stop_and_cannot_retire_until_separate_reap(self):
+        scope, child = self.spawn_reserved(state="R")
+        scope.bind_child(child)
+        last = self.records()[-1]
+        self.assertEqual((last["phase"], last["spawn_pending"], last["process"]),
+                         ("spawn_bound", False, [child.pid, 200]))
+        self.assertEqual(self.synced_phases[-1], "spawn_bound")
+        self.assertTrue(scope.empty())
+        self.assert_code("UNKNOWN", scope.retire)
+        self.reaped(child)
+        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": True,
+                                         "neverAdmitted": False, "recovered": False})
+
+    def test_bound_running_child_still_needs_stop_before_membership_admission(self):
+        scope, child = self.spawn_reserved(state="R")
+        scope.bind_child(child)
+        self.assert_code("INVALID", lambda: scope.admit(child))
+        self.processes[child.pid]["state"] = "T"
+        scope.admit(child)
+        self.assertEqual(self.records()[-1]["phase"], "admitted")
+        self.assertFalse(self.records()[-1]["spawn_pending"])
+        self.assertEqual(self.synced_phases[-1], "admitted")
+
+    def test_bound_child_cannot_be_substituted_by_another_popen_with_same_pid(self):
+        scope, child = self.spawn_reserved(state="T")
+        scope.bind_child(child)
+        impostor = FakeChild(child.pid)
+        self.assert_code("IDENTITY", lambda: scope.admit(impostor))
+        self.assertEqual(self.records()[-1]["phase"], "spawn_bound")
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
+
+    def test_bound_birth_replacement_refuses_admission_before_membership_write(self):
+        scope, child = self.spawn_reserved(state="T")
+        scope.bind_child(child)
+        self.processes[child.pid]["start"] += 1
+        self.assert_code("IDENTITY", lambda: scope.admit(child))
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
+        self.assertEqual(self.records()[-1]["process"], [child.pid, 200])
+
+    def test_bind_rejects_raw_pid_reaped_or_foreign_process_without_clearing_intent(self):
+        scope, child = self.spawn_reserved()
+        self.assert_code("INVALID", lambda: scope.bind_child(child.pid))
+        child.returncode = 0
+        self.assert_code("INVALID", lambda: scope.bind_child(child))
+        child.returncode = None
+        self.processes[child.pid]["parent"] = self.owner_pid + 1
+        self.assert_code("INVALID", lambda: scope.bind_child(child))
+        self.assertTrue(self.records()[-1]["spawn_pending"])
+        self.assert_code("UNKNOWN", scope.retire)
+
+    def test_bind_birth_race_never_turns_unknown_spawn_into_resolved_ownership(self):
+        scope, child = self.spawn_reserved()
+        first = dict(self.processes[child.pid])
+        second = {**first, "start": first["start"] + 1}
+        with patch.object(subject, "_proc_identity", side_effect=[first, second]):
+            self.assert_code("IDENTITY", lambda: scope.bind_child(child))
+        self.assertTrue(self.records()[-1]["spawn_pending"])
+        self.assertIsNone(self.records()[-1]["process"])
+
+    def test_binding_journal_failure_poison_holds_debt_and_never_migrates_child(self):
+        scope, child = self.spawn_reserved()
+        def fail_binding_fsync(fd):
+            if self.fdpath(fd) == self.journal and self.records()[-1]["phase"] == "spawn_bound":
+                raise OSError("owned fixture binding fsync failure")
+            return self.fsync(fd)
+        with patch.object(os, "fsync", side_effect=fail_binding_fsync):
+            self.assert_code("UNKNOWN", lambda: scope.bind_child(child))
+        self.assert_code("UNKNOWN", scope.kill)
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
+
+    def test_bound_admission_write_uncertainty_requires_both_root_and_scope_cleanup(self):
+        scope, child = self.spawn_reserved(state="T")
+        scope.bind_child(child)
+        def write_then_fail(fd, data):
+            written = self.write(fd, data)
+            if self.fdpath(fd).name == "cgroup.procs":
+                raise OSError("owned fixture ambiguous migration")
+            return written
+        with patch.object(os, "write", side_effect=write_then_fail):
+            self.assert_code("UNKNOWN", lambda: scope.admit(child))
+        self.assertEqual(self.records()[-1]["phase"], "admitting")
+        self.assertFalse(self.records()[-1]["spawn_pending"])
+        scope.kill()
+        self.reaped(child)
+        self.assert_code("UNKNOWN", scope.retire)
+        self.populated(0)
+        self.assertTrue(scope.retire()["rootReaped"])
+
+    def test_bound_but_unmigrated_child_recovery_never_claims_original_parent_reap(self):
+        scope, child = self.spawn_reserved()
+        scope.bind_child(child)
+        reopened = self.restart(scope)
+        reopened.recover()
+        self.assertTrue(reopened.empty())
+        self.assert_code("UNKNOWN", reopened.retire)
+        self.processes.pop(child.pid)
+        self.assertEqual(reopened.retire(), {"scopeEmpty": True, "rootReaped": False,
+                                            "neverAdmitted": False, "recovered": True})
+
+    def test_forged_pending_marker_clear_recovery_retire_or_schema_downgrade_refuses(self):
+        scope, _child = self.spawn_reserved()
+        original = self.journal.read_bytes()
+        last = dict(self.records()[-1])
+        scope.close()
+        for phase, pending, version in (("killing", False, 2), ("recovery", True, 2),
+                                        ("recovery", False, 2), ("retired", False, 2),
+                                        ("killing", False, 1)):
+            with self.subTest(phase=phase, pending=pending, version=version):
+                forged = {**last, "sequence": last["sequence"] + 1,
+                          "phase": phase, "spawn_pending": pending, "v": version}
+                if phase == "recovery":
+                    forged["recovered"] = True
+                if version == 1:
+                    forged.pop("spawn_pending")
+                self.journal.write_bytes(original + (json.dumps(forged) + "\n").encode())
+                self.assert_code("DEBT", lambda: self.scope())
+        self.journal.write_bytes(original)
+
+    def test_legacy_no_spawn_scope_remains_v1_and_known_no_child_can_retire(self):
+        scope = self.prepared()
+        self.assertTrue(all(record["v"] == 1 and "spawn_pending" not in record for record in self.records()))
+        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": False,
+                                         "neverAdmitted": True, "recovered": False})
+
+
+    def test_v2_retired_generations_reopen_without_downgrade_and_checkpoint_is_fresh_v1(self):
+        callbacks = []
+        for generation in range(3):
+            scope, child = self.spawn_reserved(state="T")
+            self.assertTrue(self.records()[-1]["spawn_pending"])
+            scope.bind_child(child)
+            scope.admit(child)
+            self.reaped(child)
+            self.populated(0)
+            self.assertTrue(scope.retire()["rootReaped"])
+            self.assertEqual(self.records()[-1]["v"], 2)
+            self.assertFalse(self.records()[-1]["spawn_pending"])
+            callbacks.append(scope.kill)
+            scope.close()
+        versions = [record["v"] for record in self.records()]
+        first_v2 = versions.index(2)
+        self.assertTrue(all(version == 1 for version in versions[:first_v2]))
+        self.assertTrue(all(version == 2 for version in versions[first_v2:]))
+        checkpoint = self.scope()
+        checkpoint.checkpoint()
+        self.assertEqual(len(self.records()), 1)
+        self.assertEqual(self.records()[0]["v"], 1)
+        self.assertEqual(self.records()[0]["phase"], "idle")
+        checkpoint.close()
+        active = self.prepared()
+        active.reserve_spawn()
+        self.assertEqual(self.records()[-1]["v"], 2)
+        for callback in callbacks:
+            self.assert_code("UNKNOWN", callback)
+        self.assertTrue(active.status()["hasDebt"])
+
+
+    def test_every_legal_append_transition_rejects_v2_downgrade_or_removed_marker(self):
+        scope, child = self.spawn_reserved()
+        scope.bind_child(child)
+        template = dict(self.records()[-1])
+        edges = {"intent": {"idle", "retired"}, "pinned": {"intent"}, "prepared": {"pinned"},
+                 "spawn_intent": {"prepared"}, "spawn_bound": {"spawn_intent"},
+                 "admitting": {"prepared", "spawn_bound"}, "admitted": {"admitting"},
+                 "killing": {"pinned", "prepared", "spawn_intent", "spawn_bound", "admitting", "admitted"},
+                 "recovery": {"pinned", "prepared", "spawn_bound", "admitting", "admitted", "killing", "recovery"},
+                 "retired": {"pinned", "prepared", "spawn_bound", "admitting", "admitted", "killing", "recovery"}}
+        checked = 0
+        for phase, predecessors in edges.items():
+            for predecessor in predecessors:
+                previous = {**template, "phase": predecessor}
+                for version, remove_marker in ((1, True), (1, False), (2, True)):
+                    with self.subTest(previous=predecessor, phase=phase,
+                                      version=version, remove_marker=remove_marker):
+                        record = {**previous, "sequence": previous["sequence"] + 1,
+                                  "phase": phase, "v": version}
+                        if remove_marker:
+                            record.pop("spawn_pending")
+                        self.assert_code("DEBT", lambda: subject.ReaderScope._validate_transition(previous, record))
+                        checked += 1
+        self.assertEqual(checked, sum(len(states) for states in edges.values()) * 3)
+        self.assertGreater(checked, 60)
+
+
 if __name__ == "__main__":
     unittest.main()

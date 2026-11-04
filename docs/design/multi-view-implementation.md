@@ -473,3 +473,59 @@ UI remain unfinished. No multi-view gate passed or feature was enabled.
 Final verification for tranche 9: 620 pass, 5 skip, 0 fail, 12587 assertions across
 68 files in 68.64 seconds; final strict root typing passed. All 109 journal/output
 Python cases and their wrappers remained mandatory. No release or site deploy.
+
+## 10. Owned capture orchestration and broker read slice
+
+The [owned-scope producer](../../src/native/reader_process.py) now composes
+durable pre-spawn intent, a fixed stopped bootstrap, exact retained child birth,
+owned scope admission, pidfd resume, bounded pipe reading, strict PNG validation
+and separate scope-empty/root-reaped retirement. No generic command, raster
+fallback or implicit target resize is allowed. A spawn with no bound child remains
+UNKNOWN even if its cgroup is empty. All producer errors report both owned scope
+and external provider completion UNKNOWN. A successful PNG and drained owned
+helper still do not prove compositor/GPU/provider work finished; the conflicting
+provider resource cannot be released on that evidence alone.
+
+The [dated seven-scenario kernel report](../reader-producer-acceptance-2026-11-04.md)
+records real owned-process scope behavior on exact source hashes, without native
+desktop or original-application operations. The fixed capture producer itself was
+verified with fake scope/process fixtures, not a live application. There are 76
+scope, 28 producer, 28 PNG and 26 bootstrap Python cases, each wrapper checking
+its exact count without skips. Actual external-provider drain, physical pixel
+geometry, memory accounting across representations and an independently qualified
+second installed application remain unresolved.
+
+The [read-view registry](../../src/multi-view-views.ts) and [Sessions integration](../../src/session.ts)
+now exercise an owner-to-two-view read-only vertical in [broker fixtures](../../tests/multi-view-broker.test.ts).
+It binds a protected recipient/channel and live caller birth to already-owned
+sessions, validates current read policy and binding, issues a hidden random grant,
+charges the existing budget before fake work and suppresses late delivery after
+revocation. One capture is admitted at a time, with no automatic polling, new
+lease, application setup or fallback. Unknown provider work keeps the credit
+occupied. Concurrent enrollment, duplicate physical binding, reentrant callbacks,
+stale grant expiry, policy/owner changes and off during diagnostics were covered
+and repaired after independent review. Status is all-or-nothing per enrollment.
+
+This broker path is deliberately **fixture-only**. The ordinary IPC transport does
+not provide its protected channel; production constructs no read registry and no
+reader backend. Injected fixture usage epochs are not current CLI/MCP off. The
+existing on/off file and old concurrent adapters do not provide broker-wide
+revocation, durable epochs or a final transport delivery fence. A production
+owner/connector enrollment channel, cross-process off protocol, accounted
+serializer and qualified producer adapter are still required. Returning a test
+lease is not a public API or permission to expose captured data. No multi-view
+phase gate passed and no feature was enabled by this tranche.
+
+Independent review found and fixed five concrete broker races: concurrent
+enrollment overwrite, duplicate binding objects, stale grant pointers, reentrant
+registry enrollment and final lease access after an injected off change. A sixth
+status bug could publish one stale view before another invalidated the grant;
+status now commits a complete live enrollment or none. The first full verifier
+run also found new diagnostic codes missing from the allowlist. They are now
+explicitly classified; no raw content is journaled. Two initial broker fixture
+setup errors and eager Bun rejection matchers were corrected without weakening
+assertions or hiding failures.
+
+Final default verification: 695 pass, 5 skip, 0 fail, 13337 assertions across
+72 files in 71.25 seconds. Strict root TypeScript validation passed. No release,
+site deployment, Windows implementation or shared broker restart was performed.

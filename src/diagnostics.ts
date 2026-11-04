@@ -29,7 +29,8 @@ export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSI
   // BACKEND_ERROR. They are refusals a person or an agent can act on, and an agent that cannot tell
   // "you hit a ceiling" from "something broke" retries the wrong thing.
   'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
-  'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID',
+  'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID', 'READ_VIEW_INVALID', 'READ_VIEW_DENIED', 'READ_VIEW_OFF',
+  'READ_VIEW_LIMIT', 'READ_VIEW_BUSY', 'READ_VIEW_UNCONFIRMED', 'READ_VIEW_BACKEND',
   'CAPTURE_UNAVAILABLE', 'CAPTURE_DEADLINE_EXCEEDED', 'CAPTURE_GEOMETRY_CHANGED',
   'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED', 'NATIVE_STALE', 'NATIVE_INCOMPATIBLE', 'BROKER_UNAVAILABLE']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};

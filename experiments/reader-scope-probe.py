@@ -116,10 +116,10 @@ def bootstrap_owner():
 
 def orphan_owner(root, journal):
     scope = ReaderScope(Path(root), Path(journal), limits=LIMITS, initialize=True)
-    scope.prepare()
+    scope.prepare(); scope.reserve_spawn()
     process = spawn("root")
     try:
-        scope.admit(process)
+        scope.bind_child(process); scope.admit(process)
         resume(process); ready(process)
         print(json.dumps({"pid": process.pid}), flush=True)
         # Real coordinator death after confirmed admission; helper remains in its owned leaf.
@@ -193,9 +193,9 @@ def run():
         scope.close()
 
         scope = ReaderScope(root, artifacts / "descendant.jsonl", limits=LIMITS, initialize=True); scopes.append(scope)
-        scope.prepare()
+        scope.prepare(); scope.reserve_spawn()
         process = spawn("descendant"); roots.append(process)
-        scope.admit(process); resume(process)
+        scope.bind_child(process); scope.admit(process); resume(process)
         out, err = process.communicate(timeout=3)
         descendant = int(out.strip())
         if process.returncode != 0 or err or scope.empty(): raise RuntimeError("Root exit/EOF incorrectly became scope-empty")
@@ -207,9 +207,9 @@ def run():
         scope.close()
 
         scope = ReaderScope(root, artifacts / "root.jsonl", limits=LIMITS, initialize=True); scopes.append(scope)
-        scope.prepare()
+        scope.prepare(); scope.reserve_spawn()
         process = spawn("root"); roots.append(process)
-        scope.admit(process); resume(process)
+        scope.bind_child(process); scope.admit(process); resume(process)
         ready(process)
         scope.kill(); wait_until(scope.empty)
         refusal = expect_refusal(scope.retire, {"UNKNOWN"})
@@ -255,6 +255,17 @@ def run():
         if cumulative_history <= ReaderScope.MAX_JOURNAL_BYTES: raise RuntimeError("Checkpoint fixture did not cross history capacity")
         reports.append({"scenario": "same-inode-healthy-checkpoint", "cycles": 64, "cumulativeHistoryBytes": cumulative_history,
                         "maximumCheckpointBytes": maximum_checkpoint, "inodePreserved": True})
+
+        pending_journal = artifacts / "pending.jsonl"
+        scope = ReaderScope(root, pending_journal, limits=LIMITS, initialize=True); scopes.append(scope)
+        scope.prepare(); scope.reserve_spawn()
+        refusal = expect_refusal(scope.retire, {"UNKNOWN"})
+        scope.kill()
+        if not scope.empty(): raise RuntimeError("Unbound test leaf unexpectedly populated")
+        if expect_refusal(scope.retire, {"UNKNOWN"}) != "UNKNOWN": raise RuntimeError("Pending spawn debt disappeared")
+        reports.append({"scenario": "unbound-spawn-remains-unknown", "refusal": refusal, "emptyLeafInsufficient": True})
+        scope.close()
+        # Keep the unresolved leaf and journal until the private test-parent cleanup.
         success = True
     finally:
         for scope in scopes:

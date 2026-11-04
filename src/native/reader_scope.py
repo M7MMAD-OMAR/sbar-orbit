@@ -150,7 +150,8 @@ class ReaderScope:
     separate trusted layer. Closing this object never clears unresolved debt.
     """
     MAX_JOURNAL_BYTES = 65536
-    _PHASES = {"idle", "intent", "pinned", "prepared", "admitting", "admitted", "killing", "recovery", "retired"}
+    _PHASES = {"idle", "intent", "pinned", "prepared", "spawn_intent", "spawn_bound",
+               "admitting", "admitted", "killing", "recovery", "retired"}
 
     def __init__(self, root, journal, *, limits=ReaderLimits(), initialize=False):
         self._mutex = threading.RLock()
@@ -290,11 +291,16 @@ class ReaderScope:
         try:
             for sequence, line in enumerate(data.splitlines()):
                 record = json.loads(line, object_pairs_hook=_pairs)
-                if (type(record) is not dict or set(record) != keys or type(record["v"]) is not int
-                        or record["v"] != 1 or type(record["sequence"]) is not int
+                if type(record) is not dict or type(record.get("v")) is not int or record["v"] not in (1, 2):
+                    _fail("DEBT", "Reader journal schema is invalid")
+                expected_keys = keys if record["v"] == 1 else keys | {"spawn_pending"}
+                if (set(record) != expected_keys or type(record["sequence"]) is not int
                         or record["sequence"] != sequence or record["phase"] not in self._PHASES
                         or type(record["recovered"]) is not bool):
                     _fail("DEBT", "Reader journal record is invalid")
+                if record["v"] == 2 and (type(record["spawn_pending"]) is not bool
+                        or (record["spawn_pending"] and record["process"] is not None)):
+                    _fail("DEBT", "Reader journal spawn ownership is invalid")
                 for field in ("root", "owner"):
                     if not self._valid_identity(record[field]):
                         _fail("DEBT", "Reader journal identity is invalid")
@@ -325,19 +331,27 @@ class ReaderScope:
         phase = record["phase"]
         if previous is None:
             if (phase != "idle" or record["leaf"] is not None or record["leaf_identity"] is not None
-                    or record["process"] is not None or record["recovered"]):
+                    or record["process"] is not None or record["recovered"] or record.get("spawn_pending", False)):
                 _fail("DEBT", "Reader journal lacks its initial empty record")
             return
+        # Append history is schema-monotonic. A healthy checkpoint starts a new
+        # file history; it is never an in-history schema downgrade or key removal.
+        if set(previous) - set(record):
+            _fail("DEBT", "Reader journal fields cannot be removed from append history")
+        if previous["v"] > record["v"] or (previous["v"] != record["v"] and phase != "spawn_intent"):
+            _fail("DEBT", "Reader journal schema transition is invalid")
         allowed = {"intent": {"idle", "retired"}, "pinned": {"intent"}, "prepared": {"pinned"},
-                   "admitting": {"prepared"}, "admitted": {"admitting"},
-                   "killing": {"pinned", "prepared", "admitting", "admitted"},
-                   "recovery": {"pinned", "prepared", "admitting", "admitted", "killing", "recovery"},
-                   "retired": {"pinned", "prepared", "admitting", "admitted", "killing", "recovery"}}
+                   "spawn_intent": {"prepared"}, "spawn_bound": {"spawn_intent"},
+                   "admitting": {"prepared", "spawn_bound"}, "admitted": {"admitting"},
+                   "killing": {"pinned", "prepared", "spawn_intent", "spawn_bound", "admitting", "admitted"},
+                   "recovery": {"pinned", "prepared", "spawn_bound", "admitting", "admitted", "killing", "recovery"},
+                   "retired": {"pinned", "prepared", "spawn_bound", "admitting", "admitted", "killing", "recovery"}}
         if previous["phase"] not in allowed.get(phase, set()):
             _fail("DEBT", "Reader journal phase transition is invalid")
-        changed = {key for key in record if record[key] != previous[key]} - {"phase", "sequence"}
+        changed = {key for key in record if record[key] != previous.get(key)} - {"phase", "sequence"}
         permitted = {"intent": {"leaf", "leaf_identity", "process", "owner", "recovered", "limits"},
                      "pinned": {"leaf_identity"}, "admitting": {"process"},
+                     "spawn_intent": {"v", "spawn_pending"}, "spawn_bound": {"process", "spawn_pending"},
                      "recovery": {"owner", "recovered"}}
         if changed - permitted.get(phase, set()):
             _fail("DEBT", "Reader journal identity or limits changed unexpectedly")
@@ -347,6 +361,14 @@ class ReaderScope:
                 _fail("DEBT", "Reader journal intent is invalid")
         elif record["leaf"] is None or record["leaf_identity"] is None:
             _fail("DEBT", "Reader journal lacks a pinned leaf")
+        if phase == "spawn_intent" and (record["v"] != 2 or not record["spawn_pending"] or record["process"] is not None):
+            _fail("DEBT", "Reader spawn intent is invalid")
+        if phase == "spawn_bound" and (record["v"] != 2 or record["spawn_pending"] or record["process"] is None):
+            _fail("DEBT", "Reader spawn binding is invalid")
+        if phase == "admitting" and previous["phase"] == "spawn_bound" and record["process"] != previous["process"]:
+            _fail("DEBT", "Reader admission changed its bound process")
+        if phase in ("recovery", "retired") and record.get("spawn_pending", False):
+            _fail("DEBT", "Unresolved reader spawn cannot be recovered or retired")
         if phase in ("admitting", "admitted") and record["process"] is None:
             _fail("DEBT", "Reader journal lacks admitted root identity")
         if phase == "recovery" and not record["recovered"]:
@@ -462,15 +484,53 @@ class ReaderScope:
         self._append("prepared")
 
     @_serialized
-    def admit(self, process):
+    def reserve_spawn(self):
+        """Durably charge an unknown possible child BEFORE subprocess creation.
+
+        Preflight must precede this call. There is deliberately no spawn-failed
+        boolean/exception resolver: Popen can fail after creating a child.
+        """
         self._guard(leaf=True)
         if self._record["phase"] != "prepared" or self._child is not None:
+            _fail("DEBT", "Reader spawn can only be reserved once before admission")
+        self._append("spawn_intent", v=2, spawn_pending=True)
+
+    @_serialized
+    def bind_child(self, process):
+        """Bind the actual retained direct child before waiting for its stop."""
+        self._guard(leaf=True)
+        if self._record["phase"] != "spawn_intent" or self._child is not None:
+            _fail("DEBT", "Reader spawn has no unbound child reservation")
+        if not isinstance(process, subprocess.Popen) or process.returncode is not None:
+            _fail("INVALID", "Reader binding requires a retained unreaped subprocess")
+        current = _proc_identity(process.pid)
+        if current is None or current["parent"] != self._pid:
+            _fail("INVALID", "Reader binding requires an own direct child")
+        again = _proc_identity(process.pid)
+        if (again is None or _birth(again) != _birth(current)
+                or again["parent"] != self._pid or process.returncode is not None):
+            _fail("IDENTITY", "Reader child identity changed before binding")
+        self._child = process
+        self._append("spawn_bound", process=_birth(current), spawn_pending=False)
+        after = _proc_identity(process.pid)
+        if after is None or _birth(after) != _birth(current) or after["parent"] != self._pid:
+            _fail("IDENTITY", "Reader child identity changed during durable binding")
+
+    @_serialized
+    def admit(self, process):
+        self._guard(leaf=True)
+        bound = self._record["phase"] == "spawn_bound"
+        if self._record["phase"] not in ("prepared", "spawn_bound") or (self._child is not None and not bound):
             _fail("DEBT", "Reader leaf cannot admit another helper")
+        if bound and process is not self._child:
+            _fail("IDENTITY", "Reader admission requires the exact retained bound child")
         if not isinstance(process, subprocess.Popen) or process.returncode is not None:
             _fail("INVALID", "Reader admission requires a retained unreaped subprocess")
         current = _proc_identity(process.pid)
         if current is None or current["parent"] != self._pid or current["state"] not in ("T", "t"):
             _fail("INVALID", "Reader helper must be an own stopped bootstrap before admission")
+        if bound and _birth(current) != self._record["process"]:
+            _fail("IDENTITY", "Reader admission changed its bound child birth")
         self._child = process
         self._append("admitting", process=_birth(current))
         again = _proc_identity(process.pid)
@@ -493,7 +553,7 @@ class ReaderScope:
     def kill(self):
         """Kill only the originally pinned owned leaf, never a PID or shared root."""
         self._guard(leaf=True)
-        if self._record["phase"] not in ("pinned", "prepared", "admitting", "admitted", "killing", "recovery"):
+        if self._record["phase"] not in ("pinned", "prepared", "spawn_intent", "spawn_bound", "admitting", "admitted", "killing", "recovery"):
             _fail("DEBT", "Reader leaf has no killable owned operation")
         if self._record["phase"] not in ("killing", "recovery"):
             self._append("killing")
@@ -505,6 +565,8 @@ class ReaderScope:
         self._guard()
         if self._started or self._leaf_fd is not None or self._record["phase"] in ("idle", "retired"):
             _fail("DEBT", "Reader scope has no recoverable orphan debt")
+        if self._record.get("spawn_pending", False):
+            _fail("UNKNOWN", "Unbound reader spawn debt cannot be reconciled after ownership loss")
         previous = _proc_identity(self._record["owner"][0])
         if previous is not None and _birth(previous) == self._record["owner"]:
             _fail("BUSY", "Reader scope owner may still be alive")
@@ -529,6 +591,8 @@ class ReaderScope:
     def retire(self):
         """Return separate scope-empty/root-reaped facts after original-leaf removal."""
         self._guard(leaf=True)
+        if self._record.get("spawn_pending", False):
+            _fail("UNKNOWN", "Reader scope emptiness cannot resolve an unbound possible child")
         if not self.empty():
             _fail("UNKNOWN", "Reader descendants have not been proved absent")
         root_reaped = False
