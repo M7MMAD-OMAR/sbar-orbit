@@ -33,7 +33,8 @@ function fixture(enabled = true) {
         capture: (context: ReadCaptureContext) => { state.captured++; state.context = context; return capture(context); } };
     },
   };
-  const registry = new ReadViewRegistry({ ownerAuthority: authority, budget, backend, now: () => state.now });
+  let clock = () => state.now;
+  const registry = new ReadViewRegistry({ ownerAuthority: authority, budget, backend, now: () => clock() });
   if (enabled) registry.setEnabled(authority, true);
   const input = (overrides: Partial<ReadViewEnrollment> = {}): ReadViewEnrollment => ({ recipient: who,
     consentEpoch: 1, expiresAt: state.now + 1000, views: [{ binding, bindingEpoch: 1, formats: ["text", "image"] }], ...overrides });
@@ -41,7 +42,8 @@ function fixture(enabled = true) {
   const read = (grant: ReturnType<typeof enroll>, format: ReadViewFormat = "text", current = who) =>
     registry.read(current, grant.grant, grant.views[0]!.id, format);
   return { authority, who, binding, budget, state, backend, registry, input, enroll, read,
-    setCapture: (callback: typeof capture) => { capture = callback; } };
+    setCapture: (callback: typeof capture) => { capture = callback; },
+    setClock: (callback: typeof clock) => { clock = callback; } };
 }
 function denied(operation: () => unknown, code = "DENIED") {
   try { operation(); throw new Error("Expected refusal"); }
@@ -465,6 +467,112 @@ test("two-view status publishes no partial enrollment when its second binding is
     }
     expect(f.budget.status()).toMatchObject({ views: 0, conversations: 0, entries: 0, bytes: 0 });
   }
+});
+
+test("final enrollment clock off revoke and off/on cannot commit stale authority", () => {
+  for (const mutation of ["off", "conversation", "off-on"]) {
+    const f = fixture(), current = f.backend.bindingCurrent; let armed = false;
+    f.backend.bindingCurrent = (binding, epoch) => { const result = current(binding, epoch); armed = true; return result; };
+    f.setClock(() => {
+      if (armed) {
+        armed = false;
+        if (mutation === "conversation") f.registry.revokeConversation(f.authority, f.who.conversation);
+        else { f.registry.setEnabled(f.authority, false); if (mutation === "off-on") f.registry.setEnabled(f.authority, true); }
+      }
+      return f.state.now;
+    });
+    denied(() => f.enroll()); expect(f.budget.status()).toMatchObject({ views: 0, conversations: 0, entries: 0 });
+  }
+});
+
+test("final current clock mutation suppresses status read and retained lease bytes without freeing debt", async () => {
+  for (const operation of ["status", "read", "bytes"]) for (const mutation of ["off", "revoke"]) {
+    const f = fixture(), grant = f.enroll(), held = operation === "bytes" ? await f.read(grant) : undefined;
+    const current = f.backend.bindingCurrent; let armed = false;
+    f.backend.bindingCurrent = (binding, epoch) => { const result = current(binding, epoch); armed = true; return result; };
+    f.setClock(() => {
+      if (armed) { armed = false;
+        if (mutation === "off") f.registry.setEnabled(f.authority, false); else f.registry.revoke(f.authority, grant.grant);
+      }
+      return f.state.now;
+    });
+    if (operation === "status") expect(f.registry.status(f.who).views).toEqual([]);
+    else if (held) denied(() => held.bytes);
+    else await refused(f.read(grant));
+    if (held) {
+      expect(f.budget.status()).toMatchObject({ entries: 1, bytes: 8, retainedReferences: 1 }); held.release();
+    } else expect(f.state.captured).toBe(0);
+    expect(f.budget.status()).toMatchObject({ views: 0, entries: 0, bytes: 0 });
+  }
+});
+
+test("post-await final clock revocation cannot deliver even a proven stopped result", async () => {
+  const f = fixture(), grant = f.enroll(), pending = deferred<Uint8Array>();
+  f.setCapture(() => pending.promise); const read = f.read(grant), current = f.backend.bindingCurrent;
+  let armed = false;
+  f.backend.bindingCurrent = (binding, epoch) => { const result = current(binding, epoch); armed = true; return result; };
+  f.setClock(() => { if (armed) { armed = false; f.registry.revoke(f.authority, grant.grant); } return f.state.now; });
+  f.state.context!.lifecycle.confirmStopped(true); pending.resolve(new Uint8Array([1]));
+  await refused(read); expect(f.budget.status()).toMatchObject({ views: 0, entries: 0, bytes: 0 });
+});
+
+test("final recipient snapshot descriptor callback cannot revoke then return current", async () => {
+  const f = fixture(); let armed = false, snapshots = 0;
+  const principal = new Proxy(f.who, { getOwnPropertyDescriptor(target, key) {
+    if (armed && key === "birth" && ++snapshots === 2) f.registry.revokeConversation(f.authority, f.who.conversation);
+    return Reflect.getOwnPropertyDescriptor(target, key);
+  } });
+  const grant = f.enroll({ recipient: principal }); armed = true;
+  await refused(f.registry.read(principal, grant.grant, grant.views[0]!.id, "text"));
+  expect(snapshots).toBe(2); expect(f.state.captured).toBe(0); expect(f.budget.status().views).toBe(0);
+});
+
+test("nested clock enrollment and status cannot recurse into authority publication", () => {
+  const f = fixture(); let calls = 0;
+  f.setClock(() => { calls++; denied(() => f.enroll(), "BUSY"); denied(() => f.registry.status(f.who)); return f.state.now; });
+  denied(() => f.enroll()); expect(calls).toBe(1);
+  f.setClock(() => f.state.now); expect(f.registry.status(f.who)).toEqual({ enabled: false, views: [] });
+  denied(() => f.registry.setEnabled(f.authority, true));
+});
+
+test("clock throw rollback or nonfinite fault permanently revokes grants without freeing held bytes", async () => {
+  for (const failure of ["throw", "backwards", "nonfinite"]) {
+    const f = fixture(), grant = f.enroll(), held = await f.read(grant);
+    f.setClock(() => { if (failure === "throw") throw new Error(secret); return failure === "backwards" ? 999 : NaN; });
+    denied(() => f.registry.status(f.who));
+    f.setClock(() => 1000);
+    expect(f.registry.status(f.who)).toEqual({ enabled: false, views: [] });
+    denied(() => f.registry.setEnabled(f.authority, true)); await refused(f.read(grant), "OFF");
+    denied(() => held.bytes);
+    expect(f.budget.status()).toMatchObject({ entries: 1, bytes: 8, retainedReferences: 1 });
+    held.release(); expect(f.budget.status()).toMatchObject({ entries: 0, bytes: 0, views: 0 });
+  }
+});
+
+test("scope arrays reject overridden methods iterators getters holes and proxies without callbacks", () => {
+  for (const site of ["views", "formats"]) for (const poison of ["some", "map", "iterator", "getter", "hole", "proxy", "prototype"]) {
+    const f = fixture(); let calls = 0;
+    const view = { binding: f.binding, bindingEpoch: 1, formats: ["text"] as ("text" | "image")[] };
+    let values: unknown[] = site === "formats" ? view.formats : [view];
+    if (poison === "some" || poison === "map") Object.defineProperty(values, poison, { get() { calls++; return () => false; } });
+    if (poison === "iterator") Object.defineProperty(values, Symbol.iterator, { value: function* () { calls++; yield "image"; } });
+    if (poison === "getter") Object.defineProperty(values, "0", { get() { calls++; return "image"; } });
+    if (poison === "hole") delete values[0];
+    if (poison === "proxy") values = new Proxy(values, { ownKeys(target) { calls++; return Reflect.ownKeys(target); } });
+    if (poison === "prototype") Object.setPrototypeOf(values, Object.create(Array.prototype));
+    if (site === "formats") view.formats = values as ("text" | "image")[];
+    const views = site === "views" ? values as ReadViewEnrollment["views"] : [view];
+    denied(() => f.enroll({ views }), "INVALID"); expect(calls).toBe(0);
+    expect(f.budget.status()).toMatchObject({ views: 0, entries: 0, bytes: 0 });
+  }
+});
+
+test("mutating original formats during qualification cannot widen frozen permission snapshot", async () => {
+  const f = fixture(), formats: ReadViewFormat[] = ["text"], current = f.backend.bindingCurrent;
+  f.backend.bindingCurrent = (binding, epoch) => { formats.push("image"); return current(binding, epoch); };
+  const grant = f.enroll({ views: [{ binding: f.binding, bindingEpoch: 1, formats }] });
+  expect(grant.views[0]!.formats).toEqual(["text"]); expect(Object.isFrozen(grant.views[0]!.formats)).toBe(true);
+  await refused(f.read(grant, "image")); expect(f.state.captured).toBe(0);
 });
 
 test("idle revoked grants do not accumulate quota or replayable tombstones", async () => {

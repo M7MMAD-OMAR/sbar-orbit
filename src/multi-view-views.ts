@@ -7,6 +7,7 @@
  * gone. Already delivered bytes cannot be retracted. No content cache or hidden data copy.
  */
 import { randomBytes } from "node:crypto";
+import { types as utilTypes } from "node:util";
 import { ReadBudgetError, ReadResourceBudget, type OwnedReadLifecycle,
   type ReadBudgetReservation, type ReadBudgetView, type ReadReservationCost } from "./multi-view-read-budget";
 
@@ -48,6 +49,23 @@ export class ReadViewError extends Error {
 function fail(code: ReadViewErrorCode): never { throw new ReadViewError(code); }
 function object(value: unknown): value is object { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function integer(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value > 0; }
+/** Snapshot bounded arrays without invoking caller methods, iterators or indexed getters. */
+function dense(value: unknown, maximum: number): readonly unknown[] {
+  try {
+    if (utilTypes.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) fail("INVALID");
+    const size = Object.getOwnPropertyDescriptor(value, "length");
+    const length: unknown = size && Object.hasOwn(size, "value") ? size.value : undefined;
+    if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 1 || length > maximum
+        || Reflect.ownKeys(value).length !== length + 1) fail("INVALID");
+    const result: unknown[] = [];
+    for (let index = 0; index < length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) fail("INVALID");
+      result.push(descriptor.value);
+    }
+    return Object.freeze(result);
+  } catch { fail("INVALID"); }
+}
 function fields(value: unknown, allowed: readonly string[]): Record<string, unknown> {
   try {
     if (!object(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) fail("INVALID");
@@ -90,8 +108,14 @@ export class ReadViewRegistry {
   #now: () => number;
   #enabled = false;
   #enrolling = false;
+  #timing = false;
+  #clockFault = false;
+  #lastTime = -Infinity;
   #generation = 0;
-  #advance(): void { if (!Number.isSafeInteger(++this.#generation)) fail("LIMIT"); }
+  #advance(): void {
+    if (this.#generation >= Number.MAX_SAFE_INTEGER) { this.#enabled = false; return; }
+    this.#generation++;
+  }
   #grants = new Map<string, Enrollment>();
   // Bounded by budget views, including revoked-but-unreconciled work. No tombstone history.
   #records = new Set<Enrollment>();
@@ -105,13 +129,26 @@ export class ReadViewRegistry {
   }
   #owner(authority: object): void { if (authority !== this.#authority) fail("DENIED"); }
   #time(): number {
-    try { const now = this.#now(); if (!Number.isFinite(now)) fail("DENIED"); return now; }
-    catch { fail("DENIED"); }
+    if (this.#clockFault) fail("DENIED");
+    if (this.#timing) { this.#failClock(); fail("DENIED"); }
+    this.#timing = true;
+    try {
+      const now = this.#now();
+      if (this.#clockFault || typeof now !== "number" || !Number.isFinite(now) || now < this.#lastTime) fail("DENIED");
+      this.#lastTime = now; return now;
+    } catch { this.#failClock(); fail("DENIED"); }
+    finally { this.#timing = false; }
+  }
+  #failClock(): void {
+    if (this.#clockFault) return;
+    this.#clockFault = true; this.#enabled = false; this.#advance();
+    for (const entry of [...this.#records]) this.#revoke(entry);
   }
   #ready(): boolean { try { return this.#backend.admissionReady() === true; } catch { return false; } }
   setEnabled(authority: object, enabled: boolean): void {
     this.#owner(authority);
     if (typeof enabled !== "boolean") fail("INVALID");
+    if (enabled && this.#clockFault) fail("DENIED");
     this.#advance(); this.#enabled = enabled;
     if (!enabled) for (const entry of [...this.#records]) this.#revoke(entry);
   }
@@ -119,26 +156,26 @@ export class ReadViewRegistry {
     this.#owner(authority);
     // Qualification, clocks and budget calls can synchronously reenter trusted code.
     // Do not expose a partially checked binding or charge any nested enrollment.
-    if (this.#enrolling) fail("BUSY");
+    if (this.#enrolling || this.#timing) fail("BUSY");
     this.#enrolling = true;
     try { return this.#enroll(input); }
     finally { this.#enrolling = false; }
   }
   #enroll(input: ReadViewEnrollment) {
     if (!this.#enabled) fail("OFF");
+    const generation = this.#generation;
     this.#sweep();
     const data = fields(input, ["recipient", "consentEpoch", "expiresAt", "views"]);
-    const snapshot = recipientSnapshot(data.recipient), now = this.#time(), generation = this.#generation;
+    const snapshot = recipientSnapshot(data.recipient), now = this.#time();
     if (!integer(data.consentEpoch) || typeof data.expiresAt !== "number" || !Number.isFinite(data.expiresAt)
-        || data.expiresAt <= now || data.expiresAt - now > 600000 || !Array.isArray(data.views)
-        || data.views.length < 1 || data.views.length > 2) fail("INVALID");
-    const requested = data.views.map((raw: unknown) => {
+        || data.expiresAt <= now || data.expiresAt - now > 600000) fail("INVALID");
+    const requested = dense(data.views, 2).map((raw: unknown) => {
       const view = fields(raw, ["binding", "bindingEpoch", "formats"]);
-      if (!object(view.binding) || !integer(view.bindingEpoch) || !Array.isArray(view.formats)
-          || view.formats.length < 1 || view.formats.length > 2
-          || view.formats.some((format: unknown) => format !== "text" && format !== "image")
-          || new Set(view.formats).size !== view.formats.length) fail("INVALID");
-      return { binding: view.binding, epoch: view.bindingEpoch, formats: Object.freeze([...view.formats]) as readonly ReadViewFormat[] };
+      const formats = dense(view.formats, 2);
+      if (!object(view.binding) || !integer(view.bindingEpoch)
+          || formats.some(format => format !== "text" && format !== "image")
+          || new Set(formats).size !== formats.length) fail("INVALID");
+      return { binding: view.binding, epoch: view.bindingEpoch, formats: formats as readonly ReadViewFormat[] };
     });
     if (new Set(requested.map(view => view.binding)).size !== requested.length) fail("INVALID");
     // A selected client binding cannot acquire a second feature lease in another enrollment.
@@ -150,15 +187,21 @@ export class ReadViewRegistry {
           || requested.some(view => this.#backend.bindingCurrent(view.binding, view.epoch) !== true)) fail("DENIED");
     } catch { fail("DENIED"); }
     // Recheck after trusted callbacks, which may synchronously disable the registry.
-    if (!this.#enabled || generation !== this.#generation || data.expiresAt <= this.#time()) fail("DENIED");
+    const checkedAt = this.#time();
+    const after = recipientSnapshot(data.recipient);
+    // No callbacks after this fence may publish stale consent or a replaced principal.
+    if (data.expiresAt <= checkedAt || !recipientKeys.every(key => after[key] === snapshot[key])
+        || !this.#enabled || generation !== this.#generation) fail("DENIED");
     const token = randomBytes(32).toString("hex");
     const ids = requested.map(() => randomBytes(12).toString("hex"));
     if ([...this.#records].some(entry => entry.token === token)
         || new Set(ids).size !== ids.length || [...this.#records].some(entry => entry.views.some(view => ids.includes(view.id)))) fail("LIMIT");
+    if (!this.#enabled || generation !== this.#generation) fail("DENIED");
     const views: View[] = [];
     try {
       for (const [index, view] of requested.entries()) views.push({ ...view, id: ids[index]!,
         budgetView: this.#budget.bindView(snapshot.conversation), entries: new Set(), disposed: false });
+      if (!this.#enabled || generation !== this.#generation) fail("DENIED");
     } catch (error) {
       for (const view of views) { this.#budget.revokeView(view.budgetView); this.#budget.disposeView(view.budgetView); }
       this.#translate(error);
@@ -173,6 +216,7 @@ export class ReadViewRegistry {
     fail("BACKEND");
   }
   #sweep(): void {
+    if (this.#clockFault) return;
     const now = this.#time();
     for (const entry of [...this.#records]) if (!entry.revoked && now >= entry.expiresAt) this.#revoke(entry);
   }
@@ -201,10 +245,12 @@ export class ReadViewRegistry {
         && recipientKeys.every(key => snapshot[key] === entry.snapshot[key]) && this.#ready()
         && this.#backend.recipientCurrent(entry.snapshot, entry.consentEpoch) === true
         && this.#backend.bindingCurrent(view.binding, view.epoch) === true;
-      // Callback reentrancy must not resurrect an enrollment.
+      // Finish all reentrant clock/snapshot callbacks before checking raw state.
+      const checkedAt = this.#time();
       const after = recipientSnapshot(entry.recipient);
-      current = current && generation === this.#generation && this.#enabled && !entry.revoked
-        && this.#time() < entry.expiresAt && recipientKeys.every(key => after[key] === entry.snapshot[key]);
+      current = current && checkedAt < entry.expiresAt && recipientKeys.every(key => after[key] === entry.snapshot[key])
+        && generation === this.#generation && this.#enabled && !entry.revoked
+        && this.#grants.get(entry.token) === entry && this.#records.has(entry);
     } catch { current = false; }
     if (!current) this.#revoke(entry);
     return current;

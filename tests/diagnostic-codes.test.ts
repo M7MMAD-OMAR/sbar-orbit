@@ -46,6 +46,10 @@ async function thrownCodes(): Promise<Set<string>> {
  * identify their real runtime producer. Unused codes belong in neither set.
  */
 const listedButNeverThrown = new Map<string, string>([
+  ["READ_CHANNEL_INVALID", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
+  ["READ_CHANNEL_BUSY", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
+  ["READ_CHANNEL_LIMIT", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
+  ["READ_CHANNEL_CONFLICT", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
   ["READ_VIEW_LIMIT", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
   ["READ_VIEW_BUSY", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],
   ["READ_VIEW_UNCONFIRMED", "Translated dynamically from ReadViewError by the protected Sessions read-view dispatch"],

@@ -529,3 +529,50 @@ assertions or hiding failures.
 Final default verification: 695 pass, 5 skip, 0 fail, 13337 assertions across
 72 files in 71.25 seconds. Strict root TypeScript validation passed. No release,
 site deployment, Windows implementation or shared broker restart was performed.
+
+## 11. Protected connector exchange in broker fixtures
+
+The [connector channel registry](../../src/read-channel-registry.ts) implements
+a bounded owner-authorized one-use enrollment exchange into a distinct transport
+secret. It binds an exact protected connector instance, process birth, conversation
+and approved view/format subset. Revocation invalidates the channel before
+notifying the read registry; failed notification retains a quarantine slot, not
+a stop receipt. Clock faults latch closed and do not revive earlier credentials.
+No token, process metadata or selected content appears in model-facing status.
+
+[Sessions](../../src/session.ts) now connects that registry to its existing
+fixture-only protected read-view path. In owned tests an owner can issue and
+activate a channel, enroll selected already-owned views, read through a bounded
+lease and revoke it. The read transport permits only views.status and views.read,
+not legacy actions, opening, diagnostics or owner operations. A separate actual
+private IPC test verifies the real broker remains unavailable for these methods,
+even with an owner credential or spoofed body/header. The test-only connector
+bridge is not a production endpoint.
+
+Independent reviews found and repaired reentrant clock/caller authorization
+races, accidental disclosure of enrollment fields to the process verifier,
+non-atomic activation bookkeeping, post-diagnostics delivery of revoked secrets,
+a delayed idempotent issue that could revoke a successful activation, and
+mutable-array format attenuation bypass. Strict data-property snapshots and
+regressions cover these cases. Both connector and view registry failures retain
+unknown reader credit instead of inferring completion.
+
+A proposed change to the real CLI/MCP usage file was rejected during review:
+a nonblocking lock could cause explicit off to fail while the prior state stayed
+on, and old writers/path replacement still defeated the intended cross-process
+revision guarantee. The uncommitted change was removed; existing usage behavior
+was preserved. A real broker-owned off acknowledgement, mixed-version handling
+and final serialized delivery fence remain required, not solved by a nonce or a
+fixture callback. Existing same-UID caller attribution is cooperative and lacks
+kernel peer credentials; a protected inherited channel or equivalent verified
+transport and owner-mediated approval are not yet implemented.
+
+The existing producer still reports external compositor/provider completion
+UNKNOWN. Installed Wayland protocol text says per-frame ready permits that
+buffer to be read/reused, but does not acknowledge cancellation or global GPU
+quiescence. The active `grim -T` runtime path and identity mapping were not
+qualified by inspecting strings alone. No feature gate passed, production IPC
+remains unavailable, and no native application or shared broker was touched.
+
+Final verification for this tranche: 777 pass, 5 skip, 0 fail, 14286 assertions
+across 74 files in 70.52 seconds. Strict root TypeScript validation passed.

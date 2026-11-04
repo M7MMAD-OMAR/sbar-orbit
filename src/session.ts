@@ -3,6 +3,7 @@ import { discoverApplications } from "./application-discovery";
 import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { types as nodeTypes } from "node:util";
 import { NativeBackend, parseHandoff, parseNativeOpen, parseNativePresentation } from "./hyprland";
 import { nativeOptionsFromEnv } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
@@ -17,6 +18,7 @@ import { internalCaller, type Caller } from "./caller";
 import { ReadResourceBudget } from "./multi-view-read-budget";
 import { ReadViewRegistry, ReadViewError, type ReadRecipient, type ReadViewBackend, type ReadViewFormat, type ReadObservationLease } from "./multi-view-views";
 import { CallerRegistry } from "./caller-registry";
+import { ReadChannelRegistry, ReadChannelError, type ReadConnectorIdentity, type ResolvedReadChannel, type ReadChannelEnrollment } from "./read-channel-registry";
 import { WaitQueue, allocateWorkspace, busyMessage, duration, graceSeconds, parseWait, workspacePool, type Holder } from "./arbitration";
 import { hostAdapterReport } from "./host-registration";
 
@@ -72,6 +74,8 @@ export interface SessionReadViewsOptions {
   ownerIdentity: object;
   ownerChannel: object;
   channels: readonly { key: string; channel: object; recipient: ReadRecipient; callerId: string }[];
+  /** Optional fixture-only owner-approved one-use connector transport. Never an IPC flag. */
+  dynamicChannels?: { connectorChannel: object; processCurrent(identity: ReadConnectorIdentity): boolean };
   backend: ReadViewBackend;
   liveProcess(pid: number, birth: string): boolean;
   usageVersion(conversation: object): Promise<{ conversation: object; epoch: number; enabled: boolean }>;
@@ -80,7 +84,7 @@ export interface SessionReadViewsOptions {
   now?: () => number;
 }
 interface BrokerReadChannel {
-  key: string; channel: object; recipient: ReadRecipient; callerId: string;
+  key: string; channel: object; recipient: ReadRecipient; callerId: string; approved?: ResolvedReadChannel;
   fence: number; blockedEpoch: number; epoch: number; enabled: boolean; grant?: string; expiresAt?: number; enrolling?: object;
 }
 interface BrokerReadBinding {
@@ -102,6 +106,30 @@ function readFields(value: unknown, allowed: readonly string[]): Record<string, 
     result[key] = descriptor.value;
   }
   return result;
+}
+
+/** Snapshot small authority lists without executing caller array methods or accessors. */
+function readList(value: unknown): readonly unknown[] {
+  try {
+    if (nodeTypes.isProxy(value) || !Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new Error();
+    const length = Object.getOwnPropertyDescriptor(value, "length");
+    if (!length || !Object.hasOwn(length, "value") || !Number.isSafeInteger(length.value) || length.value < 1 || length.value > 2) throw new Error();
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== length.value + 1 || keys.some(key => key !== "length" && key !== "0" && !(length.value === 2 && key === "1"))) throw new Error();
+    const result: unknown[] = [];
+    for (let index = 0; index < length.value; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) throw new Error();
+      result.push(descriptor.value);
+    }
+    return Object.freeze(result);
+  } catch { throw new OrbitError("READ_VIEW_INVALID", "Read view request refused"); }
+}
+function readFormats(value: unknown): readonly ReadViewFormat[] {
+  const values = readList(value);
+  if (values.some(format => format !== "image" && format !== "text") || new Set(values).size !== values.length)
+    throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+  return values as readonly ReadViewFormat[];
 }
 
 /** Seams for the lifecycle and arbitration timing; production uses the defaults. */
@@ -147,6 +175,11 @@ export class Sessions {
   private readBindings = new WeakMap<object, BrokerReadBinding>();
   private readConfig?: SessionReadViewsOptions;
   private readCanonical = new WeakMap<Session, WeakMap<object, object>>();
+  private readTransportRegistry?: ReadChannelRegistry;
+  private readConnectorChannel?: object;
+  private readPendingChannels = new Map<string, { key: object; instance: object; approval: ReadChannelEnrollment }>();
+  private readSpentKeys = new WeakSet<object>();
+  private readControlReplies = new WeakMap<object, { current(): boolean; rollback(): void }>();
   constructor(private root: string, _accountRoot?: string, readonly diagnostics = new Diagnostics(join(root, "diagnostics")), private native = nativeOptionsFromEnv(), private updateDirectory = managedUpdateRoot(), private options: SessionOptions = {}) {
     this.callers = new CallerRegistry({ pollMs: options.pollMs, alive: options.alive,
       onGone: id => this.adapterGone(id), onBack: id => this.adapterBack(id) });
@@ -180,13 +213,54 @@ export class Sessions {
           const entry = this.readChannels.get(recipient.channel);
           return !!entry && entry.recipient.owner === recipient.owner && entry.recipient.connector === recipient.connector
             && entry.recipient.instance === recipient.instance && entry.recipient.conversation === recipient.conversation
-            && entry.enabled && entry.epoch === epoch && epoch > entry.blockedEpoch
+            && this.readChannelCurrent(entry) && entry.enabled && entry.epoch === epoch && epoch > entry.blockedEpoch
             && liveProcess(recipient.pid, recipient.birth) === true
             && usageCurrent(recipient.conversation, epoch) === true && backend.recipientCurrent(recipient, epoch) === true;
         },
         bindingCurrent: (binding, epoch) => this.readBindingCurrent(binding) && epoch === 1 && backend.bindingCurrent(binding, epoch) === true,
         prepare: (binding, format) => backend.prepare(binding, format),
       } });
+    if (config.dynamicChannels) {
+      const dynamic = config.dynamicChannels;
+      if (!dynamic.connectorChannel || typeof dynamic.connectorChannel !== "object" || dynamic.connectorChannel === config.ownerChannel
+          || typeof dynamic.processCurrent !== "function") throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+      this.readConnectorChannel = dynamic.connectorChannel;
+      this.readTransportRegistry = new ReadChannelRegistry({ ownerAuthority: this.readAuthority, ownerIdentity: config.ownerIdentity,
+        processCurrent: dynamic.processCurrent, now: config.now, onRevoke: resolved => this.dropReadChannel(resolved) });
+    }
+  }
+  private readChannelCurrent(entry: BrokerReadChannel): boolean {
+    return !entry.approved || this.readTransportRegistry?.isCurrent(entry.channel) === true;
+  }
+  private dropReadChannel(resolved: ResolvedReadChannel) {
+    for (const [secret, pending] of this.readPendingChannels) if (pending.instance === resolved.recipient.instance) this.readPendingChannels.delete(secret);
+    const channel = resolved.channel;
+    const entry = this.readChannels.get(channel);
+    if (!entry?.approved) return;
+    // Fence and remove authority before notification can throw. This does NOT settle work.
+    entry.fence++; entry.enabled = false; entry.grant = undefined;
+    this.readChannels.delete(channel); this.readKeys.delete(entry.key);
+    this.readRegistry!.detach(this.readAuthority, entry.recipient);
+  }
+  private approvedReadBinding(callerId: string, raw: unknown) {
+    const view = readFields(raw, ["sessionId", "appId", "windowId", "formats"]);
+    const formats = readFormats(view.formats);
+    const session = this.get(view.sessionId), backend = session.backend, handoff = backend.handoff;
+    const window = handoff?.windows.find(item => item.appId === view.appId && item.windowId === view.windowId);
+    if (session.ownerId !== callerId || session.state !== "running" || session.orphan || !handoff || !window
+        || handoff.appId !== view.appId || decide(session.policy, "observe").outcome !== "allow")
+      throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
+    let windows = this.readCanonical.get(session);
+    if (!windows) { windows = new WeakMap(); this.readCanonical.set(session, windows); }
+    let binding = windows.get(window);
+    if (!binding) {
+      binding = Object.freeze({ sessionId: session.id, appId: window.appId, windowId: window.windowId });
+      windows.set(window, binding);
+      this.readBindings.set(binding, { session, backend, handoff, window, appId: window.appId, windowId: window.windowId,
+        width: window.width, height: window.height, ownerId: callerId });
+    }
+    if (!this.readBindingCurrent(binding)) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
+    return { binding, bindingEpoch: 1, formats };
   }
   private readBindingCurrent(binding: object): boolean {
     const value = this.readBindings.get(binding);
@@ -209,7 +283,7 @@ export class Sessions {
     const entry = this.readChannels.get(channel);
     if (!entry || !caller.verified || caller.kind === "unidentified" || caller.id !== entry.callerId
         || caller.pid !== entry.recipient.pid || caller.start !== entry.recipient.birth
-        || this.readConfig.liveProcess(entry.recipient.pid, entry.recipient.birth) !== true)
+        || this.readConfig.liveProcess(entry.recipient.pid, entry.recipient.birth) !== true || !this.readChannelCurrent(entry))
       throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
     return entry;
   }
@@ -251,6 +325,82 @@ export class Sessions {
     if (!this.readRegistry || !this.readConfig || !channel) throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
     const registry = this.readRegistry;
     try {
+      if (method.startsWith("views.channel.")) {
+        const transport = this.readTransportRegistry;
+        if (!transport) throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
+        if (method === "views.channel.activate") {
+          if (channel !== this.readConnectorChannel) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          const input = readFields(params, ["enrollment"]);
+          if (this.readChannels.size >= 8) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          const pending = this.readPendingChannels.get(input.enrollment as string);
+          if (!pending) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          const activated = transport.activate(input.enrollment as string, caller);
+          this.readSpentKeys.add(pending.key);
+          try {
+          const resolved = transport.resolve(activated.transport, caller);
+          if (!resolved || this.readChannels.size >= 8) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          const key = crypto.randomUUID().replaceAll("-", "");
+          if (this.readKeys.has(key)) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          const entry: BrokerReadChannel = { key, channel: resolved.channel, recipient: resolved.recipient, callerId: resolved.callerId,
+            approved: resolved, fence: 0, blockedEpoch: 0, epoch: 0, enabled: false };
+          this.readChannels.set(resolved.channel, entry); this.readKeys.set(key, entry);
+          this.readPendingChannels.delete(input.enrollment as string);
+          // Protected connector control reply only. Not model-visible or ordinary IPC.
+          const reply = { ...activated, channelKey: key };
+          this.readControlReplies.set(reply, { current: () => transport.isCurrent(resolved.channel)
+            && this.readChannels.get(resolved.channel) === entry, rollback: () => { transport.revoke(this.readAuthority, pending.key); } });
+          return reply;
+          } catch {
+            this.readPendingChannels.delete(input.enrollment as string);
+            // A consumed secret whose bookkeeping failed never leaves an unreachable
+            // active slot. Registry notification failure retains its own quarantine.
+            try { transport.revoke(this.readAuthority, pending.key); } catch { /* Registry fails closed. */ }
+            throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+          }
+        }
+        this.readOwner(caller, channel);
+        if (method === "views.channel.issue") {
+          const input = readFields(params, ["key", "identity", "expiresAt", "views"]);
+          const identity = readFields(input.identity, ["callerId", "pid", "birth", "installation", "instance", "conversation"]);
+          const selected = readList(input.views);
+          if (typeof identity.callerId !== "string")
+            throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+          if (this.readSpentKeys.has(input.key as object)) throw new ReadChannelError("CONFLICT");
+          const views = selected.map(view => this.approvedReadBinding(identity.callerId as string, view));
+          const approval = Object.freeze({ ...identity, key: input.key, expiresAt: input.expiresAt,
+            views: Object.freeze(views.map(view => Object.freeze({ ...view, formats: Object.freeze([...view.formats]) }))) }) as unknown as ReadChannelEnrollment;
+          const issued = transport.issue(this.readAuthority, approval);
+          const pending = this.readPendingChannels.get(issued.enrollment)
+            ?? { key: input.key as object, instance: identity.instance as object, approval };
+          this.readPendingChannels.set(issued.enrollment, pending);
+          this.readControlReplies.set(issued, { current: () => {
+            if (this.readPendingChannels.get(issued.enrollment) !== pending || this.readSpentKeys.has(pending.key)) return false;
+            const checked = transport.issue(this.readAuthority, pending.approval);
+            return checked.enrollment === issued.enrollment && this.readPendingChannels.get(issued.enrollment) === pending
+              && !this.readSpentKeys.has(pending.key);
+          }, rollback: () => {
+            // A delayed idempotent issue reply must not revoke an already activated
+            // connector that legitimately consumed the first delivered ticket.
+            if (this.readPendingChannels.get(issued.enrollment) === pending && !this.readSpentKeys.has(pending.key))
+              transport.revoke(this.readAuthority, pending.key);
+          } });
+          return issued;
+        }
+        if (method === "views.channel.status") {
+          readFields(params, []);
+          return transport.status(this.readAuthority);
+        }
+        if (method === "views.channel.revoke") {
+          const input = readFields(params, ["key"]);
+          return { revoked: transport.revoke(this.readAuthority, input.key as object) };
+        }
+        if (method === "views.channel.detach") {
+          const input = readFields(params, ["instance"]);
+          transport.detach(this.readAuthority, input.instance as object);
+          return { detached: true };
+        }
+        throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
+      }
       if (method === "views.enable") {
         this.readOwner(caller, channel);
         const input = readFields(params, ["enabled"]);
@@ -281,26 +431,15 @@ export class Sessions {
         const epoch = await this.refreshReadUsage(entry);
         if (entry.grant || entry.enrolling !== enrollment) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
         this.readOwner(caller, channel);
-        if (fence !== entry.fence || !Array.isArray(input.views) || input.views.length < 1 || input.views.length > 2)
-          throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
-        const views = input.views.map(raw => {
-          const view = readFields(raw, ["sessionId", "appId", "windowId", "formats"]);
-          const session = this.get(view.sessionId), backend = session.backend, handoff = backend.handoff;
-          const window = handoff?.windows.find(item => item.appId === view.appId && item.windowId === view.windowId);
-          if (session.ownerId !== entry.callerId || session.state !== "running" || session.orphan || !handoff || !window
-              || handoff.appId !== view.appId || decide(session.policy, "observe").outcome !== "allow")
-            throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
-          let windows = this.readCanonical.get(session);
-          if (!windows) { windows = new WeakMap(); this.readCanonical.set(session, windows); }
-          let binding = windows.get(window);
-          if (!binding) {
-            binding = Object.freeze({ sessionId: session.id, appId: window.appId, windowId: window.windowId });
-            windows.set(window, binding);
-            this.readBindings.set(binding, { session, backend, handoff, window, appId: window.appId, windowId: window.windowId,
-              width: window.width, height: window.height, ownerId: entry.callerId });
-          }
-          return { binding, bindingEpoch: 1, formats: view.formats as ReadViewFormat[] };
-        });
+        if (fence !== entry.fence) throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
+        const views = readList(input.views).map(raw => this.approvedReadBinding(entry.callerId, raw));
+        if (entry.approved) {
+          if (!this.readChannelCurrent(entry) || typeof input.expiresAt !== "number" || input.expiresAt > entry.approved.expiresAt
+              || views.some(view => {
+                const approved = entry.approved!.views.find(item => item.binding === view.binding && item.bindingEpoch === view.bindingEpoch);
+                return !approved || !Array.isArray(view.formats) || view.formats.some(format => !approved.formats.includes(format));
+              })) throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
+        }
         if (new Set(views.map(view => JSON.stringify(view.binding))).size !== views.length)
           throw new OrbitError("READ_VIEW_INVALID", "Read view request refused");
         if (entry.grant || entry.enrolling !== enrollment || fence !== entry.fence)
@@ -344,6 +483,11 @@ export class Sessions {
         return guarded;
       } catch (error) { lease.release(); throw error; }
     } catch (error) {
+      if (error instanceof ReadChannelError) {
+        const codes: Record<ReadChannelError["code"], string> = { INVALID: "READ_CHANNEL_INVALID", DENIED: "READ_CHANNEL_DENIED",
+          BUSY: "READ_CHANNEL_BUSY", LIMIT: "READ_CHANNEL_LIMIT", CONFLICT: "READ_CHANNEL_CONFLICT" };
+        throw new OrbitError(codes[error.code], "Connector channel request refused");
+      }
       if (error instanceof ReadViewError) {
         const codes: Record<ReadViewError["code"], string> = {
           INVALID: "READ_VIEW_INVALID", DENIED: "READ_VIEW_DENIED", OFF: "READ_VIEW_OFF",
@@ -351,7 +495,7 @@ export class Sessions {
         };
         throw new OrbitError(codes[error.code], "Read view request refused");
       }
-      if (error instanceof OrbitError && ["READ_VIEW_INVALID", "READ_VIEW_DENIED", "READ_VIEW_OFF", "UNSUPPORTED"].includes(error.code)) throw error;
+      if (error instanceof OrbitError && ["READ_VIEW_INVALID", "READ_VIEW_DENIED", "READ_VIEW_OFF", "READ_CHANNEL_DENIED", "UNSUPPORTED"].includes(error.code)) throw error;
       throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
     }
   }
@@ -909,6 +1053,20 @@ export class Sessions {
       session.orphan = undefined;
     }
   }
+  /** Fixture-only protected connector transport. Existing IPC never calls this method. */
+  async dispatchReadTransport(value: unknown, caller: Caller, secret: string): Promise<unknown> {
+    if (!this.readTransportRegistry) throw new OrbitError("UNSUPPORTED", "Read views are unavailable");
+    let request: Record<string, unknown>, principal: Caller;
+    try {
+      request = readFields(value, ["method", "params"]);
+      if (request.method !== "views.status" && request.method !== "views.read") throw new Error("Not read-only");
+      request.params = readFields(request.params, request.method === "views.read" ? ["viewId", "format"] : []);
+      principal = Object.freeze({ ...readFields(caller, ["id", "label", "role", "kind", "verified", "pid", "start"]) }) as unknown as Caller;
+    } catch { throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused"); }
+    const resolved = this.readTransportRegistry.resolve(secret, principal);
+    if (!resolved || !this.readChannels.has(resolved.channel)) throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+    return this.dispatch(request, principal, resolved.channel);
+  }
   async dispatch(value: unknown, caller: Caller = internalCaller, protectedReadChannel?: object): Promise<unknown> {
     this.callers.touch(caller);
     if (value && typeof value === "object" && "method" in value && value.method === "diagnostics.report") return this.diagnostics.report();
@@ -916,7 +1074,19 @@ export class Sessions {
     const request = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
     const params = request.params && typeof request.params === "object" ? request.params as Record<string, unknown> : {};
     const session = typeof params.sessionId === "string" ? this.sessions.get(params.sessionId) : undefined;
-    return this.diagnostics.run({ ...request, params: { ...params, backend: session?.kind ?? params.backend } }, () => this.dispatchRequest(value, caller, protectedReadChannel));
+    const result = await this.diagnostics.run({ ...request, params: { ...params, backend: session?.kind ?? params.backend } }, () => this.dispatchRequest(value, caller, protectedReadChannel));
+    const control = result && typeof result === "object" ? this.readControlReplies.get(result) : undefined;
+    if (control) {
+      this.readControlReplies.delete(result as object);
+      let current = false;
+      try { current = control.current(); } catch { /* Unknown control delivery refuses. */ }
+      if (!current) {
+        try { control.rollback(); } catch { /* Registry retains quarantine when notification fails. */ }
+        throw new OrbitError("READ_CHANNEL_DENIED", "Connector channel request refused");
+      }
+    }
+    // No await after the final protected control check. Ordinary IPC has no such replies.
+    return result;
   }
   private async dispatchRequest(value: unknown, caller: Caller, protectedReadChannel?: object): Promise<unknown> {
     const request = record(value);
@@ -1165,6 +1335,7 @@ export class Sessions {
       failed: mine.flatMap((session, index) => results[index]?.status === "rejected" ? [{ sessionId: session.id, taskName: session.taskName }] : []) };
   }
   async close() {
+    this.readTransportRegistry?.close(this.readAuthority);
     this.readRegistry?.setEnabled(this.readAuthority, false);
     this.callers.stop();
     for (const session of this.sessions.values()) if (session.orphan?.timer) clearTimeout(session.orphan.timer);

@@ -6,6 +6,7 @@ import { internalCaller, type Caller } from "../src/caller";
 import { NativeBackend } from "../src/hyprland";
 import { Sessions, type SessionOptions, type SessionReadViewsOptions } from "../src/session";
 import { decide, type SessionPolicy } from "../src/policy";
+import type { ReadChannelRegistry } from "../src/read-channel-registry";
 import type { ReadCaptureContext, ReadObservationLease, ReadRecipient, ReadViewBackend } from "../src/multi-view-views";
 
 // Only protected in-process fake channels. This is not IPC, CLI/MCP off or native qualification.
@@ -28,9 +29,9 @@ const triggered = (signal: Promise<unknown>, outcome: Promise<unknown>) => Promi
 })]);
 const agent = (pid: number, start: string, id: string): Caller => ({ id, label: "display-only", role: "agent", kind: "adapter", verified: true, pid, start });
 
-async function fixture(configured = true, sharedConversation = false) {
+async function fixture(configured = true, sharedConversation = false, dynamicChannels = false) {
   const root = await mkdtemp(join(tmpdir(), "orbit-read-broker-fixture-"));
-  const owner = { ...internalCaller }, ownerIdentity = {}, ownerChannel = {}, channelA = {}, channelB = {};
+  const owner = { ...internalCaller }, ownerIdentity = {}, ownerChannel = {}, channelA = {}, channelB = {}, connectorChannel = {}, approvalKey = {};
   const a = agent(4001, "101", "conv:fixture-a"), b = agent(4002, "102", sharedConversation ? "conv:fixture-a" : "conv:fixture-b");
   const recipient = (channel: object, caller: Caller): ReadRecipient => ({ owner: ownerIdentity, connector: {}, instance: {},
     conversation: {}, channel, pid: caller.pid!, birth: caller.start! });
@@ -51,7 +52,10 @@ async function fixture(configured = true, sharedConversation = false) {
     bindingCurrent: () => state.binding, prepare };
   const readViews: SessionReadViewsOptions = { ownerIdentity, ownerChannel,
     usageCurrent: (_conversation, epoch) => state.enabled && state.epoch === epoch,
-    channels: [{ key: "a", channel: channelA, recipient: recipientA, callerId: a.id }, { key: "b", channel: channelB, recipient: recipientB, callerId: b.id }],
+    channels: dynamicChannels ? [] : [{ key: "a", channel: channelA, recipient: recipientA, callerId: a.id }, { key: "b", channel: channelB, recipient: recipientB, callerId: b.id }],
+    ...(dynamicChannels ? { dynamicChannels: { connectorChannel, processCurrent: (identity: import("../src/read-channel-registry").ReadConnectorIdentity) =>
+      state.alive && identity.callerId === a.id && identity.pid === a.pid && identity.birth === a.start
+      && identity.installation === recipientA.connector && identity.instance === recipientA.instance && identity.conversation === recipientA.conversation } } : {}),
     backend, liveProcess: (pid, birth) => state.alive && ((pid === a.pid && birth === a.start) || (pid === b.pid && birth === b.start)),
     usageVersion: async conversation => {
       expect(conversation === recipientA.conversation || conversation === recipientB.conversation).toBe(true);
@@ -86,7 +90,15 @@ async function fixture(configured = true, sharedConversation = false) {
     const enroll = (views = targets(), channelKey = "a") => call("views.enroll", { channelKey, expiresAt: 2000, views }) as Promise<{ views: { id: string; formats: string[] }[] }>;
     const read = (viewId: string, caller = a, channel = channelA, format = "image") => call("views.read", { viewId, format }, caller, channel) as Promise<ReadObservationLease>;
     const close = async () => { create.mockRestore(); await sessions.close(); await sessions.diagnostics.flush(); await rm(root, { recursive: true, force: true }); };
-    return { sessions, state, a, b, owner, channelA, channelB, ownerChannel, recipientA, recipientB, readViews, firstBackend,
+    const issueChannel = (views = targets(), expiresAt = 2000) => call("views.channel.issue", { key: approvalKey, expiresAt, views, identity: {
+      callerId: a.id, pid: a.pid, birth: a.start, installation: recipientA.connector, instance: recipientA.instance, conversation: recipientA.conversation,
+    } }) as Promise<{ enrollment: string; expiresAt: number }>;
+    const activateChannel = (enrollment: string, caller = a, channel = connectorChannel) =>
+      call("views.channel.activate", { enrollment }, caller, channel) as Promise<{ transport: string; channelKey: string; expiresAt: number }>;
+    const transportCall = (secret: string, method: string, params: unknown = {}, caller = a) =>
+      sessions.dispatchReadTransport({ method, params }, caller, secret);
+    return { sessions, state, a, b, owner, channelA, channelB, ownerChannel, connectorChannel, approvalKey, recipientA, recipientB, readViews, firstBackend,
+      issueChannel, activateChannel, transportCall,
       create, prepare, capture, legacyObserve, started, first, second, foreign, call, enable, enroll, read, targets, close };
   } catch (error) { create.mockRestore(); await sessions.close(); await rm(root, { recursive: true, force: true }); throw error; }
 }
@@ -279,6 +291,298 @@ test("lease remains guarded after dispatch diagnostics awaits and owner revocati
     await f.enable(); const enrolled = await f.enroll(); const lease = await f.read(enrolled.views[0]!.id);
     await f.call("views.off", { channelKey: "a" });
     expect(() => lease.bytes).toThrow(); lease.release();
+  } finally { await f.close(); }
+});
+
+test("dynamic owner issue activate enroll read and revoke uses the actual channel registry", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const issued = await f.issueChannel();
+    expect(issued.enrollment).toMatch(/^[a-f0-9]{64}$/);
+    const activated = await f.activateChannel(issued.enrollment);
+    await expect(f.issueChannel()).rejects.toMatchObject({ code: "READ_CHANNEL_CONFLICT" });
+    expect(activated.transport).not.toBe(issued.enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    expect(JSON.stringify(enrolled)).not.toContain(issued.enrollment);
+    expect(JSON.stringify(enrolled)).not.toContain(activated.transport);
+    const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+    expect([...lease.bytes]).toEqual([1, 2, 3]);
+    expect(await f.call("views.channel.revoke", { key: f.approvalKey })).toEqual({ revoked: true });
+    expect(() => lease.bytes).toThrow(); lease.release();
+    await expect(f.transportCall(activated.transport, "views.status")).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(f.create).not.toHaveBeenCalled(); expect(f.legacyObserve).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test("dynamic channel secrets and owner issuance cannot cross ordinary dispatch or wrong protected control channels", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable();
+    await expect(f.sessions.dispatch({ method: "views.channel.issue", params: {} }, f.owner)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    await expect(f.call("views.channel.issue", {}, f.a, f.ownerChannel)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    const issued = await f.issueChannel();
+    await expect(f.activateChannel(issued.enrollment, f.a, {})).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    await expect(f.activateChannel(issued.enrollment, f.b)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    const activated = await f.activateChannel(issued.enrollment);
+    await expect(f.activateChannel(issued.enrollment)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    await expect(f.transportCall(activated.transport, "views.status", {}, { ...f.a, start: "999" })).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    await expect(f.sessions.dispatch({ method: "views.read", params: { transport: activated.transport } }, f.a)).rejects.toMatchObject({ code: "UNSUPPORTED" });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test("dynamic read enrollment cannot broaden approved native window formats or expiration", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable();
+    const approved = [{ ...f.targets()[0]!, formats: ["image"] }];
+    const activated = await f.activateChannel((await f.issueChannel(approved)).enrollment);
+    await expect(f.enroll([f.targets()[1]!], activated.channelKey)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    await expect(f.enroll([f.targets()[0]!], activated.channelKey)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    await expect(f.call("views.enroll", { channelKey: activated.channelKey, expiresAt: 2001, views: approved })).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    const enrolled = await f.enroll(approved, activated.channelKey);
+    await expect(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "text" })).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+    expect([...lease.bytes]).toEqual([1, 2, 3]); lease.release();
+  } finally { await f.close(); }
+});
+
+test("dynamic owner approval refuses foreign sessions and replaced canonical window bindings", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable();
+    await expect(f.issueChannel([{ sessionId: f.foreign.sessionId, appId: "app-3", windowId: "window-3", formats: ["image"] }]))
+      .rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    const approved = [f.targets()[0]!];
+    const activated = await f.activateChannel((await f.issueChannel(approved)).enrollment);
+    f.firstBackend.handoff!.windows = f.firstBackend.handoff!.windows.map(window => ({ ...window }));
+    await expect(f.enroll(approved, activated.channelKey)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+for (const operation of ["revoke", "detach"] as const) test("dynamic registry " + operation + " callback synchronously fences accepted reader work", async () => {
+  const f = await fixture(true, false, true), gate = deferred<void>();
+  try {
+    await f.enable(); const activated = await f.activateChannel((await f.issueChannel()).enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey); f.state.captureGate = gate.promise;
+    const outcome = rejection(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as Promise<ReadObservationLease>);
+    await triggered(f.started.promise, outcome);
+    if (operation === "revoke") await f.call("views.channel.revoke", { key: f.approvalKey });
+    else await f.call("views.channel.detach", { instance: f.recipientA.instance });
+    expect((await f.started.promise).isCurrent()).toBe(false);
+    gate.resolve(); expect(await outcome).toMatchObject({ code: "READ_VIEW_DENIED" });
+    await expect(f.transportCall(activated.transport, "views.status")).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+  } finally { gate.resolve(); await f.close(); }
+});
+
+test("dynamic off revokes read authority without resurrecting it through an unchanged usage epoch", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const activated = await f.activateChannel((await f.issueChannel()).enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    await f.call("views.off", { channelKey: activated.channelKey });
+    await expect(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" })).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    await expect(f.enroll(f.targets(), activated.channelKey)).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    f.state.epoch = 2;
+    expect((await f.enroll(f.targets(), activated.channelKey)).views).toHaveLength(2);
+    expect(f.capture).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test("dynamic transport expiry and clock rollback cannot restore a stale captured lease", async () => {
+  for (const time of [2000, 999]) {
+    const f = await fixture(true, false, true);
+    try {
+      await f.enable(); const activated = await f.activateChannel((await f.issueChannel()).enrollment);
+      const enrolled = await f.enroll(f.targets(), activated.channelKey);
+      const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+      f.state.now = time;
+      expect(() => lease.bytes).toThrow(); lease.release();
+      f.state.now = 1000;
+      await expect(f.transportCall(activated.transport, "views.status")).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    } finally { await f.close(); }
+  }
+});
+
+test("dynamic process invalidation permanently revokes transport instead of trusting a reused claim", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const activated = await f.activateChannel((await f.issueChannel()).enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    f.state.alive = false;
+    await expect(f.transportCall(activated.transport, "views.status")).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    f.state.alive = true;
+    await expect(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" })).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test("dynamic registry revocation never frees unresolved reader credit for a new approval", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const activated = await f.activateChannel((await f.issueChannel([f.targets()[0]!])).enrollment);
+    const enrolled = await f.enroll([f.targets()[0]!], activated.channelKey); f.state.unknown = true;
+    await expect(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" })).rejects.toMatchObject({ code: "READ_VIEW_UNCONFIRMED" });
+    await f.call("views.channel.revoke", { key: f.approvalKey });
+    const issued = await f.call("views.channel.issue", { key: {}, expiresAt: 2000, views: [f.targets()[0]!], identity: {
+      callerId: f.a.id, pid: f.a.pid, birth: f.a.start, installation: f.recipientA.connector, instance: f.recipientA.instance, conversation: f.recipientA.conversation,
+    } }) as { enrollment: string };
+    const replacement = await f.activateChannel(issued.enrollment);
+    await expect(f.enroll([f.targets()[0]!], replacement.channelKey)).rejects.toMatchObject({ code: "READ_VIEW_LIMIT" });
+    expect(f.capture).toHaveBeenCalledTimes(1);
+  } finally { await f.close(); }
+});
+
+test("dynamic protected exchange secrets never enter diagnostics or model-visible view metadata", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const issued = await f.issueChannel(), activated = await f.activateChannel(issued.enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    const status = await f.transportCall(activated.transport, "views.status");
+    const report = await f.sessions.diagnostics.report();
+    const publicText = JSON.stringify({ enrolled, status, report });
+    expect(publicText).not.toContain(issued.enrollment); expect(publicText).not.toContain(activated.transport);
+    expect(publicText).not.toContain("private-fixture-title");
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { await f.close(); }
+});
+
+test("read transport rejects every non-read method before dispatch without state or backend effects", async () => {
+  const f = await fixture(true, false, true);
+  try {
+    await f.enable(); const activated = await f.activateChannel((await f.issueChannel()).enrollment);
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    const state = mutableSession(f).state;
+    for (const method of ["session.act", "session.stop", "session.pause", "session.resume", "session.create", "session.narrow", "session.control",
+      "session.forget", "native.open", "native.present", "native.candidates", "views.enable", "views.enroll", "views.off", "views.channel.issue",
+      "views.channel.activate", "views.channel.revoke", "diagnostics.report", "settings.write", "caller.detach", "update.begin"]) {
+      await expect(f.transportCall(activated.transport, method, { sessionId: f.first.sessionId, enabled: false }))
+        .rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    }
+    let getterReads = 0;
+    const forged = Object.defineProperty({ params: {} }, "method", { get() { getterReads++; return "session.stop"; }, enumerable: true });
+    await expect(f.sessions.dispatchReadTransport(forged, f.a, activated.transport)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(getterReads).toBe(0);
+    expect(mutableSession(f).state).toBe(state); expect(f.create).not.toHaveBeenCalled(); expect(f.prepare).not.toHaveBeenCalled();
+    const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+    expect([...lease.bytes]).toEqual([1, 2, 3]); lease.release();
+  } finally { await f.close(); }
+});
+
+test("consumed activation bookkeeping failure revokes exactly its pending channel without losing capacity", async () => {
+  const f = await fixture(true, false, true);
+  let restore: (() => void) | undefined;
+  try {
+    await f.enable(); const issued = await f.issueChannel();
+    const original = crypto.randomUUID.bind(crypto); let calls = 0;
+    const random = spyOn(crypto, "randomUUID").mockImplementation(() => {
+      if (++calls === 2) throw new Error("fixture channel bookkeeping failed");
+      return original();
+    });
+    restore = () => random.mockRestore();
+    await expect(f.activateChannel(issued.enrollment)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    restore(); restore = undefined;
+    expect(await f.call("views.channel.status")).toMatchObject({ active: 0, pending: 0, quarantined: 0 });
+    await expect(f.activateChannel(issued.enrollment)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { restore?.(); await f.close(); }
+});
+
+test("expiry during post-activation resolution cannot leak a consumed active credential", async () => {
+  const f = await fixture(true, false, true);
+  let restore: (() => void) | undefined;
+  try {
+    await f.enable(); const issued = await f.issueChannel();
+    const registry = (f.sessions as unknown as { readTransportRegistry: ReadChannelRegistry }).readTransportRegistry;
+    const original = registry.resolve.bind(registry);
+    const resolve = spyOn(registry, "resolve").mockImplementation((secret, caller) => { f.state.now = 2000; return original(secret, caller); });
+    restore = () => resolve.mockRestore();
+    await expect(f.activateChannel(issued.enrollment)).rejects.toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    restore(); restore = undefined;
+    expect(await f.call("views.channel.status")).toMatchObject({ active: 0, pending: 0, quarantined: 0 });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { restore?.(); await f.close(); }
+});
+
+for (const control of ["issue", "activate"] as const) test("dynamic " + control + " secret refuses delivery when owner revokes during diagnostics await", async () => {
+  const f = await fixture(true, false, true), logged = deferred<void>(), release = deferred<void>();
+  let restore: (() => void) | undefined;
+  try {
+    await f.enable();
+    const issued = control === "activate" ? await f.issueChannel() : undefined;
+    const original = f.sessions.diagnostics.run.bind(f.sessions.diagnostics);
+    const run = spyOn(f.sessions.diagnostics, "run").mockImplementation(async (value, work) => {
+      const body = value as { method?: string };
+      if (body.method !== "views.channel." + control) return original(value, work);
+      const result = await work(); logged.resolve(); await release.promise; return result;
+    });
+    restore = () => run.mockRestore();
+    const pending = settle<unknown>(control === "issue" ? f.issueChannel() : f.activateChannel(issued!.enrollment));
+    await triggered(logged.promise, pending);
+    await f.call("views.channel.revoke", { key: f.approvalKey });
+    release.resolve();
+    const outcome = await pending;
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(await f.call("views.channel.status")).toMatchObject({ active: 0, pending: 0 });
+    expect(f.prepare).not.toHaveBeenCalled();
+  } finally { release.resolve(); restore?.(); await f.close(); }
+});
+
+test("delayed duplicate issue reply cannot revoke the transport activated from the first issue reply", async () => {
+  const f = await fixture(true, false, true), logged = deferred<void>(), release = deferred<void>();
+  let restore: (() => void) | undefined;
+  try {
+    await f.enable(); const issued = await f.issueChannel();
+    const original = f.sessions.diagnostics.run.bind(f.sessions.diagnostics);
+    const run = spyOn(f.sessions.diagnostics, "run").mockImplementation(async (value, work) => {
+      if ((value as { method?: string }).method !== "views.channel.issue") return original(value, work);
+      const result = await work(); logged.resolve(); await release.promise; return result;
+    });
+    restore = () => run.mockRestore();
+    const duplicate = settle(f.issueChannel()); await triggered(logged.promise, duplicate);
+    const activated = await f.activateChannel(issued.enrollment);
+    release.resolve(); const outcome = await duplicate;
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toMatchObject({ code: "READ_CHANNEL_DENIED" });
+    expect(await f.call("views.channel.status")).toMatchObject({ active: 1, pending: 0, quarantined: 0 });
+    const enrolled = await f.enroll(f.targets(), activated.channelKey);
+    const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+    expect([...lease.bytes]).toEqual([1, 2, 3]); lease.release();
+  } finally { release.resolve(); restore?.(); await f.close(); }
+});
+
+test("malicious formats and view arrays cannot override attenuation checks or execute caller accessors", async () => {
+  const f = await fixture(true, false, true);
+  let effects = 0;
+  try {
+    await f.enable();
+    const imageOnly = [{ ...f.targets()[0]!, formats: ["image"] }];
+    const activated = await f.activateChannel((await f.issueChannel(imageOnly)).enrollment);
+    const lyingSome = Object.assign(["text"], { some: () => { effects++; return false; } });
+    const lyingIterator = Object.defineProperty(["image"], Symbol.iterator, { value: function* () { effects++; yield "text"; } });
+    const getter = Object.defineProperty(["image"], "0", { enumerable: true, get() { effects++; return "text"; } });
+    const prototype = Object.setPrototypeOf(["text"], Object.create(Array.prototype));
+    const extra = Object.assign(["image"], { extra: true });
+    const proxy = new Proxy(["text"], { get(target, key, receiver) { effects++; return Reflect.get(target, key, receiver); },
+      getOwnPropertyDescriptor(target, key) { effects++; return Reflect.getOwnPropertyDescriptor(target, key); } });
+    for (const formats of [lyingSome, lyingIterator, getter, prototype, extra, proxy, new Array(1)]) {
+      await expect(f.enroll([{ ...f.targets()[0]!, formats: formats as string[] }], activated.channelKey))
+        .rejects.toMatchObject({ code: "READ_VIEW_INVALID" });
+    }
+    const outer = Object.assign([...imageOnly], { map: () => { effects++; return f.targets(); } });
+    await expect(f.call("views.enroll", { channelKey: activated.channelKey, expiresAt: 2000, views: outer }))
+      .rejects.toMatchObject({ code: "READ_VIEW_INVALID" });
+    const outerGetter = Object.defineProperty([...imageOnly], "0", { enumerable: true, get() { effects++; return f.targets()[1]; } });
+    await expect(f.call("views.enroll", { channelKey: activated.channelKey, expiresAt: 2000, views: outerGetter }))
+      .rejects.toMatchObject({ code: "READ_VIEW_INVALID" });
+    expect(effects).toBe(0); expect(f.prepare).not.toHaveBeenCalled();
+    const enrolled = await f.enroll(imageOnly, activated.channelKey);
+    await expect(f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "text" }))
+      .rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
+    const lease = await f.transportCall(activated.transport, "views.read", { viewId: enrolled.views[0]!.id, format: "image" }) as ReadObservationLease;
+    expect([...lease.bytes]).toEqual([1, 2, 3]); lease.release();
   } finally { await f.close(); }
 });
 
