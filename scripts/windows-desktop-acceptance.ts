@@ -10,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { startBroker, call } from "../src/ipc";
 import { managedUpdateRoot, requireUpdateAdmission } from "../src/update-admission";
 import { withUpdateLock } from "../src/update-lock";
-import { sealRelease, sameBrokerIdentity } from "../src/managed-identity";
+import { sealRelease, sameBrokerIdentity, preparedIdentity, type BrokerIdentity } from "../src/managed-identity";
 import { currentVersion, pruneVersions } from "../src/update";
 import { admittedWindowsBootstrap, recordWindowsReleaseFiles, verifyWindowsCurrent } from "../src/windows-managed-install";
 import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, desktopSourceDigest, parseDesktopManifest, validateDesktopPayload, windowsFileDigest } from "../src/windows-desktop-update";
@@ -81,24 +81,48 @@ async function inspectFailure(options: Map<string, string>) {
   check(runnerTemp && root === resolve(managedUpdateRoot()) && report.startsWith(resolve(runnerTemp) + sep) && report.endsWith(".json"), "Only the known hosted root and owned evidence report are inspectable");
   const parent = dirname(report), parentInfo = await lstat(parent);
   check(parentInfo.isDirectory() && !parentInfo.isSymbolicLink() && await realpath(parent) === parent && await missing(report), "Exclusive canonical inspector result required");
-  const task: Record<string, unknown> = { queryCompleted: false, found: null, state: "unknown", lastTaskResult: null, lastRunTimeSeen: null, queryHResult: null, exactOwnership: false };
+  const task: Record<string, unknown> = { queryCompleted: false, taskQueryStage: "sid", queryFailureKind: "unobserved", found: null, state: "unknown", lastTaskResult: null, lastRunTimeSeen: null, queryHResult: null, exactOwnership: false };
   const evidence: Record<string, unknown> = { schema: 1, kind: "owned-read-only-install-failure", contentFree: true, mutationsAttempted: false,
-    expectedSourceIdentityValid: false, recoveryBarrierPresent: false, task, socketPresent: null, endpoint: "unclassified", doctorIdentity: "unobserved", inspectorComplete: false };
-  let selected: Awaited<ReturnType<typeof verifyWindowsCurrent>> | null = null;
+    expectedSourceIdentityValid: false, sourceIdentityResult: "unobserved", launchAdmission: "unobserved", recoveryBarrierPresent: false, task, socketPresent: null, endpoint: "unclassified", doctorIdentity: "unobserved", inspectorComplete: false };
+  let expectedIdentity: BrokerIdentity | null = null;
   try {
     const info = await lstat(root);
     check(info.isDirectory() && !info.isSymbolicLink() && await realpath(root) === root, "Known root is redirected");
     evidence.recoveryBarrierPresent = !(await missing(join(root, "activation-recovery.json")));
-    try { selected = await verifyWindowsCurrent(root); evidence.expectedSourceIdentityValid = selected.version === required(options, "--version"); } catch { selected = null; }
+    const version = required(options, "--version");
     try {
+      const selected = await verifyWindowsCurrent(root);
+      check(selected.version === version, "Observed current version differs from owned fixture");
+      expectedIdentity = selected.identity; evidence.expectedSourceIdentityValid = true; evidence.sourceIdentityResult = "valid"; evidence.launchAdmission = "open";
+    } catch (error) {
+      evidence.launchAdmission = error instanceof Error && error.message === "Managed admission is closed pending recovery; new launches are refused" ? "admission-blocked" : "unclassified-refusal";
+      try {
+        const pointer = join(root, "current.txt"), info = await lstat(pointer);
+        check(info.isFile() && !info.isSymbolicLink() && info.size <= 32768, "Bounded regular current pointer required");
+        const directory = join(root, "versions", version), target = (await readFile(pointer, "utf8")).replace(/\r?\n$/, "");
+        check(target === directory && resolve(target) === target, "Only the exact expected current version is inspectable");
+        const identity = await preparedIdentity(root, version);
+        check(identity.runtime === join(directory, DESKTOP_RUNTIME), "Expected versioned runtime differs");
+        await validateDesktopPayload(directory, version, await desktopSourceDigest(directory));
+        expectedIdentity = { ...identity, root, directory }; evidence.expectedSourceIdentityValid = true; evidence.sourceIdentityResult = "valid-bytes-without-launch-admission";
+      } catch (identityError) {
+        evidence.sourceIdentityResult = identityError instanceof Error && identityError.message === "Prepared release or runtime bytes changed; migrate deliberately" ? "byte-failure" : "identity-unproven";
+      }
+    }
+    try {
+      task.taskQueryStage = "sid";
       const sid = await currentUserSid(), name = taskNameForUser(sid);
-      const code = "$ErrorActionPreference='Stop';try{$service=New-Object -ComObject 'Schedule.Service';$service.Connect();$folder=$service.GetFolder([string][char]92);$task=$folder.GetTask('" + name.replaceAll("'", "''") + "');[pscustomobject]@{found=$true;state=[int]$task.State;lastTaskResult=[long]$task.LastTaskResult;lastRunTimeSeen=($task.LastRunTime.Year -gt 1900);xml=[string]$task.Xml;queryHResult=$null}|ConvertTo-Json -Compress -Depth 3}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};[pscustomobject]@{found=$null;state=0;lastTaskResult=$null;lastRunTimeSeen=$null;xml='';queryHResult=[int]$failure.HResult}|ConvertTo-Json -Compress}";
+      task.taskQueryStage = "command";
+      const code = "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$WarningPreference='SilentlyContinue';$InformationPreference='SilentlyContinue';try{$service=New-Object -ComObject 'Schedule.Service';$service.Connect();$folder=$service.GetFolder([string][char]92);$task=$folder.GetTask('" + name.replaceAll("'", "''") + "');[pscustomobject]@{found=$true;state=[int]$task.State;lastTaskResult=[long]$task.LastTaskResult;lastRunTimeSeen=($task.LastRunTime.Year -gt 1900);xml=[string]$task.Xml;queryHResult=$null}|ConvertTo-Json -Compress -Depth 3}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};[pscustomobject]@{found=$null;state=0;lastTaskResult=$null;lastRunTimeSeen=$null;xml='';queryHResult=[int]$failure.HResult}|ConvertTo-Json -Compress}";
       const query = await boundedCommand(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(code, "utf16le").toString("base64")], 10000);
-      if (query.ok) {
+      if (!query.ok) {
+        task.queryFailureKind = query.stopUnconfirmed === true && query.output === "Lifecycle command timed out; command exit is not confirmed" ? "stop-unconfirmed" : !query.stopUnconfirmed && query.output === "Lifecycle command timed out" ? "timeout" : "failed";
+      } else {
+        task.taskQueryStage = "parse";
         const value: unknown = JSON.parse(query.output);
         if (value !== null && typeof value === "object" && !Array.isArray(value)) {
           const data = value as Record<string, unknown>;
-          task.queryCompleted = true;
+          task.queryCompleted = true; task.queryFailureKind = "none";
           if (data.found === true) {
             task.found = true;
             const states = new Map([[0, "unknown"], [1, "disabled"], [2, "queued"], [3, "ready"], [4, "running"]]);
@@ -108,17 +132,18 @@ async function inspectFailure(options: Map<string, string>) {
             if (typeof data.xml === "string" && data.xml.length <= 65536) task.exactOwnership = taskOwned(data.xml, join(root, "bin/sbar-orbit.cmd"), sid);
           }
           if (typeof data.queryHResult === "number" && Number.isSafeInteger(data.queryHResult) && data.queryHResult >= -2147483648 && data.queryHResult <= 2147483647) task.queryHResult = data.queryHResult;
-        }
+          task.taskQueryStage = "complete";
+        } else task.queryFailureKind = "invalid-json";
       }
-    } catch { /* A failed task query remains unknown, never absent. */ }
+    } catch { task.queryFailureKind = task.taskQueryStage === "sid" ? "sid-failed" : task.taskQueryStage === "parse" ? "invalid-json" : "failed"; /* Unknown remains unknown, never absent. */ }
     const socket = serviceSocketPath();
     try { evidence.socketPresent = !(await missing(socket)); } catch { evidence.socketPresent = null; }
     const signal = AbortSignal.timeout(5000);
     try {
       const doctor = await call(socket, "doctor", {}, signal);
       evidence.doctorIdentity = doctor && typeof doctor === "object" && "managedIdentity" in doctor ? doctor.managedIdentity === null ? "null" : "non-null" : "absent";
-      evidence.endpoint = selected && doctor && typeof doctor === "object" && "managedIdentity" in doctor
-        && sameBrokerIdentity(doctor.managedIdentity, { ...selected.identity, root, directory: selected.directory }) ? "identity-match" : "identity-mismatch";
+      evidence.endpoint = expectedIdentity && doctor && typeof doctor === "object" && "managedIdentity" in doctor
+        && sameBrokerIdentity(doctor.managedIdentity, expectedIdentity) ? "identity-match" : "identity-mismatch";
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
       evidence.endpoint = signal.aborted ? "timeout" : ["ENOENT", "FailedToOpenSocket"].includes(code) ? "missing"
