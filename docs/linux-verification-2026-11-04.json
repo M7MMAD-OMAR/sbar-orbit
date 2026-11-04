@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "timeZone": "Asia/Dubai",
+  "scope": "Linux source and immutable-artifact verification; Windows 11 delegated to owner-operated testing agent",
+  "sourceVersion": "0.4.3",
+  "sourceVersionStatus": "unpublished-candidate",
+  "publishedStable": "0.4.2",
+  "local": {
+    "platform": "Linux",
+    "bun": "1.3.14",
+    "typecheck": true,
+    "defaultSuite": {
+      "passed": 562,
+      "skipped": 5,
+      "failed": 0,
+      "assertions": 3102,
+      "tests": 567,
+      "files": 60,
+      "seconds": 67.79
+    },
+    "focusedPolicyLifecycleInstallerPackaging": {
+      "passed": 105,
+      "skipped": 1,
+      "failed": 0,
+      "assertions": 1229,
+      "seconds": 6.32
+    },
+    "canonicalPackagingTests": {
+      "passed": 12,
+      "failed": 0,
+      "assertions": 111,
+      "seconds": 3.03
+    },
+    "budget": {
+      "memoryBytes": 1610612736,
+      "cpuQuotaPercent": 150,
+      "swapBytes": 0,
+      "tasks": 256
+    },
+    "resourcePreflight": true,
+    "graftIndexRefreshed": true
+  },
+  "cleanLinuxWorkflow": {
+    "id": 41781310218,
+    "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41781310218",
+    "platform": "ubuntu-24.04",
+    "conclusion": "success",
+    "durationSeconds": 186,
+    "bun": "1.3.14",
+    "verification": {
+      "typecheck": true,
+      "defaultVerify": true,
+      "packagingVerify": true,
+      "sourceManifest": true,
+      "registrySourceReceipt": true,
+      "frozenInstall": true,
+      "help": true,
+      "preflightContract": true,
+      "installDryRun": true,
+      "nativeAcceptance": false
+    },
+    "budget": {
+      "memoryBytes": 1610612736,
+      "cpuQuotaPercent": 150,
+      "swapBytes": 0,
+      "tasks": 256
+    },
+    "defaultSuite": {
+      "passed": 561,
+      "skipped": 6,
+      "failed": 0,
+      "assertions": 3098,
+      "tests": 567,
+      "files": 60,
+      "seconds": 69.59,
+      "skips": [
+        "macOS binary-plist application discovery",
+        "Windows current-user App Paths discovery",
+        "bound socket owner-only access",
+        "socket privacy refusal",
+        "Windows deny-delete holder fixture, not MCP E2E",
+        "stale Flatpak branches and distinct verified deployments"
+      ]
+    },
+    "packagingSuite": {
+      "passed": 17,
+      "failed": 0,
+      "assertions": 214,
+      "files": 3,
+      "seconds": 1.8
+    },
+    "websiteSuite": {
+      "passed": 10,
+      "failed": 0,
+      "assertions": 284,
+      "files": 1,
+      "seconds": 0.589,
+      "typecheck": true,
+      "build": true,
+      "deployed": false
+    },
+    "sitePublicationGate": "Candidate site assumes unavailable Windows assets; do not deploy from Linux-green evidence alone",
+    "sourceCommit": "0c53b8e182817ff990e129414d11dc51523bff42",
+    "workflowCommit": "0c53b8e182817ff990e129414d11dc51523bff42"
+  },
+  "artifacts": [
+    {
+      "name": "sbar-orbit-0.4.3-source.tar.gz",
+      "bytes": 5120631,
+      "sha256": "1daf14984fc6ff490cc87684ea411ce1626c18f468429c70d6f74d7fd65a655f"
+    },
+    {
+      "name": "sbar-orbit-0.4.3-source.tar.gz.sha256",
+      "bytes": 97,
+      "sha256": "3e22412a445ec255ba1838333162c57256516ca1ecf016ace30f0c8440004ba3"
+    },
+    {
+      "name": "sbar-orbit-0.4.3.tgz",
+      "bytes": 1044887,
+      "sha256": "5592effc815316eaa25ef39548c33f538ee0030d3e3cf726f86138687ce80219"
+    },
+    {
+      "name": "sbar-orbit-0.4.3.tgz.sha256",
+      "bytes": 87,
+      "sha256": "9017f3dec60ccab958e1eba2e85a1d973a4853edfce7d240a9ea1f03c42babae"
+    }
+  ],
+  "publication": {
+    "releaseCreated": false,
+    "tagCreated": false,
+    "npmPublished": false,
+    "websiteDeployed": false,
+    "windowsBinaryUploaded": false
+  },
+  "limits": {
+    "linuxOriginalApplicationAcceptanceRerun": false,
+    "successfulTaskThroughputMeasured": false,
+    "windowsAcceptance": false,
+    "windowsNativeApplicationControl": "unsupported"
+  },
+  "windowsHandoff": {
+    "os": "Windows 11 x64",
+    "agentDocument": "docs/windows11-agent-handoff.md",
+    "latestActualRun": 41780007115,
+    "currentFailure": {
+      "phase": "health",
+      "code": "broker-not-ready",
+      "centralExitCode": 1
+    },
+    "positiveInstaller": false,
+    "guiAcceptance": false,
+    "activationRollbackAcceptance": false,
+    "remoteConnectionCreated": false,
+    "issueWorkflow": "Owner-operated agent reproduces, redacts and reports GitHub Issues; maintainer reviews when requested"
+  },
+  "preservation": {
+    "sharedBrokerRestarted": false,
+    "ownerApplicationsControlled": false,
+    "profilesCopied": false,
+    "securityDisabled": false,
+    "unknownManagedStateDeleted": false
+  },
+  "artifactIndependentHashVerification": true,
+  "sourceCommit": "0c53b8e182817ff990e129414d11dc51523bff42"
+}
