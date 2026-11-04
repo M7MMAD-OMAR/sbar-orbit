@@ -708,3 +708,31 @@ helper and production wiring are not implemented.
 
 Final source suite: 872 pass, 5 skip, 0 fail, 16578 assertions across 84 files
 in 71.95 seconds. Strict TypeScript validation passed.
+
+## 16. Native helper and real client progress
+
+The dormant [fixed Wayland helper](../../src/native/reader_helper.c) uses the
+foreign-toplevel image-copy protocol with one bounded SHM frame. Its owner supplies
+a 120-byte setup on fd 3 and a separate receipt pipe on fd 4. It samples target
+closure before issuing capture-related destructor requests and a same-connection
+sync, then emits the bounded receipt. The nonce and digest are trusted setup echoes,
+not independent target authentication. Total process/libpng/Wayland allocations,
+actual compositor drain, continuous target liveness and GPU quiescence are not
+proved. The 13 owned tests compiled the helper with local Wayland 1.26.0, protocols
+1.49 and libpng 1.6.59 and exercised preflight and callbacks without a compositor.
+A synthetic protocol server, installed build, owned-scope launch and real app
+acceptance remain required. The focused helper test is not in the default suite
+because it requires newer compiler and Wayland protocol development packages.
+
+The [fixed handshake client](../../src/native/read_channel_client.py) and existing
+server exchanged metadata through a real private socket with owned processes.
+Kernel peer credentials and pidfd, protected generation checks, path validation,
+cancellation and malformed replies were covered by 27 Python cases. An ACK is not
+a future authorization, read grant, DSH conversation binding or data-drain proof.
+Off-latency and hostile same-UID/descriptor-transfer isolation are not claimed.
+The attempted TypeScript-to-Python durable usage bridge was not shipped because
+root-domain quarantine, child lifetime and lost-ack handling remain unqualified.
+
+Final default suite: 873 pass, 5 skip, 0 fail, 16582 assertions across 85
+files in 75.44 seconds. The separately compiled helper fixture passed all 13
+Python cases; it is not an original-app or compositor acceptance.
