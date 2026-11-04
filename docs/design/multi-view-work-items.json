@@ -1,0 +1,780 @@
+{
+  "schema": 1,
+  "status": "design-only",
+  "date": "2026-11-04",
+  "branch": "main",
+  "baselineCommit": "28f2609ad4939300e6746899074c8b0c03b93d36",
+  "functionalCodeBaseline": "0c53b8e182817ff990e129414d11dc51523bff42",
+  "implementationPerformed": false,
+  "requiresFutureImplementationRequest": true,
+  "plan": "docs/design/multi-view-plan.md",
+  "documents": [
+    "docs/design/multi-view-current-state.md",
+    "docs/design/multi-view-safety.md",
+    "docs/research/multi-view-platforms.md"
+  ],
+  "initialProposedLimits": {
+    "enabledByDefault": false,
+    "activeViewsPerConversation": 2,
+    "additionalModelWorkers": 0,
+    "dispatchedWritersPerSharedResource": 1,
+    "captureInflightPerDevice": 1,
+    "queuedActionMetadataPerConversation": 8,
+    "unconsumedObservationsPerView": 1,
+    "observationBytesPerView": 16777216,
+    "observationBytesPerDevice": 33554432,
+    "uncertainEffectAutomaticRetries": 0,
+    "extraSeatsEnabled": false,
+    "crossDeviceEnabled": false,
+    "rawContentTelemetry": false,
+    "qualification": "Design parameters only; use stricter existing bounds and verify P0 compatibility before implementation",
+    "activeViewsPerDevice": 8,
+    "activeFeatureConversationsPerDevice": 4,
+    "queuedActionMetadataPerDevice": 32,
+    "recoveryMetadataEntriesPerDevice": 1024,
+    "recoveryMetadataBytesPerDevice": 1048576
+  },
+  "phaseGateDocument": "docs/design/multi-view-plan.md",
+  "phaseGates": [
+    "MV-GATE-00",
+    "MV-GATE-01",
+    "MV-GATE-02",
+    "MV-GATE-03",
+    "MV-GATE-04",
+    "MV-GATE-R1",
+    "MV-GATE-R2"
+  ],
+  "safetyGateDocument": "docs/design/multi-view-safety.md",
+  "safetyGates": [
+    "MV-SAFETY-GATE-01",
+    "MV-SAFETY-GATE-02",
+    "MV-SAFETY-GATE-03",
+    "MV-SAFETY-GATE-04",
+    "MV-SAFETY-GATE-05",
+    "MV-SAFETY-GATE-06"
+  ],
+  "invariants": {
+    "prefix": "MV-INV-",
+    "count": 20
+  },
+  "adversarialCases": {
+    "prefix": "MV-SAFE-",
+    "count": 30,
+    "allApplicableRequiredBeforeRelease": true
+  },
+  "workItems": [
+    {
+      "id": "MV-00",
+      "phase": "P0",
+      "title": "Freeze actual capability, ingress and single-view baseline",
+      "dependsOn": [],
+      "expectedWriteScopes": [
+        "docs/design/multi-view-current-state.md",
+        "docs/acceptance.md",
+        "docs/support-tiers.md"
+      ],
+      "deliverables": [
+        "Complete authenticated caller to final input-consumer inventory, including direct/legacy/native routes",
+        "Document current off/cancellation, reference wiring, resource scopes and known single-view effect failures",
+        "Freeze supported exact adapter/app/build matrix, quiescence evidence and numeric limits before implementation",
+        "Classify and prioritize caller-unqualified operation-ID maps and unconditional paste-clipboard restoration before multi-writer enablement"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-00"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-01",
+      "phase": "P1",
+      "title": "Introduce scoped view bindings and attenuated authority",
+      "dependsOn": [
+        "MV-00"
+      ],
+      "expectedWriteScopes": [
+        "src/session.ts",
+        "src/caller-registry.ts",
+        "src/multi-view.ts (proposed new module)",
+        "tests/multi-view-identity.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "src/caller.ts",
+        "src/ipc.ts"
+      ],
+      "deliverables": [
+        "Versioned ViewBinding and broker-private ConversationGrant with caller, target and epoch binding",
+        "Known-process/window replacement, cross-caller, forged-label and delegated-scope refusal tests",
+        "No mutation or extra model worker in initial two-view mode",
+        "A view does not allocate a second native writer session for an already leased client; bind protected owner-issued connector identity rather than a free conversation string"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-01",
+        "MV-SAFETY-GATE-01"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-02",
+      "phase": "P1",
+      "title": "Add bounded consented observations and transition/freshness handling",
+      "dependsOn": [
+        "MV-01"
+      ],
+      "expectedWriteScopes": [
+        "src/multi-view-observation.ts (proposed)",
+        "src/session.ts",
+        "src/hyprland.ts",
+        "src/native/session.py",
+        "tests/multi-view-observation.test.ts (proposed)",
+        "scripts/verify-desktop.ts"
+      ],
+      "deliverables": [
+        "ObservationRef identity/geometry/topology epochs, completeness and transition labels",
+        "Latest-value coalescing, consent-isolated immutable cache and strict byte accounting",
+        "Event-aware observation with bounded polling fallback and off/revocation stopping new capture/delivery",
+        "No all-screen capture, content telemetry or retained image queue",
+        "Requested vs actual fallback format and text/image temporal consistency are truthful; text-only grants refuse image fallback and cursor-overlay rendering is qualified"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-01",
+        "MV-SAFETY-GATE-06"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-03",
+      "phase": "P1",
+      "title": "Expose host-neutral read-only status and human controls",
+      "dependsOn": [
+        "MV-02"
+      ],
+      "expectedWriteScopes": [
+        "src/multi-view-protocol.ts (proposed new module)",
+        "src/mcp.ts",
+        "src/cli.ts",
+        "desktop/panel.py",
+        "tests/multi-view-status.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "Separately authorized host-adapter repository, if selected"
+      ],
+      "deliverables": [
+        "Versioned bounded events with sequence-gap requery and safe rendered labels",
+        "Two-view cards showing actual status, age/completeness/scope and explicit stop/takeover",
+        "No UI-created authority, automatic new agent, DSH server replacement or hidden view"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-01"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-04",
+      "phase": "P1",
+      "title": "Qualify read-only two-view behavior and feature-off parity",
+      "dependsOn": [
+        "MV-02",
+        "MV-03"
+      ],
+      "expectedWriteScopes": [
+        "tests/multi-view-observation.test.ts (proposed)",
+        "tests/multi-view-compatibility.test.ts (proposed)",
+        "docs/acceptance.md",
+        "scripts/verify-desktop.ts"
+      ],
+      "deliverables": [
+        "Deterministic hotplug/resize/scroll/navigation/reconnect/pressure fault tests",
+        "No focus/pointer changes or unapproved observation; partial/cross-view skew remains truthful",
+        "Initial feature-off creates no subscriptions/models/workers; no live desktop effect claim from fixtures"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-01",
+        "MV-SAFETY-GATE-02"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-05",
+      "phase": "P2",
+      "title": "Implement a conservative hierarchical resource arbiter",
+      "dependsOn": [
+        "MV-01",
+        "MV-04"
+      ],
+      "expectedWriteScopes": [
+        "src/multi-view-scheduler.ts (proposed)",
+        "src/session.ts",
+        "src/native/control.py",
+        "tests/multi-view-scheduler.test.ts (proposed)",
+        "scripts/verify-desktop.ts"
+      ],
+      "deliverables": [
+        "All-or-none ordered acquisition, ancestor/descendant conflicts and app/document/seat/clipboard closure",
+        "Finite queues, fair scheduling, deadlines and no hold-and-wait resource upgrades",
+        "Known-quiescent device-wide enable transition for affected old and new writers"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-02",
+        "MV-SAFETY-GATE-01"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-06",
+      "phase": "P2",
+      "title": "Fence the last side-effect consumer with compatible cohorts",
+      "dependsOn": [
+        "MV-05"
+      ],
+      "expectedWriteScopes": [
+        "src/native/control.py",
+        "src/native/session.py",
+        "src/native/transport.py",
+        "experiments/ghost-cursor/plugin/ghostinput.cpp",
+        "Native bridge/protocol files identified by MV-00",
+        "tests/multi-view-fencing.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "src/native/paste.py"
+      ],
+      "deliverables": [
+        "ActionTicket grant, resource fence, binding and observation checks at actual dispatch",
+        "Reject queued old-generation commands and unsupported/mixed protocol consumers",
+        "Stage source/ABI-verified native changes without restarting a shared active broker"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-02",
+        "MV-SAFETY-GATE-01"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-07",
+      "phase": "P2",
+      "title": "Implement revocation, quiescent drain and uncertain-action recovery",
+      "dependsOn": [
+        "MV-06"
+      ],
+      "expectedWriteScopes": [
+        "src/conversation-usage.ts",
+        "src/session.ts",
+        "src/native/control.py",
+        "src/native/session.py",
+        "src/multi-view-journal.ts (proposed)",
+        "tests/multi-view-recovery.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "src/native/paste.py"
+      ],
+      "deliverables": [
+        "Consent revocation before next input, parent-child cancellation and scoped subscription stop",
+        "cancel_pending/draining/quarantined behavior, no TTL-based regrant or global human key release",
+        "Minimal safe action-intent/outcome journal; zero automatic uncertain-effect replay",
+        "Disable retains fences and barriers until quiescence; no automatic undo of external effects",
+        "Remove or refuse unsafe unconditional clipboard restoration on coordinated routes; never overwrite a later owner copy"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-02",
+        "MV-SAFETY-GATE-05"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-08",
+      "phase": "P2",
+      "title": "Cover every supported legacy and new action route",
+      "dependsOn": [
+        "MV-06",
+        "MV-07"
+      ],
+      "expectedWriteScopes": [
+        "src/multi-view-protocol.ts (proposed new module)",
+        "src/mcp.ts",
+        "src/cli.ts",
+        "src/session.ts",
+        "src/hyprland.ts",
+        "src/native/session.py",
+        "desktop/panel.py",
+        "tests/multi-view-compatibility.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "src/caller.ts",
+        "src/ipc.ts",
+        "src/native/paste.py"
+      ],
+      "deliverables": [
+        "CLI, MCP, batches, resume and applicable panel/native routes share resource and final-dispatch checks",
+        "Existing full/protected settings and ordinary clipboard policy preserved",
+        "No single-view/mixed-version bypass; refuse or defer active incompatible writer migration"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-02",
+        "MV-SAFETY-GATE-02",
+        "MV-SAFETY-GATE-05"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-09",
+      "phase": "P2",
+      "title": "Qualify coordinated one-writer workflows and owner interference",
+      "dependsOn": [
+        "MV-08",
+        "MV-04"
+      ],
+      "expectedWriteScopes": [
+        "tests/multi-view-acceptance.test.ts (proposed)",
+        "Native owned-fixture tests identified by MV-00",
+        "docs/acceptance.md",
+        "docs/support-tiers.md",
+        "scripts/verify-desktop.ts"
+      ],
+      "deliverables": [
+        "All applicable MV-SAFE scenarios mapped to deterministic tests, including no duplicate send/save/submit",
+        "Real exact original-app observe-act-settle-verify and human takeover evidence",
+        "Zero wrong-target/cross-scope actions; unknown quiescence blocks conflicting work"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-02",
+        "MV-SAFETY-GATE-02",
+        "MV-SAFETY-GATE-03",
+        "MV-SAFETY-GATE-05"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-10",
+      "phase": "P3",
+      "title": "Add optional host-supervised delegated readers and task dependencies",
+      "dependsOn": [
+        "MV-09"
+      ],
+      "expectedWriteScopes": [
+        "src/multi-view.ts (proposed)",
+        "src/mcp.ts",
+        "tests/multi-view-delegation.test.ts (proposed)",
+        "scripts/verify-desktop.ts",
+        "Separately authorized host-adapter implementation"
+      ],
+      "deliverables": [
+        "Host-owned bounded DAG, explicit roles and attenuated caller grants",
+        "No provider engine in Orbit, worker per screen default or agent-label authority",
+        "No reassignment of uncertain side effects; parent revocation cancels descendants",
+        "Host budget declarations do not pretend to control unrelated external agents"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-03",
+        "MV-SAFETY-GATE-01",
+        "MV-SAFETY-GATE-06"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-11",
+      "phase": "P4",
+      "title": "Measure, publish qualified limits and execute opt-in rollback drill",
+      "dependsOn": [
+        "MV-09",
+        "MV-10"
+      ],
+      "expectedWriteScopes": [
+        "Benchmark/acceptance harness selected in MV-00",
+        "docs/acceptance.md",
+        "docs/support-tiers.md",
+        "docs/release-notes or release document selected later"
+      ],
+      "deliverables": [
+        "Start with at least 20 paired cold and warm pilot samples per equivalent scenario, counterbalance and expand by predeclared precision/confidence rules before tail/regression release decisions; count failures and verification cost",
+        "Best/typical/worst completed-task time, tails, tokens, frame bytes, memory/CPU, waits and owner effects",
+        "Predeclared regression budgets, exact app/build matrix and no universal savings claim",
+        "Feature-disable/drain/rollback drill and source/runtime cohort checks before any release"
+      ],
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-04",
+        "MV-SAFETY-GATE-03",
+        "MV-SAFETY-GATE-04",
+        "MV-SAFETY-GATE-05",
+        "MV-SAFETY-GATE-06"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-R1",
+      "phase": "R1",
+      "title": "Optional independent native input-seat qualification",
+      "dependsOn": [
+        "MV-11"
+      ],
+      "expectedWriteScopes": [
+        "Separate adapter-specific research and acceptance scope, to be approved later"
+      ],
+      "deliverables": [
+        "Exact platform/compositor ABI, application builds and input-method capability matrix",
+        "Independent effect/focus/pointer/modifier/clipboard/dialog evidence, not cursor overlays",
+        "Unsupported IME/XWayland/application routes stay on qualified existing path or refuse"
+      ],
+      "optional": true,
+      "requiresSeparateAuthorization": true,
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-R1"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    },
+    {
+      "id": "MV-R2",
+      "phase": "R2",
+      "title": "Optional multiple-device orchestration research",
+      "dependsOn": [
+        "MV-11"
+      ],
+      "expectedWriteScopes": [
+        "Separate device-transport/enrollment/host research scope, to be approved later"
+      ],
+      "deliverables": [
+        "Explicit device enrollment, authenticated caller/device scope and per-device fences",
+        "Partition/duplicate/reorder/offline tests and visible partial-failure reconciliation",
+        "No global OS input or cross-device atomic-commit claim; no remote connection created by this plan"
+      ],
+      "optional": true,
+      "requiresSeparateAuthorization": true,
+      "status": "planned",
+      "runtimeAcceptance": false,
+      "writeScopesAreProposed": true,
+      "acceptanceEvidenceRequired": true,
+      "gateContributions": [
+        "MV-GATE-R2"
+      ],
+      "completionRule": "Complete dependencies and reviewed own deliverables with applicable tests; this item contributes evidence, not automatic passage of the entire phase gate."
+    }
+  ],
+  "executionRules": [
+    "Never start these work items automatically from this manifest",
+    "Read actual latest repository and owner instructions before implementing",
+    "Implement on main only; preserve unrelated owner changes",
+    "Register each new mandatory test in the default suite with missing-file guard",
+    "Re-read actual caller graph and approved write scopes before editing; listed seams are proposals, not proven exhaustive filenames",
+    "Do not infer UI resource ownership from cgroup/process leases or agent labels",
+    "Do not restart a shared active broker, copy profiles, create a hidden desktop or disable safeguards",
+    "Source/test fixture success is not native application-effect acceptance",
+    "No Windows/native control, CI restart, remote access, release or deployment is authorized by this plan"
+  ],
+  "safetyCaseAssignments": [
+    {
+      "id": "MV-SAFE-01",
+      "workItems": [
+        "MV-01"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-02",
+      "workItems": [
+        "MV-01",
+        "MV-06"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-03",
+      "workItems": [
+        "MV-05"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-04",
+      "workItems": [
+        "MV-05"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-05",
+      "workItems": [
+        "MV-09",
+        "MV-R1"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-06",
+      "workItems": [
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-07",
+      "workItems": [
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-08",
+      "workItems": [
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-09",
+      "workItems": [
+        "MV-02",
+        "MV-06"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-10",
+      "workItems": [
+        "MV-02"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-11",
+      "workItems": [
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-12",
+      "workItems": [
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-13",
+      "workItems": [
+        "MV-03",
+        "MV-10"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-14",
+      "workItems": [
+        "MV-02"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-15",
+      "workItems": [
+        "MV-02",
+        "MV-05"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-16",
+      "workItems": [
+        "MV-01",
+        "MV-02"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-17",
+      "workItems": [
+        "MV-07",
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-18",
+      "workItems": [
+        "MV-06",
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-19",
+      "workItems": [
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-20",
+      "workItems": [
+        "MV-05",
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-21",
+      "workItems": [
+        "MV-06",
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-22",
+      "workItems": [
+        "MV-08",
+        "MV-R2"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-23",
+      "workItems": [
+        "MV-07",
+        "MV-11"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-24",
+      "workItems": [
+        "MV-08"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-25",
+      "workItems": [
+        "MV-02",
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-26",
+      "workItems": [
+        "MV-00",
+        "MV-08"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-27",
+      "workItems": [
+        "MV-01",
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-28",
+      "workItems": [
+        "MV-09"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-29",
+      "workItems": [
+        "MV-01",
+        "MV-05",
+        "MV-10"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    },
+    {
+      "id": "MV-SAFE-30",
+      "workItems": [
+        "MV-01",
+        "MV-05",
+        "MV-07"
+      ],
+      "status": "proposed-not-executed",
+      "definition": "docs/design/multi-view-safety.md#proposed-adversarial-acceptance"
+    }
+  ],
+  "gateSemantics": "gateContributions lists obligations this item helps establish, not gates that must already pass before the item can finish. Only the declared phase closer may claim a scoped phase-gate result. Partial read-only acceptance never counts as full writer or full-release acceptance.",
+  "phaseClosers": {
+    "MV-GATE-00": "MV-00",
+    "MV-GATE-01": "MV-04",
+    "MV-GATE-02": "MV-09",
+    "MV-GATE-03": "MV-10",
+    "MV-GATE-04": "MV-11",
+    "MV-GATE-R1": "MV-R1",
+    "MV-GATE-R2": "MV-R2"
+  },
+  "releaseRule": "No capability becomes enabled merely because a work item is complete. Record gate phase, capability scope, exact test coverage and evidence; all applicable full safety obligations must pass before its release."
+}
