@@ -245,13 +245,22 @@ class NativeSession:
             raise SessionError("Native application is unavailable in this session")
         return app
 
-    def _target(self, app_id, window_id):
+    def _target(self, app_id, window_id, *, passive=False):
         window_id = identifier(window_id)
         target = self.windows.get(window_id)
         if target is None or target["key"][0] != app_id:
             raise SessionError("Window does not belong to the requested native application")
-        if not any(window["windowId"] == window_id for window in self._owned_windows(app_id)):
+        windows = self._owned_windows(app_id, commit=False) if passive else self._owned_windows(app_id)
+        current = next((window for window in windows if window["windowId"] == window_id), None)
+        if current is None:
             raise TargetClosed("The target window closed or was replaced")
+        if passive:
+            # Detached current geometry for capture, not a rollback of shared state.
+            target = copy.deepcopy(target)
+            target["size"] = (current["width"], current["height"])
+            point = target["pointer"]
+            if point is not None and (point["x"] >= current["width"] or point["y"] >= current["height"]):
+                target["pointer"] = None
         return target
 
     @classmethod
@@ -267,7 +276,7 @@ class NativeSession:
                   "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
-        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "observationTimeoutMs"}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "observationTimeoutMs", "observationMode"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -281,6 +290,8 @@ class NativeSession:
         if kind == "observe" and result.setdefault("format", "image") not in a11y.FORMATS:
             raise SessionError("Unknown observation format")
         if kind == "observe":
+            if "observationMode" in result and result["observationMode"] != "passive-v1":
+                raise SessionError("Unknown observation mode")
             cls._settle_options(result)
         if kind in ("click", "mouse-down", "mouse-up", "drag"):
             result.setdefault("button", "left")
@@ -358,13 +369,13 @@ class NativeSession:
                 digest, stable_since = latest, time.monotonic()
 
     def _ensure_pointer(self, target, address):
-        """Visible render-only presence, with no pointer or keyboard input."""
+        """Legacy cursor refresh; the plugin handler may flush pending input."""
         point = target["pointer"]
         if (point is None or not 0 <= point["x"] < target["size"][0]
                 or not 0 <= point["y"] < target["size"][1]):
             point = {"x": target["size"][0] // 2, "y": target["size"][1] // 2}
         # Refresh the selected target after a sibling window or portal had the
-        # latest cursor. This is render-only and cannot replay pointer input.
+        # latest cursor. Passive observation must never call this effectful route.
         self.transport._perform(f"ghost-cursor {address} {point['x']} {point['y']}")
         target["pointer"] = point
         return target["pointer"]
@@ -398,6 +409,7 @@ class NativeSession:
         if self.closed:
             raise SessionError("Native session is closed")
         action = self.parse(value)
+        passive = action.get("observationMode") == "passive-v1"
         request = "native-session " + json.dumps(action, sort_keys=True, ensure_ascii=True)
         frame = None
         observation_deadline = (started + action.get("observationTimeoutMs", action.get("timeoutMs", CAPTURE_TIMEOUT_SECONDS * 1000)) / 1000
@@ -408,7 +420,11 @@ class NativeSession:
             app_id, kind = action["appId"], action["type"]
             if kind == "windows":
                 return {"windows": self._owned_windows(app_id)}
-            target = self._target(app_id, action["windowId"])
+            def current_target():
+                return (self._target(app_id, action["windowId"], passive=True) if passive
+                        else self._target(app_id, action["windowId"]))
+
+            target = current_target()
             address = target["address"] + "@" + target["key"][1] + "@" + self._app(app_id).unit
             if kind in ("key", "text", "state"):
                 self._ensure_pointer(target, address)
@@ -419,11 +435,11 @@ class NativeSession:
                 if action["format"] != "image":
                     tree_size = tuple(target["size"])
                     tree = self._tree(target, deadline=observation_deadline)
-                    after_tree = self._target(app_id, action["windowId"])
+                    after_tree = current_target()
                     capture_remaining(observation_deadline)
-                    if tree.get("status") == "ok" and tuple(after_tree["size"]) != tree_size:
+                    if (tree.get("status") == "ok" or passive) and tuple(after_tree["size"]) != tree_size:
                         raise CaptureGeometryChanged()
-                    if action["format"] == "text" and tree["status"] == "ok":
+                    if action["format"] == "text" and (tree["status"] == "ok" or passive):
                         # Text only: no pixels are captured. The surface size is the compositor's.
                         captured = int(time.time() * 1000)
                         width, height = target["size"]
@@ -439,7 +455,10 @@ class NativeSession:
                 def begin():
                     """Everything before the pixels leave the compositor, then the capture itself."""
                     capture_remaining(observation_deadline)
-                    self._ensure_pointer(target, address)
+                    # Skipping refresh avoids the legacy cursor handler and its
+                    # pending-input flush. It does not drain unrelated input.
+                    if not passive:
+                        self._ensure_pointer(target, address)
                     captured = int(time.time() * 1000)
                     surface_size = tuple(target["size"])
                     self._check_target(address)
@@ -457,7 +476,9 @@ class NativeSession:
                     pixels, captured, surface_size, geometry = handle
                     image, width, height = pixels
                     verify_host(self.plan)
-                    self._target(app_id, action["windowId"])
+                    current = current_target()
+                    if passive:
+                        target["size"], target["pointer"] = current["size"], current["pointer"]
                     self._check_target(address)
                     after_geometry = self._geometry(address)
                     capture_remaining(observation_deadline)
@@ -551,7 +572,8 @@ class NativeSession:
                 # Same scoped post-capture refresh as the old separate windows request,
                 # but under this read admission and without another worker round trip.
                 acknowledged = frame if frame is not None else result
-                acknowledged["windows"] = self._owned_windows(action["appId"])
+                acknowledged["windows"] = (self._owned_windows(action["appId"], commit=False) if passive
+                                           else self._owned_windows(action["appId"]))
                 capture_remaining(observation_deadline)
             return result
 
@@ -571,4 +593,6 @@ class NativeSession:
                 "treeNodes": len(nodes) if nodes is not None else 0,
                 "treeComplete": tree.get("complete") is True if nodes is not None else None,
             }
+            if passive:
+                observed["observation"].update(mode="passive-v1", cursorRefresh="omitted")
         return observed

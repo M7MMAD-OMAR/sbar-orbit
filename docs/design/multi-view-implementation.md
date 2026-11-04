@@ -4,9 +4,10 @@ Started 4 November 2026, Asia/Dubai, following the owner request to implement th
 [plan](multi-view-plan.md). Source baseline:
 `ffa32d5e6558435190d53679e0fabd870ea8e809`, version `0.4.3` candidate.
 
-**Status: prerequisite repairs implemented; multi-view is not available. No phase
-gate has passed.** No additional model, capture subscription, writer, native
-protocol or desktop permission has been enabled. Windows testing remains with
+**Status: prerequisite repairs and an internal passive observation seam are
+implemented; multi-view is not available. No phase gate has passed.** No additional
+model, capture subscription, writer, plugin protocol or desktop permission has
+been enabled. Windows testing remains with
 the owner-operated Windows 11 workflow. No release or site deployment occurred.
 
 ## 1. Completed prerequisite changes
@@ -140,8 +141,9 @@ Next dependency-ordered work:
    Freeze the versioned cohort handshake, authority source, resource limits and
    initial app/build qualification without inventing live evidence. In particular,
    image observation refreshes a cursor through a handler that can flush pending
-   input callbacks; implement and qualify a no-refresh observation route or
-   classify that work as effectful before P1 read concurrency.
+   input callbacks. The internal passive seam in section 5 now omits that command;
+   live capture/owner-preservation qualification remains required before P1 read
+   concurrency, and legacy cursor-refresh work remains classified as effectful.
 2. Introduce private caller-bound read-only view records and bounded observations.
    No second lease for an already leased client; no unauthorized image fallback.
 3. Integrate a host-neutral status/consent surface and qualify two-view reads.
@@ -158,3 +160,90 @@ and unestablished pointer preservation. Subsequent source fixtures do not turn
 that into a passed native rerun. No new desktop operation, broker restart,
 compositor reload, owner-window closure or clipboard operation was performed in
 this prerequisite tranche. Unknown input quiescence remains unknown.
+
+## 5. Internal passive observation seam
+
+Implementation tranche after `cba9500bd2872f28b6ce61c7ed961f01965389ce`. This
+adds an internal observation mode, not a public multi-view tool or a passed
+`MV-00`/`MV-GATE-01`. No plugin source, ABI, loaded instance, shared broker or
+original application was changed/restarted for this work.
+
+[NativeSession](../../src/native/session.py) accepts only the literal
+`observationMode: "passive-v1"` on observe actions. Image, both, digest, settled
+and bounded-resample capture paths omit `_ensure_pointer`; passive text returns
+text with the actual tree status, including unavailable, instead of capturing
+unauthorized fallback pixels. Successful responses extend existing observation
+metrics with `mode: "passive-v1"` and `cursorRefresh: "omitted"`. Legacy requests
+without the new mode retain their old behavior and response semantics. The
+helper comment now correctly labels legacy cursor refresh as effectful.
+
+[NativeBackend](../../src/hyprland.ts) exposes an internal `observePassive` method
+with an explicit owned target and a finite integer worker budget of 100 to 3000
+ms, default 1500 ms. It requires that exact acknowledgement plus inline scoped
+window metadata, rejects old/missing acknowledgements without a second read or
+a legacy fallback, rejects passive text/image substitution, and does not commit
+writer selection, pointer, scale or window state. Its presence result contains
+only the captured target, not sibling window titles or handles. The normal
+public CLI/MCP observation route has not been migrated or broadened. No new
+background worker, subscription, timer, capture loop or model is created.
+
+### Independent review repair: worker metadata
+
+The first independent read-only review found that omitting cursor refresh and
+protecting TS state was insufficient: production window enumeration still
+registered siblings, changed stored sizes and cleared writer pointers on shrink.
+The initial Python fixture mocked those methods and could not expose the bug.
+
+[ExistingApplicationSession](../../src/native/existing.py) now has an internal
+`commit=False` enumeration path. It validates current retained window identities
+and sizes but does not enroll unknown sibling handles or mutate stored targets.
+Passive `_target` uses it and returns a detached deep copy with current geometry;
+an out-of-bounds pointer is cleared only in that local snapshot. A follow-up
+review also found that unavailable text could return an old detached size after
+a tree query resized the target; passive mode now refuses any tree-query geometry
+change even when the tree is unavailable, without fallback pixels. Every passive
+capture validation and final acknowledgement uses noncommitting enumeration.
+Geometry resampling updates only the detached capture state, not a rollback of
+shared writer state. Production-method tests now cover real detached resize
+retry/exhaustion and stable/unavailable text, not only stubbed target behavior.
+Default `commit=True` behavior is unchanged.
+
+[Production Python fixtures](../../tests/native_observation_passive_test.py) now
+include 14 cases using actual production execute, target and enumeration methods
+with only OS/capture/control boundaries faked. They check value and object-identity
+preservation for original maps, window records, size lists and pointers across
+success, failure, sibling shrink/discovery, late invalid metadata and replacement.
+The original 15 execute/parser/fault-injection cases cover images, unavailable
+text, both, digest, settle, geometry retries/deadlines, capture failures, strict
+mode validation and legacy parity. The [wrapper](../../tests/native-observation-passive.test.ts)
+asserts all 29 run without skips. [Backend fixtures](../../tests/native-observation-passive-backend.test.ts)
+cover downgrade refusal, malformed metadata, explicit target/budget, no sibling
+export and no overwrite of writer state changed while an observation waits.
+Both new wrappers are mandatory in the default verification list.
+
+### Verification and limitations
+
+- Focused backend/legacy observation/native/a11y/deadline suite: 73 pass, 0 fail,
+  262 assertions across 5 files, 1.99 seconds.
+- Focused production passive/backend/roundtrip/native/deadline/session-text suite:
+  85 pass, 0 fail, 354 assertions across 6 files, 1.77 seconds. The passive wrapper
+  executed all 25 Python cases; nested cases are not added to the Bun test count.
+- Complete default verification before the follow-up unavailable-text geometry
+  repair: 586 pass, 5 skip, 0 fail, 3239 assertions across 64 files, 75.07 seconds.
+  This does not establish the later repair or newly added geometry fixtures.
+- Final functional-tree default verification, including the unavailable-tree
+  geometry repair and all 29 Python passive cases: 586 pass, 5 skip, 0 fail,
+  3239 assertions across 64 files, 69.26 seconds.
+- Final strict root type check exited 0. All commands used the same bounded
+  one-job-at-a-time wrapper described in section 3. No live desktop acceptance
+  or throughput/performance gain is inferred from these source fixtures.
+
+The mode acknowledges omission of cursor refresh only. It does not establish
+that unrelated queued compositor callbacks stopped, that no human/OS client
+changed the target, that a prior overlay is absent from pixels, or that image
+and accessibility data form an atomic semantic snapshot. Its deadline starts
+in the worker after queue wait; client cancellation and global capture admission
+are separate unfinished contracts. Retained-reference authority, host-issued
+caller grants, binding/topology/revision epochs, resource reservations, native
+app/build acceptance and owner-interference measurements remain required.
+Multi-view enablement and all phase gates remain unpassed.

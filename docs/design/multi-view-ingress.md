@@ -49,6 +49,19 @@ Image observe, text fallback-to-image, both and pixel-digest baseline share that
 
 **Decision, not implementation:** investigate an observation route that does not refresh pointer/cursor or flush pumps. Qualify its capture completeness, owner preservation and rendering behavior before P1 read concurrency. Alternatively classify refresh as coordinated effectful work and keep it outside pure-read grants. No plugin patch/reload is authorized by this inventory. P1 input-pure observation remains blocked until that choice is implemented and independently tested.
 
+### Subsequent implementation update
+
+The internal `passive-v1` worker/backend seam now omits cursor refresh across
+image, text, both, baseline and settled/resampled captures. It uses detached
+worker metadata without sibling enrollment or writer pointer clearing; the
+backend requires an exact omission acknowledgement and does not update writer
+selection/scale state or fall back to a legacy read. Passive text never widens
+to pixels when accessibility is unavailable. Legacy observation is unchanged.
+See the [implementation ledger](multi-view-implementation.md#5-internal-passive-observation-seam)
+for test evidence and limits. This narrows the original source-reachability
+blocker, but does not establish global input quiescence or P1 native acceptance.
+No compositor plugin source, loaded instance or broker was changed/restarted.
+
 ## 4. Cancellation and drain: known boundaries, not receipts
 
 - **S:** [client abort:84-118](<../../src/ipc.ts#L84-L118>) destroys the HTTP request locally; broker dispatch does not pass request.signal to session work. [MCP off:73-83](<../../src/mcp.ts#L73-L83>) explicitly does not cancel accepted work. Neither proves endpoint quiescence.

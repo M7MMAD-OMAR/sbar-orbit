@@ -26,6 +26,34 @@ fallback or sending Ctrl+V. This intentionally removes that fallback capability;
 it does not restrict typeable text or explicit application Copy/Paste. No atomic
 clipboard-owner revision or coordinated clipboard transaction is claimed.
 
+## Internal passive observation seam
+
+The backend has an internal `observePassive(explicitTarget, format, timeoutMs)`
+method for upcoming scoped views. It is not a new CLI/MCP tool, a grant or an
+enabled multi-view feature. Its finite integer worker budget is 100 to 3000 ms,
+default 1500 ms; queue wait is separate, not an end-to-end cancellation bound.
+
+The worker accepts the observe-only `observationMode: "passive-v1"` field and
+acknowledges `observation.mode: "passive-v1"` plus `cursorRefresh: "omitted"`. That
+acknowledges omission of the legacy cursor-refresh command, not all input effects
+stopping, input quiescence, a fresh document revision or native acceptance.
+Existing scheduled compositor input can still progress independently. A missing
+or old acknowledgement refuses with no retry through the legacy observation
+route and no second window-metadata read.
+
+Passive text stays text if accessibility is unavailable, returning the actual
+unavailable tree status and no pixels. It does not silently use image fallback.
+Passive reads use detached live target geometry and do not enroll new sibling
+handles, clear stored writer pointers, or commit either worker/backend writer
+selection, window, pointer or coordinate-scale state. Responses expose only the
+selected target presence, not sibling window metadata. Existing legacy observe
+defaults remain unchanged, including its cursor refresh and image fallback.
+
+This is a tested source seam, not a guarantee that a screenshot omits an already
+drawn overlay or that no other client/human changes the application during capture.
+Global capture budgeting, host-issued authority, epochs, revocation and real
+app/build qualification remain prerequisites before view enablement.
+
 ## Same-call post-action text readback
 
 Batch `orbit_act` supports `capture.format` of `image` (default), `text` or

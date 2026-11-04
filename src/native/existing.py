@@ -230,7 +230,8 @@ class ExistingApplicationSession(NativeSession):
 
             return self.control.execute(request, operation)
 
-    def _owned_windows(self, app_id):
+    def _owned_windows(self, app_id, *, commit=True):
+        """Read live retained targets; passive reads never enroll or update writer state."""
         self._app(app_id)
         info = self._info()
         if info["status"] == "unavailable":
@@ -258,14 +259,17 @@ class ExistingApplicationSession(NativeSession):
             key = (app_id, stable, self.lease_id)
             window_id = next((identity for identity, target in self.windows.items() if target["key"] == key), None)
             if window_id is None:
+                if not commit:
+                    continue  # Observation cannot enroll a newly discovered sibling.
                 window_id = uuid.uuid4().hex
                 self.windows[window_id] = {"key": key, "address": address, "size": size, "pointer": None}
             elif self.windows[window_id]["address"] != address:
                 raise SessionError("Leased window identity changed")
-            self.windows[window_id]["size"] = size
-            pointer = self.windows[window_id]["pointer"]
-            if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
-                self.windows[window_id]["pointer"] = None
+            if commit:
+                self.windows[window_id]["size"] = size
+                pointer = self.windows[window_id]["pointer"]
+                if pointer is not None and (pointer["x"] >= size[0] or pointer["y"] >= size[1]):
+                    self.windows[window_id]["pointer"] = None
             result.append({"appId": app_id, "windowId": window_id,
                            "title": str(client.get("title", ""))[:160], "width": size[0], "height": size[1]})
         return result

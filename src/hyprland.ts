@@ -423,13 +423,37 @@ export class NativeBackend {
   }
 
   async observe(value?: unknown, format: "image" | "text" | "both" = "image", settle?: { since?: string; timeoutMs: number; quietMs?: number }) {
+    return this.readObservation(value, format, settle);
+  }
+
+  /** Internal, explicitly targeted observation. No cursor refresh or input-state commit.
+   * This is not an authority grant, a quiescence receipt or live adapter qualification. */
+  async observePassive(value: unknown, format: "image" | "text" | "both" = "image", timeoutMs = 1500) {
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 3000 || !["image", "text", "both"].includes(format))
+      throw new OrbitError("INVALID_REQUEST", "Passive observation requires a known format and an integer budget from 100 to 3000");
+    const selected = target(record(value));
+    return this.readObservation(selected, format, undefined, timeoutMs);
+  }
+
+  private async readObservation(value: unknown, format: "image" | "text" | "both", settle?: { since?: string; timeoutMs: number; quietMs?: number }, passiveTimeoutMs?: number) {
+    const passive = passiveTimeoutMs !== undefined;
     const selected = value === undefined ? this.selected : target(record(value));
     if (!selected || !this.applications.has(selected.appId))
       throw new OrbitError("INVALID_REQUEST", "Observe requires an explicit owned native target");
     if (format === "text" && settle && (settle.since !== undefined || settle.quietMs !== undefined))
       throw new OrbitError("INVALID_REQUEST", "Text capture does not accept pixel-settle options");
-    const observationOptions = format === "text" && settle ? { observationTimeoutMs: settle.timeoutMs } : settle;
+    const observationOptions = passive ? { observationMode: "passive-v1", observationTimeoutMs: passiveTimeoutMs }
+      : format === "text" && settle ? { observationTimeoutMs: settle.timeoutMs } : settle;
     const frame = record(await this.worker.request("act", { type: "observe", ...selected, ...(format === "image" ? {} : { format }), ...(observationOptions ?? {}) }));
+    if (passive) {
+      const acknowledgement = frame.observation;
+      if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement)
+          || record(acknowledgement).mode !== "passive-v1" || record(acknowledgement).cursorRefresh !== "omitted"
+          || !Object.hasOwn(frame, "windows"))
+        throw new OrbitError("UNSUPPORTED", "Native worker did not acknowledge passive observation; no legacy fallback is permitted");
+      if (format === "text" && (frame.mimeType !== "text/x-orbit-a11y" || frame.image !== undefined))
+        throw new OrbitError("BACKEND_ERROR", "Passive text observation cannot fall back to image");
+    }
     // A text frame carries the accessibility tree and no pixels; every other frame is an image.
     const textOnly = frame.mimeType === "text/x-orbit-a11y" && format === "text" && frame.image === undefined;
     if (frame.appId !== selected.appId || frame.windowId !== selected.windowId
@@ -469,6 +493,16 @@ export class NativeBackend {
       throw new OrbitError("INVALID_REQUEST", "Observed native application is closed");
     if (!owned.some(window => window.windowId === selected.windowId))
       throw new OrbitError("BACKEND_ERROR", "Observed target was not acknowledged in native window metadata");
+    if (passive) {
+      // Never overwrite a writer's selected target, pointer or coordinate scale.
+      // Do not export sibling-window metadata outside this observed target.
+      const observed = owned.find(window => window.windowId === selected.windowId)!;
+      const { windows: _windows, ...publicFrame } = frame;
+      return { ...publicFrame, presence: { title: observed.title,
+        location: this.handoff ? `Workspace ${this.handoff.workspace}` : "Orbit native scoped application",
+        pointer, pageCount: 1, pageIndex: 1,
+        tabs: [{ tab: 1, label: observed.title, active: true, ...selected }], sampled: "capture-target metadata" } };
+    }
     this.acknowledgeWindows(owned, selected.appId);
     this.selected = selected;
     this.size = { width: frame.width, height: frame.height };
