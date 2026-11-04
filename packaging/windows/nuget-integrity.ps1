@@ -58,9 +58,12 @@ $env:NUGET_PACKAGES = Join-Path $root 'cache-first'
 $env:NUGET_PLUGINS_CACHE_PATH = Join-Path $root 'plugins-cache'
 $env:NUGET_SCRATCH = Join-Path $root 'scratch'
 $stage = 'sdk-identity'
-function DotNet([string[]]$Argv) {
+# PowerShell command names are case-insensitive. Never name this wrapper after dotnet.
+$dotnetExe = (Get-Command dotnet.exe -CommandType Application -ErrorAction Stop).Source
+if (-not [IO.Path]::IsPathFullyQualified($dotnetExe) -or -not (Test-Path -LiteralPath $dotnetExe -PathType Leaf)) { throw 'Absolute dotnet application path is required' }
+function Invoke-DotNetDiagnostic([string[]]$Argv) {
   Check-Reserve | Out-Host
-  $output = @(& dotnet @Argv 2>&1)
+  $output = @(& $dotnetExe @Argv 2>&1)
   $code = $LASTEXITCODE
   $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
   if ($text.Length -gt 65536) { throw 'Diagnostic command output exceeds metadata bound' }
@@ -69,7 +72,7 @@ function DotNet([string[]]$Argv) {
 }
 Push-Location $project
 try {
-  if ((& $bun --version).Trim() -ne '1.4.4' -or (& dotnet --version).Trim() -ne '10.0.403') { throw 'Actual tool version differs from diagnostic pins' }
+  if ((& $bun --version).Trim() -ne '1.4.4' -or (& $dotnetExe --version).Trim() -ne '10.0.403') { throw 'Actual tool version differs from diagnostic pins' }
   $report.dotnetSdk = '10.0.403'
   $report.targetFramework = 'net10.0-windows'
   $report.packageId = 'Microsoft.Web.WebView2'
@@ -102,7 +105,7 @@ try {
   $report.catalog = @{url=$catalogUrl;packageHashAlgorithm='SHA512';packageHash=$catalog.packageHash}
   $restore = @('restore',$fixture,'--runtime','win-x64','--disable-parallel','--no-cache','--configfile',$config)
   $stage = 'new-owned-fixture-lock'
-  $null = DotNet ($restore + @('--use-lock-file','--packages',$env:NUGET_PACKAGES))
+  $null = Invoke-DotNetDiagnostic ($restore + @('--use-lock-file','--packages',$env:NUGET_PACKAGES))
   $lockPath = Join-Path $project 'packages.lock.json'
   if ((Get-Item -LiteralPath $lockPath).Length -gt 65536) { throw 'Fixture lock metadata exceeds bound' }
   $lockDigest = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -120,14 +123,14 @@ try {
   $stage = 'locked-repeat-fresh-cache'
   $env:NUGET_PACKAGES = Join-Path $root 'cache-locked'
   $env:NUGET_HTTP_CACHE_PATH = Join-Path $root 'http-locked'
-  $null = DotNet ($restore + @('--locked-mode','--packages',$env:NUGET_PACKAGES))
+  $null = Invoke-DotNetDiagnostic ($restore + @('--locked-mode','--packages',$env:NUGET_PACKAGES))
   if ((Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $lockDigest) { throw 'Locked repeat changed the fixture lock' }
   $package = Join-Path $env:NUGET_PACKAGES $packageSuffix
   $secondRaw = Sha512-Base64 $package
   if ($secondRaw -ne $expected) { throw 'Fresh locked archive differs from exact official catalog hash' }
   $report.lockedRepeat = @{ok=$true;freshCache=$true;lockUnchanged=$true;rawArchiveBytes=(Get-Item -LiteralPath $package).Length;rawArchiveSha512=$secondRaw;cacheSha512=(Get-Content -LiteralPath ($package + '.sha512') -Raw).Trim()}
   $stage = 'signature-verification'
-  $signatureText = DotNet @('nuget','verify','--all',$package,'--verbosity','detailed')
+  $signatureText = Invoke-DotNetDiagnostic @('nuget','verify','--all',$package,'--verbosity','detailed')
   [IO.File]::WriteAllText((Join-Path $evidence 'signature-verification.txt'), $signatureText.Replace($root,'<owned-fixture>'), [Text.UTF8Encoding]::new($false))
   $report.signatureVerification = @{ok=$true;command='dotnet nuget verify --all';certificateMetadataFile='signature-verification.txt'}
   $stage = 'license-notice-metadata'
