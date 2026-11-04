@@ -150,7 +150,7 @@ namespace Orbit.Shared
             if (publicOnly)
             {
                 if (Directory.GetFileSystemEntries(directory).Any(path => String.Equals(Path.GetFileName(path), "runtime", StringComparison.OrdinalIgnoreCase)) || File.Exists(Path.Combine(directory, "runtime-source-receipt.json"))) throw new Exception("Public package contains private runtime state");
-                long publicBytes = 0; foreach (var path in Files(directory, "")) { var full = Path.Combine(directory, path); publicBytes += new FileInfo(full).Length; if (publicBytes > 1073741824) throw new Exception("Public payload byte bound exceeded"); var digest = RuntimeDescriptor.FileHash(full, 268435456); if (digest == descriptor.ExecutableSha256 || digest == descriptor.ArchiveSha256) throw new Exception("Public payload contains renamed Bun bytes"); }
+                long publicBytes = 0; foreach (var path in Files(directory, "")) { var full = Path.Combine(directory, path.Replace('/', Path.DirectorySeparatorChar)); publicBytes += new FileInfo(full).Length; if (publicBytes > 1073741824) throw new Exception("Public payload byte bound exceeded"); var digest = RuntimeDescriptor.FileHash(full, 268435456); if (digest == descriptor.ExecutableSha256 || digest == descriptor.ArchiveSha256) throw new Exception("Public payload contains renamed Bun bytes"); }
             }
             else
             {
