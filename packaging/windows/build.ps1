@@ -90,14 +90,14 @@ function Add-VendorNotices([string]$Published) {
   @{schema=1;files=$inventory;orbitLicenseDoesNotCoverVendors=$true;redistributionReview='required: Bun statically linked JavaScriptCore/WebCore LGPL2 relinking/source obligations and Microsoft WebView2 SDK/runtime terms'} | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Published 'vendor-notice-inventory.json')
 }
 Add-VendorNotices "$build/published"
-Run-Bounded @($bun,'run','scripts/registry-package.ts',($build + '/source-archive'),'--ref',$env:GITHUB_SHA)
-$archives = @(Get-ChildItem "$build/source-archive/*.tgz")
-if ($archives.Count -ne 1) { throw 'Expected one audited source package' }
-New-Item -ItemType Directory "$build/source" | Out-Null
-Run-Bounded @('tar.exe','-xf',$archives[0].FullName,'-C',($build + '/source'))
-Push-Location "$build/source/package"
+$sourcePayload = Join-Path $build 'source-payload'
+Run-Bounded @($bun,'run','scripts/registry-stage.ts',$sourcePayload,'--ref',$env:GITHUB_SHA)
+$sourceReceipt = Get-Content (Join-Path $sourcePayload 'SOURCE-COMMIT.json') -Raw | ConvertFrom-Json
+$sourcePackage = Get-Content (Join-Path $sourcePayload 'package.json') -Raw | ConvertFrom-Json
+if ($sourceReceipt.schema -ne 1 -or $sourceReceipt.sourceCommit -cne $env:GITHUB_SHA -or $sourceReceipt.version -cne $version -or $sourcePackage.name -cne 'sbar-orbit' -or $sourcePackage.version -cne $version) { throw 'Immutable selected registry directory provenance differs' }
+Push-Location $sourcePayload
 try { Run-Bounded @($bun,'install','--frozen-lockfile','--production','--ignore-scripts','--linker','hoisted') } finally { Pop-Location }
-Run-Bounded @($bun,'run','scripts/package-windows.ts',($build + '/source/package'),($build + '/published'),($build + '/Orbit.Launcher.exe'),($build + '/Orbit.RuntimeBootstrap.exe'),($build + '/artifacts'),$env:GITHUB_SHA,'--runtime-source',($build + '/runtime-source.json'))
+Run-Bounded @($bun,'run','scripts/package-windows.ts',$sourcePayload,($build + '/published'),($build + '/Orbit.Launcher.exe'),($build + '/Orbit.RuntimeBootstrap.exe'),($build + '/artifacts'),$env:GITHUB_SHA,'--runtime-source',($build + '/runtime-source.json'))
 $iscc = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6/ISCC.exe'
 if (-not (Test-Path -LiteralPath $iscc)) { throw 'Trusted runner Inno Setup compiler unavailable' }
 Run-Bounded @($iscc,('/DPayload=' + $build + '/artifacts/installer-payload'),('/DPackageVersion=' + $version),('/DArtifactOutput=' + $build + '/artifacts'),'packaging/windows/Orbit.iss')

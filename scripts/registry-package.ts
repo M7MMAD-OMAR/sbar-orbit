@@ -1,13 +1,14 @@
-import { chmod, copyFile, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { createWorkspaceDirectory } from "../src/workspace-storage";
 import { isPublicSourcePath } from "./public-paths";
 import { tarExecutable } from "../src/platform";
 import { immutableTarArguments, packageRefArguments, readCommittedSource } from "./package-source";
 
-/** Produce the installable registry artifact, including its frozen dependency lock. */
-export async function registryPackage(destination: string, source = resolve(import.meta.dir, ".."), options: { ref?: string } = {}) {
+type RegistryStage = { staging: string; unpacked: string; name: string; committed: boolean; run: (args: string[], cwd?: string) => Promise<string> };
+/** One audited selection boundary shared by archive production and immutable directory staging. */
+async function withRegistryStage<T>(source: string, options: { ref?: string }, consume: (stage: RegistryStage) => Promise<T>): Promise<T> {
   const committed = options.ref === undefined ? undefined : await readCommittedSource(source, options.ref, { filterPrivate: true });
   const committedFiles = new Map(committed?.files.map(file => [file.path, file]));
   const staging = await createWorkspaceDirectory("registry");
@@ -72,6 +73,13 @@ export async function registryPackage(destination: string, source = resolve(impo
       if (pkg.name !== "sbar-orbit" || pkg.version !== committed.version) throw new Error("Packed identity differs from committed version");
       await writeFile(join(unpacked, "package", "SOURCE-COMMIT.json"), JSON.stringify({ schema: 1, version: committed.version, sourceCommit: committed.sourceCommit }) + "\n", { flag: "wx" });
     }
+    return await consume({ staging, unpacked, name, committed: committed !== undefined, run });
+  } finally { await rm(staging, { recursive: true, force: true }); }
+}
+
+/** Produce the unchanged installable registry archive, retaining the canonical GNU/Linux ref guard. */
+export async function registryPackage(destination: string, source = resolve(import.meta.dir, ".."), options: { ref?: string } = {}) {
+  return withRegistryStage(source, options, async ({ staging, unpacked, name, committed, run }) => {
     const complete = join(staging, "complete.tgz");
     await run(committed ? await immutableTarArguments(tarExecutable(), complete, unpacked, "package")
       : [tarExecutable(), "czf", complete, "-C", unpacked, "package"]);
@@ -80,7 +88,43 @@ export async function registryPackage(destination: string, source = resolve(impo
     // A completed artifact must not replace another release without an explicit cleanup.
     await copyFile(complete, output, constants.COPYFILE_EXCL);
     return output;
-  } finally { await rm(staging, { recursive: true, force: true }); }
+  });
+}
+
+/** Fresh immutable directory, using Bun's exact registry selection before canonical archive creation. */
+export async function registryPackageDirectory(destination: string, source = resolve(import.meta.dir, ".."), options: { ref: string }) {
+  if (!options || typeof options.ref !== "string" || !/^[a-fA-F0-9]{40}$/.test(options.ref)) throw new Error("Registry directory staging requires a full immutable --ref");
+  source = await realpath(resolve(source)); destination = resolve(destination);
+  if (destination === source || destination.startsWith(source + sep) || source.startsWith(destination + sep)) throw new Error("Registry directory output must be outside its source checkout");
+  const parent = dirname(destination), parentInfo = await lstat(parent);
+  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink() || await realpath(parent) !== parent) throw new Error("Registry directory output requires a canonical existing parent");
+  if (await lstat(destination).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; })) throw new Error("Registry directory output must be new and exclusive");
+  return withRegistryStage(source, options, async ({ unpacked }) => {
+    const input = join(unpacked, "package"); let created = false, count = 0, bytes = 0;
+    try {
+      // Recheck after all packing work, then create exclusively. Never replace an existing destination.
+      if (await realpath(parent) !== parent || (await lstat(parent)).isSymbolicLink()) throw new Error("Registry output parent changed");
+      await mkdir(destination, { mode: 0o700 }); created = true;
+      async function copy(relative: string, depth: number) {
+        if (++count > 20000 || depth > 32 || relative.length > 512) throw new Error("Registry directory entry bound exceeded");
+        const from = relative ? join(input, relative) : input, to = relative ? join(destination, relative) : destination, info = await lstat(from);
+        if (info.isSymbolicLink() || await realpath(from) !== resolve(from)) throw new Error("Registry directory contains a redirected entry");
+        if (info.isDirectory()) {
+          if (relative) await mkdir(to, { mode: 0o700 });
+          for (const name of (await readdir(from)).sort()) await copy(relative ? relative + "/" + name : name, depth + 1);
+          await chmod(to, 0o755);
+        } else if (info.isFile()) {
+          bytes += info.size; if (info.size > 128 * 1024 * 1024 || bytes > 512 * 1024 * 1024 || info.mode & 0o7000) throw new Error("Registry directory byte or mode bound exceeded");
+          await copyFile(from, to, constants.COPYFILE_EXCL);
+          // Same ordinary 0644/0755 result as immutable GNU --mode=u+rwX,go+rX,go-w.
+          await chmod(to, info.mode & 0o111 ? 0o755 : 0o644);
+        } else throw new Error("Registry directory requires only regular files and directories");
+      }
+      await copy("", 0); return destination;
+    } catch (error) {
+      if (created) await rm(destination, { recursive: true, force: true }); throw error;
+    }
+  });
 }
 
 if (import.meta.main) {

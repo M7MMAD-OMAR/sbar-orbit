@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readCommittedSource, packageRefArguments } from "../scripts/package-source";
-import { registryPackage } from "../scripts/registry-package";
+import { registryPackage, registryPackageDirectory } from "../scripts/registry-package";
 import { tarExecutable } from "../src/platform";
+import { registryStageArguments } from "../scripts/registry-stage";
 import { needsCommand } from "./platform-support";
 
 const project = resolve(import.meta.dir, "..");
@@ -15,7 +16,7 @@ async function run(args: string[], cwd: string) {
   return out;
 }
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "orbit-immutable-package-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "orbit-immutable-package-")));
   await run(["git", "init", "--quiet"], root);
   const files: Record<string, string> = {
     "package.json": JSON.stringify({ name: "sbar-orbit", version: "9.8.7", bin: { "sbar-orbit": "bin/sbar-orbit" }, files: ["src", "bin", "bun.lock"] }),
@@ -131,3 +132,51 @@ needsCommand("git", "owned immutable path fixture")("committed modes and private
     expect(await run([tarExecutable(), "xOf", result.archive, prefix + "/src/value.ts"], f.root)).toBe(f.files["src/value.ts"]!);
   } finally { await f.cleanup(); }
 }, 60_000);
+
+test("registry directory CLI requires an immutable full ref with no dirty-source fallback", () => {
+  const ref = "a".repeat(40); expect(registryStageArguments(["out", "--ref", ref])).toEqual({ destination: resolve("out"), ref });
+  for (const args of [[], ["out"], ["out", "--ref", "HEAD"], ["out", "--ref", "a".repeat(7)], ["out", "--ref", ref, "--ref", ref]]) expect(() => registryStageArguments(args)).toThrow();
+});
+async function selectedTree(directory: string) {
+  const result: { path: string; kind: string; mode: number; bytes?: string }[] = [];
+  async function visit(relative: string) {
+    const path = relative ? join(directory, relative) : directory, info = await lstat(path);
+    if (info.isDirectory()) { result.push({ path: relative, kind: "directory", mode: info.mode & 0o777 }); for (const name of (await readdir(path)).sort()) await visit(relative ? relative + "/" + name : name); }
+    else if (info.isFile()) result.push({ path: relative, kind: "file", mode: info.mode & 0o777, bytes: (await readFile(path)).toString("hex") });
+    else throw new Error("Unexpected nonregular selected fixture");
+  }
+  await visit(""); return result;
+}
+(process.platform === "linux" && Bun.which("git") ? test : test.skip)("immutable registry directory equals Linux registry TGZ files bytes modes receipt and CRLF", async () => {
+  const f = await fixture(), output = f.root + "-selected", unpacked = f.root + "-unpacked";
+  try {
+    const batch = "@echo off\r\nexit /b 0\r\n";
+    await Bun.write(join(f.root, ".gitattributes"), "bin/*.cmd -text\n"); await Bun.write(join(f.root, "bin/sbar-orbit.cmd"), batch);
+    await Bun.write(join(f.root, "excluded-not-for-package.txt"), "tracked but outside package.files\n");
+    await run(["git", "add", "."], f.root); const ref = await f.commit();
+    await Bun.write(join(f.root, "package.json"), JSON.stringify({ name: "sbar-orbit", version: "99.0.0", files: ["src"] }));
+    await Bun.write(join(f.root, "src/value.ts"), "dirty future import\n"); await run(["git", "add", "package.json", "src/value.ts"], f.root);
+    await Bun.write(join(f.root, "src/untracked.ts"), "untracked must not ship\n"); await Bun.write(join(f.root, "bin/sbar-orbit.cmd"), "dirty batch\n");
+    const archive = await registryPackage(join(f.root, "archives"), f.root, { ref }); await mkdir(unpacked);
+    await run([tarExecutable(), "xzpf", archive, "-C", unpacked], f.root);
+    expect(await registryPackageDirectory(output, f.root, { ref })).toBe(output);
+    expect(await selectedTree(output)).toEqual(await selectedTree(join(unpacked, "package")));
+    expect(await readFile(join(output, "bin/sbar-orbit.cmd"), "utf8")).toBe(batch);
+    expect(JSON.parse(await readFile(join(output, "SOURCE-COMMIT.json"), "utf8"))).toEqual({ schema: 1, version: "9.8.7", sourceCommit: ref });
+    expect(await readFile(join(output, "bun.lock"), "utf8")).toBe(f.files["bun.lock"]!);
+    expect(await lstat(join(output, "excluded-not-for-package.txt")).catch(() => null)).toBeNull();
+    expect(await lstat(join(output, "src/untracked.ts")).catch(() => null)).toBeNull();
+  } finally { await rm(output, { recursive: true, force: true }); await rm(unpacked, { recursive: true, force: true }); await f.cleanup(); }
+}, 60_000);
+needsCommand("git", "owned immutable registry directory")("directory output rejects existing redirected nested and invalid-ref destinations without mutation", async () => {
+  const f = await fixture(), output = f.root + "-selected", alias = f.root + "-redirect", target = f.root + "-target";
+  try {
+    const ref = await f.commit(); await mkdir(output); await Bun.write(join(output, "owner-data"), "preserve");
+    await expect(registryPackageDirectory(output, f.root, { ref })).rejects.toThrow("new and exclusive"); expect(await Bun.file(join(output, "owner-data")).text()).toBe("preserve");
+    await expect(registryPackageDirectory(join(f.root, "nested"), f.root, { ref })).rejects.toThrow("outside"); expect(await lstat(join(f.root, "nested")).catch(() => null)).toBeNull();
+    await mkdir(target); await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+    await expect(registryPackageDirectory(join(alias, "child"), f.root, { ref })).rejects.toThrow("canonical"); expect(await readdir(target)).toEqual([]);
+    const bad = f.root + "-badref"; await expect(registryPackageDirectory(bad, f.root, { ref: "0".repeat(40) })).rejects.toThrow(); expect(await lstat(bad).catch(() => null)).toBeNull();
+    await expect(registryPackageDirectory(bad, f.root, { ref: "" })).rejects.toThrow("full immutable"); expect(await lstat(bad).catch(() => null)).toBeNull();
+  } finally { await rm(output, { recursive: true, force: true }); await rm(alias, { force: true }); await rm(target, { recursive: true, force: true }); await f.cleanup(); }
+});

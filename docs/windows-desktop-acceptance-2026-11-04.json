@@ -68,6 +68,34 @@
         "bytes": 937,
         "metadataOnly": true
       }
+    },
+    {
+      "id": 41761183848,
+      "sourceCommit": "afe77072c9ce89f9788a9bbc62fef28407d376f5",
+      "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41761183848",
+      "result": "failed",
+      "completed": [
+        "real default Windows IPC",
+        "Framework C#5 native launcher compile",
+        "Framework C#5 native runtime bootstrap compile",
+        "native thirteen-field descriptor and receipt conformance",
+        "native strict dependency inventory synthetic vector",
+        "production locked NuGet restore",
+        "dotnet GUI compile and publish",
+        "vendor notice collection"
+      ],
+      "failedAt": "Immutable registry --ref archive correctly requires GNU tar on Linux; Windows build requires the same committed-byte registry directory before canonical archive creation",
+      "guiCompiled": true,
+      "visibleGuiRan": false,
+      "installerRan": false,
+      "realDependencyTamperSentinelRan": false,
+      "repair": "Share the immutable registry stage and keep public canonical archive requirements unchanged; no dirty source fallback",
+      "artifact": {
+        "id": 13290975461,
+        "bytes": 1789,
+        "sha256": "e80554fe3d6284e24ae60b5201d575cac8f141466281243db7be8712a2b58e41",
+        "metadataOnly": true
+      }
     }
   ],
   "runtimeReceipt": {

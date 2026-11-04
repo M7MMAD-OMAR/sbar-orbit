@@ -79,7 +79,10 @@ release/upstream trust boundary, not independent publisher authentication.
 
 Only a dedicated hosted Windows CI account may run the acceptance driver. It refuses an
 existing managed root and performs an actual private IPC/client doctor roundtrip before SDK
-download. Memory/CPU/disk preflights and existing capped Bun jobs guard heavy steps. .NET
+download. Registry inputs come from fresh committed-blob staging with the same Bun-selected
+files, lock and source receipt as Linux NPM packing, not the Windows working tree or CRLF
+checkout. The GNU canonical tar guard remains unchanged for published archives. Memory/CPU/disk
+preflights and existing capped Bun jobs guard heavy steps. .NET
 builds and compression use at most two workers. No local build is implied by these sources.
 
 The job compiles actual native helpers and compares native descriptor/receipt conformance
