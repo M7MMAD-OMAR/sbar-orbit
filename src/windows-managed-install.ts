@@ -40,11 +40,13 @@ function shim(root: string) {
     "@setlocal DisableDelayedExpansion", '@"' + join(root, "bin/Orbit.exe") + '" --cli "' + root + '" %*', "@exit /b %errorlevel%", ""].join("\r\n");
 }
 export const WINDOWS_INSTALL_PHASES = ["resources", "arguments", "payload", "root", "task", "copy", "seal", "bootstrap", "register", "start", "health", "schedule", "complete"] as const;
-export const WINDOWS_INSTALL_CODES = ["unknown", "platform-unsupported", "root-policy-refusal", "payload-policy-refusal", "integrity-refusal", "unknown-managed-root", "preference-invalid", "task-absence-unproven", "endpoint-present", "existing-managed-unhealthy", "task-register-failed", "broker-not-ready", "schedule-failed", "recovery-ownership-changed", "resource-refusal", "fs-access-denied", "fs-not-found", "fs-already-exists", "fs-no-space", "fs-busy", "fs-invalid"] as const;
+export const WINDOWS_INSTALL_CODES = ["unknown", "platform-unsupported", "root-policy-refusal", "payload-policy-refusal", "integrity-refusal", "unknown-managed-root", "preference-invalid", "task-absence-unproven", "task-present", "task-query-timeout", "task-query-stop-unconfirmed", "task-query-failed", "task-query-output-invalid", "endpoint-present", "existing-managed-unhealthy", "task-register-failed", "broker-not-ready", "schedule-failed", "recovery-ownership-changed", "resource-refusal", "fs-access-denied", "fs-not-found", "fs-already-exists", "fs-no-space", "fs-busy", "fs-invalid"] as const;
 type WindowsInstallPhase = typeof WINDOWS_INSTALL_PHASES[number];
 type WindowsInstallCode = typeof WINDOWS_INSTALL_CODES[number];
 type InstallTrace = { phase: WindowsInstallPhase };
 const INSTALL_TRACE: unique symbol = Symbol("private installer diagnostic trace");
+const TASK_QUERY_REASON: unique symbol = Symbol("private measured task-query refusal");
+const TASK_QUERY_CODES = ["task-present", "task-query-timeout", "task-query-stop-unconfirmed", "task-query-failed", "task-query-output-invalid"] as const;
 const INSTALL_POLICY_CODES = new Map<string, WindowsInstallCode>([
   ["The managed Windows installer requires Windows; source fixtures are not live acceptance", "platform-unsupported"],
   ["Windows installation requires the normal per-user managed root", "root-policy-refusal"],
@@ -74,7 +76,9 @@ const INSTALL_POLICY_CODES = new Map<string, WindowsInstallCode>([
 export function windowsInstallFailure(phase: WindowsInstallPhase, error: unknown) {
   let code: WindowsInstallCode = "unknown";
   if (error instanceof Error) {
-    const owned = INSTALL_POLICY_CODES.get(error.message); if (owned) code = owned;
+    const measured = TASK_QUERY_REASON in error ? error[TASK_QUERY_REASON] : undefined;
+    const tagged = TASK_QUERY_CODES.find(value => value === measured);
+    const owned = tagged ?? INSTALL_POLICY_CODES.get(error.message); if (owned) code = owned;
     else if ("code" in error && typeof error.code === "string") {
       if (["RESOURCE_LIMIT_REQUIRED", "RESOURCE_EXHAUSTED", "RESOURCE_STATUS_UNAVAILABLE"].includes(error.code)) code = "resource-refusal";
       else { const errno = new Map<string, WindowsInstallCode>([["EACCES", "fs-access-denied"], ["EPERM", "fs-access-denied"], ["ENOENT", "fs-not-found"], ["EEXIST", "fs-already-exists"], ["ENOSPC", "fs-no-space"], ["EBUSY", "fs-busy"], ["EINVAL", "fs-invalid"]]); code = errno.get(error.code) ?? "unknown"; }
@@ -107,7 +111,15 @@ async function healthy(identity: BrokerIdentity, socket: string) {
 async function freshTaskAbsent(run: CommandRunner, task: string) {
   const result = await run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
     "$ErrorActionPreference='Stop'; $tasks=@(Get-ScheduledTask -ErrorAction Stop | Where-Object {$_.TaskPath -eq '\\' -and $_.TaskName -eq '" + task + "'}); if($tasks.Count -eq 0){'ABSENT'}else{'PRESENT'}"], 5000);
-  if (!result.ok || result.output.trim() !== "ABSENT") fail("First install requires proven absence of the per-user broker task; migrate existing mechanisms deliberately");
+  if (!result.ok || result.output.trim() !== "ABSENT") {
+    const error = new Error("First install requires proven absence of the per-user broker task; migrate existing mechanisms deliberately");
+    const reason = !result.ok
+      ? result.output === "Lifecycle command timed out; command exit is not confirmed" && result.stopUnconfirmed === true ? "task-query-stop-unconfirmed"
+        : result.output === "Lifecycle command timed out" && !result.stopUnconfirmed ? "task-query-timeout" : "task-query-failed"
+      : result.output.trim() === "PRESENT" ? "task-present" : "task-query-output-invalid";
+    Object.defineProperty(error, TASK_QUERY_REASON, { value: reason });
+    throw error;
+  }
 }
 async function copyPayload(source: string, destination: string) {
   let count = 0, bytes = 0;

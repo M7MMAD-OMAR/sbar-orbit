@@ -343,3 +343,28 @@ test("parallel owned failures never share a global diagnostic phase", async () =
   const results = await Promise.all([diagnoseWindowsManagedInstall(one.directory, one.options), diagnoseWindowsManagedInstall(two.directory, { ...two.options, run: async (args, timeout) => args.includes("/Create") ? { ok: false, output: "refused" } : two.run(args, timeout) })]);
   expect(results[0]).toMatchObject({ phase: "root", code: "unknown-managed-root" }); expect(results[1]).toMatchObject({ phase: "register", code: "task-register-failed" });
 });
+
+for (const entry of [
+  { ok: true, output: "PRESENT", expected: "task-present" },
+  { ok: false, output: "Lifecycle command timed out", expected: "task-query-timeout" },
+  { ok: false, output: "Lifecycle command timed out; command exit is not confirmed", stopUnconfirmed: true, expected: "task-query-stop-unconfirmed" },
+  { ok: false, output: "PRIVATE_OWNER_ACCOUNT_PERMISSION_TEXT", expected: "task-query-failed" },
+  { ok: false, output: "ABSENT", expected: "task-query-failed" },
+  { ok: true, output: "ABSENT\nPRIVATE_OWNER_ACCOUNT_PERMISSION_TEXT", expected: "task-query-output-invalid" },
+  { ok: true, output: "Lifecycle command timed out", expected: "task-query-output-invalid" },
+  { ok: false, output: "Lifecycle command timed out plus unrelated output", expected: "task-query-failed" },
+  { ok: false, output: "Lifecycle command timed out; command exit is not confirmed", expected: "task-query-failed" },
+]) test("actual task query refusal is classified without absence or permission inference: " + entry.expected + " / " + entry.ok + " / " + entry.output.length, async () => {
+  const f = await installFixture(), observed: { args: string[]; timeout?: number }[] = [];
+  const run: CommandRunner = async (args, timeout) => { observed.push({ args: [...args], timeout }); return args[0] === "powershell.exe" ? entry : f.run(args, timeout); };
+  const result = await diagnoseWindowsManagedInstall(f.directory, { ...f.options, run });
+  expect(result).toMatchObject({ ok: false, diagnosticSchema: 1, phase: "task", code: entry.expected, error: entry.expected });
+  expect(observed).toHaveLength(1); expect(observed[0]!.timeout).toBe(5000); expect(observed[0]!.args).toContain("-NoProfile");
+  expect(observed[0]!.args.at(-1)).toContain("Get-ScheduledTask -ErrorAction Stop");
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_OWNER_ACCOUNT_PERMISSION_TEXT"); expect(JSON.stringify(result)).not.toContain(f.root);
+  await expect(installWindowsManaged(f.directory, { ...f.options, run })).rejects.toThrow("First install requires proven absence of the per-user broker task; migrate existing mechanisms deliberately");
+});
+test("an untagged task refusal retains the old generic code without trusting its text as measured state", () => {
+  const error = new Error("First install requires proven absence of the per-user broker task; migrate existing mechanisms deliberately");
+  expect(windowsInstallFailure("task", error).code).toBe("task-absence-unproven");
+});
