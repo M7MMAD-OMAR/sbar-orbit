@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "date": "2026-11-04",
+  "timeZone": "Asia/Dubai",
+  "sourceBase": "1985b1b196d1495c102e6c6c4759dc75f503ffb0",
+  "scope": "single owned original Calculator; internal passive backend, not public multi-view admission",
+  "runtimeAcceptance": "narrow-operation-evidence-only",
+  "phaseGatesPassed": [],
+  "platform": {
+    "distribution": "Fedora Linux 44",
+    "kernel": "7.2.15-200.fc44.x86_64",
+    "arch": "x86_64",
+    "bun": "1.3.14",
+    "python": "3.14.8",
+    "application": "gnome-calculator-50.0-1.fc44.x86_64",
+    "gtk": "4.22.5",
+    "libadwaita": "1.9.4",
+    "atSpi": "2.60.7",
+    "pygobject": "3.56.3",
+    "hyprland": "0.57.1",
+    "hyprlandCommit": "acc1aa0bfd4bd575dcb0f76c35ccf12b660a1ab9",
+    "abiHash": "acc1aa0bfd4bd575dcb0f76c35ccf12b660a1ab9_aq_0.16_hu_0.14_hg_0.6_hc_0.1_hlg_0.6",
+    "pluginBinarySha256": "31e6892227f58c98003bb147ed08b49dd9b3b5163840f58c4ab525bf2077b3cd",
+    "pluginSourceSha256": "beb3024586ce1e7f07735bd5f6cdf4cc129424f4e72ee1ee5491d60b7aff9a67"
+  },
+  "observations": {
+    "successful": 44,
+    "failed": 0,
+    "mode": "passive-v1",
+    "cursorRefresh": "omitted",
+    "backendStateUnchanged": true,
+    "arithmeticReceipts": 2,
+    "arithmeticObservedInPixels": true,
+    "arithmeticObservedInTree": true,
+    "focusAndOutputsEqualAtAllSamples": true,
+    "pointerEqualAtReadBrackets": true,
+    "pointerEqualAcrossOpeningOrHandoff": false,
+    "openingOrHandoffPointerChangeCause": "unestablished"
+  },
+  "samples": {
+    "order": "20 serial image then 20 serial cold text after one arithmetic request; not paired/counterbalanced task-performance experiment",
+    "image": {
+      "count": 20,
+      "workerMsSamples": [
+        77.647,
+        74.118,
+        67.517,
+        78.171,
+        67.047,
+        65.301,
+        79.746,
+        64.864,
+        63.523,
+        70.294,
+        61.84,
+        65.976,
+        64.595,
+        69.347,
+        70.535,
+        72.161,
+        68.442,
+        61.896,
+        68.914,
+        65.275
+      ],
+      "workerMs": {
+        "min": 61.84,
+        "median": 67.9795,
+        "p95": 78.171,
+        "max": 79.746
+      },
+      "imageBytes": [
+        44614
+      ],
+      "treeNodes": [
+        0
+      ],
+      "dimensions": [
+        "1020x962"
+      ],
+      "backendStateUnchanged": true
+    },
+    "text": {
+      "count": 20,
+      "workerMsSamples": [
+        290.364,
+        166.635,
+        161.656,
+        180.999,
+        190.495,
+        181.208,
+        173.312,
+        197.752,
+        181.299,
+        168.975,
+        184.828,
+        162.908,
+        164.313,
+        176.892,
+        181.638,
+        158.096,
+        175.192,
+        172.505,
+        147.952,
+        155.2
+      ],
+      "workerMs": {
+        "min": 147.952,
+        "median": 174.252,
+        "p95": 197.752,
+        "max": 290.364
+      },
+      "imageBytes": [
+        0
+      ],
+      "treeNodes": [
+        40
+      ],
+      "dimensions": [
+        "680x641"
+      ],
+      "backendStateUnchanged": true
+    }
+  },
+  "limits": {
+    "warmHelperTested": false,
+    "globalPeakMemoryMeasured": false,
+    "pairedPerformanceGainEstablished": false,
+    "twoViewQualified": false,
+    "initialImagePhysicalSizes": [
+      "1020x924",
+      "1020x961",
+      "1020x962"
+    ],
+    "proposedImageEnvelope": "1280x960",
+    "postArithmeticEnvelopeWouldRefuse": true
+  },
+  "cleanup": {
+    "normalExactCloseRequestedOnce": true,
+    "windowDisappearanceVerified": true,
+    "unrelatedCandidateIdentitiesPreserved": true,
+    "privateSessionsStopped": true,
+    "privateControllerExit": 0,
+    "sharedBrokerRestarted": false,
+    "pluginReloaded": false,
+    "foreignLeaseReleased": false
+  },
+  "screenshots": [
+    {
+      "sha256": "5f50134f209e6cc4351f3f1f85fd786382344ff5b288f72dd8b50017ec4cef27",
+      "bytes": 38264,
+      "width": 1020,
+      "height": 924,
+      "reviewed": true,
+      "stage": "initial blank Calculator"
+    },
+    {
+      "sha256": "793176d3ef0a7b5b3b68f480a2f190a2cd2e8c9ba5192acbfdad8c2cfcc69a91",
+      "bytes": 40947,
+      "width": 1020,
+      "height": 961,
+      "reviewed": true,
+      "stage": "arithmetic result 3"
+    },
+    {
+      "sha256": "a69f330c50368c48624071b6a5668f895721ba52ebd1f3164de0694ce6ad5979",
+      "bytes": 44614,
+      "width": 1020,
+      "height": 962,
+      "reviewed": true,
+      "stage": "last sampled image result 3"
+    }
+  ],
+  "sourceSha256": {
+    "src/hyprland.ts": "d41f96eba943568907dd4f7d4fef9985252e22300aed67ac507f6da0656195e5",
+    "src/native/session.py": "1def0ab7eb079d99e3fdfa74854cac4ca11e1c99d79f191ed0cf93fecb3e91e4",
+    "src/native/existing.py": "7ceef9e970d6bfda44c8c64195e205ac4079c5dbcc75496670f0ad2ab1b48229",
+    "src/native/session_worker.py": "176f01e29847c111c0a01af1e6c044d5d82a542160d973a4c3336fbfa3f2078e",
+    "src/native-worker.ts": "4a01dafbdef825a214cb435082f5b10bb58a3e4790950d0a9b2d8f0a3a7660a1",
+    "experiments/efficiency-native-acceptance.ts": "cb4bcdbab04a34bdb39e92baf773f6473c3f2d5fa10a53e73b03006cb292e11c"
+  }
+}

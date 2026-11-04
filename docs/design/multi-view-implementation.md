@@ -247,3 +247,53 @@ are separate unfinished contracts. Retained-reference authority, host-issued
 caller grants, binding/topology/revision epochs, resource reservations, native
 app/build acceptance and owner-interference measurements remain required.
 Multi-view enablement and all phase gates remain unpassed.
+
+## 6. Owned native qualification and P0 decisions
+
+The subsequent [dated native run](../multi-view-native-acceptance-2026-11-04.md)
+and [content-free exact record](../multi-view-native-acceptance-2026-11-04.json)
+measured the internal passive seam on original Calculator 50.0, Fedora 44,
+Hyprland 0.57.1 with exact source/ABI/binary agreement. The newly attributed window
+was on an already visible numbered workspace. Image, text and both succeeded;
+one ordinary arithmetic input was confirmed as 1+2=3 by viewed pixels and tree.
+There were 44 successful passive observations, including 20 image and 20 cold-text
+samples, all with unchanged TS backend state. Empirical worker median costs were
+67.980 ms image and 174.252 ms cold text. These are unlike output formats and not a
+paired task-speedup comparison, warm benchmark or productivity claim.
+
+Read-bracket focus, physical pointer and output/workspace samples matched.
+Opening/handoff pointer samples changed with unestablished cause and do not pass
+setup preservation. GTK/minimum-size and physical rounding produced 1020x962
+result frames; the proposed 1280x960 feature envelope would refuse these. No
+limit was raised to qualify the example. Exact normal test closure, candidate
+disappearance and own session handback were verified, private controller exited 0,
+and the shared broker/other sessions were not restarted or released.
+
+The [P0 cohort decision record](multi-view-cohort.md) freezes a default-off
+read-only design with explicit owner-enrolled connector authority, per-operation
+passive acknowledgement, bounded capture/payload/memory/queue decisions and a
+restricted measured matrix. A second original view must be explicitly selected
+and independently qualified, not silently created or substituted. This is not
+an implemented grant API, a passed MV-00 gate or admission proof. Owned reader
+cancellation/drain and global scratch/capture reservations remain the next
+prerequisite work.
+
+Independent harness review additionally found unlatched uncertain input and
+identity tracking only after artifact writes. The manual-only controller now
+quarantines failed/partial/uncertain setup/input, blocks subsequent mutations and
+automatic closure, permits read-only inspection plus own pause/stop, records
+acknowledged identities before evidence IO and reports unresolved opening or
+handoff outcomes without guessing a cleanup target. Pure barrier tests cover
+this control flow; it is not the missing native consumer fence/quiescence receipt.
+
+The TS framed worker adapter still had stale advice to paste unsupported text
+through the shared clipboard, overriding the repaired Python error. That fixed
+public override now states the actual direct-stroke/keymap limitation and unsafe
+fallback refusal. A real framed-worker fixture verifies typed errors, request
+and worker-message redaction, and an unaffected subsequent status exchange.
+
+Source verification after this tranche: 594 pass, 5 skip, 0 fail, 3507 assertions
+across 65 files in 68.64 seconds after platform-safe guard registration. Manual-only guard fixtures cannot open an app in
+the default suite. Strict root typing passed before live use; the actual native
+run and source fixtures are separate evidence layers. No release, site deploy,
+new public multi-view tool, remote device or extra seat was enabled.
