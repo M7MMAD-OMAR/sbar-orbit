@@ -10,6 +10,7 @@ Build toward **one conversation supervising several explicitly selected original
 
 - [Current-state audit](multi-view-current-state.md): existing code, exact integration points and evidence gaps.
 - [Safety specification](multi-view-safety.md): invariants, failure/recovery rules and adversarial acceptance.
+- [Implementation ingress inventory](multi-view-ingress.md): direct/legacy routes, delayed endpoint consumers and the observation cursor-flush blocker, without a phase-gate pass.
 - [Primary-source comparison](../research/multi-view-platforms.md): competitor capabilities, limitations and adoption boundaries.
 - [Machine-readable work items](multi-view-work-items.json): dependencies, expected write scopes, deliverables and gates. Work-item and gate status is explicit; prerequisite repairs do not imply feature completion.
 - [Current product contract](../desktop-only.md) remains authoritative. [Acceptance evidence](../acceptance.md) and [Linux verification](../linux-verification-2026-11-04.md) do not establish this feature.

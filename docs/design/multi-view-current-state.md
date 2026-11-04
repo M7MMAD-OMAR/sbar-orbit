@@ -5,7 +5,10 @@ Status: documentation only, 4 November 2026. Audited checkout: `28f2609ad493`, c
 This is the preserved pre-implementation audit. Subsequent caller-cache and
 clipboard repairs, tests and compatibility limits are tracked in the
 [implementation ledger](multi-view-implementation.md). Source line links below
-refer to the audited baseline and may shift after implementation.
+refer to the audited baseline and may shift after implementation. The subsequent
+[endpoint inventory](multi-view-ingress.md) also identifies a transitive input
+flush from cursor refresh; the render-only classification below is not a
+qualified current zero-input-effect guarantee.
 
 ## 1. Authority and production entry path
 

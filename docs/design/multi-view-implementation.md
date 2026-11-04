@@ -135,9 +135,13 @@ prerequisite tests alone.
 
 Next dependency-ordered work:
 
-1. Finish the exact production/direct-native ingress and delayed-consumer map.
+1. Review the completed [ingress and final-consumer inventory](multi-view-ingress.md).
+   It establishes source reachability, not cancellation/drain or live acceptance.
    Freeze the versioned cohort handshake, authority source, resource limits and
-   initial app/build qualification without inventing live evidence.
+   initial app/build qualification without inventing live evidence. In particular,
+   image observation refreshes a cursor through a handler that can flush pending
+   input callbacks; implement and qualify a no-refresh observation route or
+   classify that work as effectful before P1 read concurrency.
 2. Introduce private caller-bound read-only view records and bounded observations.
    No second lease for an already leased client; no unauthorized image fallback.
 3. Integrate a host-neutral status/consent surface and qualify two-view reads.
