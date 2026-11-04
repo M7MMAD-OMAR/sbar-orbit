@@ -1,0 +1,41 @@
+name: NuGet signed package integrity diagnostic (metadata only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-nuget-integrity-diagnostic
+  cancel-in-progress: false
+jobs:
+  signed-package-evidence:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      DOTNET_PROCESSOR_COUNT: "2"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resource preflight and exact official Bun bootstrap before SDK setup
+        shell: pwsh
+        run: ./packaging/windows/nuget-integrity.ps1 -Phase Prepare
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: desktop/windows/global.json
+      - name: One serial budgeted diagnostic with isolated fixture lock and fresh caches
+        shell: pwsh
+        run: ./packaging/windows/nuget-integrity.ps1 -Phase Run
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-nuget-integrity-metadata-only
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/orbit-nuget-integrity-${{ github.run_id }}-${{ github.run_attempt }}/evidence/diagnostic.build.json
+            ${{ runner.temp }}/orbit-nuget-integrity-${{ github.run_id }}-${{ github.run_attempt }}/evidence/fixture-lock.build.json
+            ${{ runner.temp }}/orbit-nuget-integrity-${{ github.run_id }}-${{ github.run_attempt }}/evidence/signature-verification.txt
+# No nupkg, DLL, executable, runtime ZIP, cache or log directory is uploaded.
+# This does not change the production package lock or grant redistribution approval.
