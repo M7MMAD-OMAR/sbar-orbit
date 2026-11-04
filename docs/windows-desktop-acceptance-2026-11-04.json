@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "date": "4 November 2026",
+  "candidateVersion": "0.4.3",
+  "publishedWindowsInstaller": false,
+  "nativeWindowsApplicationControl": "unsupported",
+  "scope": "Owned hosted Windows runner control-plane, build and installation acceptance only; no owner application or profile copied",
+  "runs": [
+    {
+      "id": 41750809540,
+      "sourceCommit": "a777900ec54ee59ec82800f66a6a281c04e2f566",
+      "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41750809540",
+      "result": "failed",
+      "completed": [
+        "resource preflight",
+        "verified official Bun 1.4.4",
+        "frozen dependency install",
+        "private IPC bind and doctor before postcondition"
+      ],
+      "failedAt": "Private IPC postcondition detected ordinary workspace metadata sharing the managed installation root",
+      "guiCompiled": false,
+      "installerRan": false,
+      "repair": "Windows managed runtime moved into a separate managed child; no state cleanup or fresh-root guard relaxation"
+    },
+    {
+      "id": 41752689533,
+      "sourceCommit": "ec33cf944050903d30476d4f9ffe066de70be1cf",
+      "url": "https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41752689533",
+      "result": "failed",
+      "completed": [
+        "resource preflight",
+        "verified official Bun 1.4.4",
+        "frozen dependency install",
+        "real default Windows IPC with simulated=false",
+        "dotnet SDK setup"
+      ],
+      "failedAt": "NU1403: locked WebView2 content hash differed before native compilation",
+      "guiCompiled": false,
+      "installerRan": false,
+      "artifact": {
+        "id": 13287067000,
+        "name": "windows-desktop-content-free-evidence-only",
+        "archiveSha256": "546c69f16ed0f1310fcd44f9e5de8aaac89d4f6d366c1e67aaaec4672e78823d",
+        "containsProductBinaries": false
+      }
+    }
+  ],
+  "runtimeReceipt": {
+    "sourceRun": 41752689533,
+    "upstream": "oven-sh/bun",
+    "version": "1.4.4",
+    "platform": "win32",
+    "arch": "x64",
+    "archiveUrl": "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip",
+    "archiveSha256": "cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5",
+    "archiveMember": "bun-windows-x64/bun.exe",
+    "executableSha256": "cb1d8e6564e655e49d30cead359750a1cbbd12f42651caa4b62244d7bd93c244",
+    "executableBytes": 115281496,
+    "archiveBytesFromOfficialAssetApi": 54731706,
+    "archiveBytesStillRequireAcquisitionCheck": true
+  },
+  "publicationBoundary": "No Setup, desktop ZIP, Bun executable or package binary was uploaded. Schema-2 direct-upstream delivery remains a separate implementation and acceptance obligation.",
+  "diagnosticRun": {
+    "id": 41754143721,
+    "result": "canceled",
+    "reason": "PowerShell wrapper shadowed the external dotnet command and recursively called itself; no canonical package hash or signature proof was produced",
+    "productionLockChanged": false
+  },
+  "recordedAtUtc": "2026-11-04T01:44:19.064Z",
+  "nugetIntegrityEvidence": {
+    "runId": 41755860193,
+    "sourceCommit": "0ea61135d6e54d1060ff06622e6adb6c4b2ef404",
+    "overallDiagnosticResult": "failed an invalid diagnostic assumption comparing canonical content hash with raw cache hash",
+    "package": "Microsoft.Web.WebView2",
+    "version": "1.0.4314.35",
+    "rawSignedArchiveBytes": 9818548,
+    "rawSignedArchiveSha512": "cOaiVqP3BmQHMnxGpZzANM22tUXgycrisyJHjIGNzIaMsm8iXj7Kx+ceYg+RbYwJtzT009qfcFTocvVLY+ekMw==",
+    "canonicalNuGetContentHash": "x5MFf2W03xueU1mMNvivXfHSsQ+ODo7vJ36qw/dLtU5Gs+8d7+7N7zzmNNDoT3ffosmcvZNBtUnlzyiDUuBkSQ==",
+    "canonicalHashMatchesGeneratedLockAndActualSignatureVerifier": true,
+    "bothRawArchivesAndCacheSidecarsMatchExactOfficialCatalog": true,
+    "freshCacheLockedRepeat": true,
+    "fixtureLockUnchanged": true,
+    "actualSignatureVerification": "Successfully verified package Microsoft.Web.WebView2.1.0.4314.35",
+    "signers": [
+      "Microsoft Corporation author",
+      "NuGet repository countersignature"
+    ],
+    "rootLockCorrection": "Only contentHash corrected to the measured canonical hash; exact version, locked restore, raw archive pin and signature checks retained",
+    "guiCompiled": false,
+    "installerRan": false
+  }
+}

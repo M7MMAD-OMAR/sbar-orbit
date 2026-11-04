@@ -31,9 +31,11 @@ type RuntimeSourceV2 = {
   arch: "x64";
   url: string;                     // exactly reconstructed fixed official URL
   archiveSha256: string;           // 64 lowercase hex
+  archiveBytes: number;            // exact positive bounded archive length
   archiveEntry: "bun-windows-x64/bun.exe";
   executablePath: "runtime/bun.exe";
   executableSha256: string;        // required actual digest, never a placeholder
+  executableBytes: number;         // exact positive bounded executable length
   license: { url: string; sha256: string };
 };
 type DesktopManifestV2 = {
@@ -51,7 +53,7 @@ type DesktopManifestV2 = {
 
 Initial upstream pin: Bun 1.4.4 at https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-windows-x64.zip, archive SHA-256 cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5. The license URL is https://raw.githubusercontent.com/oven-sh/bun/bun-v1.4.4/LICENSE.md, SHA-256 362fe32c954ec829240bd7429c53d705eef08c6bfa45ffc2d02005f857cba4dd.
 
-The exact executable digest, expanded size and proposed archive-entry path must be confirmed from the existing approved private CI acquisition report. They are **not yet supplied by this design**. Do not invent a digest, accept a wildcard executable search or publish until the pin is complete. Later versions require reviewed descriptor pins; no latest/canary URL.
+The metadata-only receipt from [private Windows run 41752689533](https://github.com/M7MMAD-OMAR/sbar-orbit/actions/runs/41752689533) measured executable SHA-256 cb1d8e6564e655e49d30cead359750a1cbbd12f42651caa4b62244d7bd93c244, 115281496 executable bytes and the exact archive member bun-windows-x64/bun.exe. The official GitHub asset API reports 54731706 archive bytes; acquisition must verify that expected length against the downloaded bytes. These facts qualify the upstream runtime pin, not schema-2 native GUI or activation acceptance. Later versions require reviewed descriptor pins; no latest/canary URL.
 
 The URL parser reconstructs github.com/oven-sh/bun/releases/download/bun-vVERSION/bun-windows-x64.zip from the validated version. Reject credentials, custom hosts/ports, fragments, initial queries and alternate paths. License URLs are likewise fixed-version raw upstream URLs. Allow only bounded HTTPS redirects to the official GitHub release/CDN host set, never to a descriptor-provided arbitrary host. Pin checks establish integrity within the reviewed feed, not independent code signing.
 
@@ -79,7 +81,7 @@ Private final validation requires all expected overlay bytes including runtime/b
 
 The receipt records schema 2, Orbit/Bun versions, exact URL/archive/executable hashes and paths, acquisition kind (upstream download, supplied verified archive, or verified private cache copy) and descriptor ID. It is an audit record, not consent, publisher authentication or provider capability proof. The trusted materializer computes hashes; manifest fields cannot assert that validation occurred.
 
-Define descriptor ID as SHA-256 of the ordered length-prefixed UTF-8 values: kind, Bun version, platform, arch, URL, archive SHA, archive member, executable path, executable SHA, license URL, license SHA. Each value is encoded as decimal byte length, colon, then bytes. Publish shared conformance vectors for native and Bun implementations.
+Define descriptor ID as SHA-256 of the ordered length-prefixed UTF-8 values: kind, Bun version, platform, arch, URL, archive SHA, decimal archive byte length, archive member, executable path, executable SHA, decimal executable byte length, license URL, license SHA. These are exactly thirteen values; both size strings use invariant ASCII decimal notation. Each value is encoded as decimal byte length, colon, then bytes. Publish shared conformance vectors for native and Bun implementations.
 
 Cache candidates are restricted to canonical regular files in this user's admitted prepared runtime/cache roots, matching the expected executable digest. Verify before and after copying into an exclusive new stage. No hardlinks, junctions, global Bun discovery or overwrite of a mapped old runtime. A cache receipt never replaces byte verification.
 
