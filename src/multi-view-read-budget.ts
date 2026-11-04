@@ -35,8 +35,11 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
 function natural(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 declare const viewBrand: unique symbol;
 declare const reservationBrand: unique symbol;
+declare const deliveryBrand: unique symbol;
 export type ReadBudgetView = Readonly<{ readonly [viewBrand]: true }>;
 export type ReadBudgetReservation = Readonly<{ readonly [reservationBrand]: true }>;
+export type ReadDeliveryReservation = Readonly<{ readonly [deliveryBrand]: true }>;
+export const READ_DELIVERY_SCRATCH_LIMIT = 65536;
 export interface ReadReservationCost { scratchBytes: number; retainedBytes: number }
 export interface OwnedReadLifecycle {
   /** Trusted adapter callback only. true retains one result reference, never a grant. */
@@ -49,6 +52,7 @@ interface ViewState { conversation: object; bytes: number; entries: number; revo
 interface Entry {
   view: ViewState; cost: Readonly<ReadReservationCost>; phase: Phase;
   bytes: number; references: number; invalidated: boolean;
+  delivery?: ReadDeliveryReservation;
 }
 
 export class ReadResourceBudget {
@@ -58,6 +62,8 @@ export class ReadResourceBudget {
   #conversations = new Map<object, number>();
   #entries = new Map<ReadBudgetReservation, Entry>();
   #capture: ReadBudgetReservation | undefined;
+  #deliveries = new Map<ReadDeliveryReservation, { reservation: ReadBudgetReservation; entry: Entry; bytes: number }>();
+  #releasedDeliveries = new WeakSet<ReadDeliveryReservation>();
   #bytes = 0;
 
   constructor(options: Partial<ReadBudgetLimits> = {}) {
@@ -99,6 +105,7 @@ export class ReadResourceBudget {
     entry.bytes -= bytes; entry.view.bytes -= bytes; this.#bytes -= bytes;
   }
   #remove(handle: ReadBudgetReservation, entry: Entry) {
+    if (entry.delivery !== undefined) fail("STATE", "Outstanding delivery storage cannot be released");
     this.#subtract(entry, entry.bytes);
     entry.view.entries--;
     this.#entries.delete(handle);
@@ -188,8 +195,44 @@ export class ReadResourceBudget {
   release(handle: ReadBudgetReservation): void {
     const entry = this.#entry(handle);
     if (entry.phase !== "retained" || entry.references < 1) fail("STATE", "Only a retained read reference can be released");
-    if (--entry.references === 0) this.#remove(handle, entry);
+    // Pending delivery conservatively holds the original result and its copy credit.
+    // Keep a retained entry with zero references, not deliverable or disposable.
+    if (--entry.references === 0 && entry.delivery === undefined) this.#remove(handle, entry);
   }
+  /** Charge copy storage BEFORE allocating it. This is not a capture or a new entry. */
+  reserveDelivery(reservation: ReadBudgetReservation, bytes: number): ReadDeliveryReservation {
+    if (!natural(bytes) || bytes === 0) fail("INVALID", "Delivery storage must have a positive safe byte count");
+    if (bytes > READ_DELIVERY_SCRATCH_LIMIT) fail("LIMIT", "Delivery storage exceeds its chunk bound");
+    const entry = this.#entry(reservation);
+    if (!this.isDeliverable(reservation)) fail("STATE", "Read result cannot reserve delivery storage");
+    if (entry.delivery !== undefined) fail("LIMIT", "Read result already has outstanding delivery storage");
+    if (entry.view.bytes + bytes > this.#limits.viewBytes || this.#bytes + bytes > this.#limits.deviceBytes)
+      fail("LIMIT", "Delivery storage exceeds read allocation capacity");
+    const handle = Object.freeze(Object.create(null)) as ReadDeliveryReservation;
+    this.#deliveries.set(handle, { reservation, entry, bytes });
+    entry.delivery = handle;
+    entry.bytes += bytes; entry.view.bytes += bytes; this.#bytes += bytes;
+    return handle;
+  }
+
+  /** Trusted sink-drain owner only. Timeout/revocation does not establish drain. */
+  releaseDelivery(handle: ReadDeliveryReservation): boolean {
+    const delivery = this.#deliveries.get(handle);
+    if (!delivery) {
+      if (this.#releasedDeliveries.has(handle)) return false;
+      fail("HANDLE", "Unknown read delivery reservation handle");
+    }
+    const { reservation, entry, bytes } = delivery;
+    if (this.#entries.get(reservation) !== entry || entry.phase !== "retained" || entry.delivery !== handle)
+      fail("STATE", "Read delivery storage ownership is inconsistent");
+    this.#deliveries.delete(handle);
+    this.#releasedDeliveries.add(handle); // Weak identity tombstone, not an unbounded retained map.
+    delete entry.delivery;
+    this.#subtract(entry, bytes);
+    if (entry.references === 0) this.#remove(reservation, entry);
+    return true;
+  }
+
   inspect(handle: ReadBudgetReservation) {
     const entry = this.#entry(handle);
     return Object.freeze({ phase: entry.phase, references: entry.references, bytes: entry.bytes, deliverable: this.isDeliverable(handle) });

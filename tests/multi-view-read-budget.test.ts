@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { ReadBudgetError, ReadResourceBudget, READ_BUDGET_LIMITS } from "../src/multi-view-read-budget";
+import { ReadBudgetError, ReadResourceBudget, READ_BUDGET_LIMITS, READ_DELIVERY_SCRATCH_LIMIT } from "../src/multi-view-read-budget";
 
 // Pure ledger fixtures, not allocator, RSS, process-drain or OS proofs.
 const request = { scratchBytes: 7, retainedBytes: 3 };
@@ -458,5 +458,206 @@ test("deterministic mixed lifecycle sequences conserve every byte reference and 
     }
   }
   for (const view of views) { budget.revokeView(view); budget.disposeView(view); }
+  expect(budget.status()).toEqual({ ...empty, captureOccupied: false });
+});
+
+
+const retainedResult = (budget: ReadResourceBudget, view: ReturnType<ReadResourceBudget["bindView"]>, bytes = 3) => {
+  const reservation = budget.reserve(view, { scratchBytes: 0, retainedBytes: bytes });
+  const operation = budget.start(reservation);
+  expect(operation.confirmStopped(true)).toBe(true);
+  return { reservation, operation };
+};
+
+test("delivery scratch is opaque charged before allocation without a new entry or capture", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  const before = budget.status(), delivery = budget.reserveDelivery(reservation, 7);
+  expect(Object.isFrozen(delivery)).toBe(true);
+  expect(Object.getPrototypeOf(delivery)).toBe(null);
+  expect(Reflect.ownKeys(delivery)).toEqual([]);
+  expect(budget.status()).toEqual({ ...before, bytes: before.bytes + 7 });
+  expect(budget.inspect(reservation)).toEqual({ phase: "retained", references: 1, bytes: 10, deliverable: true });
+  expect(budget.releaseDelivery(delivery)).toBe(true);
+  expect(budget.releaseDelivery(delivery)).toBe(false);
+  expect(budget.status()).toEqual(before);
+  budget.release(reservation);
+  expect(budget.status()).toMatchObject({ entries: 0, bytes: 0, retainedReferences: 0, captureOccupied: false });
+});
+
+test("delivery scratch validates strict bytes and the exact independent 64 KiB ceiling", () => {
+  expect(READ_DELIVERY_SCRATCH_LIMIT).toBe(65536);
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  for (const bytes of [0, -1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, true, "1", null, undefined, 1n])
+    unchanged(budget, "INVALID", () => budget.reserveDelivery(reservation, bytes as never));
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(reservation, 65537));
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(reservation, Number.MAX_SAFE_INTEGER));
+  const exact = budget.reserveDelivery(reservation, 65536);
+  expect(budget.inspect(reservation).bytes).toBe(65539);
+  expect(budget.releaseDelivery(exact)).toBe(true);
+  budget.release(reservation);
+});
+
+test("delivery does not consume entry or reference capacity and is independent of occupied capture", () => {
+  const budget = new ReadResourceBudget({ maxEntriesPerView: 1, maxReferences: 1 });
+  const view = budget.bindView({}), other = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  const capture = budget.reserve(other, request), before = budget.status();
+  const delivery = budget.reserveDelivery(reservation, 11);
+  expect(budget.status()).toEqual({ ...before, bytes: before.bytes + 11 });
+  expect(budget.status().captureOccupied).toBe(true);
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(reservation, 1));
+  expect(budget.releaseDelivery(delivery)).toBe(true);
+  expect(budget.status()).toEqual(before);
+  budget.cancel(capture); budget.release(reservation);
+});
+
+test("delivery scratch shares the whole view budget across retained entries", () => {
+  const budget = new ReadResourceBudget({ deviceBytes: 20, viewBytes: 10 }), view = budget.bindView({});
+  const first = retainedResult(budget, view).reservation;
+  const second = retainedResult(budget, view).reservation;
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(first, 5));
+  const exact = budget.reserveDelivery(first, 4);
+  expect(budget.status().bytes).toBe(10);
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(second, 1));
+  budget.releaseDelivery(exact);
+  const next = budget.reserveDelivery(second, 4);
+  budget.releaseDelivery(next); budget.release(first); budget.release(second);
+  expect(budget.status()).toMatchObject({ entries: 0, bytes: 0 });
+});
+
+test("delivery and held originals aggregate against device bytes across views", () => {
+  const budget = new ReadResourceBudget({ deviceBytes: 15, viewBytes: 10 });
+  const firstView = budget.bindView({}), secondView = budget.bindView({}), thirdView = budget.bindView({});
+  const first = retainedResult(budget, firstView, 6).reservation;
+  const second = retainedResult(budget, secondView, 6).reservation;
+  const delivery = budget.reserveDelivery(first, 3);
+  expect(budget.status().bytes).toBe(15);
+  unchanged(budget, "LIMIT", () => budget.reserveDelivery(second, 1));
+  budget.release(first);
+  expect(budget.inspect(first)).toEqual({ phase: "retained", references: 0, bytes: 9, deliverable: false });
+  unchanged(budget, "LIMIT", () => budget.reserve(thirdView, { scratchBytes: 0, retainedBytes: 1 }));
+  budget.releaseDelivery(delivery);
+  expect(budget.status()).toMatchObject({ bytes: 6, entries: 1, retainedReferences: 1 });
+  const capture = budget.reserve(thirdView, { scratchBytes: 0, retainedBytes: 9 });
+  budget.cancel(capture); budget.release(second);
+});
+
+test("last frame reference cannot dispose or resurrect an entry while delivery scratch is held", () => {
+  const budget = new ReadResourceBudget({ maxEntriesPerView: 1 }), view = budget.bindView({});
+  const { reservation, operation } = retainedResult(budget, view);
+  const delivery = budget.reserveDelivery(reservation, 5);
+  budget.release(reservation);
+  expect(budget.isDeliverable(reservation)).toBe(false);
+  expect(budget.inspect(reservation)).toEqual({ phase: "retained", references: 0, bytes: 8, deliverable: false });
+  unchanged(budget, "STATE", () => budget.retain(reservation));
+  unchanged(budget, "STATE", () => budget.release(reservation));
+  unchanged(budget, "STATE", () => budget.reserveDelivery(reservation, 1));
+  unchanged(budget, "LIMIT", () => budget.reserve(view, request));
+  expect(operation.confirmStopped(false)).toBe(false);
+  expect(operation.unknownDrain()).toBe(false);
+  budget.revokeView(view);
+  unchanged(budget, "STATE", () => budget.disposeView(view));
+  expect(budget.status()).toMatchObject({ bytes: 8, entries: 1, retainedReferences: 0, captureOccupied: false });
+  expect(budget.releaseDelivery(delivery)).toBe(true);
+  budget.disposeView(view);
+  expect(budget.status()).toEqual({ ...empty, captureOccupied: false });
+  expect(budget.releaseDelivery(delivery)).toBe(false);
+});
+
+test("revocation and cancellation never free either outstanding scratch or retained aliases", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  budget.retain(reservation);
+  const delivery = budget.reserveDelivery(reservation, 4);
+  budget.revokeView(view);
+  expect(budget.status()).toMatchObject({ bytes: 7, entries: 1, retainedReferences: 2 });
+  unchanged(budget, "STATE", () => budget.reserveDelivery(reservation, 1));
+  budget.release(reservation); budget.release(reservation);
+  expect(budget.cancel(reservation)).toBe(false);
+  expect(budget.status()).toMatchObject({ bytes: 7, entries: 1, retainedReferences: 0 });
+  unchanged(budget, "STATE", () => budget.disposeView(view));
+  expect(budget.releaseDelivery(delivery)).toBe(true);
+  budget.disposeView(view);
+  expect(budget.status()).toEqual({ ...empty, captureOccupied: false });
+});
+
+test("releasing scratch before the frame preserves the original result and stale scratch cannot free a new loan", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  const old = budget.reserveDelivery(reservation, 4);
+  expect(budget.releaseDelivery(old)).toBe(true);
+  expect(budget.inspect(reservation)).toEqual({ phase: "retained", references: 1, bytes: 3, deliverable: true });
+  const fresh = budget.reserveDelivery(reservation, 6), occupied = budget.status();
+  expect(fresh).not.toBe(old);
+  expect(budget.releaseDelivery(old)).toBe(false);
+  expect(budget.status()).toEqual(occupied);
+  budget.releaseDelivery(fresh); budget.release(reservation);
+});
+
+test("forged cross-instance cloned and wrong-domain scratch handles cannot recover credit", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  const delivery = budget.reserveDelivery(reservation, 2);
+  const other = new ReadResourceBudget(), otherView = other.bindView({});
+  const foreign = retainedResult(other, otherView).reservation, foreignDelivery = other.reserveDelivery(foreign, 2);
+  for (const handle of [{}, { ...delivery }, Object.create(null), foreignDelivery, reservation, view, null, 1])
+    unchanged(budget, "HANDLE", () => budget.releaseDelivery(handle as never));
+  for (const handle of [{}, { ...reservation }, foreign, delivery, view])
+    unchanged(budget, "HANDLE", () => budget.reserveDelivery(handle as never, 1));
+  expect(other.status()).toMatchObject({ bytes: 5, entries: 1 });
+  budget.releaseDelivery(delivery); other.releaseDelivery(foreignDelivery);
+  budget.release(reservation); other.release(foreign);
+  unchanged(other, "HANDLE", () => other.releaseDelivery(delivery));
+  expect(budget.releaseDelivery(delivery)).toBe(false);
+});
+
+test("scratch primitive argument checks never invoke getters coercion or proxy traps", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  let calls = 0;
+  const coercion = { valueOf() { calls++; budget.revokeView(view); return 1; } };
+  unchanged(budget, "INVALID", () => budget.reserveDelivery(reservation, coercion as never));
+  const proxy = new Proxy({}, { get() { calls++; throw new Error("must not read handle"); },
+    ownKeys() { calls++; throw new Error("must not enumerate handle"); },
+    getPrototypeOf() { calls++; throw new Error("must not inspect handle prototype"); } });
+  unchanged(budget, "HANDLE", () => budget.reserveDelivery(proxy as never, 1));
+  unchanged(budget, "HANDLE", () => budget.releaseDelivery(proxy as never));
+  expect(calls).toBe(0);
+  expect(budget.isDeliverable(reservation)).toBe(true);
+  budget.release(reservation);
+});
+
+test("only retained deliverable frames can reserve scratch and rejection never frees unknown work", () => {
+  const budget = new ReadResourceBudget(), view = budget.bindView({});
+  const reservation = budget.reserve(view, request);
+  unchanged(budget, "STATE", () => budget.reserveDelivery(reservation, 1));
+  const operation = budget.start(reservation);
+  unchanged(budget, "STATE", () => budget.reserveDelivery(reservation, 1));
+  operation.unknownDrain();
+  unchanged(budget, "STATE", () => budget.reserveDelivery(reservation, 1));
+  expect(budget.status()).toMatchObject({ bytes: 10, entries: 1, captureOccupied: true, quarantined: 1 });
+  operation.confirmStopped(false);
+  unchanged(budget, "HANDLE", () => budget.reserveDelivery(reservation, 1));
+});
+
+test("bounded scratch reuse cycles conserve bytes entries references and old handle idempotence", () => {
+  const budget = new ReadResourceBudget({ deviceBytes: 100, viewBytes: 100, maxEntriesPerView: 1, maxReferences: 1 });
+  const view = budget.bindView({});
+  const { reservation } = retainedResult(budget, view);
+  const released: ReturnType<ReadResourceBudget["reserveDelivery"]>[] = [];
+  for (let index = 0; index < 256; index++) {
+    const bytes = index % 64 + 1, delivery = budget.reserveDelivery(reservation, bytes);
+    expect(budget.status()).toMatchObject({ entries: 1, retainedReferences: 1, bytes: 3 + bytes, captureOccupied: false });
+    for (const old of released.slice(-2)) expect(budget.releaseDelivery(old)).toBe(false);
+    expect(budget.releaseDelivery(delivery)).toBe(true);
+    released.push(delivery);
+    expect(budget.status()).toMatchObject({ entries: 1, retainedReferences: 1, bytes: 3, captureOccupied: false });
+  }
+  budget.release(reservation);
+  expect(budget.status()).toMatchObject({ entries: 0, bytes: 0, retainedReferences: 0 });
+  for (const old of released) expect(budget.releaseDelivery(old)).toBe(false);
+  budget.revokeView(view); budget.disposeView(view);
   expect(budget.status()).toEqual({ ...empty, captureOccupied: false });
 });

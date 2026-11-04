@@ -478,6 +478,13 @@ export class Sessions {
               throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
             return lease.bytes;
           },
+          reserveDelivery(bytes: number) {
+            sessions.readRecipient(caller, channel);
+            if (entry.fence !== fence || !entry.enabled || entry.epoch !== epoch
+                || sessions.readConfig!.usageCurrent(entry.recipient.conversation, epoch) !== true)
+              throw new OrbitError("READ_VIEW_DENIED", "Read view request refused");
+            return lease.reserveDelivery(bytes);
+          },
           release: () => lease.release(),
         });
         return guarded;

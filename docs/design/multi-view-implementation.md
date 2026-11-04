@@ -576,3 +576,40 @@ remains unavailable, and no native application or shared broker was touched.
 
 Final verification for this tranche: 777 pass, 5 skip, 0 fail, 14286 assertions
 across 74 files in 70.52 seconds. Strict root TypeScript validation passed.
+
+## 12. Accounted protected delivery in fixtures
+
+The [read budget](../../src/multi-view-read-budget.ts) now reserves up to 64 KiB
+of delivery scratch before each copy. A single retained frame can hold one
+outstanding delivery loan. Releasing the last frame reference or revoking its
+view does not free either the original frame or the copy reservation while a
+loan remains. The opaque loan is idempotently returned only after trusted sink
+drain; it does not allocate another capture slot.
+
+The [delivery controller](../../src/read-view-delivery.ts) is integrated with the
+existing protected Sessions lease in [fixture tests](../../tests/read-view-delivery.test.ts).
+It copies one chunk at a time into a separate backing buffer after reservation,
+so the sink cannot reach other chunks through that buffer. A trusted terminal
+receipt must cover every sink alias and queued use. Once a stop is requested, a
+late write acknowledgement alone cannot release the loan; an explicit stop
+receipt is required. Timeout, abort, thrown code and promise completion never
+stand in for that receipt. Unknown work remains quarantined.
+
+Independent review rejected the earlier zero-copy draft because a chunk view
+exposed the entire frame buffer and constructor callbacks could claim the same
+lease twice. The new version uses own-data snapshots, claims the lease before
+callbacks and reserves a separately backed copy. A subsequent review added
+post-callback lease-release checks and required stop confirmation for outstanding
+async stop aliases. Status can report later cleanup after an immutable initial
+result; it does not manufacture a completed delivery or retry.
+
+This is still a **trusted in-process fixture boundary**. Its combined synchronous
+dispatch guard, timer and sink receipt are trusted components, not untrusted
+client assertions. Existing raw lease bytes can have been retained by a prior
+owner; the caller must transfer exclusive ownership with no earlier aliases. A
+production transport must hide or move raw lease access, bind actual owner/off
+authority, account its own buffers and prove sink/provider drain. Existing IPC
+does not expose this controller and no feature gate passed.
+
+Final source verification: 833 pass, 5 skip, 0 fail, 16411 assertions across
+77 files in 71.21 seconds. Strict root TypeScript validation passed.

@@ -583,3 +583,18 @@ test("idle revoked grants do not accumulate quota or replayable tombstones", asy
   expect(f.budget.status()).toMatchObject({ views: 0, conversations: 0 });
   await refused(f.registry.read(f.who, old, "a".repeat(24), "text"));
 });
+
+test("delivery scratch stays charged after revocation and last frame reference release", async () => {
+  const f = fixture(), grant = f.enroll(), lease = await f.read(grant);
+  const before = f.budget.status().bytes;
+  const loan = lease.reserveDelivery(7);
+  expect(f.budget.status().bytes).toBe(before + 7);
+  expect(() => lease.reserveDelivery(1)).toThrow();
+  f.registry.revoke(f.authority, grant.grant);
+  expect(() => lease.reserveDelivery(1)).toThrow();
+  lease.release();
+  expect(f.budget.status()).toMatchObject({ entries: 1, bytes: before + 7 });
+  expect(loan.release()).toBe(true);
+  expect(loan.release()).toBe(false);
+  expect(f.budget.status()).toMatchObject({ entries: 0, views: 0, bytes: 0 });
+});

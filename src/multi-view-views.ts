@@ -37,8 +37,14 @@ export interface ReadViewEnrollment {
   recipient: ReadRecipient; consentEpoch: number; expiresAt: number;
   views: readonly { binding: object; bindingEpoch: number; formats: readonly ReadViewFormat[] }[];
 }
+export interface ReadDeliveryLoan {
+  /** Release only after the trusted sink has dropped every reference to this copy. */
+  release(): boolean;
+}
 export interface ReadObservationLease {
   readonly bytes: Uint8Array;
+  /** Reserve bounded scratch before allocating a delivery copy. Internal trusted serializer only. */
+  reserveDelivery(bytes: number): ReadDeliveryLoan;
   /** Trusted serializer only. Idempotent, not authority or proof of reader stop. */
   release(): void;
 }
@@ -348,8 +354,19 @@ export class ReadViewRegistry {
     let released = false;
     return Object.freeze({
       get bytes(): Uint8Array {
-        if (released || !registry.#current(entry, view) || !registry.#budget.isDeliverable(reservation) || !payload) fail("DENIED");
+        if (released || !registry.#current(entry, view) || released || !registry.#budget.isDeliverable(reservation) || !payload) fail("DENIED");
         return payload;
+      },
+      reserveDelivery(bytes: number): ReadDeliveryLoan {
+        if (released || !registry.#current(entry, view) || released || !registry.#budget.isDeliverable(reservation)) fail("DENIED");
+        let handle: ReturnType<ReadResourceBudget["reserveDelivery"]>;
+        try { handle = registry.#budget.reserveDelivery(reservation, bytes); } catch (error) { registry.#translate(error); }
+        let returned = false;
+        return Object.freeze({ release(): boolean {
+          if (returned) return false;
+          const result = registry.#budget.releaseDelivery(handle);
+          returned = true; collect(); return result;
+        } });
       },
       release(): void {
         if (released) return;

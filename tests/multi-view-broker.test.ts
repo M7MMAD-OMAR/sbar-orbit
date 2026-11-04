@@ -723,3 +723,17 @@ test("process death before admission and after capture denies with fixed content
     expect(JSON.stringify(await f.call("views.status", {}, f.b, f.channelB).catch(error => ({ code: error.code, message: error.message })))).not.toContain("private-fixture-title");
   } finally { await f.close(); }
 });
+
+test("broker lease reserves delivery scratch only while usage and channel remain current", async () => {
+  const f = await fixture();
+  try {
+    await f.enable(); const enrolled = await f.enroll();
+    const lease = await f.read(enrolled.views[0]!.id);
+    const loan = lease.reserveDelivery(4);
+    await f.call("views.off", { channelKey: "a" });
+    expect(() => lease.reserveDelivery(1)).toThrow();
+    lease.release();
+    expect(loan.release()).toBe(true);
+    expect(loan.release()).toBe(false);
+  } finally { await f.close(); }
+});
