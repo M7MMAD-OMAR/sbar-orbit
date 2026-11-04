@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { copyExclusiveTree } from "./package-windows";
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -10,13 +10,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { startBroker, call } from "../src/ipc";
 import { managedUpdateRoot, requireUpdateAdmission } from "../src/update-admission";
 import { withUpdateLock } from "../src/update-lock";
-import { sealRelease } from "../src/managed-identity";
+import { sealRelease, sameBrokerIdentity } from "../src/managed-identity";
 import { currentVersion, pruneVersions } from "../src/update";
 import { admittedWindowsBootstrap, recordWindowsReleaseFiles, verifyWindowsCurrent } from "../src/windows-managed-install";
 import { DESKTOP_EXE, DESKTOP_LAUNCHER, DESKTOP_MANIFEST, DESKTOP_RUNTIME, desktopSourceDigest, parseDesktopManifest, validateDesktopPayload, windowsFileDigest } from "../src/windows-desktop-update";
 import { boundedCommand } from "../src/lifecycle-command";
 import { DEPENDENCY_INVENTORY } from "../src/windows-dependencies";
-import { registeredTaskXml } from "../src/windows-autostart";
+import { registeredTaskXml, currentUserSid, taskNameForUser } from "../src/windows-autostart";
+import { taskOwned } from "../src/managed-lifecycle";
 import { serviceSocketPath } from "../src/service";
 import { requireResourceBudget } from "../src/resource-budget";
 import { parseRuntimeSource, materializeWindowsRuntime } from "../src/windows-runtime-source";
@@ -72,6 +73,64 @@ async function maintenanceModuleAudit(payload: string) {
   await visit(join(payload, "src/windows-managed-install.ts"));
   return { modulesChecked: seen.size, allRelativeRuntimeModulesBundled: true, excludedPackagingDependency: false, installerPowerShellIsExternalOnly: true };
 }
+/** Read-only failure evidence: never starts, stops, registers or repairs anything. */
+async function inspectFailure(options: Map<string, string>) {
+  hostedWindows();
+  const root = resolve(required(options, "--root")), report = resolve(required(options, "--report"));
+  const runnerTemp = process.env.RUNNER_TEMP;
+  check(runnerTemp && root === resolve(managedUpdateRoot()) && report.startsWith(resolve(runnerTemp) + sep) && report.endsWith(".json"), "Only the known hosted root and owned evidence report are inspectable");
+  const parent = dirname(report), parentInfo = await lstat(parent);
+  check(parentInfo.isDirectory() && !parentInfo.isSymbolicLink() && await realpath(parent) === parent && await missing(report), "Exclusive canonical inspector result required");
+  const task: Record<string, unknown> = { queryCompleted: false, found: null, state: "unknown", lastTaskResult: null, lastRunTimeSeen: null, queryHResult: null, exactOwnership: false };
+  const evidence: Record<string, unknown> = { schema: 1, kind: "owned-read-only-install-failure", contentFree: true, mutationsAttempted: false,
+    expectedSourceIdentityValid: false, recoveryBarrierPresent: false, task, socketPresent: null, endpoint: "unclassified", doctorIdentity: "unobserved", inspectorComplete: false };
+  let selected: Awaited<ReturnType<typeof verifyWindowsCurrent>> | null = null;
+  try {
+    const info = await lstat(root);
+    check(info.isDirectory() && !info.isSymbolicLink() && await realpath(root) === root, "Known root is redirected");
+    evidence.recoveryBarrierPresent = !(await missing(join(root, "activation-recovery.json")));
+    try { selected = await verifyWindowsCurrent(root); evidence.expectedSourceIdentityValid = selected.version === required(options, "--version"); } catch { selected = null; }
+    try {
+      const sid = await currentUserSid(), name = taskNameForUser(sid);
+      const code = "$ErrorActionPreference='Stop';try{$service=New-Object -ComObject 'Schedule.Service';$service.Connect();$folder=$service.GetFolder([string][char]92);$task=$folder.GetTask('" + name.replaceAll("'", "''") + "');[pscustomobject]@{found=$true;state=[int]$task.State;lastTaskResult=[long]$task.LastTaskResult;lastRunTimeSeen=($task.LastRunTime.Year -gt 1900);xml=[string]$task.Xml;queryHResult=$null}|ConvertTo-Json -Compress -Depth 3}catch{$failure=$_.Exception;while($null -ne $failure.InnerException){$failure=$failure.InnerException};[pscustomobject]@{found=$null;state=0;lastTaskResult=$null;lastRunTimeSeen=$null;xml='';queryHResult=[int]$failure.HResult}|ConvertTo-Json -Compress}";
+      const query = await boundedCommand(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(code, "utf16le").toString("base64")], 10000);
+      if (query.ok) {
+        const value: unknown = JSON.parse(query.output);
+        if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+          const data = value as Record<string, unknown>;
+          task.queryCompleted = true;
+          if (data.found === true) {
+            task.found = true;
+            const states = new Map([[0, "unknown"], [1, "disabled"], [2, "queued"], [3, "ready"], [4, "running"]]);
+            task.state = typeof data.state === "number" ? states.get(data.state) ?? "unknown" : "unknown";
+            if (typeof data.lastTaskResult === "number" && Number.isSafeInteger(data.lastTaskResult) && data.lastTaskResult >= -2147483648 && data.lastTaskResult <= 4294967295) task.lastTaskResult = data.lastTaskResult;
+            if (typeof data.lastRunTimeSeen === "boolean") task.lastRunTimeSeen = data.lastRunTimeSeen;
+            if (typeof data.xml === "string" && data.xml.length <= 65536) task.exactOwnership = taskOwned(data.xml, join(root, "bin/sbar-orbit.cmd"), sid);
+          }
+          if (typeof data.queryHResult === "number" && Number.isSafeInteger(data.queryHResult) && data.queryHResult >= -2147483648 && data.queryHResult <= 2147483647) task.queryHResult = data.queryHResult;
+        }
+      }
+    } catch { /* A failed task query remains unknown, never absent. */ }
+    const socket = serviceSocketPath();
+    try { evidence.socketPresent = !(await missing(socket)); } catch { evidence.socketPresent = null; }
+    const signal = AbortSignal.timeout(5000);
+    try {
+      const doctor = await call(socket, "doctor", {}, signal);
+      evidence.doctorIdentity = doctor && typeof doctor === "object" && "managedIdentity" in doctor ? doctor.managedIdentity === null ? "null" : "non-null" : "absent";
+      evidence.endpoint = selected && doctor && typeof doctor === "object" && "managedIdentity" in doctor
+        && sameBrokerIdentity(doctor.managedIdentity, { ...selected.identity, root, directory: selected.directory }) ? "identity-match" : "identity-mismatch";
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
+      evidence.endpoint = signal.aborted ? "timeout" : ["ENOENT", "FailedToOpenSocket"].includes(code) ? "missing"
+        : ["ECONNREFUSED", "ConnectionRefused", "UNAUTHORIZED", "FORBIDDEN", "AUTH_REQUIRED", "ORBIT_DISABLED"].includes(code) ? "refused" : "unclassified";
+    }
+    evidence.inspectorComplete = true;
+  } catch { /* Keep the primary installer failure; the partial record contains no private exception text. */ }
+  const text = JSON.stringify(evidence, null, 2) + "\n";
+  check(Buffer.byteLength(text) <= 8192, "Failure inspector output bound exceeded");
+  await writeFile(report, text, { flag: "wx", mode: 0o600 });
+}
+
 async function ownGui(desktopPath: string, output: string, expected: string) {
   await assertPE(desktopPath);
   const result = await boundedCommand([desktopPath, "--smoke-output", output], 60000);
@@ -297,7 +356,8 @@ if (import.meta.main) {
       throw error;
     }
   }
+  else if (mode === "inspect-failure") await inspectFailure(options);
   else if (mode === "prepare") await prepare(options);
   else if (mode === "activate") await runAcceptance(options);
-  else fail("Use probe, prepare or activate only");
+  else fail("Use probe, prepare, activate or inspect-failure only");
 }

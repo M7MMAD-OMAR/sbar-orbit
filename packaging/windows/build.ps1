@@ -159,6 +159,9 @@ $installCompleted = $installed.WaitForExit(120000)
 if (-not $installCompleted) { $installed.Kill($true); $installed.WaitForExit(3000) | Out-Null }
 $installExit = if ($installed.HasExited) { $installed.ExitCode } else { $null }
 New-Item -ItemType File -Path (Join-Path $evidence 'installer-install-result.json') -Value (@{schema=1;installerExitCode=$installExit;timedOut=(-not $installCompleted);helperReportPresent=(Test-Path -LiteralPath $installReport);contentFree=$true} | ConvertTo-Json) -ErrorAction Stop | Out-Null
+if (-not $installCompleted -or $installed.ExitCode -ne 0) {
+  try { Run-Bounded @($bun,'run','scripts/windows-desktop-acceptance.ts','inspect-failure','--root',$root,'--version',$version,'--report',(Join-Path $evidence 'installed-broker-failure.json')) } catch { Write-Host 'Read-only owned failure inspector did not complete; primary installer failure is preserved.' }
+}
 if (-not $installCompleted) { throw 'Owned installer exceeded deadline' }
 if ($installed.ExitCode -ne 0) { throw "Owned installer failed: $($installed.ExitCode)" }
 Run-Bounded @((Join-Path $root 'bin/Orbit.exe'),'--cli',$root,'help')
