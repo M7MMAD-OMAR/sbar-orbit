@@ -118,6 +118,12 @@ on the owner compositor from unit fixtures alone.
 Several agents can share one broker. Each caller is identified (see
 [several agents on one broker](agent-interface.md#several-agents-on-one-broker)); set
 `ORBIT_CONVERSATION_ID` so the CLI and the adapter of one conversation are one caller.
+The ID must be well-formed Unicode with no surrounding whitespace or ASCII control
+characters. Invalid IDs are refused before CLI work or MCP startup. If an older
+version stored `off` under a padded ID, Orbit does not migrate or merge that file:
+review the host's exact conversation ID and explicitly set `usage off` for the
+correct canonical ID before continuing. A canonical ID can otherwise have its own
+independent default-on state. This preference is cooperative, not authentication.
 `session list` shows your sessions in full and other agents' as summaries without ids.
 `session stop --mine` stops exactly your own sessions and prints what it stopped; `session stop ID`
 on someone else's session is refused with `SESSION_NOT_OWNED`. `--owner` (or `ORBIT_OWNER=1`)

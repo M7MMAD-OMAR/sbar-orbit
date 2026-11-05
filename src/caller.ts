@@ -66,11 +66,28 @@ export function hostName(env: Record<string, string | undefined> = process.env):
   return "Agent";
 }
 
+/** Exact legacy conversation identity, not authorization. Never normalize a usage file key. */
+export function isCanonicalConversationId(value: unknown): value is string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256
+      || value !== value.trim() || /[\x00-\x1f\x7f]/.test(value)) return false;
+  // UTF-8 hashing replaces lone surrogates. Refuse those rather than merge a
+  // distinct broker identity with the replacement-character usage file.
+  for (let index = 0; index < value.length; index++) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const low = value.charCodeAt(index + 1);
+      if (!(low >= 0xdc00 && low <= 0xdfff)) return false;
+      index++;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+  }
+  return true;
+}
+
 /** What this process says about itself on every request. */
 export function localClaim(kind: CallerKind, env: Record<string, string | undefined> = process.env, pid = process.pid): CallerClaim {
-  const conversation = env.ORBIT_CONVERSATION_ID?.trim();
+  const conversation = env.ORBIT_CONVERSATION_ID;
   return { v: 1, kind, pid, start: processStart(pid),
-    ...(conversation && conversation.length <= 256 && !/[\x00-\x1f\x7f]/.test(conversation) ? { conversationId: conversation } : {}),
+    ...(isCanonicalConversationId(conversation) ? { conversationId: conversation } : {}),
     host: hostName(env) };
 }
 export function encodeClaim(claim: CallerClaim): string { return Buffer.from(JSON.stringify(claim)).toString("base64url"); }
@@ -92,8 +109,7 @@ export function resolveCaller(header: string | null | undefined, probe: ProcessP
     if (!value || value.v !== 1 || !["adapter", "cli", "client"].includes(String(value.kind))
         || !Number.isInteger(value.pid) || (value.pid as number) < 2) return unidentifiedCaller;
     if (value.start !== undefined && (typeof value.start !== "string" || !/^\d{1,20}$/.test(value.start))) return unidentifiedCaller;
-    if (value.conversationId !== undefined && (typeof value.conversationId !== "string" || !value.conversationId.trim()
-        || value.conversationId.length > 256 || /[\x00-\x1f\x7f]/.test(value.conversationId))) return unidentifiedCaller;
+    if (value.conversationId !== undefined && !isCanonicalConversationId(value.conversationId)) return unidentifiedCaller;
     claim = value as CallerClaim;
   } catch { return unidentifiedCaller; }
   const actual = probe.start(claim.pid);

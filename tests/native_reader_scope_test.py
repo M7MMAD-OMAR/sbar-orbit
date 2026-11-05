@@ -226,6 +226,15 @@ class ReaderScopeTests(unittest.TestCase):
         with patch.object(subject, "_dup_wait_pidfd", side_effect=lambda fd, pid: os.dup(scope._root_fd)), patch.object(subject.os, "waitid", side_effect=waitid):
             return scope.wait_root(12345, deadline=time.monotonic() + 1)
 
+    def assert_legacy_debt(self, scope, wait_receipt=None):
+        before = self.journal.read_bytes()
+        leaf = scope._record["leaf"]
+        self.assert_code("UNKNOWN", lambda: scope.retire(wait_receipt=wait_receipt))
+        self.assert_code("DEBT", scope.checkpoint)
+        self.assertTrue(scope.status()["hasDebt"])
+        self.assertTrue((self.root / leaf).exists())
+        self.assertEqual(self.journal.read_bytes(), before)
+
     def assert_code(self, code, operation):
         with self.assertRaises(subject.ReaderScopeError) as caught:
             operation()
@@ -369,15 +378,17 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", scope.retire)
         self.assertTrue(scope.status()["hasDebt"])
 
-    def test_empty_and_separately_reaped_root_produce_distinct_retirement_receipt(self):
+    def test_same_owner_reaped_root_and_empty_legacy_leaf_keep_outside_containment_debt(self):
         scope, child = self.historical_admitted()
+        outsider = child.pid + 10
+        self.processes[outsider] = {"pid": outsider, "start": 777, "parent": child.pid, "state": "S"}
         wait_receipt = self.reaped(child)
+        self.assertEqual(wait_receipt.returncode, 0)
         self.populated(0)
-        receipt = scope.retire(wait_receipt=wait_receipt)
-        self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": True, "neverAdmitted": False, "recovered": False})
-        self.assertFalse(self.leaf.exists())
-        self.assertFalse(scope.status()["hasDebt"])
-        self.assertEqual(self.records()[-1]["phase"], "retired")
+        self.assertTrue(scope.empty())
+        self.assert_legacy_debt(scope, wait_receipt)
+        self.assertIn(outsider, self.processes)
+        self.assertFalse(scope._wait_consumed)
 
     def test_cached_returncode_and_disappeared_pid_are_not_kernel_wait_evidence(self):
         scope, child = self.historical_admitted()
@@ -387,19 +398,23 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", scope.retire)
         self.assertTrue(scope.status()["hasDebt"])
 
-    def test_forged_or_cloned_wait_receipt_cannot_retire_exact_scope(self):
+    def test_real_or_forged_wait_receipt_cannot_retire_unqualified_legacy_containment(self):
         scope, child = self.historical_admitted()
-        wait_receipt = self.reaped(child)
+        actual = self.reaped(child)
         self.populated(0)
-        actual = wait_receipt
-        self.assert_code("UNKNOWN", lambda: scope.retire(wait_receipt=subject.RootWaitReceipt(0)))
-        self.assert_code("UNKNOWN", lambda: scope.retire(wait_receipt=object()))
-        self.assertTrue(scope.retire(wait_receipt=actual)["rootReaped"])
-        self.assertTrue(scope._wait_consumed)
+        for candidate in (subject.RootWaitReceipt(0), object(), actual):
+            self.assert_legacy_debt(scope, candidate)
+        self.assertFalse(scope._wait_consumed)
+        self.assertTrue(scope._wait_poisoned)
 
-    def test_never_admitted_empty_leaf_never_claims_root_reaped(self):
+    def test_legacy_no_recorded_root_is_not_evidence_against_hidden_child(self):
         scope = self.prepared()
-        self.assertEqual(scope.retire(wait_receipt=None), {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": True, "recovered": False})
+        hidden = 989898
+        self.processes[hidden] = {"pid": hidden, "start": 888, "parent": self.owner_pid, "state": "S"}
+        self.assertIsNone(scope._record["process"])
+        self.assertTrue(scope.empty())
+        self.assert_legacy_debt(scope)
+        self.assertIn(hidden, self.processes)
 
     def test_kill_success_is_not_scope_empty_and_never_signals_shared_parent(self):
         scope, child = self.historical_admitted()
@@ -535,20 +550,19 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", replacement.recover)
         self.assertTrue(replacement.status()["hasDebt"])
 
-    def test_retired_instance_is_single_operation_and_old_callbacks_cannot_hit_new_leaf(self):
+    def test_closed_legacy_instance_cannot_reuse_debt_or_run_old_callbacks(self):
         scope = self.prepared()
         old_kill, old_empty, old_retire = scope.kill, scope.empty, scope.retire
-        scope.retire(wait_receipt=None)
-        self.assert_code("DEBT", scope.prepare)
+        self.assert_legacy_debt(scope)
         scope.close()
         replacement = self.scope()
-        replacement.prepare()
+        self.assert_code("DEBT", replacement.prepare)
+        self.assert_code("DEBT", replacement.checkpoint)
         before = self.journal.read_bytes()
-        for callback in (old_kill, old_empty, old_retire):
-            self.assert_code("UNKNOWN", callback)
+        for callback in (old_kill, old_empty, old_retire): self.assert_code("UNKNOWN", callback)
         self.assertEqual(self.journal.read_bytes(), before)
+        self.assertTrue(replacement.status()["hasDebt"])
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
-        self.assertEqual(replacement.status()["phase"], "prepared")
 
     def test_pinned_root_fd_replacement_is_not_parent_signal_authority(self):
         scope, child = self.historical_admitted()
@@ -600,15 +614,15 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("IDENTITY", self.scope)
         self.assertEqual(self.journal.read_bytes(), before)
 
-    def test_original_root_pid_reuse_is_distinct_from_original_birth_liveness(self):
+    def test_unrelated_pid_reuse_never_converts_legacy_root_wait_to_containment(self):
         scope, child = self.historical_admitted()
-        wait_receipt = self.reaped(child)  # Genuine fixture kernel-wait receipt BEFORE unrelated PID reuse.
-        self.processes[child.pid] = {"pid": child.pid, "start": 201, "parent": 98765, "state": "S"}
+        receipt = self.reaped(child)
+        replacement = {"pid": child.pid, "start": 201, "parent": 98765, "state": "S"}
+        self.processes[child.pid] = dict(replacement)
         self.populated(0)
-        receipt = scope.retire(wait_receipt=wait_receipt)
-        self.assertTrue(receipt["scopeEmpty"])
-        self.assertTrue(receipt["rootReaped"])
-        self.assertFalse(receipt["recovered"])
+        self.assert_legacy_debt(scope, receipt)
+        self.assertEqual(self.processes[child.pid], replacement)
+        self.no_kill.assert_not_called(); self.no_killpg.assert_not_called()
 
     def test_default_missing_journal_refuses_without_creating_file_or_leaf(self):
         self.assert_code("DEBT", lambda: self.scope(initialize=False))
@@ -688,24 +702,22 @@ class ReaderScopeTests(unittest.TestCase):
         reopened = self.scope()
         self.assertFalse(reopened.status()["hasDebt"])
 
-    def test_healthy_operations_exceed_64k_equivalent_history_while_checkpoint_stays_bounded(self):
-        total_history = 0
+    def test_repeated_untouched_idle_checkpoint_is_bounded_not_operation_retirement(self):
         scope = self.scope()
-        original_inode = self.journal.stat().st_ino
-        for _ in range(64):
-            scope.prepare()
-            receipt = scope.retire(wait_receipt=None)
-            self.assertTrue(receipt["scopeEmpty"])
-            total_history += self.journal.stat().st_size
+        inode = self.journal.stat().st_ino
+        # This totals repeated idle-record bytes, NOT retired operation history
+        # and NOT evidence that any prior process/containment lifecycle completed.
+        total_idle_bytes = 0
+        for _ in range(256):
+            total_idle_bytes += self.journal.stat().st_size
             scope.checkpoint()
-            self.assertEqual(self.journal.stat().st_ino, original_inode)
+            self.assertEqual(self.journal.stat().st_ino, inode)
             self.assertLess(self.journal.stat().st_size, 4096)
-            self.assertEqual(len(self.records()), 1)
+            self.assertEqual([item["phase"] for item in self.records()], ["idle"])
             self.assertFalse(scope.status()["hasDebt"])
-            self.assert_code("DEBT", scope.prepare)
-            scope.close()
-            scope = self.scope(initialize=False)
-        self.assertGreater(total_history, 65536)
+        self.assertGreater(total_idle_bytes, 65536)
+        scope.prepare()
+        self.assert_legacy_debt(scope)
 
     def test_checkpoint_never_erases_active_or_unknown_kill_debt(self):
         scope, child = self.historical_admitted()
@@ -735,21 +747,15 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before)
         self.assertTrue(replacement.status()["hasDebt"])
 
-    def test_retired_checkpoint_preserves_single_operation_and_old_callback_refusal(self):
+    def test_failed_legacy_retirement_cannot_checkpoint_or_reinitialize_after_restart(self):
         scope = self.prepared()
-        old_kill, old_retire = scope.kill, scope.retire
-        scope.retire(wait_receipt=None)
-        scope.checkpoint()
+        self.assert_legacy_debt(scope)
         self.assert_code("DEBT", scope.prepare)
-        self.assert_code("DEBT", scope.recover)
         scope.close()
         replacement = self.scope()
-        replacement.prepare()
-        before = self.journal.read_bytes()
-        self.assert_code("UNKNOWN", old_kill)
-        self.assert_code("UNKNOWN", old_retire)
-        self.assertEqual(self.journal.read_bytes(), before)
-        self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
+        self.assertTrue(replacement.status()["hasDebt"])
+        self.assert_code("DEBT", replacement.prepare)
+        self.assert_code("DEBT", replacement.checkpoint)
 
     def test_checkpoint_requires_root_still_empty_and_without_child_directories(self):
         scope = self.scope()
@@ -938,18 +944,19 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", reopened.recover)
         self.assertTrue(self.leaf.exists())
 
-    def test_running_child_binds_before_stop_and_cannot_retire_until_separate_reap(self):
+    def test_running_legacy_child_wait_remains_distinct_from_containment_release(self):
         scope, child = self.spawn_reserved(state="R")
         scope.bind_child(child)
         last = self.records()[-1]
         self.assertEqual((last["phase"], last["spawn_pending"], last["process"]),
                          ("spawn_bound", False, [child.pid, 200]))
         self.assertEqual(self.synced_phases[-1], "spawn_bound")
+        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
         self.assertTrue(scope.empty())
-        self.assert_code("UNKNOWN", scope.retire)
-        wait_receipt = self.reaped(child)
-        self.assertEqual(scope.retire(wait_receipt=wait_receipt), {"scopeEmpty": True, "rootReaped": True,
-                                         "neverAdmitted": False, "recovered": False})
+        self.assert_legacy_debt(scope)
+        receipt = self.reaped(child)
+        self.assertEqual(receipt.returncode, 0)
+        self.assert_legacy_debt(scope, receipt)
 
     def test_bound_running_or_stopped_child_cannot_enable_numeric_admission(self):
         scope, child = self.spawn_reserved(state="R")
@@ -1027,7 +1034,7 @@ class ReaderScopeTests(unittest.TestCase):
         wait_receipt = self.reaped(child)
         self.assert_code("UNKNOWN", scope.retire)
         self.populated(0)
-        self.assertTrue(scope.retire(wait_receipt=wait_receipt)["rootReaped"])
+        self.assert_legacy_debt(scope, wait_receipt)
 
     def test_bound_but_unmigrated_child_recovery_never_claims_original_parent_reap(self):
         scope, child = self.spawn_reserved()
@@ -1126,6 +1133,56 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("DEBT", self.scope)
         self.assertEqual(self.journal.read_bytes(), payload)
 
+    def test_legacy_pinned_or_killing_without_recorded_process_keeps_hidden_child_debt(self):
+        scope = self.scope()
+        self.bad_readback = True
+        self.assert_code("UNSUPPORTED", scope.prepare)
+        self.assertEqual(self.records()[-1]["phase"], "pinned")
+        hidden = 989899
+        self.processes[hidden] = {"pid": hidden, "start": 889, "parent": self.owner_pid, "state": "S"}
+        self.assertTrue(scope.empty())
+        self.assert_legacy_debt(scope)
+        scope.kill()
+        self.assertEqual(self.records()[-1]["phase"], "killing")
+        self.assertTrue(scope.empty())
+        self.assert_legacy_debt(scope)
+        self.assertIn(hidden, self.processes)
+
+    def test_nonrecovered_v1_retired_history_with_healthy_active_suffix_refuses_unchanged(self):
+        scope = self.prepared()
+        records = self.records()
+        terminal = {**records[-1], "phase": "retired", "sequence": records[-1]["sequence"]+1}
+        self.assertIsNone(terminal["process"])
+        self.assertFalse(terminal["recovered"])
+        intent = {**terminal, "phase": "intent", "sequence": terminal["sequence"]+1,
+                  "leaf": "orbit-reader-" + "e"*32, "leaf_identity": None, "process": None}
+        pinned = {**intent, "phase": "pinned", "sequence": intent["sequence"]+1, "leaf_identity": [9000, 9001]}
+        active = {**pinned, "phase": "prepared", "sequence": pinned["sequence"]+1}
+        history = [*records, terminal, intent, pinned, active]
+        for previous, current in zip(history, history[1:]): subject.ReaderScope._validate_transition(previous, current)
+        scope.close()
+        payload = b"".join((json.dumps(item, sort_keys=True) + "\n").encode() for item in history)
+        self.journal.write_bytes(payload)
+        before = self.journal.stat()
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
+        after = self.journal.stat()
+        self.assertEqual((after.st_dev, after.st_ino, after.st_mode, after.st_size),
+                         (before.st_dev, before.st_ino, before.st_mode, before.st_size))
+
+    def test_nonrecovered_v1_process_terminal_history_refuses_without_writes(self):
+        scope, child = self.historical_admitted()
+        records = self.records()
+        terminal = {**records[-1], "phase": "retired", "sequence": records[-1]["sequence"]+1}
+        self.assertEqual(terminal["process"], [child.pid, 200])
+        self.assertFalse(terminal["recovered"])
+        subject.ReaderScope._validate_transition(records[-1], terminal)
+        scope.close()
+        payload = b"".join((json.dumps(item, sort_keys=True) + "\n").encode() for item in [*records, terminal])
+        self.journal.write_bytes(payload)
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
+
     def test_forged_pending_marker_clear_recovery_retire_or_schema_downgrade_refuses(self):
         scope, _child = self.spawn_reserved()
         original = self.journal.read_bytes()
@@ -1145,44 +1202,25 @@ class ReaderScopeTests(unittest.TestCase):
                 self.assert_code("DEBT", lambda: self.scope())
         self.journal.write_bytes(original)
 
-    def test_legacy_no_spawn_scope_remains_v1_and_known_no_child_can_retire(self):
+    def test_legacy_v1_absent_spawn_record_cannot_assert_never_spawned(self):
         scope = self.prepared()
-        self.assertTrue(all(record["v"] == 1 and "spawn_pending" not in record for record in self.records()))
-        self.assertEqual(scope.retire(wait_receipt=None), {"scopeEmpty": True, "rootReaped": False,
-                                         "neverAdmitted": True, "recovered": False})
+        self.assertTrue(all(item["v"] == 1 and "spawn_pending" not in item for item in self.records()))
+        self.assertIsNone(scope._record["process"])
+        self.assert_legacy_debt(scope)
 
-
-    def test_v2_retired_generations_reopen_without_downgrade_and_checkpoint_is_fresh_v1(self):
-        callbacks = []
-        for generation in range(3):
-            scope, child = self.spawn_reserved(state="T")
-            self.assertTrue(self.records()[-1]["spawn_pending"])
-            scope.bind_child(child)
-            self.historical_admission(scope, child)
-            wait_receipt = self.reaped(child)
-            self.populated(0)
-            self.assertTrue(scope.retire(wait_receipt=wait_receipt)["rootReaped"])
-            self.assertEqual(self.records()[-1]["v"], 2)
-            self.assertFalse(self.records()[-1]["spawn_pending"])
-            callbacks.append(scope.kill)
-            scope.close()
-        versions = [record["v"] for record in self.records()]
-        first_v2 = versions.index(2)
-        self.assertTrue(all(version == 1 for version in versions[:first_v2]))
-        self.assertTrue(all(version == 2 for version in versions[first_v2:]))
-        checkpoint = self.scope()
-        checkpoint.checkpoint()
-        self.assertEqual(len(self.records()), 1)
-        self.assertEqual(self.records()[0]["v"], 1)
-        self.assertEqual(self.records()[0]["phase"], "idle")
-        checkpoint.close()
-        active = self.prepared()
-        active.reserve_spawn()
-        self.assertEqual(self.records()[-1]["v"], 2)
-        for callback in callbacks:
-            self.assert_code("UNKNOWN", callback)
-        self.assertTrue(active.status()["hasDebt"])
-
+    def test_legacy_v2_retired_record_cannot_reopen_or_be_checkpointed(self):
+        scope, child = self.spawn_reserved(state="T")
+        scope.bind_child(child)
+        self.historical_admission(scope, child)
+        records = self.records()
+        self.assertEqual(records[-1]["v"], 2)
+        terminal = {**records[-1], "phase": "retired", "sequence": records[-1]["sequence"]+1}
+        subject.ReaderScope._validate_transition(records[-1], terminal)
+        scope.close()
+        payload = b"".join((json.dumps(item, sort_keys=True) + "\n").encode() for item in [*records, terminal])
+        self.journal.write_bytes(payload)
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
 
     def test_every_legal_append_transition_rejects_v2_downgrade_or_removed_marker(self):
         scope, child = self.spawn_reserved()

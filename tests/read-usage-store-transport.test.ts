@@ -190,7 +190,11 @@ test("timeout of queued work poisons the global channel before any later or dupl
 test("old disarmed timers cannot poison a later healthy operation", async () => {
   const f = fixture(); await f.coordinator.on(f.authority, f.a);
   expect(f.timers[0]!.cancelled).toBe(true); f.state.autoAck = false;
-  const pending = outcome(f.coordinator.off(f.authority, f.a)); await Promise.resolve();
+  const secondWrite = deferred<void>();
+  f.state.writeHook = () => { secondWrite.resolve(); return Promise.resolve(); };
+  const pending = outcome(f.coordinator.off(f.authority, f.a));
+  await Promise.race([secondWrite.promise, pending.then(() => { throw new Error("Off settled before its second write"); })]);
+  expect(f.writes[1]?.id).toBe(2);
   f.timers[0]!.expire(); expect(f.state.failures).toBe(0); f.peer.ack(2); expect(await pending).toBe("ok");
 });
 

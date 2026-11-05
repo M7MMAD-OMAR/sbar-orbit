@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
 import { stateDirectory } from "./service";
+import { isCanonicalConversationId } from "./caller";
 
 export type UsageMode = "on" | "off";
 
@@ -13,8 +14,8 @@ export class ConversationUsage {
   constructor(readonly conversationId = process.env.ORBIT_CONVERSATION_ID,
     private readonly root = process.env.ORBIT_USAGE_DIR ?? join(stateDirectory(), "usage")) {
     if (conversationId !== undefined) {
-      if (!conversationId.trim() || conversationId.length > 256 || /[\x00-\x1f\x7f]/.test(conversationId))
-        throw new OrbitError("INVALID_REQUEST", "Conversation ID must contain 1 to 256 characters without control characters");
+      if (!isCanonicalConversationId(conversationId))
+        throw new OrbitError("INVALID_REQUEST", "Conversation ID must contain 1 to 256 well-formed UTF-16 code units without ASCII controls or surrounding whitespace");
       this.path = join(root, `${createHash("sha256").update(conversationId).digest("hex")}.json`);
     }
   }

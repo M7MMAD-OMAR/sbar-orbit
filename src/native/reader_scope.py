@@ -1,7 +1,11 @@
 """Dormant owned cgroup2 leaf primitive. No spawning, PID signals or parent edits.
 
 Only trusted owner runtime paths belong here, never model-provided resource IDs.
-A durable journal is debt until the original leaf is proved empty and retired.
+All legacy v1/v2 operation history retains containment debt. No current retire
+API proves atomic placement or absence of hidden pre-admission descendants.
+Every historical retired event is refused, even before a healthy-looking suffix.
+Old checkpoint-erased history cannot be reconstructed; idle is not evidence of
+historical freshness or authorization. Checkpoint only bounds untouched idle state.
 Recovered generations retain broader containment debt even when the original leaf
 is empty or no root was recorded. Legacy v1 can have an unrecorded child before
 admission; v1/v2 do not prove atomic containment. Historical recovered retirement
@@ -402,8 +406,8 @@ class ReaderScope:
                     _fail("DEBT", "Reader journal limits are invalid")
                 # Inspect EVERY historical event, not only the final phase. A later
                 # healthy generation cannot erase legacy unproven recovered-root debt.
-                if record["phase"] == "retired" and record["recovered"]:
-                    _fail("DEBT", "Journal contains unproven recovered retirement")
+                if record["phase"] == "retired":
+                    _fail("DEBT", "Journal contains unproven legacy retirement")
                 self._validate_transition(last, record)
                 last = record
         except (ValueError, TypeError, KeyError, UnicodeError):
@@ -665,7 +669,8 @@ class ReaderScope:
         returncode may become visible after an interrupted consuming syscall; ONLY
         an exact directly returned receipt may acknowledge root accounting. There
         is no cached token recovery; interruption after publication retains poison
-        until the caller explicitly supplies its returned token to retire. Arbitrary
+        until a future qualified lifecycle can acknowledge it. Legacy retire remains
+        unavailable even with a directly returned root-wait token. Arbitrary
         async exceptions during lock/FD acquisition cannot promise leak-free
         cleanup or bounded termination/reaping. The owner must exclude arbitrary
         asynchronous interruption at ownership-acquisition boundaries for liveness.
@@ -780,36 +785,13 @@ class ReaderScope:
 
     @_serialized
     def retire(self, wait_receipt=None):
-        """Return separate scope-empty/root-reaped facts after original-leaf removal."""
+        """Legacy v1/v2 cannot prove atomic creation/containment; retain all debt.
+
+        Leaf emptiness and actual root wait remain separate diagnostics, not proof
+        against hidden pre-admission children. No leaf removal or retired append.
+        """
         self._guard(leaf=True)
-        if self._record.get("spawn_pending", False):
-            _fail("UNKNOWN", "Reader scope emptiness cannot resolve an unbound possible child")
-        if self._recovered or self._record["recovered"]:
-            _fail("UNKNOWN", "Recovered reader process containment remains unconfirmed")
-        if not self.empty():
-            _fail("UNKNOWN", "Reader descendants have not been proved absent")
-        root_reaped = False
-        if self._record["process"] is not None:
-            if (self._wait_owner is not self or not self._wait_ready or wait_receipt is None or wait_receipt is not self._wait_receipt or self._wait_consumed
-                    or self._child is None or self._wait_child is not self._child
-                    or self._wait_birth != tuple(self._record["process"])
-                    or self._wait_generation != (self._record["leaf"], tuple(self._record["leaf_identity"]))
-                    or self._child.returncode != self._wait_code):
-                _fail("UNKNOWN", "Reader root requires its exact consumed kernel wait receipt")
-            root_reaped = True
-        self._guard(leaf=True)
-        os.rmdir(self._record["leaf"], dir_fd=self._root_fd)
-        # A crash before this durable event leaves debt, not permission to infer empty.
-        self._append("retired")
-        if root_reaped:
-            self._wait_consumed = True
-            self._wait_ready = False
-            self._wait_poisoned = False
-        os.close(self._leaf_fd)
-        self._leaf_fd = None
-        self._child = None
-        return {"scopeEmpty": True, "rootReaped": root_reaped,
-                "neverAdmitted": self._record["process"] is None, "recovered": self._recovered}
+        _fail("UNKNOWN", "Legacy reader containment cannot be retired")
 
     @_serialized
     def checkpoint(self):
@@ -820,8 +802,8 @@ class ReaderScope:
         describes only this already-proven no-work state, not active work.
         """
         self._guard()
-        if (self._recovered or self._record["recovered"]
-                or self._record["phase"] not in ("idle", "retired") or self._leaf_fd is not None or self._child is not None):
+        if (self._started or self._recovered or self._record["recovered"]
+                or self._record["phase"] != "idle" or self._leaf_fd is not None or self._child is not None):
             _fail("DEBT", "Reader checkpoint cannot discard unresolved scope ownership")
         self._root_no_work()
         # Keep the original flock and inode; never rename or replace the lock file.
@@ -851,7 +833,7 @@ class ReaderScope:
     def status(self):
         self._guard()
         return {"phase": self._record["phase"], "leaf": self._record["leaf"],
-                "hasDebt": self._record["phase"] not in ("idle", "retired"),
+                "hasDebt": self._started or self._recovered or self._record["phase"] != "idle",
                 "recovered": self._record["recovered"]}
 
     @_serialized

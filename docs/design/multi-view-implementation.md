@@ -944,3 +944,31 @@ fsync failures and post-commit marker, lock and root replacement. Each targeted
 failpoint is asserted to have fired, and failures preserve uncertainty rather than
 claiming a durable barrier. The full verifier passed 945 tests, with 5 skipped and
 0 failed, across 91 files in 81.99 seconds; strict TypeScript checking also passed.
+
+## 27. Identity, deadline and legacy scope safeguards
+
+The legacy CLI and MCP usage preference and broker caller now share an exact
+conversation ID validator. Leading or trailing whitespace, ASCII controls and
+unpaired UTF-16 surrogates are rejected rather than normalized into another
+identity. This is cooperative attribution, not authentication. Historical padded
+`off` files are not migrated; an owner must reconcile the host ID explicitly as
+described in the [CLI guide](../cli.md). A real owned CLI child verifies refusal
+before broker access, while other tests use owned state fixtures.
+
+The dormant [usage coordinator](../../src/read-usage-coordinator.ts) rechecks its
+deadline after timer cleanup before publishing an `on` acknowledgement. Queued writes
+wait for both actual store settlement and the final acknowledgement fence; failed
+timer cleanup and clock uncertainty remain disabled. This assumes trusted,
+nonblocking clock and timer callbacks and is not a hard real-time or cancellation
+guarantee.
+
+[ReaderScope](../../src/native/reader_scope.py) no longer retires legacy v1/v2
+generations or treats historical `retired` events as reusable proof. Leaf emptiness
+and root wait remain diagnostics, not proof against pre-admission descendants. An
+older checkpoint may already have erased history; this change cannot reconstruct it.
+No production read-view path is enabled.
+
+The first full verifier exposed an ordering assumption in a transport test after
+the coordinator change; the test now waits for the actual second write. The final
+verifier passed 977 tests, with 5 skipped and 0 failed, across 92 files in 83.87
+seconds. Strict TypeScript checking and the focused real CLI fixture also passed.

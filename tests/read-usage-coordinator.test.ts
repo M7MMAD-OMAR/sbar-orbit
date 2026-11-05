@@ -12,6 +12,13 @@ const deferred = <T>() => {
 };
 const outcome = <T>(promise: Promise<T>) => promise.then(() => "ok", (error: unknown) => error instanceof ReadUsageError ? error.code : "unexpected");
 
+type TimerArguments = Parameters<typeof globalThis.setTimeout>;
+type TimerResult = ReturnType<typeof globalThis.setTimeout>;
+function typedTimer(body: (args: TimerArguments) => TimerResult): typeof globalThis.setTimeout {
+  const implementation = (...args: TimerArguments): TimerResult => body(args);
+  return Object.assign(implementation, { __promisify__: globalThis.setTimeout.__promisify__ }) as typeof globalThis.setTimeout;
+}
+
 test("protected identities start disabled and on requires a durable acknowledgement", async () => {
   const authority = {}, a = {}, b = {}, gate = deferred<void>();
   const writes: { conversation: object; record: ReadUsageRecord }[] = [];
@@ -416,6 +423,257 @@ test("poisoning an empty coordinator permanently rejects future registration", a
   expect(await outcome(coordinator.on(authority, {}))).toBe("UNCONFIRMED");
   expect(await outcome(coordinator.off(authority, {}))).toBe("UNCONFIRMED");
   expect(calls).toBe(0); expect(writes).toBe(0);
+});
+
+for (const operation of ["on", "off"] as const) test(operation + " final ACK refuses a deadline crossed only during timer cleanup", async () => {
+  const authority = {}, conversation = {}, records: boolean[] = []; let clock = 100;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, deadlineMs: 50, onRevoke() {}, store: {
+    async commit(_key, value) { records.push(value.enabled); },
+  } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => clock);
+  let restoreClear: (() => void) | undefined;
+  try {
+    if (operation === "off") await coordinator.on(authority, conversation);
+    const original = globalThis.clearTimeout;
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => { Reflect.apply(original, globalThis, [timer]); clock = 150; });
+    restoreClear = () => clear.mockRestore();
+    expect(await outcome(coordinator[operation](authority, conversation))).toBe("UNCONFIRMED");
+    const version = await coordinator.usageVersion(conversation);
+    expect(version.enabled).toBe(false); expect(coordinator.usageCurrent(conversation, version.epoch)).toBe(false);
+    clock = 100; expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+    expect(records).toEqual(operation === "on" ? [true] : [true, false]);
+  } finally { restoreClear?.(); now.mockRestore(); }
+});
+
+for (const fault of ["backwards", "nan", "infinity", "throw"] as const) test("final ACK clock " + fault + " is fixed unconfirmed and sticky", async () => {
+  const authority = {}, conversation = {}; let clock = 100, broken = false, writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, deadlineMs: 50, onRevoke() {}, store: {
+    async commit() { writes++; clock = 120; },
+  } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => { if (broken) throw new Error("private-clock-secret"); return clock; });
+  const original = globalThis.clearTimeout;
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => {
+    Reflect.apply(original, globalThis, [timer]);
+    if (fault === "throw") broken = true;
+    else clock = fault === "backwards" ? 110 : fault === "nan" ? NaN : Infinity;
+  });
+  try {
+    const error: unknown = await coordinator.on(authority, conversation).catch(error => error);
+    expect(error).toBeInstanceOf(ReadUsageError); expect(error).toMatchObject({ code: "UNCONFIRMED" });
+    expect(String(error)).not.toContain("private-clock-secret"); expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+    broken = false; clock = 120;
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED"); expect(writes).toBe(1);
+  } finally { clear.mockRestore(); now.mockRestore(); }
+});
+
+for (const action of ["off", "poison"] as const) test("final clock callback reentry " + action + " is checked before public on ACK", async () => {
+  const authority = {}, conversation = {}, gate = deferred<void>(); let finalSample = false, reentered = false, nested: Promise<string> | undefined;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, deadlineMs: 50, onRevoke() {}, store: {
+    async commit(_key, value) { if (!value.enabled) await gate.promise; },
+  } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => {
+    if (finalSample && !reentered) {
+      reentered = true;
+      if (action === "off") nested = outcome(coordinator.off(authority, conversation));
+      else coordinator.poisonAll(authority);
+    }
+    return 100;
+  });
+  const original = globalThis.clearTimeout;
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => { Reflect.apply(original, globalThis, [timer]); finalSample = true; });
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe(action === "off" ? "STALE" : "UNCONFIRMED");
+    expect(reentered).toBe(true); expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+    gate.resolve(); if (nested) expect(await nested).toBe("ok");
+  } finally { gate.resolve(); await nested; clear.mockRestore(); now.mockRestore(); }
+});
+
+test("clock failure before store dispatch is fixed content-free refusal without a store call", async () => {
+  const authority = {}, conversation = {}; let writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => { throw new Error("private-initial-clock"); });
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false); expect(writes).toBe(0);
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+  } finally { now.mockRestore(); }
+});
+
+test("deterministic deadline rejects a late ACK and blocks already queued work without cancelling the store", async () => {
+  const authority = {}, conversation = {}, gate = deferred<void>(), started = deferred<void>(); let clock = 100, writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, deadlineMs: 50, onRevoke() {}, store: {
+    async commit() { writes++; started.resolve(); await gate.promise; },
+  } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => clock);
+  const on = outcome(coordinator.on(authority, conversation)); let off: Promise<string> | undefined;
+  try {
+    await started.promise; off = outcome(coordinator.off(authority, conversation));
+    clock = 150; gate.resolve();
+    expect(await on).toBe("UNCONFIRMED"); expect(await off).toBe("UNCONFIRMED"); expect(writes).toBe(1);
+    clock = 100; expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { gate.resolve(); await on; await off; now.mockRestore(); }
+});
+
+for (const action of ["on", "off"] as const) test("initial unreserved clock mutation " + action + " poisons rather than reordering store operations", async () => {
+  const authority = {}, conversation = {}; let entered = false, writes = 0, nested: Promise<string> | undefined;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => {
+    if (!entered) { entered = true; nested = outcome(coordinator[action](authority, conversation)); }
+    return 100;
+  });
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+    expect(await nested).toBe("UNCONFIRMED"); expect(writes).toBe(0);
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { await nested; now.mockRestore(); }
+});
+
+test("initial clock registration reentry cannot publish a new conversation after poisoning", async () => {
+  const authority = {}, conversation = {}, injected = {}; let entered = false, code = "", writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => {
+    if (!entered) { entered = true; try { coordinator.register(authority, injected); } catch (error) { code = (error as ReadUsageError).code; } }
+    return 100;
+  });
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED"); expect(code).toBe("UNCONFIRMED"); expect(writes).toBe(0);
+    await expect(coordinator.usageVersion(injected)).rejects.toMatchObject({ code: "DENIED" });
+  } finally { now.mockRestore(); }
+});
+
+test("unrepresentable deadline addition fails closed before store or timer dispatch", async () => {
+  const authority = {}, conversation = {}; let writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockReturnValue(Number.MAX_VALUE);
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED"); expect(writes).toBe(0);
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { now.mockRestore(); }
+});
+
+test("on remains disabled through timer cleanup and publishes only at final ACK", async () => {
+  const authority = {}, conversation = {}, observed: boolean[] = [];
+  const versions: Promise<{ enabled: boolean }>[] = [];
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() {} } });
+  coordinator.register(authority, conversation);
+  const original = globalThis.clearTimeout;
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => {
+    Reflect.apply(original, globalThis, [timer]);
+    observed.push(coordinator.usageCurrent(conversation, 2)); versions.push(coordinator.usageVersion(conversation));
+  });
+  try {
+    await coordinator.on(authority, conversation);
+    expect(observed).toEqual([false]); expect((await Promise.all(versions)).every(version => !version.enabled)).toBe(true);
+    const accepted = await coordinator.usageVersion(conversation);
+    expect(accepted.enabled).toBe(true); expect(coordinator.usageCurrent(conversation, accepted.epoch)).toBe(true);
+  } finally { clear.mockRestore(); }
+});
+
+test("queued on never dispatches before preceding off final ACK deadline fence", async () => {
+  const authority = {}, conversation = {}, gate = deferred<void>(), started = deferred<void>();
+  const records: boolean[] = []; let clock = 100, hold = false;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, deadlineMs: 50, onRevoke() {}, store: {
+    async commit(_key, record) { records.push(record.enabled); if (hold) { started.resolve(); await gate.promise; } },
+  } });
+  coordinator.register(authority, conversation);
+  const now = spyOn(performance, "now").mockImplementation(() => clock);
+  let restoreClear: (() => void) | undefined, first: Promise<string> | undefined, second: Promise<string> | undefined;
+  try {
+    await coordinator.on(authority, conversation); hold = true;
+    first = outcome(coordinator.off(authority, conversation)); await started.promise;
+    second = outcome(coordinator.on(authority, conversation));
+    const original = globalThis.clearTimeout;
+    const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => { Reflect.apply(original, globalThis, [timer]); clock = 150; });
+    restoreClear = () => clear.mockRestore();
+    gate.resolve(); expect(await first).toBe("UNCONFIRMED"); expect(await second).toBe("UNCONFIRMED");
+    expect(records).toEqual([true, false]); expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { gate.resolve(); await first; await second; restoreClear?.(); now.mockRestore(); }
+});
+
+test("throwing timer cleanup rejects fixed unconfirmed and blocks the next queued on", async () => {
+  const authority = {}, conversation = {}, gate = deferred<void>(), started = deferred<void>();
+  let hold = false; const records: boolean[] = [];
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: {
+    async commit(_key, value) { records.push(value.enabled); if (hold) { started.resolve(); await gate.promise; } },
+  } });
+  coordinator.register(authority, conversation); await coordinator.on(authority, conversation); hold = true;
+  const first = outcome(coordinator.off(authority, conversation)); await started.promise;
+  const second = outcome(coordinator.on(authority, conversation));
+  const original = globalThis.clearTimeout;
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(timer => { Reflect.apply(original, globalThis, [timer]); throw new Error("private-timer-cleanup"); });
+  try {
+    gate.resolve(); expect(await first).toBe("UNCONFIRMED"); expect(await second).toBe("UNCONFIRMED");
+    expect(records).toEqual([true, false]); expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+  } finally { gate.resolve(); await first; await second; clear.mockRestore(); }
+});
+
+test("timer setup mutation reentry poisons before an ordering tail or store write can escape", async () => {
+  const authority = {}, conversation = {}; let entered = false, nested: Promise<string> | undefined, writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const original = globalThis.setTimeout;
+  const implementation = typedTimer(args => {
+    if (!entered) { entered = true; nested = outcome(coordinator.off(authority, conversation)); }
+    return Reflect.apply(original, globalThis, args) as TimerResult;
+  });
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(implementation);
+  try {
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED");
+    expect(await nested).toBe("UNCONFIRMED"); expect(writes).toBe(0);
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { await nested; timer.mockRestore(); }
+});
+
+test("timer setup exception is content-free unconfirmed with no store dispatch", async () => {
+  const authority = {}, conversation = {}; let writes = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  coordinator.register(authority, conversation);
+  const implementation = typedTimer(() => { throw new Error("private-timer-setup"); });
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(implementation);
+  try {
+    const error: unknown = await coordinator.on(authority, conversation).catch(error => error);
+    expect(error).toBeInstanceOf(ReadUsageError); expect(error).toMatchObject({ code: "UNCONFIRMED" });
+    expect(String(error)).not.toContain("private-timer-setup"); expect(writes).toBe(0);
+    expect((await coordinator.usageVersion(conversation)).enabled).toBe(false);
+  } finally { timer.mockRestore(); }
+});
+
+for (const mode of ["throw", "return"] as const) test("uncleared stale timer is inactive after ACK cleanup " + mode, async () => {
+  const authority = {}, a = {}, b = {}, callbacks: (() => void)[] = [], handles: TimerResult[] = [];
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() {} } });
+  coordinator.register(authority, a); coordinator.register(authority, b); await coordinator.on(authority, b);
+  const other = await coordinator.usageVersion(b), nativeSet = globalThis.setTimeout, nativeClear = globalThis.clearTimeout;
+  const implementation = typedTimer(args => {
+    callbacks.push(() => { Reflect.apply(args[0], undefined, []); });
+    const handle = Reflect.apply(nativeSet, globalThis, args) as TimerResult; handles.push(handle); return handle;
+  });
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(implementation);
+  // Deliberately do not call native clear: its runtime resource stays live until fixture cleanup.
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(() => { if (mode === "throw") throw new Error("private-uncleared-timer"); });
+  try {
+    expect(await outcome(coordinator.on(authority, a))).toBe(mode === "throw" ? "UNCONFIRMED" : "ok");
+    const before = await coordinator.usageVersion(a);
+    callbacks[0]!(); expect(await coordinator.usageVersion(a)).toEqual(before);
+    expect(coordinator.usageCurrent(b, other.epoch)).toBe(true);
+    if (mode === "return") {
+      await coordinator.off(authority, a); await coordinator.on(authority, a);
+      const fresh = await coordinator.usageVersion(a); callbacks[0]!();
+      expect(coordinator.usageCurrent(a, fresh.epoch)).toBe(true);
+    } else expect(await outcome(coordinator.on(authority, a))).toBe("UNCONFIRMED");
+  } finally {
+    clear.mockRestore(); timer.mockRestore();
+    for (const handle of handles) Reflect.apply(nativeClear, globalThis, [handle]);
+  }
 });
 
 test("counter exhaustion uses the same complete cohort poison without wrapping or callback recursion", async () => {

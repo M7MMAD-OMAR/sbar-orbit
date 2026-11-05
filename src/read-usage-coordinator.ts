@@ -41,7 +41,9 @@ interface Entry {
  * are instance-local and may repeat; bind a fresh Sessions and registry to each coordinator.
  * The trusted store must enforce an exclusive single writer, including across restarts, and
  * reconcile any unresolved old write before replacement. Timeouts do not stop store work.
- * ownerAuthority, conversations and store are trusted broker objects, not request data. */
+ * ownerAuthority, conversations and store are trusted broker objects, not request data.
+ * Clock samples and timer primitives are trusted nonblocking runtime seams. Deadline
+ * checks constrain observed samples/ACK boundaries, not hard real-time scheduling or cancellation. */
 export class ReadUsageCoordinator {
   readonly #authority: object;
   readonly #store: ReadUsageStore;
@@ -52,6 +54,7 @@ export class ReadUsageCoordinator {
   #counter = 0;
   #exhausted = false;
   #poisoned = false;
+  #settingUp = false;
 
   constructor(options: { ownerAuthority: object; store: ReadUsageStore; onRevoke: (conversation: object) => void; deadlineMs?: number }) {
     if (!validObject(options.ownerAuthority) || !options.store || typeof options.store.commit !== "function"
@@ -117,6 +120,7 @@ export class ReadUsageCoordinator {
   /** Explicit protected registration only. It does not change or read legacy usage. */
   register(authority: object, conversation: object): void {
     this.#owner(authority);
+    if (this.#settingUp) { this.#poison(); fail("UNCONFIRMED"); }
     if (this.#poisoned) fail("UNCONFIRMED");
     if (!validObject(conversation)) fail("INVALID");
     if (this.#entries.has(conversation)) fail("INVALID");
@@ -138,6 +142,7 @@ export class ReadUsageCoordinator {
    * Queue exhaustion and notification failure also leave the conversation disabled. */
   off(authority: object, conversation: object): Promise<void> {
     this.#owner(authority);
+    if (this.#settingUp) { this.#poison(); return this.#refused(); }
     if (this.#poisoned) return this.#refused();
     const entry = this.#entry(conversation);
     const epoch = this.#next();
@@ -151,6 +156,7 @@ export class ReadUsageCoordinator {
   /** Only the protected owner may request on. No old grant is restored. */
   on(authority: object, conversation: object): Promise<void> {
     this.#owner(authority);
+    if (this.#settingUp) { this.#poison(); return this.#refused(); }
     if (this.#poisoned) return this.#refused();
     const entry = this.#entry(conversation);
     if (entry.uncertain) return Promise.reject(new ReadUsageError("UNCONFIRMED"));
@@ -171,11 +177,24 @@ export class ReadUsageCoordinator {
       return Promise.reject(new ReadUsageError("UNCONFIRMED"));
     }
     entry.pending++;
-    const startedAt = performance.now();
+    let startedAt: number;
+    this.#settingUp = true;
+    try { startedAt = performance.now(); } catch {
+      entry.enabled = false; entry.uncertain = true; entry.pending--; return this.#refused();
+    } finally { this.#settingUp = false; }
+    if (typeof startedAt !== "number" || !Number.isFinite(startedAt) || this.#poisoned || this.#exhausted || entry.uncertain) {
+      entry.enabled = false; entry.uncertain = true; entry.pending--; return this.#refused();
+    }
     const expiresAt = startedAt + this.#deadlineMs;
+    if (!Number.isFinite(expiresAt) || expiresAt <= startedAt) {
+      entry.enabled = false; entry.uncertain = true; entry.pending--; return this.#refused();
+    }
+    let lastSample = startedAt;
     const expired = () => {
-      const now = performance.now();
-      return !Number.isFinite(startedAt) || !Number.isFinite(now) || now < startedAt || now >= expiresAt;
+      let now: number;
+      try { now = performance.now(); } catch { return true; }
+      if (typeof now !== "number" || !Number.isFinite(now) || now < lastSample || now >= expiresAt) return true;
+      lastSample = now; return false;
     };
     const record = Object.freeze({ instance: this.#instance, epoch, enabled });
     const run = entry.tail.then(async () => {
@@ -191,31 +210,54 @@ export class ReadUsageCoordinator {
       // Queue overflow or a callback failure can occur while a commit is in flight.
       if (entry.uncertain || this.#exhausted || this.#poisoned) fail("UNCONFIRMED");
       // A newer off/on can arrive while the store was awaited. Never publish stale on.
-      if (enabled) {
-        if (entry.epoch !== epoch) fail("STALE");
-        entry.enabled = true;
-      }
+      if (enabled && entry.epoch !== epoch) fail("STALE");
     });
-    // Swallow only on the private ordering tail, never on the caller's acknowledgement.
-    entry.tail = run.then(() => {}, () => {});
     // The timer limits caller waiting, not the store. Keep the unresolved run as the
     // ordering tail and charged pending work. Late settlement cannot clear uncertainty.
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let timerActive = true;
     const deadline = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => {
-        entry.enabled = false;
-        entry.uncertain = true;
+      // Ordering is not reserved until the final ACK promise exists. Refuse any
+      // mutation reentered through synchronous timer setup just like initial clock setup.
+      this.#settingUp = true;
+      try {
+        timer = setTimeout(() => {
+          if (!timerActive) return;
+          timerActive = false;
+          entry.enabled = false; entry.uncertain = true;
+          reject(new ReadUsageError("UNCONFIRMED"));
+        }, this.#deadlineMs);
+      } catch {
+        timerActive = false;
+        entry.enabled = false; entry.uncertain = true;
         reject(new ReadUsageError("UNCONFIRMED"));
-      }, this.#deadlineMs);
+      } finally { this.#settingUp = false; }
     });
-    const charged = run.finally(() => { entry.pending--; });
-    return Promise.race([charged, deadline]).finally(() => { if (timer !== undefined) clearTimeout(timer); }).then(() => {
+    const acknowledgement = Promise.race([run, deadline]).finally(() => {
+      // Authority expires before timer cleanup. A failed clear may leave a runtime
+      // timer alive until expiry, but its stale callback can no longer mutate state.
+      timerActive = false;
+      try { if (timer !== undefined) clearTimeout(timer); }
+      catch { entry.enabled = false; entry.uncertain = true; fail("UNCONFIRMED"); }
+    }).then(() => {
       // The caller acknowledgement has its own final fence, including an off whose
       // store already settled while ordering/deadline cleanup was still pending.
+      if (expired()) { entry.enabled = false; entry.uncertain = true; }
+      // Clock sampling is a trusted callback seam; recheck reentrant poison/off after it.
       if (this.#poisoned || this.#exhausted || entry.uncertain) fail("UNCONFIRMED");
       // An enabled ACK must still describe this exact on at the final boundary.
       // Off only acknowledges its durable write, even if a later on was requested.
-      if (enabled && (entry.epoch !== epoch || !entry.enabled)) fail("STALE");
+      if (enabled) {
+        if (entry.epoch !== epoch) fail("STALE");
+        entry.enabled = true; // Sole publication point. No callbacks or await follow.
+      }
     });
+    // Both settlements are required. A timeout may settle the public ACK while
+    // the real store is still live; a completed store may precede a failed final
+    // ACK fence. Neither case permits queued dispatch or releases pending charge.
+    const storeStopped = run.then(() => {}, () => {});
+    const ackSettled = acknowledgement.then(() => {}, () => {});
+    entry.tail = Promise.all([storeStopped, ackSettled]).then(() => { entry.pending--; });
+    return acknowledgement;
   }
 }
