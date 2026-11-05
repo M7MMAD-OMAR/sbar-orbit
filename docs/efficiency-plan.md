@@ -1,5 +1,13 @@
 # Efficiency execution plan
 
+Current status, 6 November 2026: the owner froze this campaign and released 0.4.4.
+Bounded public refs, skeleton/root traversal and guarded semantic dispatch now
+exist with the scoped GTK, Qt and Thunderbird evidence in [the release record](release-0.4.4.md).
+The remaining acceptance, platform adapters and comparative throughput program
+are deferred. No 1.8x gain is established. The dated design and source milestones
+below are historical stages, including statements that refs or semantic verbs
+were disabled then; use [current status](completion-status.md) for shipped behavior.
+
 Status: staged implementation plan, 3 November 2026. This is not an installed-runtime report or a speed claim. The [original application contract](desktop-only.md), [dated acceptance](acceptance.md) and [native roadmap](roadmap.md) remain authoritative.
 
 ## Current source milestone: same-call text and identity comparison

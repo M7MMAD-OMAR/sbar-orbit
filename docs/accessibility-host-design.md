@@ -1,5 +1,13 @@
 # Accessibility host: staged safety design
 
+Current status, 6 November 2026: the owner froze this campaign and released 0.4.4.
+Bounded public refs, skeleton/root traversal and guarded semantic dispatch now
+exist with the scoped GTK, Qt and Thunderbird evidence in [the release record](release-0.4.4.md).
+The remaining acceptance, platform adapters and comparative throughput program
+are deferred. No 1.8x gain is established. The dated design and source milestones
+below are historical stages, including statements that refs or semantic verbs
+were disabled then; use [current status](completion-status.md) for shipped behavior.
+
 Status: source implementation plus future safety design, 4 November 2026. The supervised **read-only warm helper** is implemented as an explicit `ORBIT_A11Y_WARM_HOST=1` opt-in. The default cold-process observation path is unchanged. No refs or semantic actions are exposed. Source implementation, installed activation and live acceptance are separate gates. The [execution plan](efficiency-plan.md), [pinned upstream review](research/agent-desktop.md) and [original application contract](desktop-only.md) remain applicable.
 
 Initial review found `COMPOSITOR_NOT_RESTARTED`: installed Hyprland 0.57.1, running 0.57.0. Later the owner session was running 0.57.1; after confirming no active leases, an ABI-matched signed-header build and normal refresh restored `native-check` agreement. See the [readiness repair ledger](efficiency-plan.md#native-readiness-repair-not-application-acceptance). No shared broker/compositor restart or forced logout was used. Readiness alone does not establish application, identity or semantic safety acceptance.
