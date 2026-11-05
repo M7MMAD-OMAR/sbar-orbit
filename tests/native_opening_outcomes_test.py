@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.native import owner_open
+from src.native import owner_open, opening_evidence
 
 REQUESTED = {"width": 640, "height": 480}
 ROOT = [101, 202]
@@ -31,13 +31,13 @@ class OutcomeTests(unittest.TestCase):
         result = self.outcome(window(pid=101), launcher_root=ROOT, ancestry_proven=True)
         self.assertEqual(result["process"], {"launchProcessPid": 101,
             "launchProcessKind": "registration-launch-scope-helper", "windowPid": 101,
-            "relation": "same", "evidence": "live-launch-ancestry-at-attribution", "forwarded": "unknown"})
+            "relation": "same", "evidence": "live-launch-ancestry-at-attribution", "forwarded": False})
 
     def test_descendant_relation_is_scoped_to_the_receipt_root(self):
         process = self.outcome(launcher_root=ROOT, ancestry_proven=True)["process"]
         self.assertEqual(process["relation"], "descendant")
         self.assertEqual(process["windowPid"], 303)
-        self.assertEqual(process["forwarded"], "unknown")
+        self.assertIs(process["forwarded"], False)
 
     def test_matching_pid_without_live_ancestry_evidence_is_unknown(self):
         self.assertEqual(self.outcome(window(pid=101), launcher_root=ROOT)["process"]["relation"], "unknown")
@@ -125,12 +125,31 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(result["openingOutcome"]["process"]["forwarded"], "unknown")
         self.assertEqual(result["openingOutcome"]["geometry"]["comparison"], "matched")
 
+    def test_ambiguous_candidates_are_bounded_explicit_and_never_choose_a_target(self):
+        windows = [{**window(), "address": f"0x{index + 100:x}", "stableId": f"{index + 100:x}"} for index in range(65)]
+        result = owner_open.uncertain_candidates(windows, {"workspace": 4, "window": REQUESTED}, "multiple-attributed-windows")
+        self.assertFalse(result["opened"])
+        self.assertEqual(result["openingStatus"], "uncertain")
+        self.assertEqual(len(result["candidates"]), 64)
+        self.assertTrue(result["candidatesTruncated"])
+        self.assertNotIn("candidate", result)
+        self.assertFalse(result["placementChanged"])
+        self.assertNotIn("Owned fixture", json.dumps(result))
+
+    def test_ambiguous_candidates_with_invalid_identity_fail_before_selection(self):
+        with self.assertRaises(owner_open.OpeningDeliveryUncertain):
+            owner_open.uncertain_candidates([{**window(), "stableId": "invalid"}], {"workspace": 4, "window": REQUESTED}, "multiple-attributed-windows")
+
 
 class FakeOpening:
     """All compositor replies and launch receipts are owned in-memory/file fixtures."""
-    def __init__(self, directory, proof="launch-ancestry", pid=303, existing=False, owner_input=False):
+    def __init__(self, directory, proof="launch-ancestry", pid=303, existing=False, owner_input=False,
+                 forwarded=False, minimum=None, requested=None, placement_unavailable=False):
         self.directory = Path(directory)
         self.proof, self.pid, self.existing, self.owner_input = proof, pid, existing, owner_input
+        self.forwarded, self.minimum = forwarded, minimum
+        self.requested = REQUESTED if requested is None else requested
+        self.placement_unavailable = placement_unavailable
         self.launched = False
         self.commands, self.placements = [], []
         self.clock = 0
@@ -148,12 +167,18 @@ class FakeOpening:
 
     def exchange(self, command):
         self.commands.append(command)
+        if command.startswith("ghost-window-constraints "):
+            return "unknown request" if self.minimum is None else json.dumps({"schema": 1,
+                "address": "0xabc", "stableId": "123", "pid": self.pid, "size": [640, 480],
+                "minimum": self.minimum, "source": "xdg-toplevel-current"})
         if len(self.commands) > 100:
             raise AssertionError("Owned fixture query budget exceeded")
         if command == "j/workspaces": return json.dumps([{"id": 4, "monitor": "fixture"}])
         if command == "j/monitors": return json.dumps([{"name": "fixture", "x": 0, "y": 0, "width": 1920,
             "height": 1080, "scale": 1, "focused": True, "activeWorkspace": {"id": 4}, "reserved": [0, 0, 0, 0]}])
-        if command == "j/clients": return json.dumps([window(pid=self.pid)] if self.launched or self.existing else [])
+        if command == "j/clients":
+            before = [{**window(pid=self.pid), "address": "0xdef", "stableId": "456"}] if self.forwarded else []
+            return json.dumps(before + ([window(pid=self.pid)] if self.launched or self.existing else []))
         if command == "j/activewindow": return json.dumps(window(pid=self.pid) if self.launched and self.owner_input else {})
         if command == "j/cursorpos": return json.dumps({"x": 300 if self.launched and self.owner_input else 100, "y": 100})
         if command.startswith("eval hl.exec_cmd("):
@@ -164,16 +189,21 @@ class FakeOpening:
         raise AssertionError("Unexpected owned fixture operation")
 
     def run(self):
+        def place(*args, **kwargs):
+            self.placements.append((args, kwargs))
+            if self.placement_unavailable:
+                raise owner_open.PlacementUnavailable("Owned pre-mutation refusal")
         registered = SimpleNamespace(process=(700, 800), verify=lambda: True) if self.proof == "registered-dbus-client" else None
         with patch.object(owner_open, "require_budget"), patch.object(owner_open.shutil, "which", return_value="/owned/registered-app"), \
                 patch.object(owner_open, "opening_identity", self.identity), patch.object(owner_open, "registered_client", return_value=registered), \
                 patch.object(owner_open, "belongs_to", side_effect=lambda pid, root: self.proof == "launch-ancestry" or self.proof == "registered-dbus-client" and tuple(root) == (700, 800)), \
+                patch.object(opening_evidence, "process_identity", side_effect=lambda pid: None if pid == 101 and self.forwarded and self.launched else (pid, 404)), \
                 patch.object(owner_open.OriginalLaunchScope, "contains", return_value=self.proof == "launch-scope"), \
-                patch.object(owner_open, "place_new_window", side_effect=lambda *args, **kwargs: self.placements.append((args, kwargs))), \
+                patch.object(owner_open, "place_new_window", side_effect=place), \
                 patch.object(owner_open.time, "monotonic", self.monotonic), patch.object(owner_open.time, "sleep"), \
                 patch.object(owner_open.time, "time_ns", return_value=123456000000):
             return owner_open.open_application(self.session, {"workspace": 4, "argv": ["/owned/registered-app"],
-                "window": REQUESTED, **({"busName": "org.example.Owned"} if registered else {})})
+                "window": self.requested, **({"busName": "org.example.Owned"} if registered else {})})
 
 
 class OpeningIntegrationTests(unittest.TestCase):
@@ -228,6 +258,37 @@ class OpeningIntegrationTests(unittest.TestCase):
         self.assertFalse(result["placementChanged"])
         self.assertEqual(result["openingOutcome"]["process"]["relation"], "descendant")
         self.assertEqual(fixture.placements, [])
+
+    def test_new_surface_in_preexisting_process_after_launcher_exit_is_explicitly_forwarded(self):
+        result, fixture = self.run_fixture(proof="activation-token", forwarded=True)
+        self.assertTrue(result["opened"])
+        self.assertEqual(result["openingStatus"], "forwarded")
+        self.assertIs(result["openingOutcome"]["process"]["forwarded"], True)
+        self.assertEqual(result["openingOutcome"]["process"]["relation"], "pre-existing")
+        self.assertEqual(len(fixture.placements), 1)
+
+    def test_proven_forwarding_survives_unsupported_atomic_placement_without_claiming_placement(self):
+        result, fixture = self.run_fixture(proof="activation-token", forwarded=True, placement_unavailable=True)
+        self.assertFalse(result["opened"])
+        self.assertEqual(result["openingStatus"], "forwarded")
+        self.assertEqual(result["candidateReason"], "placement-unavailable")
+        self.assertFalse(result["placementChanged"])
+        self.assertIs(result["openingOutcome"]["process"]["forwarded"], True)
+        self.assertEqual(result["candidate"]["stableId"], "123")
+        self.assertEqual(len(fixture.placements), 1)
+
+    def test_native_minimum_metadata_is_wired_into_success_without_altering_geometry(self):
+        result, _ = self.run_fixture(minimum=[600, 400])
+        self.assertEqual(result["openingOutcome"]["geometry"]["nativeMinimum"], {"width": 600, "height": 400})
+        self.assertIs(result["openingOutcome"]["geometry"]["minimumSizeEnforced"], False)
+
+    def test_native_minimum_clamp_is_explicit_in_the_real_opening_result(self):
+        result, _ = self.run_fixture(minimum=[640, 480], requested={"width": 320, "height": 240})
+        self.assertTrue(result["opened"])
+        self.assertEqual(result["windowAdjustment"]["actual"], REQUESTED)
+        geometry = result["openingOutcome"]["geometry"]
+        self.assertIs(geometry["minimumSizeEnforced"], True)
+        self.assertEqual(geometry["differenceCause"], "native-minimum-size")
 
 
 if __name__ == "__main__":

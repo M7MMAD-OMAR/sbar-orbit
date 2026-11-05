@@ -15,8 +15,9 @@ from .lease import process_identity
 from .session import SessionError, OpeningDeliveryUncertain
 from .window_geometry import window_size, placement, measured_window
 from .launch_identity import BUS_NAME, OriginalLaunchScope, registered_client
-from .window_placement import place_new_window
+from .window_placement import PlacementUnavailable, place_new_window
 from .opening_identity import opening_identity
+from .opening_evidence import ConstraintSampleChanged, existing_processes, forwarding_proven, native_constraints, minimum_outcome
 
 
 def validate_open(value):
@@ -79,7 +80,7 @@ def _outcome_size(value):
 
 
 def opening_outcome(window, requested, *, launcher_root=None, ancestry_proven=False,
-                    placement_request=None, sampled_at_ms=None):
+                    placement_request=None, sampled_at_ms=None, forwarded=False, constraints=None):
     """Describe one already sampled window, not application constraints or future stability.
 
     ancestry_proven is supplied only by the successful belongs_to branch at attribution.
@@ -91,7 +92,8 @@ def opening_outcome(window, requested, *, launcher_root=None, ancestry_proven=Fa
     window_pid = window.get("pid")
     pid_valid = type(window_pid) is int and window_pid > 0
     proven = ancestry_proven is True and root_valid and pid_valid
-    relation = ("same" if window_pid == launcher_root[0] else "descendant") if proven else "unknown"
+    forwarded = forwarded is True and root_valid and pid_valid and not proven
+    relation = ("same" if window_pid == launcher_root[0] else "descendant") if proven else "pre-existing" if forwarded else "unknown"
     size = window.get("size")
     actual = _outcome_size({"width": size[0], "height": size[1]}) if isinstance(size, list) and len(size) == 2 else None
     requested = _outcome_size(requested)
@@ -102,28 +104,48 @@ def opening_outcome(window, requested, *, launcher_root=None, ancestry_proven=Fa
     return {
         "process": {"launchProcessPid": launcher_root[0] if root_valid else None,
                     "launchProcessKind": "registration-launch-scope-helper", "windowPid": window_pid if pid_valid else None,
-                    "relation": relation, "evidence": "live-launch-ancestry-at-attribution" if proven else "unknown",
-                    "forwarded": "unknown"},
+                    "relation": relation, "evidence": "live-launch-ancestry-at-attribution" if proven else "activation-token-and-prelaunch-process" if forwarded else "unknown",
+                    "forwarded": True if forwarded else False if proven else "unknown"},
         "geometry": {"requested": requested, "placementRequest": _outcome_size(placement_request),
                      "actual": actual, "comparison": comparison, "difference": difference, "tolerancePx": 2,
                      "sampledAtMs": timestamp, "clock": "local-wall-at-compositor-reply",
                      "source": "compositor-window-list", "stability": "not-established",
-                     "minimumSizeEnforced": "unknown", "differenceCause": "unknown", "futureGeometry": "unknown"},
+                     **minimum_outcome(actual, _outcome_size(placement_request), constraints), "futureGeometry": "unknown"},
     }
 
 
 def candidate_result(window, value, evidence, *, existing=False, reason=None, launcher_root=None,
-                     ancestry_proven=False, placement_request=None, sampled_at_ms=None):
+                     ancestry_proven=False, placement_request=None, sampled_at_ms=None, forwarded=False):
     return {"openingOutcome": opening_outcome(window, value["window"], launcher_root=launcher_root,
-                ancestry_proven=ancestry_proven, placement_request=placement_request, sampled_at_ms=sampled_at_ms),
-        "opened": False, "launchAcknowledged": True, "reusedExisting": existing,
+                ancestry_proven=ancestry_proven, placement_request=placement_request, sampled_at_ms=sampled_at_ms,
+                forwarded=forwarded),
+        "opened": False, "openingStatus": "forwarded" if forwarded else "uncertain", "launchAcknowledged": True, "reusedExisting": existing,
         "identityEvidence": evidence, "attribution": "candidate-only",
         "requestedWorkspace": value["workspace"], "requestedWindow": value["window"],
         "candidate": {"address": window["address"], "stableId": window["stableId"], "pid": window["pid"],
             "workspace": window.get("workspace", {}).get("id"), "title": str(window.get("title", ""))[:160]},
+        "candidates": [{"address": window["address"], "stableId": window["stableId"], "pid": window["pid"],
+            "workspace": window.get("workspace", {}).get("id")}],
         "placementChanged": False, "applicationLifetime": "owner",
         **({"candidateReason": reason} if reason else {}),
         "handoff": "Inspect this candidate before selecting an exact handoff. Orbit applied no post-map placement and leaves ownership unchanged. Application activation and initial geometry may already have changed."}
+
+
+def uncertain_candidates(windows, value, reason):
+    """Do not choose or place one of several attributed windows."""
+    candidates = []
+    for window in windows[:64]:
+        if (not re.fullmatch(r"0x[0-9a-f]{1,16}", str(window.get("address")))
+                or not re.fullmatch(r"[0-9a-f]{1,16}", str(window.get("stableId")))
+                or type(window.get("pid")) is not int or window["pid"] <= 0):
+            raise OpeningDeliveryUncertain("Opening delivery is uncertain: attributed candidates lack stable identities")
+        candidates.append({"address": window["address"], "stableId": window["stableId"], "pid": window["pid"],
+                           "workspace": window.get("workspace", {}).get("id")})
+    return {"opened": False, "openingStatus": "uncertain", "launchAcknowledged": True,
+            "requestedWorkspace": value["workspace"], "requestedWindow": value["window"],
+            "candidateReason": reason, "candidates": candidates, "candidatesTruncated": len(windows) > 64,
+            "placementChanged": False, "applicationLifetime": "owner",
+            "handoff": "Inspect the candidates before selecting an exact handoff; do not relaunch blindly."}
 
 
 # A window that maps from a launch takes seat focus by itself. Treat that as map time focus, and
@@ -169,6 +191,7 @@ def open_application(session, value):
             fitted = placement(value["workspace"], value["window"], workspaces, monitors)
             clients = json.loads(session.transport._exchange("j/clients"))
             baseline = {(window["address"], window.get("stableId")) for window in clients}
+            preexisting = existing_processes(clients, existing)
             baseline_cursor = cursor_position(session)
             with spec.open("x") as stream:
                 os.chmod(spec, 0o600)
@@ -224,7 +247,7 @@ def open_application(session, value):
                     existing_targets = [window for window in current
                         if (window.get("address"), window.get("stableId")) in activated & baseline]
                     if len(existing_targets) > 1:
-                        raise SessionError("Activation selected multiple existing windows; inspect candidates")
+                        return uncertain_candidates(existing_targets, value, "multiple-existing-activation-targets")
                     if existing_targets:
                         return candidate_result(existing_targets[0], value, "activation-token", existing=True,
                                                 launcher_root=root, placement_request=fitted, sampled_at_ms=sampled_at_ms)
@@ -247,7 +270,7 @@ def open_application(session, value):
                         matches.append(window)
                         evidence[window["address"]] = proof
                     if len(matches) > 1:
-                        raise SessionError("Application opened multiple windows; inspect exact candidates before choosing a handoff")
+                        return uncertain_candidates(matches, value, "multiple-attributed-windows")
                     if matches:
                         window = matches[0]
                         if (not re.fullmatch(r"0x[0-9a-f]{1,16}", str(window.get("address")))
@@ -280,13 +303,25 @@ def open_application(session, value):
                             return candidate_result(window, value, evidence[window["address"]], reason="owner-input",
                                                     launcher_root=root, ancestry_proven=evidence[window["address"]] == "launch-ancestry",
                                                     placement_request=fitted, sampled_at_ms=sampled_at_ms)
+                        forwarded = forwarding_proven(window, root, preexisting, activated)
+                        if (not forwarded and evidence[window["address"]] == "activation-token"
+                                and window.get("pid") in preexisting and time.perf_counter() - first_seen < 1):
+                            # Sample normal single-instance launcher exit without
+                            # replaying launch or placement after a lost reply.
+                            time.sleep(0.05)
+                            continue
                         if evidence[window["address"]] != "launch-ancestry" and identity not in positioned:
                             if value.get("requireEmpty"):
                                 destination = workspace_inventory(session.transport, exclude=(window["address"], window["stableId"], window["pid"]))
                                 if value["workspace"] in destination["occupied"] or value["workspace"] in destination["shown"]:
                                     return candidate_result(window, value, evidence[window["address"]],
                                         reason="workspace-busy", launcher_root=root, placement_request=fitted, sampled_at_ms=sampled_at_ms)
-                            place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
+                            try:
+                                place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
+                            except PlacementUnavailable:
+                                return candidate_result(window, value, evidence[window["address"]],
+                                    reason="placement-unavailable", launcher_root=root,
+                                    placement_request=fitted, sampled_at_ms=sampled_at_ms, forwarded=forwarded)
                             positioned.add(identity)
                             if map_focus:
                                 map_focus_placed.add(identity)
@@ -304,9 +339,19 @@ def open_application(session, value):
                         adjustment = {} if (abs(measured["width"] - actual_fit["width"]) <= 2 and abs(measured["height"] - actual_fit["height"]) <= 2) else {
                             "windowAdjustment": {"reason": "observed-size-difference", "requested": value["window"],
                                                  "actual": {"width": measured["width"], "height": measured["height"]}}}
-                        return {**adjustment, "openingOutcome": opening_outcome(window, value["window"], launcher_root=root,
+                        try:
+                            constraints = native_constraints(session.transport, window)
+                        except ConstraintSampleChanged:
+                            # The query proves the same window resized after the
+                            # client-list sample. Reobserve within this launch's
+                            # original deadline, without replaying any mutation.
+                            time.sleep(0.05)
+                            continue
+                        return {**adjustment, "openingStatus": "forwarded" if forwarded else "opened",
+                                "openingOutcome": opening_outcome(window, value["window"], launcher_root=root,
                                     ancestry_proven=evidence[window["address"]] == "launch-ancestry",
-                                    placement_request=fitted, sampled_at_ms=sampled_at_ms),
+                                    placement_request=fitted, sampled_at_ms=sampled_at_ms,
+                                    forwarded=forwarded, constraints=constraints),
                                 "identityEvidence": evidence[window["address"]], "opened": True, "windowProtocol": "xwayland" if window.get("xwayland") else "wayland", "window": measured, "requestedWindow": value["window"], "workspace": value["workspace"], "address": window["address"],
                                 "stableId": window["stableId"], "pid": window["pid"],
                                 "title": str(window.get("title", ""))[:160], "applicationLifetime": "owner",

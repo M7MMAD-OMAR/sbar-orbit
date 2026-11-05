@@ -44,6 +44,8 @@ class OpenTests(unittest.TestCase):
 
     def exchange(self, command):
         self.commands.append(command)
+        if command.startswith("ghost-window-constraints "):
+            return "unknown request"
         if command.startswith("ghost-opening "):
             _, operation, token = command.split()
             return json.dumps({"schema": 1, "token": token, "ambiguous": False,
@@ -505,7 +507,7 @@ class LuaPlacementTests(unittest.TestCase):
                     script = command.removeprefix("eval ")
                     fixture = """
 local w={address='0xabc',stable_id=ID,pid=42,mapped=true}
-local o={address='0xdef',stable_id=1110,pid=43,mapped=true}
+local o={address='0xdef',stable_id='456',pid=43,mapped=true}
 local active=BUSY and w or o
 local initial=active
 local pointer={x=211,y=337}
@@ -523,7 +525,7 @@ end
 local ok,err=pcall(function() SCRIPT end)
 print(ok and 'ok' or tostring(err))
 print(calls,focusCalls,warps,active==initial and 1 or 0,pointer.x,pointer.y)
-""".replace('ID', str(291 if matching else 999)).replace('BUSY', 'true' if busy else 'false').replace('SCRIPT', script)
+""".replace('ID', json.dumps('123' if matching else '999')).replace('BUSY', 'true' if busy else 'false').replace('SCRIPT', script)
                     result = subprocess.run(
                         [shutil.which("luajit"), "-"], input=fixture, text=True,
                         capture_output=True, check=True, timeout=5,

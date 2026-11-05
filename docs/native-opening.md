@@ -84,6 +84,50 @@ opened windows, preserving any unsaved-content prompt. A successful command alon
 is not proof of input delivery. Missing acknowledgement must remain uncertain,
 not become a blind retry or closure of another window.
 
+## Explicit forwarding and native minimum outcomes, 5 November 2026
+
+Registered opening now returns `openingStatus: "opened"`, `"forwarded"` or
+`"uncertain"`. Proven forwarding requires an exact activation-token surface,
+the unchanged process generation recorded before launch, and the original
+launch helper's observed exit. A different PID or a shared D-Bus service alone
+does not prove forwarding. Unknown or multiple targets return bounded candidates
+without selecting or placing one. `opened` still separately describes verified
+placement; proven forwarding with unavailable atomic placement can return
+`opened:false`, `candidateReason:"placement-unavailable"` and the exact candidate.
+
+The existing Lua placement guard had compared the compositor's hex-string
+`stable_id` against an integer. It now compares the exact string; the Lua
+fixture uses the actual string type too. The guard still rejects an owner-active
+target before dispatch, and neither placement nor its fixtures change owner
+focus or warp the pointer.
+
+`openingOutcome.geometry.minimumSizeEnforced` is true only when a read-only
+exact-window query corroborates the current XDG toplevel minimum, the size sample
+is unchanged, the request is below that minimum and the returned dimensions match
+the native clamp within 2 logical pixels. It is false when the native minimum
+does not constrain the request. Missing or conflicting evidence remains
+`"unknown"`; an arbitrary size difference is never called a minimum. A changed
+size sample causes observation within the original deadline, without replaying
+launch or placement. Older plugins retain unknown constraint metadata.
+
+Real source-path measurements on Fedora 44, Hyprland 0.57.1, GTK 4.22.5:
+
+| Original application | Requested and observed result | Verified evidence and cleanup |
+| --- | --- | --- |
+| Calculator 50.0 | Requested 320 by 240; actual 360 by 616; native minimum 360 by 616; `minimumSizeEnforced:true`, `differenceCause:"native-minimum-size"` | Exact window stable ID `180000e1`, PID 846488 on workspace 25; tree and capture confirmed dimensions. Presentation to the explicit unfocused output succeeded after one pre-mutation readiness refusal. Normal exact closure, no remaining candidate on that workspace, and own stop. |
+| Nautilus 50.4, normal `nautilus --new-window` registration | Launch helper PID 922026 forwarded to pre-existing application PID 891527. Exact new stable ID `180000e8`; returned `openingStatus:"forwarded"`, `opened:true`, process `forwarded:true`; requested and actual 960 by 640 | Activation-token plus prelaunch process-generation proof. Exact window presented on workspace 24, handoff and capture verified it. Normal exact closure removed that window; an unrelated window that appeared on the workspace was preserved. Own session stopped. |
+
+Earlier Nautilus attempts reproduced the string/integer guard refusal and were
+inspected and closed by exact test identities before another deliberate case.
+The initial Calculator sample correctly stayed unknown while the size and
+constraint queries disagreed; the resampling repair produced the affirmative
+minimum result above. No original application process was killed and no shared
+broker was restarted. Plugin promotion used normal unload only after compositor
+readiness confirmed no leases, roots or scopes, followed by a source/ABI-matched
+refresh. Continuous owner focus/pointer preservation and cross-platform behavior
+are not certified by these limited cases. Private captures remain local tool
+results.
+
 ## Native backend and installation compatibility repair
 
 A further source review found three compatibility defects: browser names matched

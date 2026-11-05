@@ -696,6 +696,29 @@ static std::string openingRequest(const std::string& operation, const std::strin
     return std::format("{{\"schema\":1,\"token\":\"{}\",\"ambiguous\":{},\"windows\":{}}}", token, ambiguous, windows);
 }
 
+// Read-only opening diagnostics bind every field to one current native window.
+// This never enrolls a lease, changes placement or wakes the target.
+static std::string windowConstraints(const std::string& address, const std::string& stable, pid_t pid) {
+    if (!std::regex_match(address, std::regex{"0x[0-9a-f]{1,16}"}) ||
+        !std::regex_match(stable, std::regex{"[0-9a-f]{1,16}"}) || pid <= 0)
+        throw std::runtime_error("invalid opening window identity");
+    for (const auto& window : Desktop::windowState()->windows()) {
+        if (std::format("0x{:x}", reinterpret_cast<uintptr_t>(window.get())) != address) continue;
+        if (!window->mapped() || std::format("{:x}", window->metadata().stableID()) != stable || window->backend().pid() != pid)
+            throw std::runtime_error("opening window identity changed");
+        const auto xdg = windowXdg(window);
+        if (!xdg || !xdg->m_toplevel) throw std::runtime_error("native opening constraints unavailable");
+        const auto minimum = xdg->m_toplevel->m_current.minSize;
+        const auto size = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+        if (!std::isfinite(minimum.x) || !std::isfinite(minimum.y) || minimum.x < 0 || minimum.y < 0 ||
+            !std::isfinite(size.x) || !std::isfinite(size.y) || size.x <= 0 || size.y <= 0)
+            throw std::runtime_error("native opening constraints invalid");
+        return std::format("{{\"schema\":1,\"address\":\"{}\",\"stableId\":\"{}\",\"pid\":{},\"size\":[{},{}],\"minimum\":[{},{}],\"source\":\"xdg-toplevel-current\"}}",
+                           address, stable, pid, size.x, size.y, minimum.x, minimum.y);
+    }
+    throw std::runtime_error("opening window is unavailable");
+}
+
 static size_t liveRootCount() {
     std::map<pid_t, bool> roots;
     for (const auto& [pid, identity] : scopedProcesses)
@@ -2657,6 +2680,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (!(input >> command >> operation >> token) || (input >> extra))
                 return std::string{"refused: opening requires an operation and exact token"};
             try { return openingRequest(operation, token); }
+            catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
+        }});
+    registerCtl(SHyprCtlCommand{"ghost-window-constraints", false,
+        [](eHyprCtlOutputFormat, std::string request) {
+            std::istringstream input(request);
+            std::string command, address, stable, extra;
+            pid_t pid = 0;
+            if (!(input >> command >> address >> stable >> pid) || (input >> extra))
+                return std::string{"refused: opening constraints require exact window identity"};
+            try { return windowConstraints(address, stable, pid); }
             catch (const std::exception& error) { return std::string{"refused: "} + error.what(); }
         }});
     registerCtl(SHyprCtlCommand{"ghost-unload-info", false,
