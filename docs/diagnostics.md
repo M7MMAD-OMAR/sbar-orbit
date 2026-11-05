@@ -75,6 +75,15 @@ If a native worker still dies before it can answer, its final exception line is 
 error, and a bounded excerpt goes to the broker journal (`journalctl --user -u sbar-orbit.service`).
 The full traceback stays in the worker journal for as long as the session's private directory exists.
 
+## Managed broker socket recovery
+
+Orbit now refuses an existing or uninspectable managed socket entry instead of
+probing and unlinking it. A stale entry can therefore prevent restart, including
+on platforms where socket files persist. Coordinate with the owner to inspect
+the exact socket and any active work before deliberate recovery. Do not delete
+an unknown entry or restart a shared broker as an automatic repair. The pre-bind
+check is not an atomic lock, and owner credential cleanup is not yet qualified.
+
 ## The MCP tools after a broker restart
 
 The MCP adapter remains connected when the broker is unavailable, but each tool call

@@ -67,10 +67,10 @@ export async function createWorkspaceDirectory(prefix: string, root = workspaceR
 }
 
 /**
- * A workspace names the broker that owns it, so a later `clean` can tell a live broker's directory
- * from one a crashed or killed broker left behind. The owner is identified by its socket, and alive
- * means it answers on that socket: the same test a managed broker applies before displacing another.
- * A pid would not do, since a pid is reused and a process's command line is not what its argv says.
+ * A workspace records its broker PID and socket. A live or uncertain PID always
+ * preserves it: an unavailable socket can mean shutdown or an unresponsive owner,
+ * not permission to delete its files. PID reuse can conservatively retain data;
+ * this is not proof of historical process identity or descendant termination.
  */
 export async function markWorkspaceOwner(directory: string, socket: string, pid = process.pid) {
   await writeFile(join(directory, "owner.json"), JSON.stringify({ pid, socket }), { mode: 0o600 });
@@ -85,18 +85,30 @@ export async function brokerAnswers(socket: string, timeoutMs = 3000): Promise<b
 }
 
 async function ownerIsAlive(directory: string, probe: (socket: string) => Promise<boolean>): Promise<boolean | undefined> {
-  let owner: { socket?: unknown; pid?: unknown };
+  let owner: { socket?: unknown; pid?: unknown } | null;
   try { owner = JSON.parse(await readFile(join(directory, "owner.json"), "utf8")); } catch { return undefined; }
-  if (typeof owner.socket !== "string" || !isAbsolute(owner.socket)) return undefined;
-  // The socket answering is necessary and not sufficient. A managed broker binds one fixed path, so
-  // every managed broker there has ever been recorded the same socket, and the one running now
-  // answers for all of them: measured 13 September 2026, 24 such directories and most of 7.2 GB kept
-  // by `clean` as alive. The pid decides between them. A reused pid would keep one directory for
-  // one more sweep, which is the cost of not reading command lines.
-  if (Number.isInteger(owner.pid) && Number(owner.pid) > 0) {
-    try { process.kill(Number(owner.pid), 0); } catch (error) { if ((error as { code?: string }).code === "ESRCH") return false; }
+  if (!owner || typeof owner !== "object") return undefined;
+  if (owner.pid !== undefined) {
+    // Never let invalid numeric input be coerced into a process-group probe.
+    // An unusable recorded PID is uncertainty, not permission to delete.
+    if (typeof owner.pid !== "number" || !Number.isSafeInteger(owner.pid) || owner.pid < 1 || owner.pid > 2147483647) return true;
+    try { process.kill(owner.pid, 0); return true; }
+    catch (error) {
+      // Preserve on permission errors, unknown errors or unavailable liveness.
+      // ESRCH is not original-owner or descendant-stop proof. Preserve if a
+      // valid socket still answers, or if its probe has an unknown outcome.
+      if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") {
+        if (typeof owner.socket !== "string" || !isAbsolute(owner.socket)) return undefined;
+        try { return await probe(owner.socket); } catch { return true; }
+      }
+      return true;
+    }
   }
-  return probe(owner.socket);
+  // Records without a PID still use the existing socket/age policy. That
+  // policy, and false/absent evidence after ESRCH, remain legacy deletion
+  // limitations, not a universally safe cleanup qualification.
+  if (typeof owner.socket !== "string" || !isAbsolute(owner.socket)) return undefined;
+  try { return await probe(owner.socket); } catch { return true; }
 }
 
 const recordlessGraceMs = 60 * 60 * 1000;

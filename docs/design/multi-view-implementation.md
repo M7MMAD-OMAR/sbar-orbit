@@ -1061,3 +1061,23 @@ the inspected SDK tool handler and quarantines uncertain cleanup; it does not
 prove general SDK drain, authenticated peers, live host behavior or desktop
 acceptance. The final verifier passed 1019 tests, with 5 skipped and 0 failed,
 across 100 files in 87.29 seconds. Strict TypeScript checking also passed.
+
+## 32. Conservative socket and workspace prechecks
+
+The managed socket precheck now refuses any observed or uninspectable existing
+entry instead of probing and unlinking it. A stale socket can therefore require
+owner-coordinated manual recovery. This is not an atomic namespace lock: the
+absence-to-bind interval, Bun bind behavior, credential replacement and successor
+cleanup remain unqualified. No shared broker was restarted.
+
+Workspace cleanup now preserves a workspace when its recorded PID is live or
+cannot be checked, even when its socket is unresponsive. Invalid present PIDs
+are not signalled or coerced. An ESRCH followed by an answering socket, or a
+failed socket probe, also preserves it. PID reuse can retain old workspaces;
+ESRCH and the legacy missing-record/age policy do not prove that descendants
+have stopped. This is not a universal cleanup or process identity guarantee.
+
+Owned socket and filesystem fixtures passed 23 focused tests. The final verifier
+passed 1027 tests, with 5 skipped and 0 failed, across 101 files in 82.56 seconds;
+strict TypeScript checking also passed. No original application or Windows
+machine was used for these fixtures.

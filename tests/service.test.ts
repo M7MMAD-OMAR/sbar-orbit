@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test";
 import { linuxOnlySuite } from "./platform-support";
-import { mkdtemp, readFile, writeFile, mkdir, stat, rm, chmod } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { mkdtemp, readFile, readlink, writeFile, mkdir, stat, lstat, rm, chmod, symlink } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
+import { OrbitError } from "../src/errors";
+import { dirname, join, posix } from "node:path";
 import { installService as writeService, uninstallService, serviceSocketPath, claimSocket, budget, connectorConfigDirectory } from "../src/service";
 import { tmpdir } from "node:os";
 
@@ -93,40 +95,106 @@ test.skipIf(process.platform === "win32")("the managed socket path lives under t
   expect(() => serviceSocketPath("", process.env, "linux")).toThrow("XDG_RUNTIME_DIR");
 });
 
-test("claiming refuses a live broker and clears only a dead socket", async () => {
-  const { root } = await prefix();
-  const socket = join(root, "runtime/sbar-orbit/broker.sock");
-  expect(await claimSocket(socket, async () => false)).toEqual({ claimed: true, replacedStaleSocket: false });
-
-  const server = Bun.serve({ unix: socket, fetch: () => new Response("ok") });
+test.skipIf(process.platform === "win32")("observed live owned socket is never probed or removed even when a probe would lie or throw", async () => {
+  const { root } = await prefix(), socket = join(root, "runtime/sbar-orbit/broker.sock");
+  let server: ReturnType<typeof Bun.serve> | undefined, startupUnknown = false, hits = 0, probes = 0;
+  let failed = false, primary: unknown;
   try {
-    await expect(claimSocket(socket, async () => true)).rejects.toMatchObject({ code: "PROFILE_BUSY" });
-    // A socket file nothing answers on is stale, and Bun refuses to bind over it, so it is removed.
-    expect(await claimSocket(socket, async () => false)).toEqual({ claimed: true, replacedStaleSocket: true });
-  } finally { server.stop(true); }
+    expect(await claimSocket(socket, async () => { probes++; return false; })).toEqual({ claimed: true, replacedStaleSocket: false });
+    startupUnknown = true;
+    server = Bun.serve({ unix: socket, fetch: () => { hits++; return new Response("owned fixture"); } });
+    startupUnknown = false;
+    await writeFile(socket + ".owner", "OWNED-FIXTURE-CREDENTIAL", { mode: 0o600 });
+    const before = await lstat(socket);
+    const attempts: ((path: string) => Promise<boolean>)[] = [async () => { probes++; return false; },
+      async () => { probes++; throw new Error("private-probe-error"); }, async () => { probes++; return true; }];
+    for (const probe of attempts) {
+      const failure: unknown = await claimSocket(socket, probe).catch(error => error);
+      expect(failure).toBeInstanceOf(OrbitError); expect(failure).toMatchObject({ code: "CONFIG_REQUIRED" });
+      if (!(failure instanceof OrbitError)) throw new Error("Expected fixed refusal");
+      expect(failure.message).not.toContain(socket); expect(failure.message).not.toContain("private-probe-error");
+      const after = await lstat(socket); expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    }
+    expect(probes).toBe(0); expect(hits).toBe(0);
+    expect(await readFile(socket + ".owner", "utf8")).toBe("OWNED-FIXTURE-CREDENTIAL");
+    // Explicit test-only health check, not an admission probe and not peer authorization.
+    const response = await fetch("http://localhost/", { unix: socket, signal: AbortSignal.timeout(1000) });
+    expect(await response.text()).toBe("owned fixture"); expect(hits).toBe(1);
+  } catch (error) { failed = true; primary = error; }
+  try {
+    if (startupUnknown) throw new Error("Owned listener startup unconfirmed; root retained");
+    await server?.stop(true); await rm(root, { recursive: true, force: true });
+  } catch (cleanup) { if (failed) throw new AggregateError([primary, cleanup], "Owned socket fixture and cleanup failed"); throw cleanup; }
+  if (failed) throw primary;
 });
 
-test("claiming refuses to remove a path that is not a socket", async () => {
-  const { root } = await prefix();
-  const socket = join(root, "runtime/sbar-orbit/broker.sock");
-  await mkdir(join(root, "runtime/sbar-orbit"), { recursive: true });
-  await writeFile(socket, "not a socket");
-  await expect(claimSocket(socket, async () => false)).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
-  expect(await readFile(socket, "utf8")).toBe("not a socket");
+test("existing empty or nonempty regular files are refused without read-probe or deletion on every platform", async () => {
+  const { root } = await prefix(), socket = join(root, "broker.sock"); let probes = 0;
+  try {
+    for (const contents of ["", "not a socket"]) {
+      await writeFile(socket, contents); const before = await lstat(socket);
+      await expect(claimSocket(socket, async () => { probes++; return false; })).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+      const after = await lstat(socket); expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+      expect(await readFile(socket, "utf8")).toBe(contents);
+    }
+    expect(probes).toBe(0);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-/**
- * `stat` on a live Windows AF_UNIX socket answers EACCES, not ENOENT. The old code treated every
- * `stat` failure as "nothing is there", which on the guest left a stale socket file in place and
- * failed the bind with "Failed to listen on unix socket" and no cause. Only ENOENT may mean absent.
- */
+test.skipIf(process.platform === "win32")("leaf symlinks including dangling links are refused without following or changing their target", async () => {
+  const { root } = await prefix(), target = join(root, "target"), socket = join(root, "broker.sock");
+  try {
+    await writeFile(target, "owned target"); await symlink(target, socket);
+    const before = await lstat(socket);
+    await expect(claimSocket(socket, async () => { throw new Error("No probe"); })).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+    expect(await readlink(socket)).toBe(target); expect(await readFile(target, "utf8")).toBe("owned target");
+    expect((await lstat(socket)).ino).toBe(before.ino);
+    await rm(target);
+    await expect(claimSocket(socket, async () => false)).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+    expect(await readlink(socket)).toBe(target); expect((await lstat(socket)).ino).toBe(before.ino);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("existing directory at socket leaf is refused with its contents unchanged", async () => {
+  const { root } = await prefix(), socket = join(root, "broker.sock");
+  try {
+    await mkdir(socket); await writeFile(join(socket, "owned"), "keep");
+    await expect(claimSocket(socket, async () => false)).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+    expect(await readFile(join(socket, "owned"), "utf8")).toBe("keep");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("parent creation and non-ENOENT inspection errors refuse without global filesystem mocks or probing", async () => {
+  const source = await readFile(new URL("../src/service.ts", import.meta.url), "utf8");
+  const start = source.indexOf("export async function claimSocket("), end = source.indexOf("\n}", start);
+  expect(start).toBeGreaterThanOrEqual(0); expect(end).toBeGreaterThan(start);
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end + 2).replace("export async", "async") + "\nglobalThis.__Claim = claimSocket;");
+  for (const stage of ["mkdir", "lstat"]) for (const errno of stage === "mkdir" ? ["ENOENT", "EACCES", "EPERM", "EIO"] : ["EACCES", "EPERM", "EIO"]) {
+    let parents = 0, inspected = 0, probes = 0;
+    const context: Record<string, unknown> = { dirname, OrbitError, mkdir: async () => {
+      parents++; if (stage === "mkdir") throw Object.assign(new Error("private-parent-message"), { code: errno });
+    }, lstat: async () => {
+      inspected++; throw Object.assign(new Error("private-filesystem-message"), { code: errno });
+    } };
+    runInNewContext(code, context);
+    const isolated = context.__Claim as typeof claimSocket;
+    const failure: unknown = await isolated("owned-unverified", async () => { probes++; return false; }).catch(error => error);
+    expect(failure).toBeInstanceOf(OrbitError); expect(failure).toMatchObject({ code: "CONFIG_REQUIRED" });
+    if (!(failure instanceof OrbitError)) throw new Error("Expected refusal");
+    expect(failure.message).not.toContain("private-filesystem-message"); expect(failure.message).not.toContain("private-parent-message");
+    expect(parents).toBe(1); expect(inspected).toBe(stage === "mkdir" ? 0 : 1); expect(probes).toBe(0);
+  }
+});
+
+/** EACCES is not absence or live-owner proof on any platform. Existing and
+ * uninspectable entries are both refused; the isolated test above covers errno
+ * mapping even when privileged fixture users can traverse mode-restricted paths. */
 // These fixtures deny directory traversal through POSIX mode bits. Windows uses ACLs.
-test.skipIf(process.platform === "win32")("a socket that cannot be inspected is probed, not assumed absent", async () => {
+test.skipIf(process.platform === "win32")("an existing mode-restricted entry is refused without probing or assuming absence", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-claim-"));
   try {
-    // A directory with no execute bit: `stat` on a path inside it fails with EACCES rather than
-    // ENOENT, which is the shape a live Windows socket file presents. Skipped for root, who is not
-    // stopped by the mode and would see ENOENT instead.
+    // Non-root users may get EACCES; privileged users can still inspect the existing
+    // leaf. Both outcomes must refuse it, and neither authorizes a probe or deletion.
     const locked = join(root, "locked");
     await mkdir(locked, { recursive: true });
     const socket = join(locked, "broker.sock");
@@ -134,8 +202,8 @@ test.skipIf(process.platform === "win32")("a socket that cannot be inspected is 
     await chmod(locked, 0o000);
     try {
       let probed = false;
-      await expect(claimSocket(socket, async () => { probed = true; return true; })).rejects.toThrow(/already serving/);
-      expect(probed).toBe(true);
+      await expect(claimSocket(socket, async () => { probed = true; return true; })).rejects.toMatchObject({ code: "CONFIG_REQUIRED" });
+      expect(probed).toBe(false);
     } finally { await chmod(locked, 0o700); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

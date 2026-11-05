@@ -1,5 +1,5 @@
 import { totalmem, homedir } from "node:os";
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 /**
  * A macOS path is a POSIX path, whatever host computed it.
@@ -158,8 +158,9 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
   // and the owning user with no Everyone and no Anonymous. See docs/windows-measured.md.
   //
   // It differs from the Linux path in one way worth stating: a runtime directory is cleared when the
-  // person logs out and this is not, so a socket file can outlive the broker that bound it. That is
-  // what `claimSocket` already handles, by probing the socket before replacing it.
+  // person logs out and this is not, so an entry can outlive the broker that bound it.
+  // claimSocket now refuses every existing or uninspectable entry without probing/removing it;
+  // the owner must coordinate inspection and manual recovery before another startup.
   if (!runtime && platform === "win32")
     return win32.join(env.LOCALAPPDATA || win32.join(home, "AppData", "Local"), "sbar-orbit", "broker.sock");
   if (!runtime) throw new OrbitError("CONFIG_REQUIRED", "XDG_RUNTIME_DIR is required for a managed broker socket");
@@ -173,49 +174,22 @@ export function serviceSocketPath(runtimeDirectory?: string, env = process.env, 
     : posix.join(runtime, "sbar-orbit", "broker.sock");
 }
 
-/** Refuse to displace a broker that still answers; clear only a socket file nothing is serving. */
-export async function claimSocket(socket: string, probe: (path: string) => Promise<boolean>) {
-  await mkdir(dirname(socket), { recursive: true, mode: 0o700 });
-  let existing;
-  try { existing = await stat(socket); }
+/** Refuse any observed existing entry. No liveness probe can authorize replacing it.
+ * A stale entry now requires coordinated owner inspection/manual recovery. This is
+ * only a pre-bind observation, NOT an atomic namespace lock or bind/cleanup proof. */
+export async function claimSocket(socket: string, _probe: (path: string) => Promise<boolean>) {
+  const refusal = () => new OrbitError("CONFIG_REQUIRED",
+    "Broker socket admission is unverified. Coordinate with the owner to inspect and recover the socket path manually; Orbit will not probe or remove an existing entry.");
+  try { await mkdir(dirname(socket), { recursive: true, mode: 0o700 }); }
+  catch { throw refusal(); } // Even mkdir ENOENT is an unverified parent, never safe leaf absence.
+  try { await lstat(socket); }
   catch (error) {
-    // ENOENT is the ordinary "nothing to claim". On Windows a socket file that IS there answers
-    // `stat` with EACCES while it is bound, and treating that as absent was measured to leave a
-    // stale file in place and fail the bind with "Failed to listen on unix socket", which says
-    // nothing about the cause. Anything that is not ENOENT means a path that exists and cannot be
-    // inspected, so it is probed rather than assumed away.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { claimed: true, replacedStaleSocket: false };
-    if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
-    // Below here the path exists, could not be inspected, and nobody answers on it. The shape test
-    // further down exists to refuse a path that is NOT a socket rather than delete it, and this
-    // branch used to unlink whatever it found without asking anything at all.
-    //
-    // What to ask depends on why `stat` failed, and the two platforms fail differently. Measured on
-    // the Windows guest: a LIVE AF_UNIX socket answers `stat` with EACCES and a read with EACCES,
-    // and Bun removes the file when the server stops, so a stale one is ENOENT rather than EACCES.
-    // EACCES on an existing path is therefore the socket's own shape there, and refusing it would
-    // refuse the live-file case this function has to handle. On Linux a socket answers `stat`
-    // perfectly well and never reaches this branch at all, so an unreadable path here is somebody
-    // else's file and deleting it is the thing to refuse.
-    if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EACCES") {
-      const readable = await Bun.file(socket).arrayBuffer().catch(() => null);
-      if (readable === null || readable.byteLength > 0)
-        throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and could not be shown to be a socket; remove it deliberately`);
-    }
-    await unlink(socket).catch(() => {});
-    return { claimed: true, replacedStaleSocket: true };
+    const code: unknown = error && typeof error === "object" ? Object.getOwnPropertyDescriptor(error, "code")?.value : undefined;
+    if (code === "ENOENT") return { claimed: true, replacedStaleSocket: false };
+    // EACCES and every other inspection failure are unknown, on every platform.
+    throw refusal();
   }
-  // `isSocket()` is false for a Windows AF_UNIX socket file, which reports as a regular file, so the
-  // shape test cannot be the same on both. What a socket is NOT, on either platform, is a file with
-  // contents: Bun's socket file is empty, and a config or a note someone left at this path is not.
-  // Dropping the test entirely on Windows would have let `claimSocket` delete a person's file, which
-  // is the thing this function exists to refuse.
-  const plausibleSocket = process.platform === "win32" ? existing.size === 0 : existing.isSocket();
-  if (!plausibleSocket)
-    throw new OrbitError("CONFIG_REQUIRED", `${socket} exists and is not a socket; remove it deliberately`);
-  if (await probe(socket)) throw new OrbitError("PROFILE_BUSY", `An Orbit broker is already serving ${socket}`);
-  await unlink(socket);
-  return { claimed: true, replacedStaleSocket: true };
+  throw refusal();
 }
 
 /** The budget sits on the slice, because the broker looks for sbarorbit.slice in its own cgroup path. */
