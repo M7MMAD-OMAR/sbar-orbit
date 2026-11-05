@@ -110,7 +110,10 @@ try {
   } else if (command === "status") {
     // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
-    const status = await readStatus(socketFromEnvironment());
+    const status = await readStatus(socketFromEnvironment(), async () => usage.assertEnabled());
+    // Recheck after pending-version disk reads too. This suppresses observed off,
+    // not already admitted reads or an atomic filesystem-to-stdout off/on race.
+    await usage.assertEnabled();
     console.log(JSON.stringify({ ...status, summary: summarize(status) }, null, process.argv.includes("--json") ? 0 : 2));
   } else if (command === "native-prepare") {
     if (arg !== undefined && (arg !== "--plugin-manifest" || !fourth || process.argv.slice(2).length !== 4))
@@ -339,6 +342,8 @@ try {
       method = "session.act";
       params = { sessionId: verb, requestId: process.env.ORBIT_REQUEST_ID ?? crypto.randomUUID(), action: await actionDocument(arg) };
     } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-monitors, native-present JSON|@FILE|-, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session list/stop/pause/resume/observe/journal, or act ID JSON|@FILE|-");
+    // A document read from stdin or disk may have blocked after the first gate.
+    await usage.assertEnabled();
     const result = await call(socket, method, params);
     await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }

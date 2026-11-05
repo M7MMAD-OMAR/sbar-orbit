@@ -995,3 +995,24 @@ The first full verifier identified an unregistered `OWNER_REQUIRED` diagnostic
 code; it was added to the diagnostic allowlist. The final verifier passed 991
 tests, with 5 skipped and 0 failed, across 94 files in 81.81 seconds. Strict
 TypeScript checking and focused IPC, owner CLI and watcher tests also passed.
+
+## 29. CLI off checks and known concurrent writer defect
+
+The one-shot [CLI status](../../src/cli.ts) now uses the same point-in-time
+usage checks as the watcher before each status subrequest and before output.
+Other ordinary CLI RPC commands recheck after reading their input and before
+dispatch. These checks do not cancel accepted work or establish an atomic
+cross-process revocation barrier. Owned Linux CLI and fake-peer fixtures exercise
+off during list, presence and an open stdin document. An unconfirmed fixture
+child is retained rather than being signalled by an unproven PID.
+
+The [known-race fixture](../../tests/conversation-usage-concurrency.test.ts)
+reproduces a defect using an isolated transpiled copy of the production class
+and real owned files: a delayed `on` overwrites an acknowledged later `off`.
+A pass here documents the defect, not a safety guarantee or a cross-process
+test. Legacy writers are not serialized, and mixed-version coordination remains
+unqualified. The MCP retry and late-delivery work was deferred after fixture
+cleanup review; no MCP enforcement is claimed by this section.
+
+The final verifier passed 997 tests, with 5 skipped and 0 failed, across 96 files
+in 84.88 seconds. Strict TypeScript checking and focused CLI fixtures passed.
