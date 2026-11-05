@@ -831,9 +831,40 @@ or no process was recorded.
 On reopen the journal checks every historical record, not only the newest one.
 A legacy retired recovery now refuses as debt even if no process was recorded or a
 later generation appears healthy. This does not reconstruct history already erased
-by an older checkpoint. Existing same-owner numeric admission remains unqualified,
-and even same-owner v1 no-process retirement cannot prove that no child was spawned.
-Capture and the manual live probe remain disabled; this change does not prove
+by an older checkpoint. Even same-owner v1 no-process retirement cannot prove that no
+child was spawned. Capture and the manual live probe remain disabled; this change does not prove
 atomic creation, descendant containment, provider completion or native acceptance.
 The final default verifier passed 876 tests, with 5 skipped and 0 failed, across
 86 files in 84.82 seconds. The scope wrapper required all 99 Python cases.
+
+## 21. Numeric admission disabled
+
+[ReaderScope](../../src/native/reader_scope.py) now rejects numeric PID admission
+before inspecting input or touching the cgroup. A pinned pidfd opened after spawn
+does not prove that a reused PID denotes the original child, and post-write checks
+cannot undo a wrong migration. The old migration implementation was removed, with
+no test-only production bypass. Historical journal scenarios in the scope fixtures
+are synthesized in an owned fake filesystem, not evidence of actual admission.
+An atomically placed, birth-bound child and qualified immutable supervisor are still
+required before capture can be implemented.
+
+## 22. Shared-store cohort failure fence
+
+The fixture-only [usage coordinator](../../src/read-usage-coordinator.ts) exposes
+an owner-authorized synchronous cohort poison. It disables every registered
+conversation before notifying any revocation callback, permanently rejects new
+authority on that instance, and prevents late store acknowledgements from enabling
+or acknowledging pending work. The final on acknowledgement rechecks its epoch
+after timer cleanup. A broker fixture exercises two conversations, retained leases
+and an in-flight read using actual Sessions with fake store, channels and backend.
+
+The future shared-channel owner must call this fence before processing further
+acknowledgements when channel health is lost. Detection and delivery over a real
+channel are not wired here. Revocation callbacks are trusted synchronous functions
+that return undefined; a nonstandard rejected Promise may defeat best-effort
+observation. Poisoning proves neither writer termination nor provider drain and does
+not release uncertain resource credit.
+
+Final verification for sections 21 and 22: strict TypeScript checking passed; the
+default suite passed 888 tests, with 5 skipped and 0 failed, across 86 files in
+77.93 seconds. These are source and owned-fixture results, not desktop acceptance.

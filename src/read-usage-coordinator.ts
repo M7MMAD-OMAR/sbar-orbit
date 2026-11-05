@@ -4,8 +4,13 @@ import { types as nodeTypes } from "node:util";
 /** Broker-owned read usage fencing. This is not a CLI/MCP switch or an authority source.
  * The injected store must durably commit the exact protected conversation record before
  * returning its acknowledgement. A store rejection or uncertain acknowledgement poisons
- * that conversation for this coordinator's lifetime. Nothing here qualifies a store,
- * excludes legacy writers, proves reader drain, or provides a transport delivery fence. */
+ * that conversation for this coordinator's lifetime. Shared-channel failure additionally
+ * requires the owner to call poisonAll before processing any further acknowledgement. Nothing here qualifies a store,
+ * excludes legacy writers, proves reader drain, or provides a transport delivery fence.
+ * onRevoke is a trusted synchronous callback and MUST return undefined. The defensive
+ * observer for accidentally returned ordinary promises is best effort, not a universal
+ * hostile-Promise guarantee: custom constructor/@@species hooks are out of contract
+ * and can prevent standard JavaScript from installing a rejection observer. */
 export interface ReadUsageRecord {
   readonly instance: string;
   readonly epoch: number;
@@ -46,6 +51,7 @@ export class ReadUsageCoordinator {
   readonly #entries = new Map<object, Entry>();
   #counter = 0;
   #exhausted = false;
+  #poisoned = false;
 
   constructor(options: { ownerAuthority: object; store: ReadUsageStore; onRevoke: (conversation: object) => void; deadlineMs?: number }) {
     if (!validObject(options.ownerAuthority) || !options.store || typeof options.store.commit !== "function"
@@ -62,10 +68,48 @@ export class ReadUsageCoordinator {
     if (!entry) fail("DENIED");
     return entry;
   }
+  #notify(conversation: object): boolean {
+    try {
+      const acknowledgement: unknown = this.#revoke(conversation);
+      if (acknowledgement === undefined) return true;
+      // Trusted callbacks must return undefined. Best-effort observation handles
+      // ordinary native/cross-realm promises, never arbitrary thenables. Custom
+      // constructor/@@species hooks are out of contract and may defeat observation.
+      if (nodeTypes.isPromise(acknowledgement)) void Promise.prototype.then.call(acknowledgement, undefined, () => {});
+    } catch { /* Raw callback details never escape this authority boundary. */ }
+    return false;
+  }
+  #refused(): Promise<void> {
+    const result = Promise.reject<void>(new ReadUsageError("UNCONFIRMED"));
+    // Retain rejection for the caller while making callback reentry safe to ignore.
+    void result.catch(() => {});
+    return result;
+  }
+  #poison(): void {
+    if (this.#poisoned) return;
+    this.#poisoned = true;
+    const entries = [...this.#entries.values()];
+    // Phase one has NO external callbacks. Every conversation is fenced before
+    // any observer can reenter, including when epoch space is already exhausted.
+    if (this.#counter < Number.MAX_SAFE_INTEGER) this.#counter++;
+    for (const entry of entries) {
+      entry.enabled = false; entry.uncertain = true;
+      entry.epoch = this.#counter;
+    }
+    // Phase two notifies each registered conversation exactly once for this
+    // cohort poison, even if another callback throws, returns a promise or reenters.
+    for (const entry of entries) this.#notify(entry.conversation);
+  }
+  /** Owner-only shared store/cohort failure latch. No stop, cleanup or reconnect receipt. */
+  poisonAll(authority: object): void {
+    this.#owner(authority);
+    this.#poison();
+  }
   #next(): number {
+    if (this.#poisoned) fail("UNCONFIRMED");
     if (this.#exhausted || this.#counter >= Number.MAX_SAFE_INTEGER) {
       this.#exhausted = true;
-      for (const entry of this.#entries.values()) { entry.enabled = false; entry.uncertain = true; }
+      this.#poison();
       fail("LIMIT");
     }
     return ++this.#counter;
@@ -73,6 +117,7 @@ export class ReadUsageCoordinator {
   /** Explicit protected registration only. It does not change or read legacy usage. */
   register(authority: object, conversation: object): void {
     this.#owner(authority);
+    if (this.#poisoned) fail("UNCONFIRMED");
     if (!validObject(conversation)) fail("INVALID");
     if (this.#entries.has(conversation)) fail("INVALID");
     if (this.#entries.size >= 4) fail("LIMIT");
@@ -81,37 +126,32 @@ export class ReadUsageCoordinator {
   /** Exact synchronous fence for Sessions usageCurrent. Unknown and old epochs deny. */
   usageCurrent = (conversation: object, epoch: number): boolean => {
     const entry = this.#entries.get(conversation);
-    return !!entry && !this.#exhausted && !entry.uncertain && entry.enabled && entry.epoch === epoch;
+    return !!entry && !this.#poisoned && !this.#exhausted && !entry.uncertain && entry.enabled && entry.epoch === epoch;
   };
   /** Sessions usageVersion shape. This does not read or authenticate any label. */
   usageVersion = async (conversation: object): Promise<{ conversation: object; epoch: number; enabled: boolean }> => {
     const entry = this.#entry(conversation);
     return Object.freeze({ conversation: entry.conversation, epoch: entry.epoch,
-      enabled: entry.enabled && !entry.uncertain && !this.#exhausted });
+      enabled: entry.enabled && !entry.uncertain && !this.#exhausted && !this.#poisoned });
   };
   /** Every accepted off fences immediately, including while a previous commit is pending.
    * Queue exhaustion and notification failure also leave the conversation disabled. */
   off(authority: object, conversation: object): Promise<void> {
     this.#owner(authority);
+    if (this.#poisoned) return this.#refused();
     const entry = this.#entry(conversation);
     const epoch = this.#next();
     entry.epoch = epoch;
     entry.enabled = false;
     const result = this.#enqueue(entry, epoch, false);
-    try {
-      const acknowledgement: unknown = this.#revoke(conversation);
-      if (acknowledgement !== undefined) {
-        // A notification is a synchronous fence, never an unobserved async operation.
-        if (nodeTypes.isPromise(acknowledgement)) void Promise.prototype.then.call(acknowledgement, undefined, () => {});
-        entry.uncertain = true;
-      }
-    } catch { entry.uncertain = true; }
+    if (!this.#notify(conversation)) entry.uncertain = true;
     if (entry.uncertain) return result.then(() => fail("UNCONFIRMED"), () => fail("UNCONFIRMED"));
     return result;
   }
   /** Only the protected owner may request on. No old grant is restored. */
   on(authority: object, conversation: object): Promise<void> {
     this.#owner(authority);
+    if (this.#poisoned) return this.#refused();
     const entry = this.#entry(conversation);
     if (entry.uncertain) return Promise.reject(new ReadUsageError("UNCONFIRMED"));
     if (entry.pending >= 8) return Promise.reject(new ReadUsageError("BUSY"));
@@ -119,18 +159,12 @@ export class ReadUsageCoordinator {
     entry.epoch = epoch;
     entry.enabled = false;
     const result = this.#enqueue(entry, epoch, true);
-    try {
-      const acknowledgement: unknown = this.#revoke(conversation);
-      if (acknowledgement !== undefined) {
-        // A notification is a synchronous fence, never an unobserved async operation.
-        if (nodeTypes.isPromise(acknowledgement)) void Promise.prototype.then.call(acknowledgement, undefined, () => {});
-        entry.uncertain = true;
-      }
-    } catch { entry.uncertain = true; }
+    if (!this.#notify(conversation)) entry.uncertain = true;
     if (entry.uncertain) return result.then(() => fail("UNCONFIRMED"), () => fail("UNCONFIRMED"));
     return result;
   }
   #enqueue(entry: Entry, epoch: number, enabled: boolean): Promise<void> {
+    if (this.#poisoned) return this.#refused();
     if (entry.pending >= 8) {
       // The synchronous fence happened, but no durable off was acknowledged.
       entry.uncertain = true;
@@ -146,7 +180,7 @@ export class ReadUsageCoordinator {
     const record = Object.freeze({ instance: this.#instance, epoch, enabled });
     const run = entry.tail.then(async () => {
       if (expired()) { entry.enabled = false; entry.uncertain = true; }
-      if (entry.uncertain) fail("UNCONFIRMED");
+      if (entry.uncertain || this.#poisoned) fail("UNCONFIRMED");
       try {
         const pending = this.#store.commit(entry.conversation, record);
         if (!nodeTypes.isPromise(pending)) fail("UNCONFIRMED");
@@ -155,7 +189,7 @@ export class ReadUsageCoordinator {
       // A delayed event loop cannot turn an already expired commit into an acknowledgement.
       if (expired()) { entry.enabled = false; entry.uncertain = true; }
       // Queue overflow or a callback failure can occur while a commit is in flight.
-      if (entry.uncertain || this.#exhausted) fail("UNCONFIRMED");
+      if (entry.uncertain || this.#exhausted || this.#poisoned) fail("UNCONFIRMED");
       // A newer off/on can arrive while the store was awaited. Never publish stale on.
       if (enabled) {
         if (entry.epoch !== epoch) fail("STALE");
@@ -175,6 +209,13 @@ export class ReadUsageCoordinator {
       }, this.#deadlineMs);
     });
     const charged = run.finally(() => { entry.pending--; });
-    return Promise.race([charged, deadline]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+    return Promise.race([charged, deadline]).finally(() => { if (timer !== undefined) clearTimeout(timer); }).then(() => {
+      // The caller acknowledgement has its own final fence, including an off whose
+      // store already settled while ordering/deadline cleanup was still pending.
+      if (this.#poisoned || this.#exhausted || entry.uncertain) fail("UNCONFIRMED");
+      // An enabled ACK must still describe this exact on at the final boundary.
+      // Off only acknowledges its durable write, even if a later on was requested.
+      if (enabled && (entry.epoch !== epoch || !entry.enabled)) fail("STALE");
+    });
   }
 }

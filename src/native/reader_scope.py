@@ -600,31 +600,14 @@ class ReaderScope:
         if after is None or _birth(after) != _birth(current) or after["parent"] != self._pid:
             _fail("IDENTITY", "Reader child identity changed during durable binding")
 
-    @_serialized
     def admit(self, process):
-        self._guard(leaf=True)
-        bound = self._record["phase"] == "spawn_bound"
-        if self._record["phase"] not in ("prepared", "spawn_bound") or (self._child is not None and not bound):
-            _fail("DEBT", "Reader leaf cannot admit another helper")
-        if bound and process is not self._child:
-            _fail("IDENTITY", "Reader admission requires the exact retained bound child")
-        if not isinstance(process, subprocess.Popen) or process.returncode is not None:
-            _fail("INVALID", "Reader admission requires a retained unreaped subprocess")
-        current = _proc_identity(process.pid)
-        if current is None or current["parent"] != self._pid or current["state"] not in ("T", "t"):
-            _fail("INVALID", "Reader helper must be an own stopped bootstrap before admission")
-        if bound and _birth(current) != self._record["process"]:
-            _fail("IDENTITY", "Reader admission changed its bound child birth")
-        self._child = process
-        self._append("admitting", process=_birth(current))
-        again = _proc_identity(process.pid)
-        if again != current or process.returncode is not None:
-            _fail("IDENTITY", "Reader helper identity changed before admission")
-        self._control("cgroup.procs", str(process.pid))
-        members = self._control("cgroup.procs").split()
-        if str(process.pid) not in members or _proc_identity(process.pid) != current:
-            _fail("UNKNOWN", "Reader helper admission was not confirmed")
-        self._append("admitted")
+        """Unavailable: numeric PID migration is not atomic owned-task placement.
+
+        Refuse before inspecting inputs/self, acquiring locks or reading/writing
+        cgroups. A future atomic-creation/placement schema needs a separate API.
+        """
+        _fail("UNSUPPORTED", "Reader numeric PID admission is unavailable")
+
 
     @_serialized
     def empty(self):

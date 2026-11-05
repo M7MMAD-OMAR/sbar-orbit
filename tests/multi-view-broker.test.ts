@@ -842,3 +842,60 @@ test("shutdown fences protected reentry even when unsubscribe throws", async () 
     await expect(f.call("views.enable", { enabled: true })).rejects.toMatchObject({ code: "READ_VIEW_DENIED" });
   } finally { await f.close(); }
 });
+
+test("shared store poison synchronously revokes two actual broker conversations and retains unknown reader debt", async () => {
+  const authority = {}, captureGate = deferred<void>(), captureStarted = deferred<ReadCaptureContext>();
+  let listener: ((key: object) => void) | undefined, a!: object, b!: object, poisoning = false;
+  let epochs: number[] = [], writes = 0;
+  const notifications: object[] = [], allFenced: boolean[] = [], budgets: ReadResourceBudget[] = [];
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, store: { async commit() { writes++; } }, onRevoke: key => {
+    if (poisoning) {
+      notifications.push(key);
+      allFenced.push(!coordinator.usageCurrent(a, epochs[0]!) && !coordinator.usageCurrent(b, epochs[1]!));
+    }
+    if (!listener) throw new Error("Missing protected broker binding");
+    listener(key);
+    if (poisoning && key === a) throw new Error("private-first-notification-failure");
+  } });
+  const original = ReadResourceBudget.prototype.reserve;
+  const reserve = spyOn(ReadResourceBudget.prototype, "reserve").mockImplementation(function (this: ReadResourceBudget, view, cost) {
+    budgets.push(this); return original.call(this, view, cost);
+  });
+  const f = await fixture(true, false, false, (first, second) => {
+    a = first; b = second; coordinator.register(authority, a); coordinator.register(authority, b);
+    return { usageVersion: coordinator.usageVersion, usageCurrent: coordinator.usageCurrent,
+      bindUsageRevocation: callback => { listener = callback; return () => { listener = undefined; }; } };
+  });
+  let leaseA: ReadObservationLease | undefined, leaseB: ReadObservationLease | undefined;
+  let pending: Promise<unknown> | undefined;
+  try {
+    await coordinator.on(authority, a); await coordinator.on(authority, b); await f.enable();
+    epochs = [(await coordinator.usageVersion(a)).epoch, (await coordinator.usageVersion(b)).epoch];
+    const first = await f.enroll();
+    const second = await f.enroll([{ sessionId: f.foreign.sessionId, appId: "app-3", windowId: "window-3", formats: ["image"] }], "b");
+    leaseA = await f.read(first.views[0]!.id); leaseB = await f.read(second.views[0]!.id, f.b, f.channelB);
+    f.capture.mockImplementationOnce(async context => {
+      captureStarted.resolve(context); await captureGate.promise;
+      context.lifecycle.unknownDrain(); return new Uint8Array([1, 2, 3]);
+    });
+    pending = rejection(f.read(first.views[1]!.id));
+    await triggered(captureStarted.promise, pending);
+    poisoning = true; coordinator.poisonAll(authority);
+    expect(notifications).toEqual([a, b]); expect(allFenced).toEqual([true, true]);
+    const keys = (f.sessions as unknown as { readKeys: Map<string, { grant?: string }> }).readKeys;
+    expect(keys.get("a")?.grant).toBeUndefined(); expect(keys.get("b")?.grant).toBeUndefined();
+    expect(() => leaseA!.bytes).toThrow(); expect(() => leaseB!.bytes).toThrow();
+    expect((await captureStarted.promise).isCurrent()).toBe(false);
+    leaseA.release(); leaseB.release();
+    captureGate.resolve(); expect(await pending).toMatchObject({ code: "READ_VIEW_DENIED" });
+    expect(budgets[0]?.status()).toMatchObject({ captureOccupied: true, quarantined: 1, bytes: 16 });
+    const on = await coordinator.on(authority, a).catch((error: { code: string }) => error.code);
+    const off = await coordinator.off(authority, b).catch((error: { code: string }) => error.code);
+    expect(on).toBe("UNCONFIRMED"); expect(off).toBe("UNCONFIRMED"); expect(writes).toBe(2);
+    expect(f.legacyObserve).not.toHaveBeenCalled(); expect(f.create).not.toHaveBeenCalled();
+    coordinator.poisonAll(authority); expect(notifications).toEqual([a, b]);
+  } finally {
+    captureGate.resolve(); await pending;
+    leaseA?.release(); leaseB?.release(); reserve.mockRestore(); await f.close();
+  }
+});

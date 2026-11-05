@@ -184,11 +184,27 @@ class ReaderScopeTests(unittest.TestCase):
         scope.prepare()
         return scope
 
-    def admitted(self):
+    def historical_admission(self, scope, child):
+        """TEST ONLY: synthesize old journal/control history in this owned fake FS.
+
+        This is NOT a bypass or a successful call to the unavailable real admit API.
+        No native process or real cgroup is involved; replay/cleanup/wait tests need
+        historical v1/v2 states that may already exist on disk.
+        """
+        self.assertIsInstance(child, FakeChild)
+        self.assertTrue(self.leaf.is_relative_to(self.base))
+        self.assertIn(scope._record["phase"], ("prepared", "spawn_bound"))
+        current = self.processes[child.pid]
+        scope._child = child
+        scope._append("admitting", process=[child.pid, current["start"]])
+        scope._control("cgroup.procs", str(child.pid))  # Real file under the fake FS only.
+        scope._append("admitted")
+
+    def historical_admitted(self):
         scope = self.prepared()
         child = FakeChild(424242)
         self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
-        scope.admit(child)
+        self.historical_admission(scope, child)
         return scope, child
 
     def populated(self, value):
@@ -290,32 +306,40 @@ class ReaderScopeTests(unittest.TestCase):
         self.bad_readback = True
         self.assert_code("UNSUPPORTED", scope.prepare)
         self.assertTrue(scope.status()["hasDebt"])
-        self.assert_code("DEBT", lambda: scope.admit(FakeChild(424242)))
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(FakeChild(424242)))
         self.assert_code("DEBT", scope.prepare)
 
-    def test_admit_requires_retained_stopped_direct_child_not_raw_pid(self):
+    def test_numeric_admit_is_unavailable_without_inspection_locks_or_syscalls(self):
         scope = self.prepared()
-        self.assert_code("INVALID", lambda: scope.admit(424242))
-        child = FakeChild(424242)
-        for state, parent, code in (("R", self.owner_pid, "INVALID"), ("T", self.owner_pid + 1, "INVALID")):
-            self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": parent, "state": state}
-            self.assert_code(code, lambda: scope.admit(child))
-        child.returncode = 0
-        self.assert_code("INVALID", lambda: scope.admit(child))
-        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
+        class Unreadable:
+            def __getattribute__(self, name): raise AssertionError("Admission input was inspected")
+        unreadable = Unreadable()
+        before = self.journal.read_bytes()
+        calls = list(self.calls)
+        with patch.object(subject, "_proc_identity", side_effect=AssertionError("No proc inspection")) as proc, patch.object(subject.os, "getpid", side_effect=AssertionError("No serialized syscall")) as pid, patch.object(scope, "_guard", side_effect=AssertionError("No guard inspection")) as guard:
+            for value in (None, 424242, unreadable, FakeChild(424242)):
+                self.assert_code("UNSUPPORTED", lambda: scope.admit(value))
+            self.assert_code("UNSUPPORTED", lambda: subject.ReaderScope.admit(unreadable, unreadable))
+            for call in (proc, pid, guard): call.assert_not_called()
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual(self.calls, calls)
+        self.assertFalse(hasattr(subject.ReaderScope.admit, "__wrapped__"))
+        self.assertTrue(hasattr(subject.ReaderScope.empty, "__wrapped__"))
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
 
-    def test_birth_replacement_between_stamp_and_admission_never_writes_membership(self):
+    def test_numeric_admit_refusal_does_not_consume_changing_identity_or_mutate_journal(self):
         scope = self.prepared()
         child = FakeChild(424242)
-        first = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
-        second = dict(first, start=201)
-        with patch.object(subject, "_proc_identity", side_effect=[first, second]):
-            self.assert_code("IDENTITY", lambda: scope.admit(child))
-        self.assertEqual(self.records()[-1]["phase"], "admitting")
-        self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
+        before = self.journal.read_bytes()
+        with patch.object(subject, "_proc_identity", side_effect=AssertionError("No identity read")) as identity:
+            self.assert_code("UNSUPPORTED", lambda: scope.admit(child))
+            identity.assert_not_called()
+        self.assertEqual(self.records()[-1]["phase"], "prepared")
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
 
     def test_root_exit_does_not_prove_descendants_empty(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         wait_receipt = self.reaped(child)
         self.assertFalse(scope.empty())
         self.assert_code("UNKNOWN", scope.retire)
@@ -323,7 +347,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(self.leaf.exists())
 
     def test_pipe_eof_does_not_prove_descendants_empty(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         child.stdout.close()
         child.stderr.close()
         self.assertFalse(scope.empty())
@@ -331,7 +355,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(scope.status()["hasDebt"])
 
     def test_empty_scope_without_root_reap_cannot_retire(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         self.populated(0)
         self.assertTrue(scope.empty())
         self.assert_code("UNKNOWN", scope.retire)
@@ -339,14 +363,14 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(scope.status()["hasDebt"])
 
     def test_wait_returncode_without_original_birth_disappearance_is_not_reap_proof(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         child.returncode = 0
         self.populated(0)
         self.assert_code("UNKNOWN", scope.retire)
         self.assertTrue(scope.status()["hasDebt"])
 
     def test_empty_and_separately_reaped_root_produce_distinct_retirement_receipt(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         wait_receipt = self.reaped(child)
         self.populated(0)
         receipt = scope.retire(wait_receipt=wait_receipt)
@@ -356,7 +380,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.records()[-1]["phase"], "retired")
 
     def test_cached_returncode_and_disappeared_pid_are_not_kernel_wait_evidence(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         child.returncode = 0
         self.processes.pop(child.pid)
         self.populated(0)
@@ -364,7 +388,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(scope.status()["hasDebt"])
 
     def test_forged_or_cloned_wait_receipt_cannot_retire_exact_scope(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         wait_receipt = self.reaped(child)
         self.populated(0)
         actual = wait_receipt
@@ -378,7 +402,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(scope.retire(wait_receipt=None), {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": True, "recovered": False})
 
     def test_kill_success_is_not_scope_empty_and_never_signals_shared_parent(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         scope.kill()
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "1\n")
         self.assertFalse(scope.empty())
@@ -387,7 +411,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.records()[-1]["phase"], "killing")
 
     def test_kill_error_retains_unknown_debt(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         self.kill_error = True
         with self.assertRaises((OSError, subject.ReaderScopeError)):
             scope.kill()
@@ -402,15 +426,16 @@ class ReaderScopeTests(unittest.TestCase):
             self.assertTrue(scope.status()["hasDebt"])
 
     def test_closed_scope_cannot_clear_debt_or_execute_late_calls(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         before = self.journal.read_bytes()
         scope.close()
-        for operation in (scope.kill, scope.retire, scope.prepare, lambda: scope.admit(child)):
+        for operation in (scope.kill, scope.retire, scope.prepare):
             self.assert_code("UNKNOWN", operation)
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(child))
         self.assertEqual(self.journal.read_bytes(), before)
 
     def test_replaced_leaf_identity_never_kills_replacement(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         original = self.root / "original-leaf-held"
         self.leaf.rename(original)
         self.leaf.mkdir(mode=0o700)
@@ -421,7 +446,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertNotEqual(self.records()[-1]["phase"], "retired")
 
     def test_replaced_resource_root_never_kills_either_domain(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         old = self.base / "original-root-held"
         self.root.rename(old)
         self.root.mkdir(mode=0o700)
@@ -431,7 +456,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((old / self.leaf.name / "cgroup.kill").read_text(), "")
 
     def test_replaced_journal_inode_prevents_signaling(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         old = self.private / "original-journal-held"
         self.journal.rename(old)
         self.journal.write_bytes(old.read_bytes())
@@ -440,7 +465,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
 
     def test_restart_debt_blocks_reuse_and_live_owner_recovery(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         scope.close()
         replacement = self.scope()
         self.assertTrue(replacement.status()["hasDebt"])
@@ -449,7 +474,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
 
     def test_recovery_pins_original_leaf_but_never_claims_original_root_reaped(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         replacement = self.restart(scope)
         before = (self.leaf / "cgroup.kill").read_text()
         replacement.recover()
@@ -463,7 +488,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("DEBT", replacement.checkpoint)
 
     def test_recovery_missing_or_replaced_leaf_retains_debt_without_signals(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         replacement = self.restart(scope)
         old = self.root / "orphan-leaf-held"
         self.leaf.rename(old)
@@ -479,7 +504,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "replacement-untouched")
 
     def test_inherited_supervisor_identity_cannot_signal_or_retire(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         with patch.object(os, "getpid", return_value=self.owner_pid + 1):
             self.assert_code("UNKNOWN", scope.kill)
             self.assert_code("UNKNOWN", scope.retire)
@@ -526,14 +551,14 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(replacement.status()["phase"], "prepared")
 
     def test_pinned_root_fd_replacement_is_not_parent_signal_authority(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         old_fd = scope._root_fd
         scope._root_fd = os.open(self.private, os.O_RDONLY | os.O_DIRECTORY)
         os.close(old_fd)
         self.assert_code("IDENTITY", scope.kill)
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), "")
 
-    def test_admission_journal_fsync_failure_never_writes_membership(self):
+    def test_historical_admitting_journal_fsync_failure_never_writes_membership(self):
         scope = self.prepared()
         child = FakeChild(424242)
         self.processes[child.pid] = {"pid": child.pid, "start": 200, "parent": self.owner_pid, "state": "T"}
@@ -543,13 +568,13 @@ class ReaderScopeTests(unittest.TestCase):
             return self.real_fsync(fd)
         with patch.object(os, "fsync", side_effect=fail_sync):
             with self.assertRaises((OSError, subject.ReaderScopeError)):
-                scope.admit(child)
+                self.historical_admission(scope, child)
         self.assertEqual(self.records()[-1]["phase"], "admitting")
         self.assertFalse(any(kind == "write" and name.endswith("/cgroup.procs") for kind, name in self.calls))
         self.assert_code("UNKNOWN", scope.kill)
 
     def test_deadline_or_unknown_control_error_cannot_clear_durable_debt(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         def timeout(fd, data):
             if self.fdpath(fd).name == "cgroup.kill":
                 raise TimeoutError("fixture cleanup deadline")
@@ -576,7 +601,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before)
 
     def test_original_root_pid_reuse_is_distinct_from_original_birth_liveness(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         wait_receipt = self.reaped(child)  # Genuine fixture kernel-wait receipt BEFORE unrelated PID reuse.
         self.processes[child.pid] = {"pid": child.pid, "start": 201, "parent": 98765, "state": "S"}
         self.populated(0)
@@ -611,7 +636,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(replacement.status()["hasDebt"])
 
     def test_missing_expected_journal_after_debt_is_not_implicitly_reinitialized(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         scope.close()
         self.journal.unlink()
         self.assert_code("DEBT", self.scope)
@@ -683,7 +708,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertGreater(total_history, 65536)
 
     def test_checkpoint_never_erases_active_or_unknown_kill_debt(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         before = self.journal.read_bytes()
         self.assert_code("DEBT", scope.checkpoint)
         self.assertEqual(self.journal.read_bytes(), before)
@@ -702,7 +727,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before)
 
     def test_checkpoint_never_erases_unfinished_recovery(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         replacement = self.restart(scope)
         replacement.recover()
         before = self.journal.read_bytes()
@@ -829,7 +854,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", scope.checkpoint)
 
     def test_full_journal_with_unresolved_work_cannot_be_checkpointed_or_evicted(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         before = self.journal.read_bytes()
         scope.MAX_JOURNAL_BYTES = len(before)
         self.assert_code("DEBT", scope.kill)
@@ -926,21 +951,22 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(scope.retire(wait_receipt=wait_receipt), {"scopeEmpty": True, "rootReaped": True,
                                          "neverAdmitted": False, "recovered": False})
 
-    def test_bound_running_child_still_needs_stop_before_membership_admission(self):
+    def test_bound_running_or_stopped_child_cannot_enable_numeric_admission(self):
         scope, child = self.spawn_reserved(state="R")
         scope.bind_child(child)
-        self.assert_code("INVALID", lambda: scope.admit(child))
+        before = self.journal.read_bytes()
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(child))
         self.processes[child.pid]["state"] = "T"
-        scope.admit(child)
-        self.assertEqual(self.records()[-1]["phase"], "admitted")
-        self.assertFalse(self.records()[-1]["spawn_pending"])
-        self.assertEqual(self.synced_phases[-1], "admitted")
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(child))
+        self.assertEqual(self.records()[-1]["phase"], "spawn_bound")
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
 
     def test_bound_child_cannot_be_substituted_by_another_popen_with_same_pid(self):
         scope, child = self.spawn_reserved(state="T")
         scope.bind_child(child)
         impostor = FakeChild(child.pid)
-        self.assert_code("IDENTITY", lambda: scope.admit(impostor))
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(impostor))
         self.assertEqual(self.records()[-1]["phase"], "spawn_bound")
         self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
 
@@ -948,7 +974,7 @@ class ReaderScopeTests(unittest.TestCase):
         scope, child = self.spawn_reserved(state="T")
         scope.bind_child(child)
         self.processes[child.pid]["start"] += 1
-        self.assert_code("IDENTITY", lambda: scope.admit(child))
+        self.assert_code("UNSUPPORTED", lambda: scope.admit(child))
         self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
         self.assertEqual(self.records()[-1]["process"], [child.pid, 200])
 
@@ -984,7 +1010,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assert_code("UNKNOWN", scope.retire)
         self.assertEqual((self.leaf / "cgroup.procs").read_text(), "")
 
-    def test_bound_admission_write_uncertainty_requires_both_root_and_scope_cleanup(self):
+    def test_historical_bound_membership_write_uncertainty_requires_root_and_scope_cleanup(self):
         scope, child = self.spawn_reserved(state="T")
         scope.bind_child(child)
         def write_then_fail(fd, data):
@@ -993,7 +1019,8 @@ class ReaderScopeTests(unittest.TestCase):
                 raise OSError("owned fixture ambiguous migration")
             return written
         with patch.object(os, "write", side_effect=write_then_fail):
-            self.assert_code("UNKNOWN", lambda: scope.admit(child))
+            with self.assertRaises(OSError):
+                self.historical_admission(scope, child)
         self.assertEqual(self.records()[-1]["phase"], "admitting")
         self.assertFalse(self.records()[-1]["spawn_pending"])
         scope.kill()
@@ -1037,7 +1064,7 @@ class ReaderScopeTests(unittest.TestCase):
             recovered.recover()
 
     def test_legacy_recovered_root_terminal_record_refuses_reopen_without_modifying_history(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         recovered = self.restart(scope)
         recovered.recover()
         records = self.records()
@@ -1053,7 +1080,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((after.st_dev, after.st_ino, after.st_mode), (before.st_dev, before.st_ino, before.st_mode))
 
     def test_historical_recovered_root_terminal_followed_by_healthy_generation_still_refuses(self):
-        scope, child = self.admitted()
+        scope, child = self.historical_admitted()
         recovered = self.restart(scope)
         recovered.recover()
         records = self.records()
@@ -1131,7 +1158,7 @@ class ReaderScopeTests(unittest.TestCase):
             scope, child = self.spawn_reserved(state="T")
             self.assertTrue(self.records()[-1]["spawn_pending"])
             scope.bind_child(child)
-            scope.admit(child)
+            self.historical_admission(scope, child)
             wait_receipt = self.reaped(child)
             self.populated(0)
             self.assertTrue(scope.retire(wait_receipt=wait_receipt)["rootReaped"])
