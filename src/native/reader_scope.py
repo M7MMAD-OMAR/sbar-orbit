@@ -2,6 +2,11 @@
 
 Only trusted owner runtime paths belong here, never model-provided resource IDs.
 A durable journal is debt until the original leaf is proved empty and retired.
+Recovered generations retain broader containment debt even when the original leaf
+is empty or no root was recorded. Legacy v1 can have an unrecorded child before
+admission; v1/v2 do not prove atomic containment. Historical recovered retirement
+is refused on load; uncertainty erased by older checkpoints cannot be reconstructed.
+Same-owner numeric admission is separately unqualified/dormant, not production.
 This is not an input-quiescence receipt or a 32 MiB logical-buffer/RSS promise.
 Python private fields are readable by trusted code, not an isolation boundary.
 Only directly returned wait receipts may cross the internal API; callers must
@@ -395,6 +400,10 @@ class ReaderScope:
                     ReaderLimits(**{key: value for key, value in limits.items() if key != "swap_bytes"})
                 except ReaderScopeError:
                     _fail("DEBT", "Reader journal limits are invalid")
+                # Inspect EVERY historical event, not only the final phase. A later
+                # healthy generation cannot erase legacy unproven recovered-root debt.
+                if record["phase"] == "retired" and record["recovered"]:
+                    _fail("DEBT", "Journal contains unproven recovered retirement")
                 self._validate_transition(last, record)
                 last = record
         except (ValueError, TypeError, KeyError, UnicodeError):
@@ -792,22 +801,19 @@ class ReaderScope:
         self._guard(leaf=True)
         if self._record.get("spawn_pending", False):
             _fail("UNKNOWN", "Reader scope emptiness cannot resolve an unbound possible child")
+        if self._recovered or self._record["recovered"]:
+            _fail("UNKNOWN", "Recovered reader process containment remains unconfirmed")
         if not self.empty():
             _fail("UNKNOWN", "Reader descendants have not been proved absent")
         root_reaped = False
         if self._record["process"] is not None:
-            if self._recovered:
-                current = _proc_identity(self._record["process"][0])
-                if current is not None and _birth(current) == self._record["process"]:
-                    _fail("UNKNOWN", "Original reader root may still be alive outside its leaf")
-            else:
-                if (self._wait_owner is not self or not self._wait_ready or wait_receipt is None or wait_receipt is not self._wait_receipt or self._wait_consumed
-                        or self._child is None or self._wait_child is not self._child
-                        or self._wait_birth != tuple(self._record["process"])
-                        or self._wait_generation != (self._record["leaf"], tuple(self._record["leaf_identity"]))
-                        or self._child.returncode != self._wait_code):
-                    _fail("UNKNOWN", "Reader root requires its exact consumed kernel wait receipt")
-                root_reaped = True
+            if (self._wait_owner is not self or not self._wait_ready or wait_receipt is None or wait_receipt is not self._wait_receipt or self._wait_consumed
+                    or self._child is None or self._wait_child is not self._child
+                    or self._wait_birth != tuple(self._record["process"])
+                    or self._wait_generation != (self._record["leaf"], tuple(self._record["leaf_identity"]))
+                    or self._child.returncode != self._wait_code):
+                _fail("UNKNOWN", "Reader root requires its exact consumed kernel wait receipt")
+            root_reaped = True
         self._guard(leaf=True)
         os.rmdir(self._record["leaf"], dir_fd=self._root_fd)
         # A crash before this durable event leaves debt, not permission to infer empty.
@@ -831,7 +837,8 @@ class ReaderScope:
         describes only this already-proven no-work state, not active work.
         """
         self._guard()
-        if self._record["phase"] not in ("idle", "retired") or self._leaf_fd is not None or self._child is not None:
+        if (self._recovered or self._record["recovered"]
+                or self._record["phase"] not in ("idle", "retired") or self._leaf_fd is not None or self._child is not None):
             _fail("DEBT", "Reader checkpoint cannot discard unresolved scope ownership")
         self._root_no_work()
         # Keep the original flock and inode; never rename or replace the lock file.

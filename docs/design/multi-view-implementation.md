@@ -818,3 +818,22 @@ Final source suite: 876 pass, 5 skip, 0 fail, 16594 assertions across 86 files
 in 77.93 seconds. Strict TypeScript validation passed. The reduction in mocked
 bootstrap and capture cases reflects removal of their unsafe execution paths, not
 a passed native-capture gate.
+
+## 20. Recovered root debt remains unresolved
+
+A recovered leaf can be empty even if an unqualified child spawned a descendant
+outside that leaf before admission. Disappearance of the recorded root does not
+prove either descendant containment or the former parent's kernel wait. Legacy v1
+can also leave a child unrecorded before admission. Every recovered generation now
+refuses retirement and checkpoint, retaining debt even when leaf emptiness is true
+or no process was recorded.
+
+On reopen the journal checks every historical record, not only the newest one.
+A legacy retired recovery now refuses as debt even if no process was recorded or a
+later generation appears healthy. This does not reconstruct history already erased
+by an older checkpoint. Existing same-owner numeric admission remains unqualified,
+and even same-owner v1 no-process retirement cannot prove that no child was spawned.
+Capture and the manual live probe remain disabled; this change does not prove
+atomic creation, descendant containment, provider completion or native acceptance.
+The final default verifier passed 876 tests, with 5 skipped and 0 failed, across
+86 files in 84.82 seconds. The scope wrapper required all 99 Python cases.

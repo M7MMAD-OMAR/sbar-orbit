@@ -1,4 +1,4 @@
-"""Deterministic fake-kernel fixtures, not actual cgroup or OS drain qualification."""
+"""Fake cgroup fixtures and real owned child waits, not cgroup or OS drain qualification."""
 import fcntl
 import contextlib
 import runpy
@@ -456,10 +456,11 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), before)
         self.populated(0)
         self.assert_code("UNKNOWN", replacement.retire)
-        wait_receipt = self.reaped(child)
-        receipt = replacement.retire()
-        self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": False, "recovered": True})
-        self.assertFalse(replacement.status()["hasDebt"])
+        self.processes.pop(child.pid)  # Root disappearance is not escaped-descendant containment.
+        self.assert_code("UNKNOWN", replacement.retire)
+        self.assertTrue(replacement.empty())
+        self.assertTrue(replacement.status()["hasDebt"])
+        self.assert_code("DEBT", replacement.checkpoint)
 
     def test_recovery_missing_or_replaced_leaf_retains_debt_without_signals(self):
         scope, child = self.admitted()
@@ -1009,8 +1010,94 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertTrue(reopened.empty())
         self.assert_code("UNKNOWN", reopened.retire)
         self.processes.pop(child.pid)
-        self.assertEqual(reopened.retire(), {"scopeEmpty": True, "rootReaped": False,
-                                            "neverAdmitted": False, "recovered": True})
+        self.assert_code("UNKNOWN", reopened.retire)
+        self.assertTrue(reopened.empty())
+        self.assertTrue(reopened.status()["hasDebt"])
+        self.assert_code("DEBT", reopened.checkpoint)
+
+    def test_recovered_unadmitted_root_disappearance_never_clears_outside_descendant_debt(self):
+        original, child = self.spawn_reserved()
+        original.bind_child(child)
+        escaped = child.pid + 1
+        self.processes[escaped] = {"pid": escaped, "start": 201, "parent": child.pid, "state": "S"}
+        recovered = self.restart(original)
+        recovered.recover()
+        self.processes.pop(child.pid)
+        for _ in range(3):
+            self.assertTrue(recovered.empty())  # Original leaf emptiness is still truthful.
+            before = self.journal.read_bytes()
+            self.assert_code("UNKNOWN", recovered.retire)
+            self.assert_code("DEBT", recovered.prepare)
+            self.assert_code("DEBT", recovered.checkpoint)
+            recovered.kill()  # Leaf kill cannot establish anything about the outsider.
+            self.assertIn(escaped, self.processes)
+            self.assertTrue(recovered.status()["hasDebt"])
+            self.assertEqual(self.journal.read_bytes(), before)
+            recovered = self.restart(recovered)
+            recovered.recover()
+
+    def test_legacy_recovered_root_terminal_record_refuses_reopen_without_modifying_history(self):
+        scope, child = self.admitted()
+        recovered = self.restart(scope)
+        recovered.recover()
+        records = self.records()
+        terminal = {**records[-1], "phase": "retired", "sequence": len(records)}
+        subject.ReaderScope._validate_transition(records[-1], terminal)  # Otherwise-valid old schema.
+        recovered.close()
+        payload = b"".join((json.dumps(record, sort_keys=True) + "\n").encode() for record in [*records, terminal])
+        self.journal.write_bytes(payload)
+        before = self.journal.stat()
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
+        after = self.journal.stat()
+        self.assertEqual((after.st_dev, after.st_ino, after.st_mode), (before.st_dev, before.st_ino, before.st_mode))
+
+    def test_historical_recovered_root_terminal_followed_by_healthy_generation_still_refuses(self):
+        scope, child = self.admitted()
+        recovered = self.restart(scope)
+        recovered.recover()
+        records = self.records()
+        terminal = {**records[-1], "phase": "retired", "sequence": len(records)}
+        intent = {**terminal, "sequence": terminal["sequence"]+1, "phase": "intent",
+                  "leaf": "orbit-reader-" + "f"*32, "leaf_identity": None, "process": None, "recovered": False}
+        pinned = {**intent, "sequence": intent["sequence"]+1, "phase": "pinned", "leaf_identity": [999, 1000]}
+        prepared = {**pinned, "sequence": pinned["sequence"]+1, "phase": "prepared"}
+        healthy = {**prepared, "sequence": prepared["sequence"]+1, "phase": "retired"}
+        chain = [*records, terminal, intent, pinned, prepared, healthy]
+        for previous, current in zip(chain, chain[1:]): subject.ReaderScope._validate_transition(previous, current)
+        recovered.close()
+        payload = b"".join((json.dumps(record, sort_keys=True) + "\n").encode() for record in chain)
+        self.journal.write_bytes(payload)
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
+
+    def test_recovered_legacy_prepared_leaf_keeps_unrecorded_child_debt(self):
+        original = self.prepared()
+        # Legacy v1 permits a child to exist before admission is journaled.
+        escaped = 424243
+        self.processes[escaped] = {"pid": escaped, "start": 201, "parent": self.owner_pid, "state": "S"}
+        recovered = self.restart(original)
+        recovered.recover()
+        self.assertTrue(recovered.empty())
+        self.assert_code("UNKNOWN", recovered.retire)
+        self.assert_code("DEBT", recovered.checkpoint)
+        self.assertTrue(recovered.status()["hasDebt"])
+        self.assertIn(escaped, self.processes)
+        self.assertEqual(self.records()[-1]["phase"], "recovery")
+        self.assertIsNone(self.records()[-1]["process"])
+
+    def test_legacy_recovered_retirement_without_process_also_refuses_reopen(self):
+        original = self.prepared()
+        recovered = self.restart(original)
+        recovered.recover()
+        records = self.records()
+        terminal = {**records[-1], "phase": "retired", "sequence": len(records)}
+        subject.ReaderScope._validate_transition(records[-1], terminal)
+        recovered.close()
+        payload = b"".join((json.dumps(record, sort_keys=True) + "\n").encode() for record in [*records, terminal])
+        self.journal.write_bytes(payload)
+        self.assert_code("DEBT", self.scope)
+        self.assertEqual(self.journal.read_bytes(), payload)
 
     def test_forged_pending_marker_clear_recovery_retire_or_schema_downgrade_refuses(self):
         scope, _child = self.spawn_reserved()
