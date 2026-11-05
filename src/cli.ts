@@ -338,15 +338,25 @@ try {
     // Deliberately local, and before the branch that requires a socket. The most common thing a person
     // reports is a broker that will not start, which is exactly the case a broker RPC cannot answer.
     // Nothing here needs Orbit to be running, and nothing here leaves the machine on its own.
-    const { describeDesktopMachine, desktopHostClassTier } = await import("./desktop-machine");
-    const { version } = await import("../package.json");
-    console.log(JSON.stringify({
-      ...await describeDesktopMachine(),
-      orbitVersion: version,
-      // What this host class may claim, which is never what it managed to run.
-      tier: { ...await desktopHostClassTier(), reference: "docs/desktop-only.md" },
-      paste: "This report is safe to paste into a public issue. Read it first anyway.",
-    }, null, 2));
+    let report: Record<string, unknown>;
+    try {
+      const { describeDesktopMachine, desktopHostClassTier } = await import("./desktop-machine");
+      const { version } = await import("../package.json");
+      report = {
+        ...await describeDesktopMachine(),
+        orbitVersion: version,
+        // What this host class may claim, which is never what it managed to run.
+        tier: { ...await desktopHostClassTier(), reference: "docs/desktop-only.md" },
+        paste: "This report is safe to paste into a public issue. Read it first anyway.",
+      };
+    } catch (error) {
+      await usage.assertEnabled();
+      throw error;
+    }
+    // Read-result sampling only: accepted host reads are not cancelled, and off
+    // after this check cannot retract bytes already handed to stdout.
+    await usage.assertEnabled();
+    console.log(JSON.stringify(report, null, 2));
   } else if (command === "serve") {
     // A managed broker binds the fixed path a service unit and generated host configuration expect.
     const managed = process.argv.includes("--managed-socket");

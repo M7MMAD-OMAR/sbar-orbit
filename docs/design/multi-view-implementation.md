@@ -1211,3 +1211,20 @@ Strict typing and focused tests passed. One full verifier run had 1085 passes,
 case passed on isolated rerun. A subsequent complete run passed 1086, skipped 5
 and failed 0 across 108 files in 85.69 seconds. The first failure cause was not
 established and is not erased by the later pass.
+
+## 40. Registry quarantine and local doctor delivery
+
+An internal channel registry now retains a revoked slot and binding when its
+revocation callback throws or returns anything other than synchronous undefined.
+Ordinary Promise rejections are observed best effort; hostile Promise species and
+external drain are not qualified. Unrelated generation changes deny the current
+lookup without permanently retiring an otherwise valid channel. A fresh stable
+proof remains necessary; no reentrant lookup is authorized by this change.
+
+The CLI local `doctor --report` now rechecks the legacy usage preference before
+printing a gathered report or exposing a late read error. This is sampling, not
+cancellation or an atomic off fence. Isolated CLI-derived fixtures replace the
+host-probing import and use owned child streams; no live desktop was queried.
+Strict typing passed. The final verifier passed 1097 tests, skipped 5 and failed 0
+across 109 files in 92.92 seconds. Multi-view remains unavailable and no protected
+production ingress or original-application acceptance is claimed.

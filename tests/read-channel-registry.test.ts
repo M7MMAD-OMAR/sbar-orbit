@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import * as crypto from "node:crypto";
+import { runInNewContext } from "node:vm";
 import type { Caller } from "../src/caller";
 import { ReadChannelRegistry, ReadChannelError, type ReadChannelEnrollment,
   type ReadConnectorIdentity, type ResolvedReadChannel } from "../src/read-channel-registry";
@@ -478,4 +479,144 @@ test("status and errors never expose authority secrets caller labels process dat
   for (const value of [ticket.enrollment, credential.transport, f.caller.id, secret, "birth", "pid", "views", "binding", "installation"])
     expect(status).not.toContain(value);
   refused(() => f.registry.activate(secret, f.caller));
+});
+
+
+function independent(f: ReturnType<typeof fixture>) {
+  const key = {}, instance = {}, conversation = {}, binding = {};
+  const ticket = f.issue({ key, instance, conversation, views: [{ binding, bindingEpoch: 1, formats: ["text"] }] });
+  const credential = f.registry.activate(ticket.enrollment, f.caller);
+  const resolved = f.registry.resolve(credential.transport, f.caller)!;
+  return { key, instance, conversation, binding, ticket, credential, resolved };
+}
+
+test("nonvoid revocation results quarantine slots bindings and tokens even after ordinary Promise settlement", async () => {
+  for (const mode of ["pending", "fulfilled", "rejected", "cross-realm", "thenable", "scalar", "object"] as const) {
+    const f = fixture({ maxChannels: 2 }), { credential, resolved } = f.connect();
+    let settle!: () => void, thenReads = 0, callbacks = 0;
+    const pending = new Promise<void>(resolve => { settle = resolve; });
+    const thenable = Object.defineProperty({}, "then", { get() { thenReads++; throw new Error(secret); } });
+    f.setRevoke(() => {
+      callbacks++;
+      if (mode === "pending") return pending as never;
+      if (mode === "fulfilled") return Promise.resolve() as never;
+      if (mode === "rejected") return Promise.reject(new Error(secret)) as never;
+      if (mode === "cross-realm") return runInNewContext("Promise.reject(new Error('PRIVATE-cross-realm'))") as never;
+      if (mode === "thenable") return thenable as never;
+      return (mode === "scalar" ? 1 : { private: secret }) as never;
+    });
+    expect(f.registry.revoke(f.authority, f.key)).toBe(true);
+    expect(f.registry.resolve(credential.transport, f.caller)).toBeUndefined();
+    expect(f.registry.isCurrent(resolved.channel)).toBe(false);
+    expect(f.registry.status(f.authority)).toMatchObject({ active: 0, pending: 0, quarantined: 1, capacity: 2 });
+    refused(() => f.issue(), "CONFLICT");
+    refused(() => f.issue({ key: {}, views: [{ binding: {}, bindingEpoch: 1, formats: ["text"] }] }), "CONFLICT");
+    refused(() => f.issue({ key: {}, instance: {} }), "CONFLICT");
+    const other = independent(f);
+    expect(f.registry.resolve(other.credential.transport, f.caller)).toBe(other.resolved);
+    expect(f.registry.isCurrent(other.resolved.channel)).toBe(true);
+    refused(() => f.issue({ key: {}, instance: {}, views: [{ binding: {}, bindingEpoch: 1, formats: ["text"] }] }), "LIMIT");
+    settle(); await Promise.resolve(); await Promise.resolve();
+    expect(f.registry.status(f.authority)).toMatchObject({ active: 1, quarantined: 1 });
+    expect(f.registry.revoke(f.authority, f.key)).toBe(false);
+    expect(callbacks).toBe(1); expect(thenReads).toBe(0);
+    expect(JSON.stringify(f.registry.status(f.authority))).not.toContain(secret);
+    // No async settlement is a synchronous revoke ACK or downstream drain proof.
+  }
+});
+
+test("a pending revocation Promise rejected later remains observed and quarantined", async () => {
+  const f = fixture({ maxChannels: 1 }), { resolved } = f.connect();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, failure) => { reject = failure; });
+  f.setRevoke(() => pending as never);
+  f.registry.revoke(f.authority, f.key);
+  reject(new Error(secret)); await Promise.resolve(); await Promise.resolve();
+  expect(f.registry.isCurrent(resolved.channel)).toBe(false);
+  expect(f.registry.status(f.authority)).toMatchObject({ active: 0, quarantined: 1 });
+  refused(() => f.issue({ key: {}, instance: {}, views: [{ binding: {}, bindingEpoch: 1, formats: ["text"] }] }), "LIMIT");
+});
+
+test("only synchronous undefined notification frees a retired binding slot", () => {
+  const f = fixture({ maxChannels: 1 }), { resolved } = f.connect();
+  const calls: ResolvedReadChannel[] = [];
+  f.setRevoke(value => { calls.push(value); });
+  expect(f.registry.revoke(f.authority, f.key)).toBe(true);
+  expect(calls).toEqual([resolved]);
+  expect(f.registry.status(f.authority)).toMatchObject({ active: 0, pending: 0, quarantined: 0 });
+  // A fresh owner request may reuse the released instance/view, not the retired key.
+  expect(f.issue({ key: {} }).enrollment).toMatch(/^[a-f0-9]{64}$/);
+  refused(() => f.issue(), "CONFLICT");
+});
+
+test("nonvoid callback reentry stays revoked and notifies once without leaking raw failure", async () => {
+  const f = fixture(), { resolved } = f.connect();
+  const observations: { current: boolean; repeated: boolean }[] = [];
+  f.setRevoke(value => {
+    observations.push({ current: f.registry.isCurrent(value.channel), repeated: f.registry.revoke(f.authority, f.key) });
+    f.registry.detach(f.authority, f.instance);
+    return Promise.reject(new Error(secret)) as never;
+  });
+  expect(f.registry.revoke(f.authority, f.key)).toBe(true);
+  await Promise.resolve();
+  expect(observations).toEqual([{ current: false, repeated: false }]);
+  expect(f.registry.status(f.authority)).toMatchObject({ quarantined: 1 });
+  expect(f.registry.isCurrent(resolved.channel)).toBe(false);
+});
+
+test("unrelated revoke during true false or throwing process proof denies one check without retiring the target", () => {
+  for (const mode of ["true", "false", "throw"] as const) {
+    const f = fixture(), own = f.connect(), other = independent(f);
+    let changed = false;
+    f.setVerify(identity => {
+      if (!changed && identity.instance === f.instance) {
+        changed = true; f.registry.revoke(f.authority, other.key);
+        if (mode === "throw") throw new Error(secret);
+        return mode === "true";
+      }
+      return true;
+    });
+    expect(f.registry.resolve(own.credential.transport, f.caller)).toBeUndefined();
+    expect(changed).toBe(true);
+    expect(f.state.notifications).toEqual([other.resolved]);
+    f.setVerify(() => true);
+    expect(f.registry.resolve(own.credential.transport, f.caller)).toBe(own.resolved);
+    expect(f.registry.isCurrent(own.resolved.channel)).toBe(true);
+    expect(f.issue()).toEqual(own.ticket); // Target key was not retired by global drift.
+    expect(f.registry.status(f.authority)).toMatchObject({ active: 1, quarantined: 0 });
+  }
+});
+
+test("unrelated generation drift in before or final live clock preserves the target but never authorizes that sample", () => {
+  for (const moment of ["before", "after"] as const) {
+    const f = fixture(), own = f.connect(), other = independent(f);
+    let armed = moment === "before", changed = false;
+    const calls = f.state.calls;
+    f.setVerify(() => { if (moment === "after" && !changed) armed = true; return true; });
+    f.setClock(() => {
+      if (armed && !changed) { armed = false; changed = true; f.registry.revoke(f.authority, other.key); }
+      return f.state.now;
+    });
+    expect(f.registry.isCurrent(own.resolved.channel)).toBe(false);
+    expect(changed).toBe(true);
+    if (moment === "before") expect(f.state.calls).toBe(calls); // No proof ran, no claim of liveness.
+    expect(f.state.notifications).toEqual([other.resolved]);
+    f.setVerify(() => true); f.setClock(() => f.state.now);
+    expect(f.registry.resolve(own.credential.transport, f.caller)).toBe(own.resolved);
+    expect(f.issue()).toEqual(own.ticket);
+  }
+});
+
+test("independent target expiry still retires it despite simultaneous unrelated generation change", () => {
+  const f = fixture(), own = f.connect(), other = independent(f);
+  let changed = false;
+  f.setVerify(() => {
+    if (!changed) { changed = true; f.registry.revoke(f.authority, other.key); f.state.now = 2000; }
+    return true;
+  });
+  expect(f.registry.resolve(own.credential.transport, f.caller)).toBeUndefined();
+  expect(f.state.notifications).toEqual([other.resolved, own.resolved]);
+  f.setVerify(() => true);
+  refused(() => f.issue({ expiresAt: 3000 }), "CONFLICT");
+  expect(f.registry.status(f.authority)).toMatchObject({ active: 0, quarantined: 0 });
 });

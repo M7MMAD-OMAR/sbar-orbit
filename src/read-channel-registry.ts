@@ -5,6 +5,8 @@
  * a secret plus verified PID/birth is cooperative same-UID attribution, not a sandbox.
  * No reader credit is released here. onRevoke must invalidate downstream grants; charged
  * reader work and retained data remain owned by their separate budget/drain lifecycle.
+ * onRevoke must return undefined synchronously. Throwing/nonvoid callbacks retain
+ * the revoked entry/binding in bounded quarantine; Promise completion never frees it.
  * Active downstream integration requires synchronous onRevoke invalidation AND an
  * isCurrent(channel) final-delivery fence; omitting either is an unqualified bridge.
  */
@@ -158,9 +160,20 @@ export class ReadChannelRegistry {
     entry.revoked = true; this.#retiredKeys.add(entry.input.key); this.#advance();
     // Invalidate before notification. Failure retains this bounded slot in quarantine.
     // Notification never constitutes a stop receipt or releases downstream reader credit.
-    try { this.#onRevoke?.(entry.resolved); }
-    catch { return; }
-    this.#records.delete(entry.input.key);
+    try {
+      const result: unknown = this.#onRevoke?.(entry.resolved);
+      if (result !== undefined) {
+        // Observe ordinary native/cross-realm promises only. Arbitrary thenables
+        // are not synchronous notification ACKs. Custom Promise constructor/
+        // @@species may prevent observer installation and leave rejection unhandled;
+        // those hostile hooks are outside this ordinary-Promise observation proof.
+        if (utilTypes.isPromise(result)) {
+          try { void Promise.prototype.then.call(result, undefined, () => {}); } catch { /* Quarantine remains. */ }
+        }
+        return;
+      }
+    } catch { return; }
+    if (this.#records.get(entry.input.key) === entry) this.#records.delete(entry.input.key);
   }
   #sweep(): void {
     if (this.#clockFault) return;
@@ -187,19 +200,28 @@ export class ReadChannelRegistry {
   }
   #live(entry: Entry): boolean {
     const generation = this.#generation;
-    let okay = false;
+    let okay = false, invalid = false;
     try {
       const before = this.#time();
-      if (before < entry.input.expiresAt && generation === this.#generation && !this.#closed
-          && !entry.revoked && this.#records.get(entry.input.key) === entry && this.#proof(entry.input)) {
-        const after = this.#time();
-        // The last clock callback can itself revoke/close. Fence AFTER it returns.
-        okay = after < entry.input.expiresAt && generation === this.#generation && !this.#closed
-          && !entry.revoked && this.#records.get(entry.input.key) === entry;
+      invalid = before >= entry.input.expiresAt || this.#closed || entry.revoked || this.#records.get(entry.input.key) !== entry;
+      if (!invalid && generation === this.#generation) {
+        const proof = this.#proof(entry.input);
+        if (proof) {
+          const after = this.#time();
+          // An independently expired/revoked/replaced target is invalid. Global
+          // drift alone only denies this check; it must not retire another entry.
+          invalid = after >= entry.input.expiresAt || this.#closed || entry.revoked || this.#records.get(entry.input.key) !== entry;
+          okay = !invalid && generation === this.#generation;
+        } else {
+          // A verifier that also mutated unrelated registry state did not yield
+          // a stable target-specific failure. Preserve until a fresh check.
+          invalid = this.#closed || entry.revoked || this.#records.get(entry.input.key) !== entry || generation === this.#generation;
+        }
       }
+    } catch {
+      invalid = this.#closed || entry.revoked || this.#records.get(entry.input.key) !== entry || generation === this.#generation;
     }
-    catch { okay = false; }
-    if (!okay) this.#invalidate(entry);
+    if (invalid) this.#invalidate(entry);
     return okay;
   }
   #fence(entry: Entry, generation: number): boolean {
