@@ -51,7 +51,11 @@ sbar-orbit native-present '{"requestId":"show-calculator-workspace-2","workspace
 sbar-orbit native-present @/absolute/path/presentation.json
 ```
 
-`native-present JSON|@FILE|-` also accepts standard input. Supply a stable
+`native-present JSON|@FILE|-` also accepts standard input. JSON read from stdin
+is limited to 1 MiB of raw bytes; input at the limit still requires EOF. This
+bound does not impose a read deadline or qualify native buffering. The separate
+`@FILE` path still has its existing pre-read size check, not a pinned-descriptor
+growth or replacement guarantee. Supply a stable
 `requestId` in the document, or set `ORBIT_REQUEST_ID`; otherwise the CLI generates
 one. Reuse the identity after an uncertain reply. The broker rejects a conflicting
 workspace or monitor for an existing identity, and does not replay an uncertain

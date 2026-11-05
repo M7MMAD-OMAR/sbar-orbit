@@ -22,10 +22,47 @@ import { configureCaller } from "./caller";
  * A malformed document now says what it could not parse and where it came from, rather than
  * surfacing Bun's parser message with no context.
  */
+/** Stdin byte bound only. Native stream buffers and time waiting for input are not qualified here. */
+async function readActionStdin(): Promise<string> {
+  const maximum = 1_048_576;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let used = 0, ended = false;
+  const oversized = new OrbitError("INVALID_REQUEST", "The action document from standard input exceeds 1 MiB.");
+  try {
+    const bytes = new Uint8Array(maximum); // Allocate before acquiring an owned reader.
+    reader = Bun.stdin.stream().getReader(); // No runtime chunk-size guarantee.
+    for (;;) {
+      const part = await reader.read(); // Only one owned read is pending at a time.
+      if (part.done) {
+        // Preserve Response.text UTF-8 replacement/BOM behavior, after counting raw bytes.
+        const text = new TextDecoder("utf-8").decode(bytes.subarray(0, used));
+        ended = true; return text;
+      }
+      if (!(part.value instanceof Uint8Array)) throw new Error("Unexpected input chunk");
+      if (part.value.byteLength === 0) continue;
+      if (part.value.byteLength > maximum - used) throw oversized;
+      bytes.set(part.value, used); used += part.value.byteLength;
+    }
+  } catch (error) {
+    if (error === oversized) throw oversized;
+    throw new OrbitError("INVALID_REQUEST", "Could not read action document from standard input");
+  }
+  finally {
+    if (reader) {
+      if (!ended) {
+        // Cancellation is requested, not awaited or treated as producer-stop proof.
+        // There is no pending read after an oversized fulfilled chunk is rejected.
+        try { void reader.cancel().catch(() => {}); } catch { /* Fixed input refusal remains. */ }
+      }
+      try { reader.releaseLock(); } catch { /* No second read or raw exception disclosure. */ }
+    }
+  }
+}
+
 async function actionDocument(argument: string | undefined): Promise<unknown> {
   let source = "the command line";
   let raw = argument ?? "null";
-  if (argument === "-") { source = "standard input"; raw = await new Response(Bun.stdin.stream()).text(); }
+  if (argument === "-") { source = "standard input"; raw = await readActionStdin(); }
   else if (argument?.startsWith("@")) {
     const path = argument.slice(1);
     source = path;

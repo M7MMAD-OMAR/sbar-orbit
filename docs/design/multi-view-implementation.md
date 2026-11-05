@@ -1081,3 +1081,19 @@ Owned socket and filesystem fixtures passed 23 focused tests. The final verifier
 passed 1027 tests, with 5 skipped and 0 failed, across 101 files in 82.56 seconds;
 strict TypeScript checking also passed. No original application or Windows
 machine was used for these fixtures.
+
+## 33. Bounded CLI standard input
+
+The actual CLI now reads action JSON from stdin with a 1 MiB raw-byte limit,
+checking each chunk before copying into a fixed accumulator. Oversize and read
+failures have fixed, content-free errors. EOF is still required at the exact
+limit; native stream buffering, stalled input and producer termination are not
+qualified. Existing `@FILE` handling was not changed, and its pre-read size check
+does not establish safe behavior against path replacement or file growth.
+
+Owned Linux CLI fixtures cover the exact byte boundary, fragmented UTF-8, an
+oversize pipe without producer EOF, and error redaction. A prior fixture revision
+failed on an unawaited Bun stdin write; its child and pipe state became unknown
+and were not signalled by numeric PID. The feeder was corrected and the final
+verifier passed 1037 tests, with 5 skipped and 0 failed, across 102 files in
+81.70 seconds. Strict TypeScript checking also passed.
