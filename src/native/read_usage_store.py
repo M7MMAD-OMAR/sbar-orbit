@@ -131,12 +131,16 @@ def _serial(method):
 class ReadUsageStore:
     MAX_BYTES = 256
     LOCK = ".read-usage.lock"
+    SESSION = ".read-usage.session"
+    SESSION_BYTES = b"ORB-USAGE-SESSION-1\n"
 
     def __init__(self, root, entries, *, expected_root_fd=None):
         self._mutex = threading.RLock()
         self._busy = self._closed = self._broken = False
         self._pid = os.getpid()
         self._pins, self._lock = [], None
+        self._lock_created = False
+        self._session_fd = self._session_identity = None
         self._expected_fd = None
         self._expected_identity = None
         self._entries = []
@@ -188,8 +192,12 @@ class ReadUsageStore:
                 _fail()
             self._namespace()
             self._root_guard()  # Recheck the full path/pin binding before the first mutation.
-            self._lock = os.open(self.LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
-                                 0o600, dir_fd=self._pins[-1])
+            lock_flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+            try:
+                self._lock = os.open(self.LOCK, lock_flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=self._pins[-1])
+                self._lock_created = True
+            except FileExistsError:
+                self._lock = os.open(self.LOCK, lock_flags, dir_fd=self._pins[-1])
             self._file(self._lock)
             self._lock_identity = _identity(self._lock)
             try:
@@ -210,7 +218,7 @@ class ReadUsageStore:
     def _namespace(self):
         with os.scandir(self._pins[-1]) as entries:
             for count, entry in enumerate(entries):
-                if count >= 13 or entry.name not in self._allowed:
+                if count >= len(self._allowed) or entry.name not in self._allowed:
                     _fail()
 
     def _file(self, fd):
@@ -266,6 +274,49 @@ class ReadUsageStore:
             self._root_guard()
             self._named(self.LOCK, self._lock_identity)
             self._namespace()
+            if self._session_fd is not None:
+                self._file(self._session_fd)
+                if _identity(self._session_fd) != self._session_identity:
+                    _fail()
+                self._named(self.SESSION, self._session_identity)
+                if os.pread(self._session_fd, len(self.SESSION_BYTES)+1, 0) != self.SESSION_BYTES:
+                    _fail()
+        except BaseException:
+            self._broken = True
+            _fail()
+
+    @_serial
+    def _seal_session(self):
+        """Service-only, one-shot same-root crash fence, never a freshness proof.
+
+        Owner must provision a genuinely fresh exclusive root and exclude legacy
+        writers. Pre-seal crashes/orphans and selection of another root need an
+        authoritative registry before production. No boolean/clear/unlink API.
+        """
+        try:
+            self._guard()
+            if self._session_fd is not None or not self._lock_created:
+                _fail()
+            with os.scandir(self._pins[-1]) as entries:
+                if any(item.name != self.LOCK for item in entries):
+                    _fail()
+            self._root_guard()
+            self._session_fd = os.open(self.SESSION, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+                                       0o600, dir_fd=self._pins[-1])
+            self._file(self._session_fd)
+            self._session_identity = _identity(self._session_fd)
+            self._write(self._session_fd, self.SESSION_BYTES)
+            os.fsync(self._session_fd)
+            os.fsync(self._pins[-1])
+            self._root_guard()
+            self._named(self.LOCK, self._lock_identity)
+            self._named(self.SESSION, self._session_identity)
+            if os.pread(self._session_fd, len(self.SESSION_BYTES)+1, 0) != self.SESSION_BYTES:
+                _fail()
+            # Only this exact live owner recognizes its retained marker. All new
+            # ordinary Store constructors still reject this unknown namespace.
+            self._allowed.add(self.SESSION)
+            self._guard()
         except BaseException:
             self._broken = True
             _fail()
@@ -406,7 +457,8 @@ class ReadUsageStore:
         if self._closed:
             return
         self._closed = True
-        fds, self._pins = [self._lock, self._expected_fd, *reversed(self._pins)], []
+        fds, self._pins = [self._session_fd, self._lock, self._expected_fd, *reversed(self._pins)], []
+        self._session_fd = self._session_identity = None
         self._lock = self._expected_fd = None
         if not _close_fds(fds):
             _fail()

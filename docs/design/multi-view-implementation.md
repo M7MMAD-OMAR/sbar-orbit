@@ -911,3 +911,21 @@ a service may finish a durable write and lose its ACK before closing its store l
 a new owner must not infer safety merely from reacquiring that lock. A persistent
 barrier bound to the actual store root and independently authorized owner is still
 required. No production route or native application acceptance is claimed.
+
+## 25. Persistent service session marker
+
+The dormant [usage service](../../src/native/read_usage_store_service.py) now seals
+a same-root session marker while holding the actual store flock, before returning
+from construction or accepting a request. It verifies the pinned marker and root
+during service checks. Closing or failing the service does not remove the marker;
+a subsequent ordinary store or service refuses that root. This is a conservative
+single-session restriction, not a reconciliation mechanism.
+
+The owner must independently provision a truly fresh, exclusive root and preserve
+its authoritative mapping. A crash before the marker is durable, an alternate root,
+legacy writers, and hostile same-user filesystem changes remain outside this proof.
+An ACK can reach the peer before a later server-side check reports failure, so the
+marker does not establish an atomic client acknowledgement or writer-stop proof.
+The TypeScript and Python components have still not been run together. Focused tests
+passed all 42 store and 25 service Python cases; the full verifier passed 922 tests,
+with 5 skipped and 0 failed, across 89 files in 85.76 seconds.

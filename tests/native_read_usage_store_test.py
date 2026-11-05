@@ -548,5 +548,73 @@ class UsageStoreTests(unittest.TestCase):
         self.assertTrue(stat.S_ISDIR(os.fstat(owner).st_mode))
 
 
+    def test_session_seal_real_fsync_order_and_permanent_default_constructor_fence(self):
+        store = self.store()
+        events = []
+        def fsync(fd):
+            path = self.fd_path(fd)
+            if path.name == store.SESSION: events.append("marker")
+            if path == self.root: events.append("root")
+            return self.real_fsync(fd)
+        with patch.object(os, "fsync", side_effect=fsync): store._seal_session()
+        self.assertEqual(events, ["marker", "root"])
+        marker = self.root / store.SESSION
+        identity = (marker.stat().st_dev, marker.stat().st_ino)
+        self.assertEqual(marker.read_bytes(), store.SESSION_BYTES)
+        store.commit(self.first, self.value())
+        store.commit(self.first, self.value(2, False))
+        store.close()
+        self.assertEqual((marker.stat().st_dev, marker.stat().st_ino), identity)
+        self.assertEqual(marker.read_bytes(), store.SESSION_BYTES)
+        self.code("UNCONFIRMED", self.store)
+
+    def test_session_seal_rejects_existing_lock_or_previous_data_without_adoption(self):
+        first = self.store(); first.close()
+        second = self.store()
+        self.code("UNCONFIRMED", second._seal_session)
+        self.assertFalse((self.root / second.SESSION).exists())
+
+    def test_session_seal_fsync_failures_keep_marker_and_refuse_reopen(self):
+        store = self.store()
+        def fsync(fd):
+            if self.fd_path(fd).name == store.SESSION: raise OSError("Owned marker fsync failure")
+            return self.real_fsync(fd)
+        with patch.object(os, "fsync", side_effect=fsync): self.code("UNCONFIRMED", store._seal_session)
+        self.assertTrue((self.root / store.SESSION).exists())
+        self.code("UNCONFIRMED", lambda: store.commit(self.first, self.value()))
+        store.close()
+        self.code("UNCONFIRMED", self.store)
+
+    def test_session_marker_swap_and_content_change_poison_live_store(self):
+        store = self.store(); store._seal_session()
+        marker = self.root / store.SESSION
+        marker.rename(self.base / "original-session")
+        marker.write_bytes(store.SESSION_BYTES); marker.chmod(0o600)
+        self.code("UNCONFIRMED", lambda: store.commit(self.first, self.value()))
+        store.close()
+        self.code("UNCONFIRMED", self.store)
+
+    def test_session_marker_cannot_be_sealed_twice_or_cleared_by_close(self):
+        store = self.store(); store._seal_session()
+        marker = self.root / store.SESSION
+        before = marker.read_bytes()
+        self.code("UNCONFIRMED", store._seal_session)
+        store.close()
+        self.assertEqual(marker.read_bytes(), before)
+        self.assertFalse(hasattr(store, "clear_session"))
+
+    def test_live_session_namespace_extra_slot_is_owned_instance_only(self):
+        entries = tuple((object(), str(index)*64) for index in range(4))
+        store = self.store(entries=entries); store._seal_session()
+        for _owner, key in entries:
+            for suffix in (".json", ".pending", ".writing"):
+                path = self.root / (key + suffix)
+                path.write_bytes(b"x"); path.chmod(0o600)
+        self.assertEqual(len(list(self.root.iterdir())), 14)
+        store._guard()
+        store.close()
+        self.code("UNCONFIRMED", lambda: self.store(entries=entries))
+
+
 if __name__ == "__main__":
     unittest.main()

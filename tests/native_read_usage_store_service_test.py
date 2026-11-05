@@ -47,6 +47,7 @@ class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix=".orbit-service-", dir=Path.home())
         self.root_fd = None
+        self.extra_root_fds, self.service_roots = [], {}
         self.services, self.clients, self.calls, self.releases = [], [], [], []
         self.addCleanup(self.cleanup_owned)
         self.base = Path(self.temp.name)
@@ -73,8 +74,8 @@ class ServiceTests(unittest.TestCase):
         for client in self.clients:
             try: client.close()
             except OSError: errors.append("client-close")
-        if self.root_fd is not None:
-            try: os.close(self.root_fd)
+        for fd in ([self.root_fd] if self.root_fd is not None else []) + self.extra_root_fds:
+            try: os.close(fd)
             except OSError: errors.append("root-close")
         if unknown:
             self.temp._finalizer.detach()  # Preserve private artifacts if a syscall has not returned.
@@ -83,13 +84,22 @@ class ServiceTests(unittest.TestCase):
         if errors: raise RuntimeError("Owned service fixture cleanup unconfirmed: " + ",".join(errors))
 
     def new_service(self):
+        # Every independent session gets a genuinely fresh fixture root. Old roots
+        # retain their permanent marker and are never silently reinitialized.
+        root, root_fd = self.root, self.root_fd
+        if self.services:
+            root = self.base / ("store-" + str(len(self.services)))
+            root.mkdir(mode=0o700)
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            self.extra_root_fds.append(root_fd)
         server, client = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             server.setblocking(False); client.setblocking(False)
-            service = subject.ReadUsageStoreService(server, str(self.root), self.entries, expected_root_fd=self.root_fd)
+            service = subject.ReadUsageStoreService(server, str(root), self.entries, expected_root_fd=root_fd)
         except BaseException:
             server.close(); client.close(); raise
         self.services.append(service); self.clients.append(client)
+        self.service_roots[service] = (root, root_fd)
         return service, client
 
     def call(self, service=None, **values):
@@ -128,13 +138,18 @@ class ServiceTests(unittest.TestCase):
 
     def fail(self, payload, service=None, client=None):
         service = service or self.service; client = client or self.client
-        call = self.call(service); self.send(payload, client); self.join(call)
+        # Queue while the owned channel is open, before a rejecting service can close it.
+        self.send(payload, client); call = self.call(service); self.join(call)
         self.assertIsInstance(call.error, subject.ReadUsageServiceError)
         self.assertNotIn(SECRET, str(call.error))
         self.assertIsNone(call.result)
         self.assertTrue(service.status()["failed"])
         self.assertTrue(service.status()["closed"])
-        self.assertEqual(client.recv(1024), b"")
+        try:
+            reply = client.recv(1024)
+        except ConnectionResetError:
+            reply = b""  # Unread request can reset AF_UNIX on close; never an ACK.
+        self.assertEqual(reply, b"")
 
     def disk(self, slot=0):
         return json.loads((self.root / (self.entries[slot][1] + ".json")).read_text())
@@ -313,9 +328,9 @@ class ServiceTests(unittest.TestCase):
             call = self.call(); self.send(frame(request())); self.join(call)
         self.assertIsInstance(call.error, subject.ReadUsageServiceError)
         with self.assertRaises(subject.ReadUsageServiceError): self.service.serve_one(deadline=time.monotonic()+1)
-        with ReadUsageStore(str(self.root), self.entries, expected_root_fd=self.root_fd) as store:
-            evidence = store.read_evidence(self.entries[0][0])
-            self.assertFalse(evidence["enabled"]); self.assertEqual(evidence["acknowledgement"], "unknown")
+        self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+        self.assertTrue(self.disk()["enabled"])  # Disk bytes are NOT permission or receipt.
+        with self.assertRaises(ReadUsageStoreError): ReadUsageStore(str(self.root), self.entries, expected_root_fd=self.root_fd)
 
     def test_constructor_root_fd_mismatch_precedes_namespace_or_lock_mutation(self):
         other = self.base / "other"; other.mkdir(mode=0o700)
@@ -339,6 +354,69 @@ class ServiceTests(unittest.TestCase):
             server, client = socket.socketpair(); server.setblocking(False)
             try:
                 with self.assertRaises(subject.ReadUsageServiceError): subject.ReadUsageStoreService(server, str(self.root), entries, expected_root_fd=self.root_fd)
+            finally: server.close(); client.close()
+
+    def test_session_marker_exists_before_first_request_and_survives_clean_close(self):
+        marker = self.root / ReadUsageStore.SESSION
+        self.assertEqual(marker.read_bytes(), ReadUsageStore.SESSION_BYTES)
+        identity = (marker.stat().st_dev, marker.stat().st_ino)
+        self.roundtrip(request())
+        self.assertTrue(self.service.close())
+        self.assertEqual((marker.stat().st_dev, marker.stat().st_ino), identity)
+        with self.assertRaises(ReadUsageStoreError): ReadUsageStore(str(self.root), self.entries, expected_root_fd=self.root_fd)
+        server, client = socket.socketpair(); server.setblocking(False)
+        try:
+            with self.assertRaises(subject.ReadUsageServiceError): subject.ReadUsageStoreService(server, str(self.root), self.entries, expected_root_fd=self.root_fd)
+        finally: server.close(); client.close()
+
+    def test_independent_fresh_root_session_works_without_reusing_quarantined_root(self):
+        self.service.close()
+        other, client = self.new_service()
+        self.roundtrip(request(), other, client)
+        root, _fd = self.service_roots[other]
+        self.assertNotEqual(root, self.root)
+        self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+        self.assertTrue((root / ReadUsageStore.SESSION).exists())
+
+    def test_marker_replacement_after_commit_prevents_ack_and_is_not_removed(self):
+        native = ReadUsageStore.commit
+        def commit(store, conversation, value):
+            native(store, conversation, value)
+            marker = self.root / ReadUsageStore.SESSION
+            marker.rename(self.base / "saved-marker")
+            marker.write_bytes(ReadUsageStore.SESSION_BYTES); marker.chmod(0o600)
+        with patch.object(ReadUsageStore, "commit", commit): self.fail(frame(request()))
+        self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+        self.assertTrue((self.base / "saved-marker").exists())
+        self.assertTrue(self.disk()["enabled"])
+
+    def test_corrupt_marker_after_readiness_invalidates_service_before_any_commit(self):
+        marker = self.root / ReadUsageStore.SESSION
+        marker.write_bytes(b"invalid")
+        self.fail(frame(request()))
+        self.assertEqual(marker.read_bytes(), b"invalid")
+        self.assertFalse((self.root / (self.entries[0][1] + ".json")).exists())
+
+    def test_marker_file_or_directory_fsync_failure_never_publishes_service(self):
+        native = os.fsync
+        for index, stage in enumerate(("marker", "directory")):
+            root = self.base / ("fault-" + stage); root.mkdir(mode=0o700)
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC); self.extra_root_fds.append(fd)
+            root_info = os.fstat(fd)
+            server, client = socket.socketpair(); server.setblocking(False)
+            def fsync(descriptor):
+                path = os.readlink("/proc/self/fd/" + str(descriptor))
+                info = os.fstat(descriptor)
+                marker_exists = (root / ReadUsageStore.SESSION).exists()
+                if (stage == "marker" and path.endswith(ReadUsageStore.SESSION)
+                        or stage == "directory" and marker_exists and (info.st_dev, info.st_ino) == (root_info.st_dev, root_info.st_ino)):
+                    raise OSError("Owned session fsync failpoint")
+                return native(descriptor)
+            try:
+                with patch.object(os, "fsync", side_effect=fsync):
+                    with self.assertRaises(subject.ReadUsageServiceError): subject.ReadUsageStoreService(server, str(root), self.entries, expected_root_fd=fd)
+                self.assertTrue((root / ReadUsageStore.SESSION).exists())
+                with self.assertRaises(ReadUsageStoreError): ReadUsageStore(str(root), self.entries, expected_root_fd=fd)
             finally: server.close(); client.close()
 
     def test_status_and_error_are_content_free_and_no_peer_or_stop_authority(self):

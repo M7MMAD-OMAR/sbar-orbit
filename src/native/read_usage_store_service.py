@@ -2,6 +2,11 @@
 
 Owner transfers exclusive lifetime of one pre-established nonblocking AF_UNIX
 stream socket and supplies actual protected object/key mappings and root FD.
+The service always seals a permanent same-root session marker under the actual
+Store flock before construction returns. The owner separately guarantees a newly
+provisioned root, no legacy writers/orphan and a stable authoritative root mapping;
+absence of a marker is NOT historical cleanliness. Pre-seal failure/orphan startup
+remains unqualified. Close never removes the marker, even after apparent success.
 No socket connect/listen, subprocess, peer authentication, environment, paths or
 keys on the wire. Same-UID hostile code and externally closed/reused FDs are not
 an isolation boundary. The owner must keep socket descriptors private/exclusive.
@@ -21,7 +26,10 @@ request. Already sent bytes cannot be retracted. The client independently poison
 on channel failure. Local success linearizes at the final mutex publication, not
 future authority. The owner waits for each serve_one return before the next call;
 clients wait for ACK and do not pipeline. Peeking rejects only already queued extra
-bytes, not arbitrary future sends. FD-alias exclusion is a trusted owner contract,
+bytes, not arbitrary future sends. A complete ACK can reach the peer BEFORE a
+late root/marker failure is observed; there is no atomic filesystem/client-ACK
+authorization boundary. Trusted root stability and client failure fencing remain
+required. FD-alias exclusion is a trusted owner contract,
 not enforced by the socket-object weak claim. Unknown/lost ACK must poison the external coordinator, never replay
 or restore enabled state from disk. Local close is not peer/process-stop proof.
 """
@@ -124,6 +132,7 @@ class ReadUsageStoreService:
         failed = False
         try:
             self._store = ReadUsageStore(root, entries, expected_root_fd=expected_root_fd)
+            self._store._seal_session()  # Durable same-root fence BEFORE any service handle/request.
         except BaseException:
             failed = True
         if failed:
@@ -143,7 +152,13 @@ class ReadUsageStoreService:
             if self._failed or self._closing or self._closed: _fail()
         info = os.fstat(self._connection.fileno())
         if ((info.st_dev, info.st_ino) != self._socket_pin or os.get_blocking(self._connection.fileno())): _fail()
-        return sampled
+        self._store._guard()  # Revalidate retained root/lock/session marker immediately before I/O/ACK.
+        after = time.monotonic()
+        if (not _finite(after) or after < sampled or after >= deadline
+                or cancel is not None and threading.Event.is_set(cancel)): _fail()
+        with self._mutex:
+            if self._failed or self._closing or self._closed: _fail()
+        return after
 
     def _no_extra(self):
         try:
