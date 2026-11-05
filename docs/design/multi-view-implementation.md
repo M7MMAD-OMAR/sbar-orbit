@@ -893,3 +893,21 @@ its Python traceback being surfaced. The standalone fixture subsequently passed;
 its wrapper now includes diagnostics on failure. After the service cleanup fixes,
 the full verifier passed 910 tests, with 5 skipped and 0 failed, across 88 files in
 103.19 seconds. The earlier failure is not attributed to a proven cause.
+
+## 24. Owned Unix socket adapter
+
+The fixture-only [Unix socket adapter](../../src/read-usage-unix-channel.ts) accepts
+an already established, exclusive owner-supplied socket, copies bounded data and
+fences transport failures before reporting them. Two tests use actual private Unix
+sockets with the real TypeScript transport and coordinator; the peer implements
+the protocol as a fixture, not the Python service. Other tests cover backpressure,
+startup failures and uncertain fixture cleanup. Strict TypeScript checking passed;
+the full verifier passed 922 tests, with 5 skipped and 0 failed, across 89 files in
+80.89 seconds.
+
+Socket adoption and identity, slot correspondence, root-domain crash quarantine,
+worker lifetime and cross-language execution are still unqualified. In particular,
+a service may finish a durable write and lose its ACK before closing its store lock;
+a new owner must not infer safety merely from reacquiring that lock. A persistent
+barrier bound to the actual store root and independently authorized owner is still
+required. No production route or native application acceptance is claimed.
