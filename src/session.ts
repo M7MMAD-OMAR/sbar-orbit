@@ -4,7 +4,8 @@ import { managedUpdateRoot, requireUpdateAdmission } from "./update-admission";
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { types as nodeTypes } from "node:util";
-import { NativeBackend, parseHandoff, parseNativeOpen, parseNativePresentation } from "./hyprland";
+import { NativeBackend, isSemanticActionType, parseHandoff, parseNativeOpen, parseNativePresentation } from "./hyprland";
+import { ConversationUsage } from "./conversation-usage";
 import { nativeOptionsFromEnv } from "./native-worker";
 import { OrbitError, record, text } from "./errors";
 import { errorPayload, preflightDisposition, refusedDisposition } from "./error-disposition";
@@ -137,6 +138,8 @@ function readFormats(value: unknown): readonly ReadViewFormat[] {
 
 /** Seams for the lifecycle and arbitration timing; production uses the defaults. */
 export interface SessionOptions {
+  /** Trusted fixture seam for semantic pre-dispatch usage checks; never an RPC field. */
+  semanticUsageEnabled?: (ownerId: string) => Promise<boolean>;
   /** Seconds before a disconnected adapter's sessions are stopped. Default: the setting, then 60. */
   graceSeconds?: () => number;
   /** How long a session may sit in closing before the broker forces it closed. */
@@ -804,7 +807,40 @@ export class Sessions {
     return result;
   }
   private decided(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string): Promise<unknown> {
-    return this.enqueue(session, this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId));
+    const admitted = this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId);
+    if (!isSemanticActionType(action.type)) return this.enqueue(session, admitted);
+    return this.enqueue(session, async () => {
+      this.ensureSemanticRunning(session);
+      await this.semanticUsage(session);
+      const policy = session.policy;
+      try {
+        try { await session.backend.prepareAction(action); }
+        catch (error) {
+          // Preparation has no SEND path, even when its reply or native channel
+          // is lost. A fresh observation is still required before another choice.
+          const metadata = { disposition: { delivery: "not-delivered", retry: "unsafe" }, suggestion: "observe-before-retry" };
+          if (error instanceof OrbitError)
+            throw new OrbitError(error.code, error.message, error.diagnosticId, metadata);
+          throw new OrbitError("BACKEND_ERROR", "Native semantic preparation failed before dispatch", undefined, metadata);
+        }
+        this.ensureSemanticRunning(session);
+        if (session.policy !== policy)
+          throw new OrbitError("POLICY_DENIED", "Session policy changed during semantic preparation", undefined, refusedDisposition);
+        return await this.admit(session, action, destination, method, methodIsImplied, inputLength, requestId, true)();
+      } finally { await session.backend.cancelPreparedAction(action); }
+    });
+  }
+
+  private ensureSemanticRunning(session: Session) {
+    this.ensureOpen(session);
+    if (session.state !== "running") throw new OrbitError("PAUSED", "Session is paused or pausing", undefined, refusedDisposition);
+  }
+  private async semanticUsage(session: Session) {
+    if (this.options?.semanticUsageEnabled) {
+      if (await this.options.semanticUsageEnabled(session.ownerId) !== true)
+        throw new OrbitError("ORBIT_DISABLED", "Orbit is disabled for this conversation", undefined, refusedDisposition);
+    } else if (typeof session.ownerId === "string" && session.ownerId.startsWith("conv:"))
+      await new ConversationUsage(session.ownerId.slice(5)).assertEnabled();
   }
   /** Refuse synchronously at admission, then re-decide current authority at queue dispatch. */
   private admit(session: Session, action: { type: string }, destination: string | undefined, method: string | undefined, methodIsImplied: boolean, inputLength: number | undefined, requestId: string, atDispatch = false): () => Promise<unknown> {
@@ -996,6 +1032,13 @@ export class Sessions {
   }
   private async guarded(session: Session, action: { type: string }) {
     this.ensureOpen(session);
+    if (isSemanticActionType(action.type)) {
+      const policy = session.policy;
+      await this.semanticUsage(session);
+      this.ensureSemanticRunning(session);
+      if (session.policy !== policy)
+        throw new OrbitError("POLICY_DENIED", "Session policy changed before semantic dispatch", undefined, refusedDisposition);
+    }
     const result = await session.backend.act(action);
     this.taintedBy(session, action.type);
     return result;
@@ -1358,6 +1401,7 @@ export class Sessions {
         ...(params.allow === undefined ? {} : { allow: parseActionClasses(params.allow) }),
       };
       session.policy = narrow(session.policy, limits);
+      if (typeof session.backend.cancelPreparedActions === "function") await session.backend.cancelPreparedActions();
       // Recorded so a reader can see that a narrowing happened, and whether it happened before or
       // after a page had spoken to the session.
       void this.record(session, journalEntry({
@@ -1393,12 +1437,16 @@ export class Sessions {
       }));
       throw new OrbitError("POLICY_DENIED", decision.reason);
     }
-    if (Object.keys(params).some(key => !["sessionId", "appId", "windowId", "format"].includes(key)))
+    if (Object.keys(params).some(key => !["sessionId", "appId", "windowId", "format", "refs", "skeleton", "root"].includes(key)))
       throw new OrbitError("INVALID_REQUEST", "Unknown native observation fields");
     if (params.format !== undefined && !["image", "text", "both"].includes(String(params.format)))
       throw new OrbitError("INVALID_REQUEST", "Observation format must be image, text or both");
+    const hasSelectors = ["refs", "skeleton", "root"].some(key => Object.hasOwn(params, key));
+    if (hasSelectors && (params.appId === undefined || params.windowId === undefined))
+      throw new OrbitError("INVALID_REQUEST", "Snapshot selectors require an explicit native window");
     const selected = params.appId === undefined && params.windowId === undefined ? undefined
-      : { appId: params.appId, windowId: params.windowId };
+      : { appId: params.appId, windowId: params.windowId,
+        ...Object.fromEntries(["refs", "skeleton", "root"].filter(key => Object.hasOwn(params, key)).map(key => [key, params[key]])) };
     const frame = await session.backend.observe(selected, params.format as "image" | "text" | "both" | undefined);
     this.taintedBy(session, "observe");
     return frame;

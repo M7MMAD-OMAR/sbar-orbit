@@ -12,6 +12,8 @@ from src.native.control import ActionControl, ControlError
 from src.native.host import read_plan, HostError, TargetClosed, UnsupportedText
 from src.native.session import NativeSession, SessionError, ApplicationControlEnded, OpeningDeliveryUncertain, ApplicationOwnerBusy, ApplicationLeaseConflict, PresentationNotReady, CaptureUnavailable, CaptureDeadlineExceeded, CaptureGeometryChanged, identifier
 from src.native.plugin_compatibility import NativeCompatibilityError
+from src.native.session import NativeRefError
+from src.native.semantic_actions import SemanticError, for_session as semantic_actions
 from src.native.host import verify_host
 
 
@@ -53,7 +55,7 @@ FATAL_PREFIX = "ORBIT-WORKER-FATAL "
 
 def failure_response(error, session_type):
     """Classify one failure. HostError text is fixed by host.py and names the command that repairs it."""
-    code = ("CAPTURE_UNAVAILABLE" if isinstance(error, CaptureUnavailable)
+    code = (error.code if isinstance(error, (NativeRefError, SemanticError)) else "CAPTURE_UNAVAILABLE" if isinstance(error, CaptureUnavailable)
             else "CAPTURE_DEADLINE_EXCEEDED" if isinstance(error, CaptureDeadlineExceeded)
             else "CAPTURE_GEOMETRY_CHANGED" if isinstance(error, CaptureGeometryChanged)
             else "TEXT_UNSUPPORTED" if isinstance(error, UnsupportedText)
@@ -77,7 +79,10 @@ def failure_response(error, session_type):
                              "clipboard fallback is unavailable to preserve shared selections. No paste key was sent."),
     }
     message = fixed_messages.get(code) or (str(error)[:300] if classified else "Native request failed; see the private worker log")
-    return {"ok": False, "error": {"code": code, "message": message}}
+    detail = {"code": code, "message": message}
+    if isinstance(error, SemanticError):
+        detail.update(disposition={"delivery": error.delivery, "retry": "unsafe"}, suggestion="observe-before-retry")
+    return {"ok": False, "error": detail}
 
 
 def announce_fatal(error):
@@ -138,13 +143,23 @@ def main(directory, control_directory, plan_path, session_type=None):
                             result = {"ready": True}
                         elif method == "act":
                             result = session.execute(params)
+                        elif method == "semantic-prepare" and set(params) == {"action"}:
+                            result = semantic_actions(session).prepare(params["action"])
+                        elif method == "semantic-send" and set(params) == {"action", "token"}:
+                            result = semantic_actions(session).send(identifier(params["token"]), params["action"])
+                        elif method == "semantic-cancel" and set(params) == {"token"}:
+                            result = semantic_actions(session).cancel(identifier(params["token"]))
                         elif method in ("claim", "candidates", "open", "monitors", "workspace_inventory", "present", "reveal") and session_type is not NativeSession:
                             result = getattr(session, method)(params)
                         elif method in ("pause", "resume") and not params and session_type is not NativeSession:
+                            if method == "pause":
+                                semantic_actions(session).close()
                             result = session.set_paused(method == "pause")
                         elif method == "close-application" and set(params) == {"appId"}:
+                            semantic_actions(session).close()
                             result = session.close_application(params["appId"]) or {"closed": True}
                         elif method == "close" and not params:
+                            semantic_actions(session).close()
                             session.close()
                             result = {"closed": True}
                         else:
@@ -160,6 +175,7 @@ def main(directory, control_directory, plan_path, session_type=None):
                     break
         finally:
             if session is not None:
+                semantic_actions(session).close()
                 session.close()
 
 

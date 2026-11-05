@@ -132,11 +132,14 @@ function validAdmission(value: unknown): value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const info = value as Record<string, unknown>;
   const fields = ["schema", "admission_paused", "live_roots", "tracked_scopes", "scopes_empty", "legacy_enrollment", "ready"];
-  if (Object.keys(info).length !== fields.length || !fields.every(key => key in info) || info.schema !== 1
+  const pending = Object.hasOwn(info, "semantic_pending") ? info.semantic_pending : 0;
+  if (Object.keys(info).length !== fields.length + (Object.hasOwn(info, "semantic_pending") ? 1 : 0)
+      || !fields.every(key => key in info) || info.schema !== 1
+      || typeof pending !== "number" || !Number.isInteger(pending) || pending < 0 || pending > 8
       || !["admission_paused", "scopes_empty", "legacy_enrollment", "ready"].every(key => typeof info[key] === "boolean")
       || !["live_roots", "tracked_scopes"].every(key => typeof info[key] === "number"
         && Number.isInteger(info[key]) && info[key] >= 0 && info[key] <= 128)) return false;
-  return info.ready === (info.admission_paused && info.live_roots === 0 && info.scopes_empty && !info.legacy_enrollment);
+  return info.ready === (info.admission_paused && info.live_roots === 0 && info.scopes_empty && !info.legacy_enrollment && pending === 0);
 }
 
 export async function runOwnerCommand(entry: string, words: string[]) {

@@ -449,6 +449,123 @@ So text is 27 times smaller and 3.6 times slower to produce. The small link `Uni
 pixels, fractional scale) was clicked at its returned center and the page navigated to Unix. The window
 and its process were closed afterwards, which resets the switches.
 
+## Semantic ref actions, 5 November 2026
+
+`invoke-ref` requests one AT-SPI `Action.DoAction` index, `edit-ref` requests
+`EditableText.SetTextContents`, and `value-ref` requests the `Value.CurrentValue`
+property. Each accepts the exact app/window and a complete snapshot ref. Provider
+bus addresses, object paths and preparation tokens remain private. Text is bounded
+to 16000 UTF-8 bytes; action indices are bounded to 0 through 31 and values must
+be finite. These operations are writes under the ordinary session policy.
+
+Dispatch has two phases. Preparation validates the retained object and performs
+read-only D-Bus authentication, bus identity, provider PID and object checks.
+The broker then rechecks conversation usage, session state and policy. Final SEND
+re-resolves the ref and requires the same target, provider proof and cursor point.
+The compositor rechecks the current lease, pause and owner-input gates, updates
+the render-only ghost cursor, and attempts one complete nonblocking method frame.
+It does not manufacture a pointer click, move the physical pointer or focus the
+window. There is no pointer fallback or automatic mutation replay.
+
+A complete successful method response reports delivery and the provider's boolean
+acceptance separately. Partial sends, lost responses and remote errors after a
+possible effect remain unknown. EAGAIN before any byte is sent remains
+not-delivered and queues no later write. Request receipts are bounded, expire and
+deduplicate SEND. Pause, close and policy narrowing revoke pending preparation;
+the compositor unload gate also counts pending semantic work. A failed read-only
+preparation reports not-delivered and requires a fresh observation before another
+choice. It never downgrades an uncertain SEND to safe delivery.
+
+The original GTK Calculator window used for #24 remained open on workspace 20.
+Through the source MCP API, `invoke-ref` on its `3` button changed `12` to `123`;
+`edit-ref` changed that field to `456`. A second fresh-ref `invoke-ref` on `4`
+changed `456` to `4564`, then a fresh-ref `edit-ref` changed it to `789`.
+Independent native captures showed `456`, `4564` and `789`; the final capture was
+inspected directly. Reusing the earlier button ref returned `STALE_REF` without
+a fallback action. The owned sessions were stopped and the Calculator was left
+open for the remaining subtree checks. No application process was terminated.
+
+This round preserved the monitor layout and did not present workspace 20, which
+was not displayed at sampling time. It therefore proves background application
+effects and capture content, but does not qualify monitor-visible cursor/glow
+acceptance. That initial revision qualified only the pinned GTK exporter.
+The later Qt qualification and original-app acceptance below supersede that
+provider limitation. This first round alone did not complete issue #25.
+
+## Scoped refs and explicit Qt Widgets qualification, 6 November 2026
+
+[Snapshot refs and bounded drill-down](snapshot-refs.md) documents the public
+selectors, lifetime limits and live Thunderbird row traversal. Complete refs
+are required for `ref-click`, `invoke-ref`, `edit-ref` and `value-ref`.
+Bare, foreign, expired or invalidated handles never become coordinate selectors.
+Qualified root and node lifetime checks also apply to read-only root traversal.
+The byte budget reserves ref bytes before publishing a snapshot.
+
+Qt 6.11.2 numeric AT-SPI IDs alone do not prove one object lifetime. QWidget
+marks itself in destruction before sending its accessibility destruction event,
+and the exporter can refuse invalid interfaces. Relevant pinned sources are
+[QWidget destruction](https://github.com/qt/qtbase/blob/v6.11.2/src/widgets/kernel/qwidget.cpp#L1468-L1475),
+[accessible validity](https://github.com/qt/qtbase/blob/v6.11.2/src/widgets/accessible/qaccessiblewidget.cpp#L138-L142)
+and [AT-SPI destruction dispatch](https://github.com/qt/qtbase/blob/v6.11.2/src/gui/accessible/linux/atspiadaptor.cpp#L1472-L1495).
+An event subscription or a matching role/name/box is not substituted for proof.
+
+The optional in-process Orbit Qt Widgets helper gives each supported primary
+QWidget interface a UUID route retaining a `QPointer`. Binding happens before
+reading node fields. Final verification checks the original numeric path still
+maps to that exact widget and root. Every later state/action also checks those
+mappings, the live root, root ancestry and the exact top-level window. Deleted
+widgets, replaced interfaces, virtual subelements and another top-level dialog
+cannot reuse a route. The helper and mapped binary must match the generated
+source/binary receipt. Qt and helper bus owners must belong to the exact selected
+process. Unsupported Qt versions, QML and processes without the exact helper
+remain unqualified for mutations.
+
+Build the helper with matching Qt development headers and the system compiler:
+
+```sh
+bun run scripts/limited.ts sh src/native/qt/build.sh "$PWD/src/native/qt/liborbit-qt-widget.so"
+```
+
+`ORBIT_QT_SYSROOT` may point to matching extracted headers without a system
+installation. The generated library and receipt are local build artifacts.
+Opt in through an explicit desktop registration recipe, for example:
+
+```ini
+Exec=/usr/bin/env LD_PRELOAD=/absolute/orbit/src/native/qt/liborbit-qt-widget.so QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 /usr/bin/designer-qt6
+```
+
+Use the original installed application and its normal profile. This does not
+modify or inject into an existing process. A forwarded launch is not assumed
+to have loaded the helper. No global preload or profile setting is installed.
+
+Action requests are accepted into a bounded application UI queue because a Qt
+button can synchronously open a modal event loop. The callback revalidates its
+UUID, QPointer, root, original paths, enabled state and action immediately before
+one invocation. A method acceptance is distinct from the application effect;
+independent observation remains required. Editable text and value writes check
+their interfaces and enabled/read-only state. There is no pointer fallback after
+an uncertain semantic operation.
+
+On the original installed Qt Designer 6.11.2, a 90-node qualified snapshot
+provided a New button ref. `invoke-ref` opened the New Form dialog, independently
+observed as 19 nodes and in a native capture. The old button ref was refused with
+`STALE_REF` and not-delivered disposition. Fresh refs toggled Show this Dialog on
+Startup from checked to unchecked and back to checked, with both captures
+inspected. `edit-ref` changed the Widget Box filter from blank to `PushButton`;
+an independent tree and capture showed the filtered palette. Its old text ref
+was refused. A fresh ref cleared the filter, and the full palette and 90-node
+tree were independently observed again. No unsaved form was created.
+
+Earlier attempts and uncertainty remain recorded: one process disappeared before
+input, cause unknown during resource pressure; an earlier synchronous modal
+button produced an effect but its reply timed out, and was not replayed. The
+bounded UI queue fixed that case before the successful final run. One final clear
+observation reported `StateChanged`; the following independent text read was
+complete. The exact owned Designer window was closed, workspace candidates were
+empty, the own session stopped, and the temporary registration removed. Private
+captures remain local. This proves the listed controls and stale refusals, not
+all Qt applications or continuous owner-state preservation.
+
 ## Settled capture and action batching
 
 Measured 29 October 2026 on original installed GNOME Calculator, opened with `orbit_open` on the
@@ -576,3 +693,20 @@ a new Firefox window (geometry [24,21,1200,800], surface 1248 by 848, scale 1.33
 "hover" link read at image (217,148) and clicked at (162.75,111) navigated to `#hover`. The capture is the geometry
 minus the margin strip (1176 by 779.25 logical), so its size is not the geometry on Firefox; the last 24 columns and 21
 rows of the page cannot be read off an image.
+
+## Release freeze and explicit pointer fallback, 6 November 2026
+
+The explicit `ref-click` path now performs read-only identity and named GTK pixel
+calibration before final authority checks. Final dispatch verifies the qualified
+ref, source point, surface size and crop geometry again, then sends one guarded
+click without automatic OWNER_PAUSED replay. Preparation and cancellation send
+no input; uncertain delivery remains uncertain and is not retried. Focused
+regressions cover stale identity, capture geometry changes, permission narrowing,
+single send and cached unknown outcomes. This is not an atomic provider-side
+pointer transaction.
+
+The final Nautilus follow-up sent 0 mutations because the exact window disappeared
+before input. Its exit cause is unknown. The GTK preferences checkbox was not
+measured. Qt controls and the earlier GTK button/text observations above retain
+their measured status. The owner froze further acceptance for release 0.4.4;
+issue closure records the remaining gaps as deferred.

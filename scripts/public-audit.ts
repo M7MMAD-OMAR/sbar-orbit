@@ -71,6 +71,14 @@ const reviewedBinaries = new Map([
   ["website/public/images/viewer-control.webp", "055956a37290e6724564a84ad16decdb1ef09f5ec3e6dbe24a535524dfc4f8e7"],
 ]);
 
+// Reviewed 6 November 2026 under the owner's original-application authorization.
+// These source prototypes remain production-gated. Exact bytes and named rules
+// only: an edit or another native permission API requires a new review.
+const reviewedNativeSources = new Map([
+  ["src/native/platform_macos.py", { sha256: "7bd0e80f47b5e357ff5f34bce08a5440edad72a925f3c8ec46b8cf2447a053cd", rules: new Set(["macos-screen-recording", "macos-accessibility"]) }],
+  ["tests/platform-native.test.ts", { sha256: "68555ef6d8d95678b5629a0f0d93e0b7760b156c176ceadf7d106d310baf27d4", rules: new Set(["macos-accessibility"]) }],
+]);
+
 const files = (await git("ls-files", "--cached", "-z")).toString().split("\0").filter(Boolean);
 if (!files.length) throw new Error("Stage the intended public files before auditing");
 const findings: { file: string; rule: string }[] = [];
@@ -127,7 +135,7 @@ for (const file of files) {
     && !file.endsWith(".md") && !selfReferential;
   if (sourceFile) {
     const forbidden: [string, RegExp][] = [
-      // Screen Recording. Frames come from CDP, so none of these is needed.
+      // Native permission APIs require a content-bound publication review.
       //
       // Written as PREFIXES rather than exact symbol names, because an audit probe showed the exact
       // form missing every realistic spelling: `CGWindowListCreateImageFromArray` is a different
@@ -142,8 +150,7 @@ for (const file of files) {
       ["macos-accessibility", /\bAX[A-Z]\w*|\bCGEventPost\w*|\bCGWarpMouseCursorPosition\b|\bCGDisplayMoveCursorToPoint\b/],
       // Input Monitoring: an event tap of any flavour, or raw HID in either direction.
       ["macos-input-monitoring", /\bCGEventTap\w*|\bIOHID\w*/],
-      // Automation and Apple Events. Driving another application is the thing this project refuses,
-      // and `NSWorkspace` open is the quiet way to do it.
+      // Automation and Apple Events require their own explicit source review.
       ["macos-automation", /\bNSAppleScript\b|\bosascript\b|\bAESend\w*|\bNSWorkspace\b/],
       // Downloading a browser or a helper: first launch of a quarantined binary prompts.
       ["macos-quarantine-risk", /com\.apple\.quarantine/],
@@ -152,7 +159,10 @@ for (const file of files) {
       // refuses its Python subcommands on darwin rather than letting the path be reached.
       ["macos-clt-installer-risk", /\bxcode-select\b/],
     ];
-    for (const [rule, pattern] of forbidden) if (pattern.test(content)) findings.push({ file, rule });
+    const reviewed = reviewedNativeSources.get(file);
+    const reviewedBytes = reviewed?.sha256 === new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+    for (const [rule, pattern] of forbidden)
+      if (pattern.test(content) && !(reviewedBytes && reviewed?.rules.has(rule))) findings.push({ file, rule });
     // A grep cannot see a symbol assembled at runtime, and saying so in the audit is better than
     // letting the audit's silence be read as proof. A `dlopen` whose argument is not a plain string
     // literal, or a bun:ffi `.symbols[...]` lookup by expression, is reported for a person to look

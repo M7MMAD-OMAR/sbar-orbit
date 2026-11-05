@@ -14,6 +14,11 @@ const id = z.string().min(1).max(16384);
 const nativeId = z.string().regex(/^[a-f0-9]{32}$/);
 const nativeTarget = { appId: nativeId, windowId: nativeId };
 const nativeCoordinate = z.number().min(0).max(32768);
+export const orbitSnapshotShape = {
+  refs: z.boolean().optional().describe("Retain snapshot-scoped accessibility handles; requires an explicit window and text or both."),
+  skeleton: z.boolean().optional().describe("Return bounded containers with child counts, then inspect one with root."),
+  root: z.string().regex(/^@[0-9a-f]{32}:e[0-9]{1,3}$/).optional().describe("Observe the retained subtree for this exact snapshot ref; stale or foreign refs are refused."),
+};
 export const orbitActionSchema = z.union([
   z.object({ type: z.literal("windows"), appId: nativeId }).strict(),
   z.object({ type: z.literal("close-application"), appId: nativeId }).strict(),
@@ -21,6 +26,15 @@ export const orbitActionSchema = z.union([
   z.object({ type: z.enum(["cursor", "move"]), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate }).strict(),
   z.object({ type: z.literal("click"), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate,
     button: z.enum(["left", "middle", "right"]).optional() }).strict(),
+  z.object({ type: z.literal("ref-click"), ...nativeTarget, ref: z.string().regex(/^@[0-9a-f]{32}:e[0-9]{1,3}$/),
+    button: z.enum(["left", "middle", "right"]).optional() }).strict(),
+  z.object({ type: z.literal("invoke-ref"), ...nativeTarget, ref: z.string().regex(/^@[0-9a-f]{32}:e[0-9]{1,3}$/),
+    index: z.number().int().min(0).max(31).optional() }).strict(),
+  z.object({ type: z.literal("edit-ref"), ...nativeTarget, ref: z.string().regex(/^@[0-9a-f]{32}:e[0-9]{1,3}$/),
+    text: z.string().refine(value => !value.includes("\0") && Buffer.byteLength(value, "utf8") <= 16000
+      && Buffer.from(value, "utf8").toString("utf8") === value, "Semantic text requires 0 to 16000 UTF-8 bytes without NUL") }).strict(),
+  z.object({ type: z.literal("value-ref"), ...nativeTarget, ref: z.string().regex(/^@[0-9a-f]{32}:e[0-9]{1,3}$/),
+    value: z.number().finite() }).strict(),
   z.object({ type: z.literal("scroll"), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate,
     dy: z.number().int().min(-1000).max(1000).refine(value => value !== 0) }).strict(),
   z.object({ type: z.enum(["mouse-down", "mouse-up"]), ...nativeTarget, x: nativeCoordinate, y: nativeCoordinate,
@@ -100,9 +114,9 @@ export function createMcpServer(socket: string, identity?: ClientIdentity) {
     description: "Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state and does not sample the desktop. Observe an owned session. image (default) returns a native image block plus dimensions, capture time, title, tabs/windows and pointer metadata. metadata returns presence only without screenshot capture, for cheaper tab/window checks. Metadata does not describe page content or prove visual correctness.",
     inputSchema: { sessionId: id, mode: z.enum(["image", "metadata"]).default("image"),
       format: z.enum(["image", "text", "both"]).default("image").describe("image returns a screenshot. text returns a compact accessibility tree (role, name, states, box in click coordinates) and no screenshot, falling back to the screenshot when the application exposes no tree. both returns the two. Ignored when mode is metadata."),
-      appId: nativeId.optional(), windowId: nativeId.optional() },
-  }, ({ sessionId, mode, format, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
-    { sessionId, ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
+      appId: nativeId.optional(), windowId: nativeId.optional(), ...orbitSnapshotShape },
+  }, ({ sessionId, mode, format, appId, windowId, ...selectors }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
+    { sessionId, ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }), ...selectors }));
   server.registerTool("orbit_status", { description: "List Orbit sessions. Your own sessions come in full (state, activity, surface, ids you can act with). Other agents' sessions come as summaries with redacted true: label, task, application, workspace, state and idle seconds, and no id, so you can explain a conflict or pick another workspace but cannot act on them.", inputSchema: {} }, () => invoke("session.list"));
   server.registerTool("orbit_applications", {
     description: "Discover application paths from OS registrations and current-user metadata. availability distinguishes verified host paths from unresolved namespace-visible running paths. Linux includes running executable and supported explicit profile paths; macOS inspects application bundles and Windows inspects App Paths. Returns evidence sources and ambiguity instead of inventing an active or stable version. Does not start apps, capture the owner's display, read account credentials or grant control. Call before native.open. Original browser and terminal registrations are accepted. Private desktop sessions are absent. Other platform adapters and accounts require their own measured support.",

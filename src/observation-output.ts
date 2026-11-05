@@ -29,7 +29,8 @@ function treeBlock(tree: unknown) {
   if (body.status !== "ok") return treeHeader.split(".")[0] + ": none. " + JSON.stringify({ status: body.status, reason: body.reason });
   const nodes = Array.isArray(body.nodes) ? body.nodes : [];
   const lines = nodes.map((node, index) => index + " " + JSON.stringify(node));
-  return [treeHeader, JSON.stringify({ toolkit: body.toolkit, count: nodes.length, truncated: body.truncated ?? null }), ...lines].join("\n");
+  return [treeHeader, JSON.stringify({ toolkit: body.toolkit, count: nodes.length, truncated: body.truncated ?? null,
+    ...(body.snapshot === undefined ? {} : { snapshot: body.snapshot }), ...(body.root === undefined ? {} : { root: body.root }) }), ...lines].join("\n");
 }
 
 /**

@@ -41,11 +41,13 @@ class OwnerOperationError(RuntimeError):
 def readiness(transport):
     value = json.loads(transport._exchange("ghost-unload-info"), object_pairs_hook=unique_fields)
     fields = {"schema", "admission_paused", "live_roots", "tracked_scopes", "scopes_empty", "legacy_enrollment", "ready"}
-    if (not isinstance(value, dict) or set(value) != fields or type(value["schema"]) is not int or value["schema"] != 1
+    if (not isinstance(value, dict) or set(value) not in (fields, fields | {"semantic_pending"})
+            or type(value.get("semantic_pending", 0)) is not int or not 0 <= value.get("semantic_pending", 0) <= 8
+            or type(value["schema"]) is not int or value["schema"] != 1
             or any(type(value[key]) is not bool for key in ("admission_paused", "scopes_empty", "legacy_enrollment", "ready"))
             or any(type(value[key]) is not int or not 0 <= value[key] <= 128 for key in ("live_roots", "tracked_scopes"))
             or value["ready"] != (value["admission_paused"] and value["live_roots"] == 0
-                                  and value["scopes_empty"] and not value["legacy_enrollment"])):
+                                  and value["scopes_empty"] and not value["legacy_enrollment"] and value.get("semantic_pending", 0) == 0)):
         raise RuntimeError("Native unload readiness is incomplete or inconsistent")
     return value
 

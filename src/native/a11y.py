@@ -36,7 +36,7 @@ def _trim(nodes):
     return kept, None
 
 
-def read_tree(pid, title, runtime, host=None, deadline=None):
+def read_tree(pid, title, runtime, host=None, deadline=None, selection=None):
     """A bounded tree for one window, or the reason none is available. Never raises on a missing tree."""
     started = time.monotonic()
     environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "XDG_RUNTIME_DIR": runtime}
@@ -51,7 +51,8 @@ def read_tree(pid, title, runtime, host=None, deadline=None):
             timeout = min(timeout, remaining)
             budget_ms = min(budget_ms, max(1, int(remaining * 1000)))
         if host is not None:
-            reply = host.observe(pid, title, timeout_ms=timeout * 1000) if deadline is not None else host.observe(pid, title)
+            extra = {"selection": selection} if selection is not None else {}
+            reply = host.observe(pid, title, timeout_ms=timeout * 1000, **extra) if deadline is not None else host.observe(pid, title, **extra)
         else:
             done = subprocess.run(["/usr/bin/python3", "-I", str(DUMP), str(pid), title, str(MAX_NODES), str(budget_ms)],
                                   env=environment, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout, check=False)
@@ -61,16 +62,25 @@ def read_tree(pid, title, runtime, host=None, deadline=None):
         deadline = None  # Invalid/failed reads already have no result to accept or retry.
     if deadline is not None and time.monotonic() >= deadline:
         reply = None
+    if isinstance(reply, dict) and reply.get("status") == "ref-error":
+        return {"status": "ref-error", "code": reply.get("code", "STALE_REF")}
     if not isinstance(reply, dict) or reply.get("status") not in ("ok", "unavailable"):
         return {"status": "unavailable", "reason": "accessibility query failed or timed out"}
     if reply["status"] != "ok":
         return {"status": "unavailable", "reason": str(reply.get("reason", "unavailable"))[:120]}
+    if selection is not None and "resolve" in selection:
+        return reply
     raw_nodes = reply.get("nodes")
     if not isinstance(raw_nodes, list) or not raw_nodes or not all(isinstance(node, dict) for node in raw_nodes):
         return {"status": "unavailable", "reason": "accessibility query returned no usable nodes"}
     nodes, cut = _trim(raw_nodes)
     truncated = reply.get("truncated") or cut
-    return {"status": "ok", "toolkit": str(reply.get("toolkit", ""))[:24], "nodes": nodes,
+    result = {"status": "ok", "toolkit": str(reply.get("toolkit", ""))[:24], "nodes": nodes,
             "truncated": truncated, "complete": truncated is None, "queryMs": reply.get("ms"),
             "readMs": round((time.monotonic() - started) * 1000, 3),
             "readMode": "warm-helper" if host is not None else "cold-process"}
+    if "snapshot" in reply:
+        result["snapshot"] = reply["snapshot"]
+    if "root" in reply:
+        result["root"] = reply["root"]
+    return result

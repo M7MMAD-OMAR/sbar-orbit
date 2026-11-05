@@ -7,7 +7,7 @@ import { OrbitError } from "./errors";
 import { errorPayload } from "./error-disposition";
 import { ConversationUsage } from "./conversation-usage";
 import { renderAct, renderObservation } from "./observation-output";
-import { isReadDeliveryMethod, orbitActionSchema, orbitBatchShape } from "./mcp";
+import { isReadDeliveryMethod, orbitActionSchema, orbitBatchShape, orbitSnapshotShape } from "./mcp";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
@@ -47,9 +47,9 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
     description: "Observe this session only. Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state. Metadata mode avoids image capture.",
     inputSchema: { mode: z.enum(["image", "metadata"]).default("image"),
       format: z.enum(["image", "text", "both"]).default("image").describe("image returns a screenshot. text returns a compact accessibility tree (role, name, states, box in click coordinates) and no screenshot, falling back to the screenshot when the application exposes no tree. both returns the two. Ignored when mode is metadata."),
-      appId: z.string().regex(/^[a-f0-9]{32}$/).optional(), windowId: z.string().regex(/^[a-f0-9]{32}$/).optional() },
-  }, ({ mode, format, appId, windowId }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
-    { ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }) }));
+      appId: z.string().regex(/^[a-f0-9]{32}$/).optional(), windowId: z.string().regex(/^[a-f0-9]{32}$/).optional(), ...orbitSnapshotShape },
+  }, ({ mode, format, appId, windowId, ...selectors }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
+    { ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }), ...selectors }));
   server.registerTool("orbit_act", {
     description: "Act on this acknowledged original native application. Verify actual application acceptance after redraw. No launch or private profile actions exist. Reuse requestId after uncertain delivery.",
     inputSchema: { requestId: id, action: orbitActionSchema.optional(), ...orbitBatchShape },

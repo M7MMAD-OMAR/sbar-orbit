@@ -41,7 +41,7 @@ import { dirname, join } from "node:path";
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
   expect({ code, output, error }).toMatchObject({ code: 0 });
-  expect(error).toContain("Ran 24 tests");
+  expect(error).toContain("Ran 26 tests");
 });
 
 test.each([
@@ -56,4 +56,29 @@ test.each([
   expect(code).toBe(1);
   expect(output).toBe("");
   expect(JSON.parse(error)).toMatchObject({ ok: false, error: { code: "INVALID_REQUEST" } });
+});
+
+(process.platform === "linux" ? test : test.skip).each([
+  { pending: undefined, accepted: true }, { pending: 0, accepted: true },
+  { pending: 1, accepted: false }, { pending: true, accepted: false },
+  { pending: -1, accepted: false }, { pending: 9, accepted: false }, { pending: "0", accepted: false },
+])("owner unload receipt accounts for bounded pending semantic callbacks: %j", async ({ pending, accepted }) => {
+  const source = process.env.ORBIT_OWNER_COMMAND_TEST_SOURCE ?? join(import.meta.dir, "../src/native-prepare.ts");
+  const directory = "/unused-private-preparation";
+  const admission = { schema: 1, admission_paused: true, live_roots: 0, tracked_scopes: 0,
+    scopes_empty: true, legacy_enrollment: false, ready: pending === undefined || pending === 0,
+    ...(pending === undefined ? {} : { semantic_pending: pending }) };
+  const reply = { ok: true, result: { loaded: false, compositor: [123, 456], owner_service_activation: "not performed",
+    unload_sent: true, admission_pause_sent: true, journal: join(directory, "plugin-owner.jsonl"), admission_before_unload: admission } };
+  const script = `
+    const { nativePlugin } = await import(${JSON.stringify(source)});
+    Bun.spawn = () => ({ stdout: new Response(${JSON.stringify(JSON.stringify(reply))}).body,
+      stderr: new Response("").body, exited: Promise.resolve(0), kill() {} });
+    try { await nativePlugin("unload", ${JSON.stringify(directory)}); console.log("accepted"); }
+    catch (error) { console.log(error.code); }
+  `;
+  const child = Bun.spawn([process.execPath, "--eval", script], { stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect({ code, err }).toEqual({ code: 0, err: "" });
+  expect(out.trim()).toBe(accepted ? "accepted" : "BACKEND_FAILED");
 });

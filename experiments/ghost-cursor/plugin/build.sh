@@ -31,6 +31,6 @@ SOURCE_SHA256=${SOURCE_SHA256%% *}
 g++ -std=c++23 -shared -fPIC -fno-gnu-unique -O0 \
   "-DORBIT_PLUGIN_SOURCE_SHA256=\"$SOURCE_SHA256\"" \
   -I"$INCLUDE" -I"$INCLUDE/hyprland" -I"$INCLUDE/hyprland/src" -I"$INCLUDE/hyprland/protocols" \
-  $(pkg-config --cflags pixman-1 libdrm cairo libinput xkbcommon wayland-server) \
-  "$SNAPSHOT" -o "$OUT"
+  $(pkg-config --cflags pixman-1 libdrm cairo libinput xkbcommon wayland-server dbus-1) \
+  "$SNAPSHOT" -o "$OUT" $(pkg-config --libs dbus-1)
 printf 'Built %s\n' "$OUT"

@@ -17,7 +17,21 @@ from .budget import require_budget
 
 
 ACTIONS = frozenset({"ghost-key", "ghost-type", "ghost-texthex", "ghost-click", "ghost-move", "ghost-mouse-down", "ghost-mouse-up", "ghost-drag", "ghost-target-check",
-                     "ghost-window-close", "ghost-scroll", "ghost-cursor", "ghost-release", "ghost-state"})
+                     "ghost-window-close", "ghost-scroll", "ghost-cursor", "ghost-release", "ghost-state",
+                     "ghost-semantic-prepare", "ghost-semantic-status", "ghost-semantic-send", "ghost-semantic-cancel"})
+SEMANTIC_COMMANDS = frozenset({"ghost-semantic-prepare", "ghost-semantic-status", "ghost-semantic-send", "ghost-semantic-cancel"})
+SEMANTIC_REASONS = frozenset({"preparing", "prepared", "awaiting-reply", "replied", "method-error", "bus-changed", "provider-changed",
+                              "stale-object", "disconnected", "cancelled", "not-ready", "partial-send", "send-refused", "deadline",
+                              "admission-refused", "invalid-transport"})
+
+
+def _semantic_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate semantic field")
+        result[key] = value
+    return result
 
 
 OWNER_PAUSED = "refused: application lease is paused while the owner"
@@ -37,6 +51,26 @@ def action_request(request):
 
 def action_response(command, response):
     response = response.strip()
+    if command in SEMANTIC_COMMANDS:
+        try:
+            value = json.loads(response, object_pairs_hook=_semantic_fields)
+        except (ValueError, TypeError, RecursionError):
+            raise HostError("Native semantic response is unavailable or invalid") from None
+        if (not isinstance(value, dict) or set(value) != {"schema", "requestId", "state", "delivery", "accepted", "reason"}
+                or type(value["schema"]) is not int or value["schema"] != 1
+                or type(value["requestId"]) is not str or not re.fullmatch(r"[0-9a-f]{32}", value["requestId"])
+                or type(value["reason"]) is not str or value["reason"] not in SEMANTIC_REASONS
+                or type(value["state"]) is not str or value["state"] not in ("preparing", "ready", "pending", "settled")
+                or type(value["delivery"]) is not str or value["delivery"] not in ("not-delivered", "unknown", "delivered")
+                or (value["accepted"] is not None and type(value["accepted"]) is not bool)
+                or (value["state"] in ("preparing", "ready") and (value["delivery"] != "not-delivered" or value["accepted"] is not None))
+                or (value["state"] == "pending" and (value["delivery"] != "unknown" or value["accepted"] is not None))
+                or (value["state"] == "settled" and ((value["delivery"] == "delivered") != (type(value["accepted"]) is bool)))
+                or (value["state"] in ("preparing", "ready", "pending") and value["reason"] != {"preparing": "preparing", "ready": "prepared", "pending": "awaiting-reply"}[value["state"]])
+                or (value["state"] == "settled" and value["reason"] in ("preparing", "prepared", "awaiting-reply"))
+                or (value["delivery"] == "delivered" and value["reason"] != "replied")):
+            raise HostError("Native semantic response is unavailable or invalid")
+        return response
     if response == "ok" and command != "ghost-state":
         return response
     if input_acknowledged(command, response):
@@ -108,6 +142,12 @@ class NativeTransport:
         def attempt():
             require_budget()
             command = action_request(request)
+            if command in SEMANTIC_COMMANDS:
+                result = action_response(command, self._exchange(request))
+                parts = request.split()
+                if len(parts) < 3 or json.loads(result)["requestId"] != parts[2]:
+                    raise HostError("Native semantic response identity changed")
+                return result
             if command not in KEYBOARD_ACTIONS:
                 return action_response(command, self._exchange(request))
             deadline = time.monotonic() + 3

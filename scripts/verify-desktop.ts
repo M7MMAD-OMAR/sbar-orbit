@@ -2,6 +2,9 @@
 export {};
 const requested = process.argv.slice(2);
 const files = requested.length ? requested : [
+  "tests/platform-native.test.ts", "tests/platform-native-routing.test.ts",
+  "tests/native-qt-widget.test.ts",
+  "tests/native-semantic.test.ts", "tests/session-semantic.test.ts",
   "tests/architecture.test.ts", "tests/native-only.test.ts", "tests/native-window-geometry.test.ts", "tests/native-open.test.ts", "tests/native-owner-reveal.test.ts", "tests/session-owner-reveal.test.ts", "tests/workspace-allocation.test.ts", "tests/workspace-opening-safety.test.ts", "tests/native-workspace-inventory.test.ts", "tests/native-workspace-open-guard.test.ts", "tests/native-opening-identity.test.ts", "tests/native-existing.test.ts",
   "tests/native-worker.test.ts", "tests/native-transport.test.ts", "tests/native-plugin-compatibility.test.ts", "tests/native-plugin-owner.test.ts", "tests/native-indicator-style.test.ts", "tests/native-presentation.test.ts", "tests/native-operation-scope.test.ts", "tests/native-paste.test.ts", "tests/native-action-control.test.ts",
   "tests/native-cleanup-control.test.ts", "tests/native-keyboard-focus.test.ts", "tests/native-handoff-focus.test.ts", "tests/native-owner-input.test.ts", "tests/native-window-lifecycle.test.ts", "tests/native-pointer-geometry.test.ts", "tests/native-shared-clipboard.test.ts", "tests/native-data-control.test.ts",

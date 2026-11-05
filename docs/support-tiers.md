@@ -1,17 +1,17 @@
 # Current native support
 
-Updated 5 November 2026. This table describes the current native-only implementation.
+Updated 6 November 2026. This table describes the current native-only implementation.
 Retired browser and private desktop measurements do not establish current support.
 
 | System | Discovery | Original opening | Input and capture |
 | --- | --- | --- | --- |
-| Fedora 44, Hyprland 0.57.1, Wayland, x86_64 | Implemented, locally exercised | Original Calculator measured on 4 November; original Nautilus 50.4 on visible workspace 20 on 5 November | Readiness and limited operation evidence in [the acceptance index](acceptance.md). Nautilus opened an owned folder by double click at its reported cell center; residual accessibility-box alignment remains unresolved. No general focus/pointer preservation or comparative efficiency claim. |
+| Fedora 44, Hyprland 0.57.1, Wayland, x86_64 | Implemented, locally exercised | Original Calculator measured on 4 November; original Nautilus 50.4 on visible workspace 20 on 5 November | Readiness and limited operation evidence in [the acceptance index](acceptance.md). Named GTK target correction, VS Code renderer trees, qualified GTK/Qt refs and Thunderbird skeleton/root traversal have scoped evidence. GTK button/text and Qt button/checkbox/text semantic effects were measured. Remaining #25 acceptance is deferred. No general focus/pointer preservation or comparative efficiency claim. |
 | Fedora 44, Hyprland 0.57.0, Wayland, x86_64 | Implemented, locally exercised | Original GNOME Text Editor opened and controlled on a numbered workspace, 30 October 2026 | Plugin built against and loaded on 0.57.0 (commit 0aa6745f705f): click, typed text, keys, shared clipboard, window capture and the activity overlay measured once. Drag, scroll and the click ring are not re-measured on 0.57.0. The source no longer builds for 0.56.x; a compositor of another commit needs its own headers. |
 | Fedora 44, Hyprland 0.56.2, Wayland, x86_64 (earlier releases) | Implemented, locally exercised | Limited, real installed application results below | Implemented source/ABI-bound control; dated editor Save, shared clipboard, Chrome local selection and Calculator input/capture/closure measurements. Other operations need their own evidence. |
 | Other Linux distributions with Hyprland | Registration implementation available | Not measured on another host | Not measured |
 | GNOME, KDE, Sway and other Linux compositors | Linux metadata discovery available | No opening adapter implemented | No working adapter certified |
-| Windows | App Paths metadata implementation and service contracts | No native opening adapter implemented | No native control adapter implemented |
-| macOS | Bundle metadata implementation and service contracts | No native opening adapter implemented | No native control adapter implemented |
+| Windows | App Paths metadata implementation and service contracts | No native opening adapter implemented | Metadata prototype only; production handoff/capture/input unavailable |
+| macOS | Bundle metadata implementation and service contracts | No native opening adapter implemented | Metadata prototype only; production handoff/capture/input unavailable |
 
 A platform installer, discovery result, mocked platform test or successful build is
 not application compatibility. Complete cross-platform desktop control is unfinished.

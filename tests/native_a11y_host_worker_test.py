@@ -40,6 +40,101 @@ def read_response(connection):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_qt_binds_before_provider_fields_and_reuses_that_proof_after_traversal(self):
+        trace = []
+        provider = worker.ReadOnlyProvider.__new__(worker.ReadOnlyProvider)
+        provider.pump = lambda: None
+        provider.identity = lambda node: (":1.2", "/org/a11y/atspi/accessible/1", os.getpid())
+        provider.atspi = SimpleNamespace(Cache=SimpleNamespace(NONE=0))
+        app = SimpleNamespace(get_toolkit_name=lambda: "Qt", set_cache_mask=lambda value: trace.append("cache"))
+        node = SimpleNamespace(get_application=lambda: (trace.append("application") or app),
+                               clear_cache_single=lambda: trace.append("clear"))
+        proof = SimpleNamespace(bind=lambda path: trace.append("bind"),
+                                retain=lambda nodes, identity: trace.append("retain"),
+                                close=lambda: trace.append("close"))
+        with patch("src.native.a11y_qt_identity.QtIdentity", return_value=proof) as constructor:
+            provider.begin_qualification(app, node, os.getpid())
+            provider.refresh(node)
+            trace.append("fields")
+            result = provider.qualify(app, node, [(node, {"role": "button"})], os.getpid())
+        self.assertIsNone(constructor.call_args.args[2])
+        self.assertEqual(constructor.call_count, 1)
+        self.assertEqual(trace, ["bind", "application", "cache", "clear", "fields", "retain"])
+        self.assertIs(result, proof)
+        self.assertIsNone(provider._qt_preproof)
+
+    def test_qt_mapping_change_during_fields_cannot_be_requalified_after_traversal(self):
+        closed = []
+        provider = worker.ReadOnlyProvider.__new__(worker.ReadOnlyProvider)
+        app = SimpleNamespace(get_toolkit_name=lambda: "Qt")
+        def replaced(nodes, identity):
+            raise ValueError("Original numeric ID now maps to another widget")
+        provider._qt_preproof = SimpleNamespace(retain=replaced, close=lambda: closed.append(True))
+        with self.assertRaises(worker.SnapshotError):
+            provider.qualify(app, object(), [(object(), {"role": "button"})], os.getpid())
+        self.assertEqual(closed, [True])
+        self.assertIsNone(provider._qt_preproof)
+
+    def test_publication_reserves_scoped_ref_bytes_without_leaking_placeholder_handles(self):
+        from src.native.a11y_snapshots import SnapshotStore
+        records = [{"role": "button", "box": [1, 2, 3, 4], "name": "x" * 75} for _ in range(300)]
+        kept, cut = worker.trim_refs(records)
+        self.assertEqual(cut, "bytes")
+        self.assertTrue(0 < len(kept) < len(records))
+        self.assertTrue(all("ref" not in item for item in kept))
+        store = SnapshotStore(lambda item: (":1.1", "/" + str(item), 1), lambda root, item: True)
+        published, _ = store.publish((1,), 0, 0, list(enumerate(kept)))
+        self.assertLessEqual(len(json.dumps(published, ensure_ascii=False, separators=(",", ":")).encode()), 16000)
+        self.assertTrue(all(item["ref"].startswith("@") for item in published))
+
+    def test_selected_ref_expiry_during_post_resolution_reads_is_rejected(self):
+        from src.native.a11y_snapshots import SnapshotStore
+        now = [1.0]
+        provider = worker.ReadOnlyProvider.__new__(worker.ReadOnlyProvider)
+        provider.epoch, provider.changed, provider.pid = 4, False, os.getpid()
+        provider.pump = lambda: None
+        provider.identity = lambda node: (":1.2", "/a11y/root", os.getpid())
+        provider.snapshots = SnapshotStore(provider.identity, lambda root, node: True, clock=lambda: now[0], ttl=1)
+        def delayed_name():
+            now[0] = 2.0
+            return "Fixture"
+        node = SimpleNamespace(get_role_name=lambda: "frame", get_name=delayed_name)
+        binding = (os.getpid(), "generation", "Fixture", "abc")
+        nodes, _ = provider.snapshots.publish(binding, 4, node, [(node, {"role": "frame", "name": "Fixture"})])
+        target = request()["target"]
+        target["selection"] = {"window": "abc", "resolve": nodes[0]["ref"]}
+        with patch.object(worker, "process_generation", return_value="generation"):
+            result = provider.observe(target)
+        self.assertEqual(result, {"status": "ref-error", "code": "STALE_REF"})
+
+    def test_root_expiry_during_qualification_closes_new_proof_without_publication(self):
+        from src.native.a11y_snapshots import SnapshotStore
+        now, closed = [1.0], []
+        provider = worker.ReadOnlyProvider.__new__(worker.ReadOnlyProvider)
+        provider.epoch, provider.changed, provider.pid = 4, False, os.getpid()
+        provider.pump = lambda: None
+        provider.refresh = lambda node: None
+        provider.atspi = None
+        provider.identity = lambda node: (":1.2", "/a11y/root", os.getpid())
+        provider.snapshots = SnapshotStore(provider.identity, lambda root, node: True, clock=lambda: now[0], ttl=1)
+        node = SimpleNamespace(get_application=lambda: None)
+        binding = (os.getpid(), "generation", "Fixture", "abc")
+        nodes, _ = provider.snapshots.publish(binding, 4, node, [(node, {"role": "frame"})])
+        def qualify(*args):
+            now[0] = 2.0
+            return SimpleNamespace(close=lambda: closed.append(True))
+        provider.qualify = qualify
+        def walk(*args):
+            args[5](node, {"role": "frame"}, {})
+            return [{"role": "frame"}], {"truncated": None}
+        target = request()["target"]
+        target["selection"] = {"window": "abc", "root": nodes[0]["ref"]}
+        with patch.object(worker, "process_generation", return_value="generation"), patch.object(worker.a11y_dump, "box_of", return_value=[0, 0, 100, 100]), patch.object(worker.a11y_dump, "walk", side_effect=walk):
+            result = provider.observe(target)
+        self.assertEqual(result, {"status": "ref-error", "code": "STALE_REF"})
+        self.assertEqual(closed, [True])
+        self.assertEqual(len(provider.snapshots.entries), 0)
+
     def test_only_explicit_bounded_observe_requests_are_accepted(self):
         self.assertEqual(worker.parse_request(request(), GENERATION)["title"], "Fixture")
         for changes in ({"method": "click"}, {"protocol": True}, {"generation": "c" * 32},
@@ -193,8 +288,28 @@ class CacheTests(unittest.TestCase):
         calls = []
         node = SimpleNamespace(set_cache_mask=lambda mask: calls.append(("mask", mask)),
                                clear_cache_single=lambda: calls.append(("clear",)))
+        node.get_application = lambda: node
         provider.refresh(node)
         self.assertEqual(calls, [("mask", 0), ("clear",)])
+
+    def test_child_cache_mask_is_applied_to_application_root(self):
+        provider = self.provider()
+        calls = []
+        root = SimpleNamespace(set_cache_mask=lambda value: calls.append(("root-mask", value)))
+        child = SimpleNamespace(get_application=lambda: root, clear_cache_single=lambda: calls.append(("child-clear",)))
+        provider.refresh(child)
+        self.assertEqual(calls, [("root-mask", 0), ("child-clear",)])
+
+    def test_switching_owner_invalidates_retained_refs_before_later_resolution(self):
+        provider = self.provider()
+        provider.owner, provider.epoch = ":1.10", 7
+        calls = []
+        provider.snapshots = SimpleNamespace(clear=lambda: calls.append("clear"))
+        provider.watch_owner = lambda owner: None
+        provider.select_owner(":1.11")
+        self.assertEqual((provider.owner, provider.epoch, calls), (":1.11", 8, ["clear"]))
+        provider.select_owner(":1.11")
+        self.assertEqual(provider.epoch, 8)
 
     def test_event_flood_is_bounded_and_marks_observation_unstable(self):
         provider = self.provider()

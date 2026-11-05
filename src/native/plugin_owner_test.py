@@ -34,6 +34,7 @@ class OwnerPluginTests(unittest.TestCase):
         self.paused = False
         self.scopes_empty = True
         self.legacy = False
+        self.semantic_pending = None
         self.calls = []
         self.build = {"schema": 1, "source_sha256": "a" * 64, "abi_hash": "fixture-abi", "live_roots": 0}
         self.host = patch.object(plugin_owner, "verify_host", return_value=self.plan)
@@ -76,9 +77,13 @@ class OwnerPluginTests(unittest.TestCase):
             return json.dumps(self.build)
         if request == "ghost-unload-info":
             roots = self.build["live_roots"]
-            return json.dumps({"schema": 1, "admission_paused": self.paused, "live_roots": roots,
+            value = {"schema": 1, "admission_paused": self.paused, "live_roots": roots,
                                "tracked_scopes": 1, "scopes_empty": self.scopes_empty, "legacy_enrollment": self.legacy,
-                               "ready": self.paused and roots == 0 and self.scopes_empty and not self.legacy})
+                               "ready": self.paused and roots == 0 and self.scopes_empty and not self.legacy
+                                        and (self.semantic_pending is None or self.semantic_pending == 0)}
+            if self.semantic_pending is not None:
+                value["semantic_pending"] = self.semantic_pending
+            return json.dumps(value)
         if request == "ghost-admission pause":
             self.paused = True
             return "ok paused"
@@ -100,6 +105,22 @@ class OwnerPluginTests(unittest.TestCase):
         before = sorted(self.directory.iterdir())
         self.assertFalse(self.run_operation("status")["loaded"])
         self.assertEqual(before, sorted(self.directory.iterdir()))
+
+    def test_pending_semantic_callbacks_refuse_unload_without_claiming_remote_drain(self):
+        self.loaded, self.semantic_pending = True, 1
+        with self.assertRaises(RuntimeError):
+            self.run_operation("unload")
+        self.assertNotIn("plugin unload " + self.artifact["path"], self.calls)
+
+    def test_semantic_pending_count_requires_a_bounded_integer(self):
+        self.paused = True
+        class Transport:
+            def __init__(inner, owner): inner.owner = owner
+            def _exchange(inner, request): return inner.owner.exchange(request)
+        for value in (True, -1, 9, "1"):
+            self.semantic_pending = value
+            with self.assertRaises(RuntimeError):
+                plugin_owner.readiness(Transport(self))
 
     def test_load_is_journaled_and_idempotent(self):
         self.assertTrue(self.run_operation("load")["load_sent"])

@@ -47,7 +47,7 @@ const classOfAction: Record<string, ActionClass> = {
   navigate: "navigate", "open-tab": "navigate",
   // Application mutations use ordinary owner state. Classification determines
   // the owner's chosen policy, not OS permissions or automatic process cleanup.
-  fill: "write", click: "write", "close-tab": "write", paste: "write", text: "write", key: "write",
+  fill: "write", click: "write", "ref-click": "write", "invoke-ref": "write", "edit-ref": "write", "value-ref": "write", "close-tab": "write", paste: "write", text: "write", key: "write",
   pointer: "write", window: "write", launch: "write", "launch-installed": "write", "launch-app": "write", desktop: "write", "move-window": "write",
   cursor: "write", move: "write", "mouse-down": "write", "mouse-up": "write", drag: "write", "close-application": "write",
   // Normal window closure can discard unsaved application content.

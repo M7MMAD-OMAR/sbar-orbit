@@ -28,6 +28,8 @@ failed historical results without treating them as current runtime policy.
 
 ## Dated evidence and release records
 
+- [Release 0.4.4 and campaign freeze](release-0.4.4.md)
+
 - [22 October native application and shared clipboard measurements](native-acceptance-0.3.0.md)
 - [Earlier original application openings](native-opening.md)
 - [Earlier external-agent failures](external-agent-acceptance.md)

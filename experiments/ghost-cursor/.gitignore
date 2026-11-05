@@ -2,3 +2,6 @@ plugin/.deps/
 plugin/*.so
 __pycache__/
 evidence/
+
+# Local source qualification receipt for the compiled plugin.
+plugin/*.so.source.sha256

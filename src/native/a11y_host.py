@@ -185,7 +185,7 @@ class A11yHost:
         self._remaining(deadline)
         return value
 
-    def observe(self, pid, title, timeout_ms=MAX_TIMEOUT_MS):
+    def observe(self, pid, title, timeout_ms=MAX_TIMEOUT_MS, selection=None):
         acquired = False
         try:
             if (type(pid) is not int or not 0 < pid <= 2 ** 31 - 1 or type(title) is not str
@@ -200,10 +200,13 @@ class A11yHost:
             connection, generation = self._start(deadline)
             self._no_surplus(connection)
             request_id = uuid.uuid4().hex
+            target = {"pid": pid, "title": title, "maxNodes": MAX_NODES,
+                      "budgetMs": BUDGET_MS, "deadlineNs": deadline}
+            if selection is not None:
+                target["selection"] = selection
             payload = json.dumps({
                 "protocol": 1, "generation": generation, "requestId": request_id, "method": "observe",
-                "target": {"pid": pid, "title": title, "maxNodes": MAX_NODES,
-                           "budgetMs": BUDGET_MS, "deadlineNs": deadline},
+                "target": target,
             }, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
             if len(payload) > MAX_REQUEST_BYTES:
                 raise _invalid()

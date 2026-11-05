@@ -3,10 +3,12 @@ import type { Readable, Writable } from "node:stream";
 import { open, mkdir, realpath, type FileHandle } from "node:fs/promises";
 import { openSync, readSync, fstatSync, closeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { OrbitError, record } from "./errors";
+import { OrbitError, normalizeDisposition, record } from "./errors";
 import { requireResourceBudget } from "./resource-budget";
+import { platformNativeEntry } from "./platform-native";
 
-export type NativeOptions = { planPath: string; controlDirectory: string; appearanceDirectory?: string };
+export type NativeOptions = { controlDirectory: string; appearanceDirectory?: string } &
+  ({ adapter?: "hyprland"; planPath: string } | { adapter: "platform"; planPath?: never });
 
 /**
  * What a native worker said as it died, from the last bytes of its private journal.
@@ -43,7 +45,18 @@ export function workerFailureDetail(logPath: string, bytes = 8192): string | und
 export function nativeOptionsFromEnv(): NativeOptions | undefined {
   const planPath = process.env.ORBIT_NATIVE_PLAN, controlDirectory = process.env.ORBIT_NATIVE_CONTROL;
   const appearanceDirectory = process.env.ORBIT_NATIVE_APPEARANCE;
-  if (planPath === undefined && controlDirectory === undefined && appearanceDirectory === undefined) return undefined;
+  const adapter = process.env.ORBIT_NATIVE_ADAPTER;
+  if (planPath === undefined && controlDirectory === undefined && appearanceDirectory === undefined && adapter === undefined) return undefined;
+  if (adapter !== undefined && adapter !== "hyprland" && adapter !== "platform")
+    throw new OrbitError("INVALID_REQUEST", "Unknown native adapter configuration");
+  if (process.platform === "win32" || process.platform === "darwin") {
+    if (adapter === "hyprland" || planPath !== undefined || appearanceDirectory !== undefined)
+      throw new OrbitError("INVALID_REQUEST", "Platform-native configuration uses an absolute control directory and no Hyprland plan or appearance snapshot");
+    if (!controlDirectory || !isAbsolute(controlDirectory))
+      throw new OrbitError("INVALID_REQUEST", "Platform-native configuration requires an absolute owner control directory");
+    return { adapter: "platform", controlDirectory };
+  }
+  if (adapter === "platform") throw new OrbitError("UNSUPPORTED", "Platform-native configuration requires Windows or macOS");
   if (!planPath || !controlDirectory || !isAbsolute(planPath) || !isAbsolute(controlDirectory))
     throw new OrbitError("INVALID_REQUEST", "Native broker configuration requires absolute plan and control paths");
   if (appearanceDirectory !== undefined && (!appearanceDirectory || !isAbsolute(appearanceDirectory)))
@@ -70,7 +83,8 @@ export class NativeWorker {
   /** Why the worker ended, read once from its journal after it closed. */
   exitDetail?: string;
 
-  private constructor(readonly child: ChildProcess, private stdin: Writable, stdout: Readable, private log: FileHandle, private logPath: string) {
+  private constructor(readonly child: ChildProcess, private stdin: Writable, stdout: Readable, private log: FileHandle, private logPath: string,
+    private readonly workerPlatform: NodeJS.Platform = process.platform, private readonly ownsProcessGroup = false) {
     this.exit = new Promise(resolve => child.once("close", async code => {
       this.ended = true;
       if (code !== 0) {
@@ -92,30 +106,43 @@ export class NativeWorker {
     // The descriptor is retained by the parent until child close. Stderr never enters RPC replies.
   }
 
-  static async create(directory: string, options: NativeOptions, entry = ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]) {
+  static async create(directory: string, options: NativeOptions, entry?: string[]) {
     await requireResourceBudget();
-    if (process.platform !== "linux") throw new OrbitError("UNSUPPORTED", "Native broker requires Linux");
-    if (!isAbsolute(options.planPath) || !isAbsolute(options.controlDirectory))
+    const platform = process.platform, platformNative = options.adapter === "platform";
+    if (platformNative ? platform !== "win32" && platform !== "darwin" : platform !== "linux")
+      throw new OrbitError("UNSUPPORTED", "Native configuration does not match this operating system");
+    const fixedEntry = platformNative ? platformNativeEntry(platform) : ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")];
+    if (platformNative && entry !== undefined && JSON.stringify(entry) !== JSON.stringify(fixedEntry))
+      throw new OrbitError("INVALID_REQUEST", "Platform-native helpers require their fixed system entry");
+    const command = entry ?? fixedEntry;
+    if ((!platformNative && (!options.planPath || !isAbsolute(options.planPath))) || !isAbsolute(options.controlDirectory))
       throw new OrbitError("INVALID_REQUEST", "Native configuration paths must be absolute");
+    if (platformNative && options.appearanceDirectory !== undefined)
+      throw new OrbitError("UNSUPPORTED", "Platform-native appearance is not qualified");
     await mkdir(directory, { mode: 0o700 });
     const log = await open(join(directory, "worker.log"), "wx", 0o600);
     try {
-      const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" };
+      const env: NodeJS.ProcessEnv = { PATH: platform === "win32" ? process.env.PATH ?? "" : platform === "darwin" ? "/usr/bin:/bin:/usr/sbin:/sbin" : "/usr/bin:/bin", LANG: "C.UTF-8" };
       // Read the same owner preferences as the panel without inheriting credentials.
       for (const key of ["HOME", "XDG_CONFIG_HOME"] as const) {
         if (process.env[key] !== undefined) env[key] = process.env[key];
       }
+      if (platform === "win32") for (const key of ["SystemRoot", "WINDIR", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "COMSPEC", "USERNAME", "USERDOMAIN", "SESSIONNAME"])
+        if (process.env[key] !== undefined) env[key] = process.env[key];
+      if (platform === "darwin") for (const key of ["TMPDIR", "SHELL", "USER", "LOGNAME", "LC_CTYPE"])
+        if (process.env[key] !== undefined) env[key] = process.env[key];
       // Experimental read-only helper is opt-in, never inferred from unrelated environment.
-      if (process.env.ORBIT_A11Y_WARM_HOST === "1") env.ORBIT_A11Y_WARM_HOST = "1";
+      if (!platformNative && process.env.ORBIT_A11Y_WARM_HOST === "1") env.ORBIT_A11Y_WARM_HOST = "1";
       // The plan path may be a stable name whose target a native refresh replaces; each worker binds the current one.
-      const planPath = await realpath(options.planPath).catch(() => options.planPath);
-      const child = spawn(entry[0] ?? "/usr/bin/python3", [...entry.slice(1), directory, options.controlDirectory, planPath],
-        { env, stdio: ["pipe", "pipe", log.fd] });
+      const planPath = options.adapter === "platform" ? "" : await realpath(options.planPath).catch(() => options.planPath);
+      const ownGroup = platformNative && platform === "darwin";
+      const child = spawn(command[0] ?? "/usr/bin/python3", [...command.slice(1), directory, options.controlDirectory, planPath],
+        { env, detached: ownGroup, windowsHide: true, stdio: ["pipe", "pipe", log.fd] });
       if (!child.stdin || !child.stdout) {
         child.kill("SIGTERM");
         throw new OrbitError("BACKEND_ERROR", "Native worker did not expose its framed streams");
       }
-      return new NativeWorker(child, child.stdin, child.stdout, log, join(directory, "worker.log"));
+      return new NativeWorker(child, child.stdin, child.stdout, log, join(directory, "worker.log"), platform, ownGroup);
     } catch (error) {
       await log.close();
       throw error;
@@ -179,6 +206,10 @@ export class NativeWorker {
         else {
           const code = typeof failure?.code === "string" ? failure.code : "BACKEND_ERROR";
           const publicMessages: Record<string, string> = {
+            ACCESSIBILITY_PERMISSION_REQUIRED: "The operating system has not granted Accessibility access to the native helper's responsible application",
+            SCREEN_RECORDING_PERMISSION_REQUIRED: "The operating system has not granted Screen Recording access for native window capture",
+            NATIVE_PERMISSION_REQUIRED: "Native platform permission or target ownership could not be established",
+            NATIVE_DELIVERY_UNCERTAIN: "The native semantic operation may have reached its target. Observe before another action; no fallback was attempted",
             CAPTURE_UNAVAILABLE: "Native window capture is unavailable; inspect the current target before another observation",
             CAPTURE_DEADLINE_EXCEEDED: "Native observation exceeded its capture deadline; inspect the current target before another observation",
             CAPTURE_GEOMETRY_CHANGED: "Native target geometry changed during capture; inspect the current target before another observation",
@@ -186,6 +217,14 @@ export class NativeWorker {
             TEXT_UNSUPPORTED: "Nothing was typed: the native direct-stroke implementation or keyboard keymap cannot represent the requested text. Unsafe clipboard fallback is unavailable to preserve shared selections; no paste key was sent.",
             SESSION_CLOSED: "Application control ended. Inspect native candidates; window closure is not verified.",
             OPENING_UNCERTAIN: "Application launch was attempted and delivery is uncertain. Inspect native candidates and reuse the same requestId; do not relaunch blindly.",
+            STALE_REF: "The snapshot ref expired or its application state changed. Observe the exact window again before choosing another action.",
+            INVALID_REF: "Use a complete snapshot-scoped ref from a current text observation.",
+            FOREIGN_REF: "The snapshot ref belongs to a different window or process generation.",
+            UNSUPPORTED_REF_IDENTITY: "This provider has no qualified mutation lifetime. Use a fresh image and the ordinary guarded input path.",
+            SEMANTIC_UNKNOWN: "The semantic operation may have reached the application. Observe the exact target before choosing another action; no fallback was attempted.",
+            SEMANTIC_NOT_DELIVERED: "The semantic operation was refused before delivery. Observe the current target before choosing another action.",
+            SEMANTIC_UNSUPPORTED: "The selected control does not expose a qualified interface for this semantic operation.",
+            SEMANTIC_PREPARATION_REQUIRED: "The semantic target is no longer prepared. Observe the exact window before choosing another action.",
             NATIVE_INCOMPATIBLE: "Native plugin does not match this installation or compositor. Prepare the current compositor, rebuild and reload its matching plugin.",
             NATIVE_STALE: "Native preparation no longer matches the running compositor. Run sbar-orbit native-refresh, or sbar-orbit doctor for the exact mismatch.",
             PRESENTATION_NOT_READY: "Workspace presentation was refused before display changes. Inspect monitors and wait until the requested output is unfocused with no special workspace. Retry the same requestId with unchanged parameters when ready.",
@@ -200,7 +239,8 @@ export class NativeWorker {
             && /^Application client is already leased by lease [0-9a-f]{32} \(worker pid \d+\); [a-z ,]+(; .{0,160})?$/.test(failure.message)
             ? " " + failure.message : "";
           pending.reject(new OrbitError(code, ((Object.hasOwn(publicMessages, code) ? publicMessages[code] : undefined)
-            ?? "Native request failed; inspect its private worker journal") + holder + fixed));
+            ?? "Native request failed; inspect its private worker journal") + holder + fixed, undefined,
+            code.startsWith("SEMANTIC_") ? normalizeDisposition(failure) : undefined));
           // A compositor handback ends this backend even if its worker still
           // accepts framed requests. EOF performs normal lease cleanup and the
           // existing close listener updates broker status.
@@ -238,6 +278,14 @@ export class NativeWorker {
     return operation;
   }
 
+  private signalOwned(signal: NodeJS.Signals) {
+    if (this.ended || this.child.exitCode !== null) return;
+    if (this.ownsProcessGroup && this.child.pid !== undefined) {
+      try { process.kill(-this.child.pid, signal); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    } else this.child.kill(signal);
+  }
+
   close(): Promise<void> {
     return this.closing ??= (async () => {
       const failures: unknown[] = [];
@@ -255,12 +303,12 @@ export class NativeWorker {
         if (code !== 0) failures.push(new OrbitError("BACKEND_ERROR", this.exitDetail ? "Native worker failed during cleanup: " + this.exitDetail : "Native worker failed during cleanup"));
       } catch (error) {
         failures.push(error);
-        this.child.kill("SIGCONT");
-        this.child.kill("SIGTERM");
+        if (this.workerPlatform !== "win32") this.signalOwned("SIGCONT");
+        this.signalOwned("SIGTERM");
         try { await wait(3_000); }
         catch (error) {
           failures.push(error);
-          this.child.kill("SIGKILL");
+          this.signalOwned("SIGKILL");
           try { await wait(3_000); } catch (error) { failures.push(error); }
         }
       }

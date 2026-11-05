@@ -53,6 +53,7 @@ const cooldownMs = 30_000;
  * fixture plans used by tests are untouched.
  */
 export async function ensureNativeReady(options: NativeOptions, deps: { diagnose?: typeof diagnoseNative; refresh?: typeof refreshNative; root?: string; requirePlugin?: boolean } = {}) {
+  if (options.adapter === "platform") return; // The fixed native helper checks actual OS consent; no Hyprland plan is fabricated.
   const requirePlugin = deps.requirePlugin ?? true;
   const ok = (value: NativeReadiness) => requirePlugin ? value.ready : blockers(value, false).length === 0 && value.plan !== null;
   const root = deps.root ?? nativeStateRoot();

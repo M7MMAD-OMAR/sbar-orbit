@@ -26,3 +26,12 @@ only its service contract. No installer should advertise unsupported native cont
 Browser automation, profile copying, private sessions and an embedded viewer must
 not be used to fill missing platform capabilities. The old porting proposals were
 removed because they described those retired mechanisms. Git history retains them.
+
+## Publication review, 6 November 2026
+
+Native macOS permission APIs are not an owner policy ban. The publication audit
+retains its default refusal and approves only the exact reviewed metadata
+prototype and fixture bytes for their named rules. Any changed bytes require
+review again. Production handoff/capture/opening/input remain unavailable until
+native window lifetime and real-host acceptance are qualified. Source publication
+does not claim TCC-free operation or promptless native control.

@@ -1,7 +1,7 @@
 # Orbit
 
-[Latest published release: 0.4.2](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.4.2)
-| [0.4.3 source candidate and pending gates](docs/release-0.4.3.md) | [Changelog](CHANGELOG.md)
+[Latest published release: 0.4.4](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.4.4)
+| [Release notes and deferred work](docs/release-0.4.4.md) | [Changelog](CHANGELOG.md)
 
 Open original installed native Linux applications on a numbered Hyprland workspace.
 The user can select another workspace for their own work. Applications retain their normal owner state and

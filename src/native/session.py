@@ -26,6 +26,12 @@ class SessionError(RuntimeError):
     pass
 
 
+class NativeRefError(SessionError):
+    def __init__(self, code="STALE_REF"):
+        self.code = code if code in ("STALE_REF", "INVALID_REF", "FOREIGN_REF", "REF_LIMIT_REACHED", "UNSUPPORTED_REF_IDENTITY") else "STALE_REF"
+        super().__init__(self.code + ": observe the exact window again before choosing an action")
+
+
 CAPTURE_TIMEOUT_SECONDS = 10
 CAPTURE_CLEANUP_SECONDS = 3
 
@@ -214,7 +220,7 @@ class NativeSession:
 
 
 
-    def _tree(self, target, deadline=None):
+    def _tree(self, target, deadline=None, selection=None):
         """Accessibility tree of one window, or the reason there is none."""
         if deadline is not None:
             capture_remaining(deadline)
@@ -223,10 +229,17 @@ class NativeSession:
         if identity is None:
             return {"status": "unavailable", "reason": "window process is unknown"}
         host = getattr(self, "a11y_host", None)
+        if selection is not None and host is None:
+            from .a11y_host import A11yHost
+            host = self.a11y_host = A11yHost(self.plan["runtime"])
         options = {"deadline": deadline} if deadline is not None else {}
         if host is not None:
             options["host"] = host
+        if selection is not None:
+            options["selection"] = {**selection, "window": target["key"][1]}
         tree = a11y.read_tree(identity[0], identity[1], self.plan["runtime"], **options)
+        if tree.get("status") == "ref-error":
+            raise NativeRefError(tree.get("code"))
         if deadline is not None:
             capture_remaining(deadline)
         current = json.loads(self.transport._exchange("j/clients"))
@@ -272,12 +285,16 @@ class NativeSession:
                   "close-window": {"appId", "windowId"}, "state": {"appId", "windowId"},
                   "cursor": {"appId", "windowId", "x", "y"}, "move": {"appId", "windowId", "x", "y"},
                   "click": {"appId", "windowId", "x", "y", "button"},
+                  "ref-click": {"appId", "windowId", "ref", "button"},
+                  "invoke-ref": {"appId", "windowId", "ref", "index"},
+                  "edit-ref": {"appId", "windowId", "ref", "text"},
+                  "value-ref": {"appId", "windowId", "ref", "value"},
                   "mouse-down": {"appId", "windowId", "x", "y", "button"},
                   "mouse-up": {"appId", "windowId", "x", "y", "button"},
                   "drag": {"appId", "windowId", "x", "y", "toX", "toY", "button"},
                   "scroll": {"appId", "windowId", "x", "y", "dy"},
                   "text": {"appId", "windowId", "text"}, "key": {"appId", "windowId", "key"}}
-        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "observationTimeoutMs", "observationMode"}
+        fields["observe"] = fields["observe"] | {"since", "timeoutMs", "quietMs", "graceMs", "digestOnly", "observationTimeoutMs", "observationMode", "refs", "skeleton", "root"}
         kind = value["type"]
         if kind not in fields or set(value) - (fields[kind] | {"type"}):
             raise SessionError("Unknown native action or unexpected fields")
@@ -290,11 +307,37 @@ class NativeSession:
                 coordinate(result.get(field))
         if kind == "observe" and result.setdefault("format", "image") not in a11y.FORMATS:
             raise SessionError("Unknown observation format")
+        if kind in ("ref-click", "invoke-ref", "edit-ref", "value-ref"):
+            from .a11y_snapshots import REF
+            if type(result.get("ref")) is not str or REF.fullmatch(result["ref"]) is None:
+                raise NativeRefError("INVALID_REF")
+        if kind == "invoke-ref":
+            result.setdefault("index", 0)
+            if type(result["index"]) is not int or not 0 <= result["index"] <= 31:
+                raise SessionError("Semantic action index must be an integer from 0 to 31")
+        if kind == "edit-ref":
+            value = result.get("text")
+            if type(value) is not str or "\0" in value or len(value.encode()) > 16000:
+                raise SessionError("Semantic text requires 0 to 16000 UTF-8 bytes without NUL")
+        if kind == "value-ref":
+            value = result.get("value")
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise SessionError("Semantic value must be finite")
+            result["value"] = float(value)
         if kind == "observe":
+            for option in ("refs", "skeleton"):
+                if option in result and type(result[option]) is not bool:
+                    raise SessionError("Observation selectors require boolean refs and skeleton")
+            if "root" in result:
+                from .a11y_snapshots import REF
+                if type(result["root"]) is not str or REF.fullmatch(result["root"]) is None:
+                    raise NativeRefError("INVALID_REF")
+            if any(result.get(option) for option in ("refs", "skeleton", "root")) and result["format"] == "image":
+                raise SessionError("Snapshot refs require text or both observation format")
             if "observationMode" in result and result["observationMode"] != "passive-v1":
                 raise SessionError("Unknown observation mode")
             cls._settle_options(result)
-        if kind in ("click", "mouse-down", "mouse-up", "drag"):
+        if kind in ("click", "ref-click", "mouse-down", "mouse-up", "drag"):
             result.setdefault("button", "left")
             if result["button"] not in ("left", "middle", "right"):
                 raise SessionError("Unknown native pointer button")
@@ -404,12 +447,69 @@ class NativeSession:
             time.sleep(min(max(state.get("motion_ms", 0), 10), 100) / 1000)
         raise SessionError("Native pointer action did not finish; a held button is released by the compositor timeout")
 
+    def _reference_point(self, action, target, address, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 3)
+        selection = {"resolve": action["ref"], "mutation": True}
+        resolved = self._tree(target, deadline=deadline, selection=selection)
+        if resolved.get("status") != "ok" or resolved.get("mutationIdentity") is not True:
+            raise NativeRefError()
+        record = resolved.get("node", {})
+        box = record.get("box")
+        if not isinstance(box, list) or len(box) != 4:
+            raise NativeRefError()
+        original_surface = tuple(target["size"])
+        geometry = self._geometry(address)
+        self._check_target(address)
+        if resolved.get("toolkit") == "GTK" and record.get("name"):
+            # A qualified lifetime does not make GTK's reported rectangle
+            # accurate. Use the same bounded pixel correction as observation.
+            surface = original_surface
+            environment = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+                           "XDG_RUNTIME_DIR": self.plan["runtime"],
+                           "WAYLAND_DISPLAY": str(Path(self.plan["runtime"]) / self.plan["display"])}
+            margin = geometry is not None and (geometry[0] != 0 or geometry[1] != 0)
+            log = self._app(action["appId"]).profile / ("ref-capture-" + uuid.uuid4().hex + ".log")
+            image, width, height = bounded_capture(
+                ["/usr/bin/grim"] + (["-t", "ppm"] if margin else []) + ["-T", target["key"][1], "-"],
+                environment, log, margin, deadline=deadline)
+            verify_host(self.plan, deadline=deadline)
+            current = self._target(action["appId"], action["windowId"])
+            after_geometry = self._geometry(address)
+            self._check_target(address)
+            if tuple(current["size"]) != surface or geometry != after_geometry:
+                raise NativeRefError()
+            crop = visible_crop((width, height), surface, geometry) if geometry is not None else None
+            if crop is not None:
+                image = cropped_png(image, *crop)
+                scale = width / surface[0]
+                width, height = crop[2], crop[3]
+                surface = (round(width / scale, 3), round(height / scale, 3))
+            calibrated = a11y_pixels.calibrate({"status": "ok", "toolkit": "GTK", "nodes": [copy.deepcopy(record)]},
+                                              image, (width, height), surface, deadline)
+            # OCR and capture are read-only. Revalidate the same ref after
+            # those reads, before any pointer event can be dispatched.
+            fresh = self._tree(current, deadline=deadline, selection=selection)
+            if (fresh.get("status") != "ok" or fresh.get("mutationIdentity") is not True
+                    or fresh.get("node") != record or fresh.get("semanticTarget") != resolved.get("semanticTarget")
+                    or time.monotonic() >= deadline):
+                raise NativeRefError()
+            box = calibrated["nodes"][0]["box"]
+        point = (box[0] + box[2] / 2, box[1] + box[3] / 2)
+        coordinate(point[0])
+        coordinate(point[1])
+        if time.monotonic() >= deadline:
+            raise NativeRefError()
+        return {"point": point, "surface": original_surface, "geometry": geometry}
+
     def execute(self, value):
         started = time.monotonic()
         require_budget()
         if self.closed:
             raise SessionError("Native session is closed")
         action = self.parse(value)
+        if action["type"] in ("invoke-ref", "edit-ref", "value-ref", "ref-click"):
+            from .semantic_actions import SemanticError
+            raise SemanticError("SEMANTIC_PREPARATION_REQUIRED", "not-delivered")
         passive = action.get("observationMode") == "passive-v1"
         request = "native-session " + json.dumps(action, sort_keys=True, ensure_ascii=True)
         frame = None
@@ -435,7 +535,9 @@ class NativeSession:
                 tree = None
                 if action["format"] != "image":
                     tree_size = tuple(target["size"])
-                    tree = self._tree(target, deadline=observation_deadline)
+                    selection = {key: action[key] for key in ("refs", "skeleton", "root") if key in action}
+                    tree = (self._tree(target, deadline=observation_deadline, selection=selection) if selection
+                            else self._tree(target, deadline=observation_deadline))
                     after_tree = current_target()
                     capture_remaining(observation_deadline)
                     if (tree.get("status") == "ok" or passive) and tuple(after_tree["size"]) != tree_size:

@@ -25,6 +25,10 @@ EDITABLE_TEXT = {"text", "entry", "password text", "terminal", "document text", 
 
 STRUCTURAL = {"panel", "grouping", "scroll pane", "filler", "viewport", "section", "split pane", "layered pane",
               "redundant object", "generic", "unknown"}
+SKELETON = {"frame", "dialog", "window", "panel", "grouping", "scroll pane", "viewport", "section", "split pane",
+            "list", "list box", "tree", "tree table", "table", "tool bar", "menu bar", "menu", "page tab list",
+            "document web", "document frame", "document text"}
+SKELETON_DEPTH = 6
 
 
 def contains(outer, inner):
@@ -153,16 +157,17 @@ def read_text(node, Atspi):
         return ""
 
 
-def walk(frame, Atspi, max_nodes, deadline, refresh=None):
+def walk(frame, Atspi, max_nodes, deadline, refresh=None, retain=None, skeleton=False, window_origin=None, initial=None):
     """Depth first, document order, with every bound enforced on the way in."""
     nodes, stats = [], {"visited": 0, "truncated": None, "recalibrated": 0}
-    origin = [0, 0]
-    stack = [(frame, 0, (), False, 1.0)]
+    origin = list(initial["origin"]) if initial is not None else [0, 0] if window_origin is None else list(window_origin)
+    stack = [(frame, 0, tuple(initial["chain"]), initial["scrolling"], initial["unit"])] if initial is not None else [(frame, 0, (), False, 1.0)]
     while stack:
         if time.monotonic() > deadline:
             stats["truncated"] = "time"
             break
         node, depth, chain, scrolling, unit = stack.pop()
+        inherited = {"chain": chain, "scrolling": scrolling, "unit": unit}
         if refresh is not None:
             refresh(node)
         stats["visited"] += 1
@@ -188,7 +193,7 @@ def walk(frame, Atspi, max_nodes, deadline, refresh=None):
             stats["deviceScale"] = unit if unit != 1.0 else stats.get("deviceScale")
         if raw is not None:
             raw = scaled(raw, unit)
-            if depth == 0:
+            if depth == 0 and window_origin is None and initial is None:
                 # Some toolkits (Gecko, GTK with client side shadows) report window extents in surface space,
                 # so the frame itself sits at the margin. Clicks are mapped from the window frame, not the surface.
                 origin = [raw[0], raw[1]]
@@ -214,6 +219,13 @@ def walk(frame, Atspi, max_nodes, deadline, refresh=None):
         if (interesting and role in ("label", "static") and nodes and name
                 and name in (nodes[-1].get("name"), nodes[-1].get("text")) and contains(nodes[-1]["box"], box)):
             interesting = False
+        child_count = None
+        if skeleton:
+            try:
+                child_count = node.get_child_count()
+            except Exception:
+                stats["truncated"] = stats["truncated"] or "unreadable"
+            interesting = box is not None and (depth == 0 or role in SKELETON and child_count is not None and child_count > 0)
         if interesting:
             if len(nodes) >= max_nodes:
                 stats["truncated"] = "nodes"
@@ -227,8 +239,16 @@ def walk(frame, Atspi, max_nodes, deadline, refresh=None):
                 entry["states"] = have
             if actionable:
                 entry["act"] = 1
+            if skeleton:
+                entry["childCount"] = child_count
+                if depth >= SKELETON_DEPTH and child_count:
+                    entry["descendantsOmitted"] = True
             nodes.append(entry)
+            if retain is not None:
+                retain(node, entry, {**inherited, "origin": tuple(origin)})
         if password:
+            continue
+        if skeleton and depth >= SKELETON_DEPTH:
             continue
         try:
             count = node.get_child_count()
@@ -291,7 +311,7 @@ def pick_frame(app, title, Atspi, refresh=None):
     return False
 
 
-def main(argv, refresh=None):
+def main(argv, refresh=None, retain=None, selection=None, skeleton=False):
     pid, title, max_nodes, budget_ms = int(argv[0]), argv[1], int(argv[2]), int(argv[3])
     started = time.monotonic()
     deadline = started + budget_ms / 1000
@@ -320,8 +340,10 @@ def main(argv, refresh=None):
         return {"status": "unavailable", "reason": "application exposes no top level window"}
     if frame is False:
         return {"status": "unavailable", "reason": "no accessible window matches the compositor title"}
-    nodes, stats = walk(frame, Atspi, max_nodes, deadline, refresh)
-    if len(nodes) <= 1:
+    if selection is not None:
+        selection(app, frame)
+    nodes, stats = walk(frame, Atspi, max_nodes, deadline, refresh, retain, skeleton)
+    if len(nodes) <= 1 and not skeleton:
         return {"status": "unavailable", "reason": "accessible window has no visible content"}
     return {"status": "ok", "toolkit": clean(app.get_toolkit_name() or "", 24), "nodes": nodes,
             "visited": stats["visited"], "truncated": stats["truncated"],

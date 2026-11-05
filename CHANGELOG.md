@@ -2,7 +2,22 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
-## Unreleased
+## 0.4.4 (6 November 2026)
+
+Linux release freeze: bounded snapshot refs with typed stale refusal, skeleton/root
+traversal, named GTK pixel correction, explicit renderer accessibility registration
+and proven forwarding/native minimum-size outcomes. Qualified GTK button/text
+and Qt button/checkbox/text semantic effects were measured. Prepared explicit
+ref-click sends once and refuses changed identity, geometry or authority.
+Desktop navigation requires explicit owner selection.
+
+The owner ended the issue campaign. Remaining GTK checkbox/Nautilus fallback
+acceptance, native Windows/macOS and other Linux compositor adapters, and the
+comparative efficiency program are deferred. No 1.8x gain or cross-platform
+native parity is claimed. Windows desktop source is included without a shipped
+EXE or installed Windows acceptance. See [release notes](docs/release-0.4.4.md).
+
+## Historical 0.4.3 source candidate
 
 ### 0.4.3 source candidate
 

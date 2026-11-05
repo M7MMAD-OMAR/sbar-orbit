@@ -91,6 +91,352 @@
 #include <regex>
 #include <memory>
 #include <cstdio>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <cstddef>
+#include <dbus/dbus.h>
+
+// BEGIN semantic-wire
+// Pure bounded D-Bus wire state. The compositor owns tick/send and the admission
+// callback on its own event loop. PREPARE is read-only; SEND never queues bytes.
+namespace semantic_wire {
+using Clock = std::chrono::steady_clock;
+constexpr size_t MAX_WIRE = 262144;
+constexpr size_t MAX_RECORDS = 64;
+constexpr size_t MAX_PENDING = 8;
+
+inline std::string decodeHex(const std::string& value, size_t limit) {
+    if (value == "-") return {};
+    if (value.empty() || value.size() % 2 || value.size() > limit * 2 ||
+        value.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+        throw std::runtime_error("invalid semantic encoding");
+    std::string result;
+    for (size_t i = 0; i < value.size(); i += 2)
+        result += static_cast<char>(std::stoi(value.substr(i, 2), nullptr, 16));
+    if (result.find('\0') != std::string::npos || !dbus_validate_utf8(result.c_str(), nullptr))
+        throw std::runtime_error("invalid semantic text");
+    return result;
+}
+
+struct Request {
+    std::string target, id, owner, path, address, busId, verb, payload;
+    pid_t pid = 0;
+    double x = 0, y = 0;
+    int index = 0;
+    double value = 0;
+};
+
+inline Request parse(const std::string& raw) {
+    if (raw.size() > 65536 || raw.find_first_of("\r\n\0", 0, 3) != std::string::npos) throw std::runtime_error("semantic request too large");
+    Request r;
+    std::string command, addressHex, payloadHex, pid, extra;
+    std::istringstream input(raw);
+    if (!(input >> command >> r.target >> r.id >> r.owner >> r.path >> addressHex >> r.busId >> pid >> r.verb >> payloadHex >> r.x >> r.y) ||
+        (input >> extra) || command != "ghost-semantic-prepare" ||
+        !std::regex_match(r.id, std::regex{"[0-9a-f]{32}"}) ||
+        !std::regex_match(r.busId, std::regex{"[0-9a-f]{32}"}) ||
+        !std::regex_match(pid, std::regex{"[1-9][0-9]{0,9}"}) ||
+        r.target.size() > 256 || r.owner.size() > 128 || r.owner.empty() || r.owner[0] != ':' ||
+        !dbus_validate_bus_name(r.owner.c_str(), nullptr) || r.path.size() > 512 ||
+        !dbus_validate_path(r.path.c_str(), nullptr) || !std::isfinite(r.x) || !std::isfinite(r.y) ||
+        r.x < 0 || r.y < 0 || r.x > 16384 || r.y > 16384)
+        throw std::runtime_error("invalid semantic request");
+    const auto number = std::stoll(pid);
+    if (number > 2147483647) throw std::runtime_error("invalid semantic pid");
+    r.pid = static_cast<pid_t>(number);
+    r.address = decodeHex(addressHex, 1024);
+    r.payload = decodeHex(payloadHex, 16000);
+    if (r.verb == "invoke") {
+        if (!std::regex_match(r.payload, std::regex{"0|[1-9][0-9]{0,2}"}))
+            throw std::runtime_error("invalid semantic action index");
+        r.index = std::stoi(r.payload);
+        if (r.index > 255) throw std::runtime_error("invalid semantic action index");
+    } else if (r.verb == "value") {
+        if (r.payload.empty() || r.payload.size() > 64) throw std::runtime_error("invalid semantic value");
+        size_t used = 0;
+        r.value = std::stod(r.payload, &used);
+        if (used != r.payload.size() || !std::isfinite(r.value)) throw std::runtime_error("invalid semantic value");
+    } else if (r.verb != "edit") throw std::runtime_error("unsupported semantic verb");
+    return r;
+}
+
+inline std::string unixPath(const std::string& address, bool& abstract) {
+    std::string prefix;
+    if (address.starts_with("unix:path=")) { prefix = "unix:path="; abstract = false; }
+    else if (address.starts_with("unix:abstract=")) { prefix = "unix:abstract="; abstract = true; }
+    else throw std::runtime_error("semantic bus must use a Unix socket");
+    const auto comma = address.find(',', prefix.size());
+    if (comma != std::string::npos && !std::regex_match(address.substr(comma), std::regex{",guid=[0-9a-fA-F]{32}"}))
+        throw std::runtime_error("invalid semantic bus address");
+    const auto encoded = address.substr(prefix.size(), comma == std::string::npos ? comma : comma - prefix.size());
+    std::string path;
+    for (size_t i = 0; i < encoded.size(); ++i) {
+        if (encoded[i] != '%') path += encoded[i];
+        else {
+            if (i + 2 >= encoded.size()) throw std::runtime_error("invalid semantic socket escape");
+            path += decodeHex(encoded.substr(i + 1, 2), 1); i += 2;
+        }
+    }
+    if (path.empty() || path.size() > 106 || path.find_first_of(";\r\n\0", 0, 4) != std::string::npos ||
+        (!abstract && path[0] != '/')) throw std::runtime_error("invalid semantic socket path");
+    return path;
+}
+
+struct MessageDelete { void operator()(DBusMessage* value) const { if (value) dbus_message_unref(value); } };
+using Message = std::unique_ptr<DBusMessage, MessageDelete>;
+inline Message method(const char* destination, const char* path, const char* interface, const char* member) {
+    Message result(dbus_message_new_method_call(destination, path, interface, member));
+    if (!result) throw std::runtime_error("semantic allocation failed");
+    return result;
+}
+inline std::string marshal(DBusMessage* message, dbus_uint32_t serial) {
+    dbus_message_set_serial(message, serial);
+    char* bytes = nullptr; int length = 0;
+    if (!dbus_message_marshal(message, &bytes, &length)) throw std::runtime_error("semantic encoding failed");
+    std::string result(bytes, length); dbus_free(bytes);
+    if (result.size() > MAX_WIRE) throw std::runtime_error("semantic message too large");
+    return result;
+}
+
+enum class Stage { CONNECT, AUTH, HELLO, ID, PID, STATE, READY, SENT, DONE };
+struct Operation {
+    Request request;
+    std::string fingerprint, tx, rx, delivery = "not-delivered", reason = "preparing";
+    size_t offset = 0;
+    int fd = -1;
+    dbus_uint32_t serial = 0;
+    Stage stage = Stage::CONNECT;
+    std::optional<bool> accepted;
+    Clock::time_point deadline = Clock::now() + std::chrono::seconds(3), finished{};
+    ~Operation() { if (fd >= 0) close(fd); }
+    void settle(const std::string& why, const std::string& sent = "not-delivered", std::optional<bool> effect = {}) {
+        if (fd >= 0) close(fd);
+        fd = -1; stage = Stage::DONE; reason = why; delivery = sent; accepted = effect;
+        tx.clear(); rx.clear(); request.payload.clear(); finished = Clock::now();
+    }
+    std::string receipt() const {
+        const char* state = stage == Stage::DONE ? "settled" : stage == Stage::READY ? "ready" : stage == Stage::SENT ? "pending" : "preparing";
+        return std::format("{{\"schema\":1,\"requestId\":\"{}\",\"state\":\"{}\",\"delivery\":\"{}\",\"accepted\":{},\"reason\":\"{}\"}}",
+                           request.id, state, delivery, accepted ? (*accepted ? "true" : "false") : "null", reason);
+    }
+};
+
+class Dispatcher {
+    std::map<std::string, std::unique_ptr<Operation>> operations;
+    std::function<std::string(const Request&, bool)> admit;
+    std::function<ssize_t(int, const void*, size_t, int)> finalSend;
+    static void appendString(DBusMessage* message, const std::string& value) {
+        const char* raw = value.c_str();
+        if (!dbus_message_append_args(message, DBUS_TYPE_STRING, &raw, DBUS_TYPE_INVALID))
+            throw std::runtime_error("semantic allocation failed");
+    }
+    void queue(Operation& op, Stage stage, Message message) {
+        op.stage = stage; op.offset = 0; op.tx = marshal(message.get(), ++op.serial);
+    }
+    void authenticate(Operation& op) {
+        const auto uid = std::to_string(getuid());
+        static const char hex[] = "0123456789abcdef";
+        std::string encoded;
+        for (const unsigned char c : uid) { encoded += hex[c >> 4]; encoded += hex[c & 15]; }
+        op.stage = Stage::AUTH; op.tx = std::string(1, '\0') + "AUTH EXTERNAL " + encoded + "\r\n"; op.offset = 0;
+    }
+    static std::string stringReply(DBusMessage* message) {
+        const char* value = nullptr;
+        if (!dbus_message_get_args(message, nullptr, DBUS_TYPE_STRING, &value, DBUS_TYPE_INVALID) || !value)
+            throw std::runtime_error("invalid semantic proof reply");
+        return value;
+    }
+    void reply(Operation& op, DBusMessage* message) {
+        if (dbus_message_get_type(message) == DBUS_MESSAGE_TYPE_SIGNAL) return;
+        if (dbus_message_get_reply_serial(message) != op.serial) throw std::runtime_error("unexpected semantic reply");
+        const char* sender = dbus_message_get_sender(message);
+        const bool application = op.stage == Stage::STATE || op.stage == Stage::SENT;
+        if (!sender || std::string(sender) != (application ? op.request.owner : DBUS_SERVICE_DBUS))
+            throw std::runtime_error("semantic reply owner changed");
+        if (dbus_message_get_type(message) != DBUS_MESSAGE_TYPE_METHOD_RETURN) {
+            op.settle("method-error", op.stage == Stage::SENT ? "unknown" : "not-delivered"); return;
+        }
+        if (op.stage == Stage::HELLO) {
+            const auto unique = stringReply(message);
+            if (unique.empty() || unique[0] != ':' || !dbus_validate_bus_name(unique.c_str(), nullptr)) throw std::runtime_error("invalid bus hello");
+            queue(op, Stage::ID, method(DBUS_SERVICE_DBUS, DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS, "GetId"));
+        } else if (op.stage == Stage::ID) {
+            if (stringReply(message) != op.request.busId) { op.settle("bus-changed"); return; }
+            auto next = method(DBUS_SERVICE_DBUS, DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS, "GetConnectionUnixProcessID");
+            appendString(next.get(), op.request.owner); queue(op, Stage::PID, std::move(next));
+        } else if (op.stage == Stage::PID) {
+            dbus_uint32_t pid = 0;
+            if (!dbus_message_get_args(message, nullptr, DBUS_TYPE_UINT32, &pid, DBUS_TYPE_INVALID) || pid != static_cast<unsigned>(op.request.pid)) {
+                op.settle("provider-changed"); return;
+            }
+            queue(op, Stage::STATE, method(op.request.owner.c_str(), op.request.path.c_str(), "org.a11y.atspi.Accessible", "GetState"));
+        } else if (op.stage == Stage::STATE) {
+            DBusMessageIter outer, values;
+            if (!dbus_message_has_signature(message, "au") || !dbus_message_iter_init(message, &outer) || dbus_message_iter_get_arg_type(&outer) != DBUS_TYPE_ARRAY ||
+                dbus_message_iter_get_element_type(&outer) != DBUS_TYPE_UINT32) throw std::runtime_error("invalid provider state");
+            dbus_message_iter_recurse(&outer, &values);
+            dbus_uint32_t first = 0; unsigned count = 0;
+            while (dbus_message_iter_get_arg_type(&values) != DBUS_TYPE_INVALID) {
+                dbus_uint32_t value = 0; dbus_message_iter_get_basic(&values, &value);
+                if (count++ == 0) first = value;
+                if (count > 2) throw std::runtime_error("invalid provider state");
+                dbus_message_iter_next(&values);
+            }
+            // ATSPI_STATE_DEFUNCT is bit 6 in the stable AT-SPI state enum.
+            if (count != 2 || (first & (1U << 6))) { op.settle("stale-object"); return; }
+            op.stage = Stage::READY; op.reason = "prepared";
+        } else if (op.stage == Stage::SENT) {
+            dbus_bool_t accepted = true;
+            if (op.request.verb != "value" && !dbus_message_get_args(message, nullptr, DBUS_TYPE_BOOLEAN, &accepted, DBUS_TYPE_INVALID))
+                throw std::runtime_error("invalid semantic effect reply");
+            if (op.request.verb == "value" && !dbus_message_has_signature(message, ""))
+                throw std::runtime_error("invalid semantic value reply");
+            op.settle("replied", "delivered", accepted != false);
+        } else throw std::runtime_error("unexpected semantic reply stage");
+    }
+    void read(Operation& op) {
+        char buffer[16384];
+        const auto got = recv(op.fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+        if (got == 0) { op.settle("disconnected", op.stage == Stage::SENT ? "unknown" : "not-delivered"); return; }
+        if (got < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return; throw std::runtime_error("semantic read failed"); }
+        if (op.rx.size() + static_cast<size_t>(got) > MAX_WIRE) throw std::runtime_error("semantic reply limit");
+        op.rx.append(buffer, got);
+        if (op.stage == Stage::AUTH) {
+            const auto end = op.rx.find("\r\n");
+            if (end == std::string::npos) { if (op.rx.size() > 1024) throw std::runtime_error("semantic auth limit"); return; }
+            if (!std::regex_match(op.rx.substr(0, end), std::regex{"OK [0-9a-fA-F]{32}"})) throw std::runtime_error("semantic auth refused");
+            op.rx.erase(0, end + 2);
+            queue(op, Stage::HELLO, method(DBUS_SERVICE_DBUS, DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS, "Hello"));
+            op.tx = "BEGIN\r\n" + op.tx;
+        }
+        for (unsigned i = 0; i < 8 && !op.rx.empty() && op.stage != Stage::DONE; ++i) {
+            const int needed = dbus_message_demarshal_bytes_needed(op.rx.data(), op.rx.size());
+            if (needed < 0 || needed > static_cast<int>(MAX_WIRE)) throw std::runtime_error("invalid semantic wire reply");
+            if (!needed || op.rx.size() < static_cast<size_t>(needed)) return;
+            Message message(dbus_message_demarshal(op.rx.data(), needed, nullptr));
+            if (!message) throw std::runtime_error("invalid semantic wire message");
+            op.rx.erase(0, needed); reply(op, message.get());
+        }
+    }
+    void write(Operation& op) {
+        if (op.tx.empty()) return;
+        const auto sent = ::send(op.fd, op.tx.data() + op.offset, op.tx.size() - op.offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (sent < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return; throw std::runtime_error("semantic proof write failed"); }
+        op.offset += sent;
+        if (op.offset == op.tx.size()) { op.tx.clear(); op.offset = 0; }
+    }
+    Operation& selected(const std::string& target, const std::string& id) {
+        auto found = operations.find(id);
+        if (found == operations.end() || found->second->request.target != target) throw std::runtime_error("unknown semantic request");
+        return *found->second;
+    }
+public:
+    explicit Dispatcher(std::function<std::string(const Request&, bool)> admission,
+                        std::function<ssize_t(int, const void*, size_t, int)> sender = ::send)
+        : admit(std::move(admission)), finalSend(std::move(sender)) {}
+    size_t pending() const {
+        return std::count_if(operations.begin(), operations.end(), [](const auto& entry) { return entry.second->stage != Stage::DONE; });
+    }
+    std::string prepare(const std::string& raw) {
+        const auto request = parse(raw);
+        const auto now = Clock::now();
+        // The event timer is disarmed at idle. Expired terminal receipts must
+        // also be evicted here before capacity admission, not only on a tick.
+        std::erase_if(operations, [now](const auto& entry) { return entry.second->stage == Stage::DONE && now - entry.second->finished > std::chrono::seconds(60); });
+        if (const auto found = operations.find(request.id); found != operations.end()) {
+            if (found->second->fingerprint != raw) throw std::runtime_error("semantic request conflict");
+            if (found->second->request.target != request.target) throw std::runtime_error("semantic request conflict");
+            return found->second->receipt();
+        }
+        if (operations.size() >= MAX_RECORDS || pending() >= MAX_PENDING) throw std::runtime_error("semantic request limit");
+        const auto refused = admit(request, false);
+        if (!refused.empty()) throw std::runtime_error(refused);
+        auto operation = std::make_unique<Operation>();
+        auto& op = *operation; op.request = request; op.fingerprint = raw;
+        bool abstract = false;
+        const auto path = unixPath(request.address, abstract);
+        op.fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        if (op.fd < 0) throw std::runtime_error("semantic socket unavailable");
+        sockaddr_un endpoint{}; endpoint.sun_family = AF_UNIX;
+        std::memcpy(endpoint.sun_path + (abstract ? 1 : 0), path.data(), path.size());
+        const socklen_t size = offsetof(sockaddr_un, sun_path) + path.size() + (abstract ? 1 : 1);
+        if (connect(op.fd, reinterpret_cast<const sockaddr*>(&endpoint), size) == 0) {
+            ucred credentials{}; socklen_t length = sizeof(credentials);
+            if (getsockopt(op.fd, SOL_SOCKET, SO_PEERCRED, &credentials, &length) != 0 || credentials.uid != getuid())
+                throw std::runtime_error("semantic socket owner changed");
+            authenticate(op);
+        } else if (errno != EINPROGRESS && errno != EAGAIN) throw std::runtime_error("semantic bus unavailable");
+        operations.emplace(request.id, std::move(operation));
+        return op.receipt();
+    }
+    std::string status(const std::string& target, const std::string& id) { return selected(target, id).receipt(); }
+    std::string cancel(const std::string& target, const std::string& id) {
+        auto& op = selected(target, id);
+        if (op.stage != Stage::DONE) op.settle("cancelled", op.stage == Stage::SENT ? "unknown" : "not-delivered");
+        return op.receipt();
+    }
+    std::string send(const std::string& target, const std::string& id) {
+        auto& op = selected(target, id);
+        if (op.stage == Stage::SENT || op.stage == Stage::DONE) return op.receipt();
+        if (op.stage != Stage::READY || Clock::now() >= op.deadline) { op.settle("not-ready"); return op.receipt(); }
+        Message message;
+        const auto& r = op.request;
+        if (r.verb == "invoke") {
+            message = method(r.owner.c_str(), r.path.c_str(), "org.a11y.atspi.Action", "DoAction");
+            dbus_int32_t index = r.index;
+            if (!dbus_message_append_args(message.get(), DBUS_TYPE_INT32, &index, DBUS_TYPE_INVALID)) throw std::runtime_error("semantic allocation failed");
+        } else if (r.verb == "edit") {
+            message = method(r.owner.c_str(), r.path.c_str(), "org.a11y.atspi.EditableText", "SetTextContents"); appendString(message.get(), r.payload);
+        } else {
+            message = method(r.owner.c_str(), r.path.c_str(), DBUS_INTERFACE_PROPERTIES, "Set");
+            DBusMessageIter outer, variant; dbus_message_iter_init_append(message.get(), &outer);
+            const char* interface = "org.a11y.atspi.Value"; const char* property = "CurrentValue"; double value = r.value;
+            if (!dbus_message_iter_append_basic(&outer, DBUS_TYPE_STRING, &interface) ||
+                !dbus_message_iter_append_basic(&outer, DBUS_TYPE_STRING, &property) ||
+                !dbus_message_iter_open_container(&outer, DBUS_TYPE_VARIANT, "d", &variant) ||
+                !dbus_message_iter_append_basic(&variant, DBUS_TYPE_DOUBLE, &value) ||
+                !dbus_message_iter_close_container(&outer, &variant)) throw std::runtime_error("semantic allocation failed");
+        }
+        const auto bytes = marshal(message.get(), ++op.serial);
+        if (Clock::now() >= op.deadline) { op.settle("deadline"); return op.receipt(); }
+        // No callback/event-loop turn separates final admission from this syscall.
+        const auto refused = admit(r, true);
+        if (!refused.empty()) { op.settle("admission-refused"); return op.receipt(); }
+        if (Clock::now() >= op.deadline) { op.settle("deadline"); return op.receipt(); }
+        const auto sent = finalSend(op.fd, bytes.data(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (sent == static_cast<ssize_t>(bytes.size())) {
+            op.stage = Stage::SENT; op.delivery = "unknown"; op.reason = "awaiting-reply";
+        } else op.settle(sent > 0 ? "partial-send" : "send-refused", sent > 0 ? "unknown" : "not-delivered");
+        return op.receipt();
+    }
+    void tick() {
+        const auto now = Clock::now();
+        for (auto& [id, pointer] : operations) {
+            auto& op = *pointer;
+            if (op.stage == Stage::DONE) continue;
+            if (now >= op.deadline) { op.settle("deadline", op.stage == Stage::SENT ? "unknown" : "not-delivered"); continue; }
+            try {
+                pollfd ready{op.fd, static_cast<short>(POLLIN | ((!op.tx.empty() || op.stage == Stage::CONNECT) ? POLLOUT : 0)), 0};
+                if (poll(&ready, 1, 0) <= 0) continue;
+                if (ready.revents & (POLLERR | POLLHUP | POLLNVAL)) { op.settle("disconnected", op.stage == Stage::SENT ? "unknown" : "not-delivered"); continue; }
+                if (op.stage == Stage::CONNECT && (ready.revents & POLLOUT)) {
+                    int error = 0; socklen_t length = sizeof(error);
+                    ucred credentials{}; socklen_t credentialsLength = sizeof(credentials);
+                    if (getsockopt(op.fd, SOL_SOCKET, SO_ERROR, &error, &length) != 0 || error ||
+                        getsockopt(op.fd, SOL_SOCKET, SO_PEERCRED, &credentials, &credentialsLength) != 0 || credentials.uid != getuid())
+                        throw std::runtime_error("semantic socket owner changed");
+                    authenticate(op);
+                }
+                if ((ready.revents & POLLOUT) && !op.tx.empty()) write(op);
+                if ((ready.revents & POLLIN) && op.stage != Stage::DONE) read(op);
+            } catch (...) { op.settle("invalid-transport", op.stage == Stage::SENT ? "unknown" : "not-delivered"); }
+        }
+        std::erase_if(operations, [now](const auto& entry) { return entry.second->stage == Stage::DONE && now - entry.second->finished > std::chrono::seconds(60); });
+    }
+};
+} // namespace semantic_wire
+// END semantic-wire
+
 
 // Workspace ids became a numbered or special variant in Hyprland 0.57.
 static std::optional<int64_t> workspaceNumber(const PHLWORKSPACE& workspace) {
@@ -2522,6 +2868,61 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
 
+static std::unique_ptr<semantic_wire::Dispatcher> semanticDispatcher;
+static SP<CEventLoopTimer> semanticTimer;
+
+static std::string semanticAdmission(const semantic_wire::Request& request, bool render) {
+    if (admissionPaused) return "admission-paused";
+    auto target = resolve(request.target, false);
+    if (!target.error.empty()) return "target-not-admitted";
+    pid_t pid = 0;
+    wl_client_get_credentials(target.surface->client(), &pid, nullptr, nullptr);
+    if (pid != request.pid) return "target-process-changed";
+    const Vector2D point{request.x, request.y};
+    const auto xdg = windowXdg(target.window);
+    const auto local = surfaceInputPoint(target.window->size(Desktop::View::IGeometric::GEOMETRIC_GOAL),
+        target.surface->m_current.size, xdg ? xdg->m_current.geometry : CBox{}, point);
+    if (!local) return "target-geometry-unavailable";
+    if (render) {
+        // Render only. Do not flush a pointer pump, move the seat or manufacture
+        // a native click while delivering a semantic operation.
+        auto& cursor = cursors[request.target];
+        const auto stamp = std::chrono::steady_clock::now();
+        const double now = std::chrono::duration<double>(stamp.time_since_epoch()).count();
+        cursor.motion = cursor_motion::plan({point.x, point.y}, {point.x, point.y}, ++cursorSequence, now, false, false);
+        cursor.held = false; cursor.window = target.window; cursor.local = point; cursor.sequence = cursorSequence;
+        g_pHyprRenderer->damageMonitor(target.window->m_monitor.lock());
+    }
+    return {};
+}
+
+static void armSemanticTimer() {
+    if (!semanticTimer || !semanticDispatcher) return;
+    semanticTimer->updateTimeout(semanticDispatcher->pending() ? std::optional<Time::steady_dur>{std::chrono::milliseconds(10)} : std::nullopt);
+    g_pEventLoopManager->scheduleRecalc();
+}
+
+static std::string semanticCommand(const std::string& request) {
+    if (!semanticDispatcher) return "refused: semantic transport unavailable";
+    try {
+        std::istringstream input(request);
+        std::string command, target, id, extra;
+        input >> command;
+        std::string result;
+        if (command == "ghost-semantic-prepare") result = semanticDispatcher->prepare(request);
+        else {
+            if (!(input >> target >> id) || (input >> extra) || !std::regex_match(id, std::regex{"[0-9a-f]{32}"}))
+                return "refused: invalid semantic command";
+            if (command == "ghost-semantic-status") result = semanticDispatcher->status(target, id);
+            else if (command == "ghost-semantic-send") result = semanticDispatcher->send(target, id);
+            else if (command == "ghost-semantic-cancel") result = semanticDispatcher->cancel(target, id);
+            else return "refused: invalid semantic command";
+        }
+        armSemanticTimer();
+        return result;
+    } catch (...) { return "refused: semantic request failed"; }
+}
+
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
 #ifndef ORBIT_PLUGIN_SOURCE_SHA256
@@ -2547,6 +2948,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[ghostinput] cannot build agent keymap");
     agentKeyboard->updateKeymapFD();
     installApplicationHooks();
+    semanticDispatcher = std::make_unique<semantic_wire::Dispatcher>(semanticAdmission);
+    semanticTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) {
+        semanticDispatcher->tick(); armSemanticTimer();
+    }, nullptr);
+    g_pEventLoopManager->addTimer(semanticTimer);
+    for (const auto* command : {"ghost-semantic-prepare", "ghost-semantic-status", "ghost-semantic-send", "ghost-semantic-cancel"})
+        registerCtl(SHyprCtlCommand{command, false, [](eHyprCtlOutputFormat, std::string request) { return semanticCommand(request); }});
 #ifdef ORBIT_PLUGIN_SOURCE_SHA256
     registerCtl(SHyprCtlCommand{"ghost-build-info", false,
         [sourceStamp, HASH](eHyprCtlOutputFormat, std::string request) {
@@ -2702,10 +3110,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
                 for (const auto& [unit, scope] : retainedScopes)
                     if (!scope->empty())
                         empty = false;
-                const bool ready = admissionPaused && roots == 0 && empty && !legacyEnrollmentOccurred &&
+                const auto semanticPending = semanticDispatcher ? semanticDispatcher->pending() : 0;
+                const bool ready = admissionPaused && roots == 0 && empty && !legacyEnrollmentOccurred && semanticPending == 0 &&
                     applicationLeases.empty();
-                return std::format("{{\"schema\":1,\"admission_paused\":{},\"live_roots\":{},\"tracked_scopes\":{},\"scopes_empty\":{},\"legacy_enrollment\":{},\"ready\":{}}}",
-                                   admissionPaused, roots, retainedScopes.size(), empty, legacyEnrollmentOccurred, ready);
+                return std::format("{{\"schema\":1,\"admission_paused\":{},\"live_roots\":{},\"tracked_scopes\":{},\"scopes_empty\":{},\"legacy_enrollment\":{},\"semantic_pending\":{},\"ready\":{}}}",
+                                   admissionPaused, roots, retainedScopes.size(), empty, legacyEnrollmentOccurred, semanticPending, ready);
             } catch (const std::exception& error) {
                 return std::string{"refused: unload readiness unavailable: "} + error.what();
             }
@@ -2917,10 +3326,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    if (semanticDispatcher && semanticDispatcher->pending())
+        throw std::runtime_error("pending native semantic callbacks must settle before unload");
     if (!applicationLeases.empty())
         throw std::runtime_error("active application leases must be handed back before unload");
     if (!g_pSeatManager || !g_pHyprRenderer || !PROTO::data || !PROTO::primarySelection)
         throw std::runtime_error("native cleanup protocols are unavailable; cleanup remains incomplete");
+    if (semanticTimer) g_pEventLoopManager->removeTimer(semanticTimer);
+    semanticTimer.reset(); semanticDispatcher.reset();
     keyboardPreparations.clear();
     keyboardSequences.clear();
     removeApplicationHooks();

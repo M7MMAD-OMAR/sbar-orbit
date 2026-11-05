@@ -1,7 +1,7 @@
 import { isPublicSourcePath } from "../scripts/public-paths";
 import { expect, test } from "bun:test";
 import { needsGitCheckout } from "./platform-support";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -157,4 +157,31 @@ needsGitCheckout("git ls-files, which needs the repository and not just the bina
   await run(["git", "add", "src/probe.ts"]);
   const clean = JSON.parse((await run(command)).output);
   expect(clean.findings).toEqual([]);
+});
+
+needsGitCheckout("native source review is bound to exact staged bytes")(
+  "reviewed native metadata source loses its publication exception after any edit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orbit-native-review-audit-"));
+  const run = async (args: string[]) => {
+    const child = Bun.spawn(args, { cwd: root, stdout: "pipe", stderr: "ignore" });
+    const output = await new Response(child.stdout).text();
+    return { code: await child.exited, output };
+  };
+  try {
+    await run(["git", "init", "-q"]);
+    await mkdir(join(root, "src/native"), { recursive: true });
+    const path = "src/native/platform_macos.py";
+    const source = await Bun.file(resolve(path)).text();
+    await writeFile(join(root, path), source);
+    await run(["git", "add", path]);
+    const command = [process.execPath, resolve("scripts/public-audit.ts")];
+    const approved = await run(command);
+    expect(approved.code).toBe(0);
+    expect(JSON.parse(approved.output).findings).toEqual([]);
+    await writeFile(join(root, path), source + "\n# Changed after review.\n");
+    await run(["git", "add", path]);
+    const changed = await run(command);
+    expect(changed.code).not.toBe(0);
+    expect(JSON.parse(changed.output).findings).toContainEqual({ file: path, rule: "macos-accessibility" });
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
