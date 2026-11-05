@@ -295,6 +295,12 @@ class ExistingApplicationSession(NativeSession):
             self.a11y_host = None
         return None
 
+    def reveal(self, value):
+        # Only the owner-authenticated broker route dispatches this explicit action.
+        from .owner_reveal import reveal_window
+        with self.lock:
+            return reveal_window(self, value)
+
     def set_paused(self, paused):
         if not paused:
             require_budget()

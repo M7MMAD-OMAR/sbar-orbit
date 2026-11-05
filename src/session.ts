@@ -1240,6 +1240,8 @@ export class Sessions {
     }
     if (request.method === "native.monitors" || request.method === "native.present") {
       const presentation = request.method === "native.present";
+      if (presentation && (!caller.verified || caller.role !== "owner"))
+        throw new OrbitError("APPROVAL_REQUIRED", "Desktop presentation requires an explicit owner selection; background actions and capture must not navigate");
       if (presentation) this.requireStableOperationScope(caller);
       let requestId = "", selected: ReturnType<typeof parseNativePresentation> | undefined;
       if (presentation) {
@@ -1292,6 +1294,18 @@ export class Sessions {
       }
       this.creating.add(result);
       void result.then(() => this.creating.delete(result), () => this.creating.delete(result));
+      return result;
+    }
+    if (request.method === "session.reveal") {
+      // Deliberate owner navigation only. Never called by polling or model tools.
+      if (!caller.verified || caller.role !== "owner")
+        throw new OrbitError("APPROVAL_REQUIRED", "Only an explicit owner session selection may navigate the desktop");
+      if (Object.keys(params).some(key => key !== "sessionId"))
+        throw new OrbitError("INVALID_REQUEST", "Owner navigation requires only a session identity");
+      const selected = this.get(params.sessionId);
+      this.ensureOpen(selected);
+      const result = selected.tail.then(() => { this.ensureOpen(selected); return selected.backend.reveal(); });
+      selected.tail = result.then(() => undefined, () => undefined);
       return result;
     }
     if (request.method === "session.list") return this.list(caller);

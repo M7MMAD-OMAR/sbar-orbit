@@ -148,10 +148,8 @@ def uncertain_candidates(windows, value, reason):
             "handoff": "Inspect the candidates before selecting an exact handoff; do not relaunch blindly."}
 
 
-# A window that maps from a launch takes seat focus by itself. Treat that as map time focus, and
-# place it, only while the compositor shows no owner pointer movement since the request and the
-# window was first seen moments ago. A keyboard has no compositor record, so the grace is bounded.
-MAP_FOCUS_GRACE = 0.5
+# A focused candidate belongs to owner-visible input state. Mapping age and a
+# stationary pointer do not authorize background movement or focus restoration.
 POINTER_MOVED = 2
 
 
@@ -192,7 +190,6 @@ def open_application(session, value):
             clients = json.loads(session.transport._exchange("j/clients"))
             baseline = {(window["address"], window.get("stableId")) for window in clients}
             preexisting = existing_processes(clients, existing)
-            baseline_cursor = cursor_position(session)
             with spec.open("x") as stream:
                 os.chmod(spec, 0o600)
                 json.dump({"argv": value["argv"], "scope": unit, "activationToken": token, "receipt": str(receipt), "expires": time.time() + 15, **({"cwd": value["cwd"]} if "cwd" in value else {})}, stream)
@@ -219,7 +216,6 @@ def open_application(session, value):
             bus_client = existing
             next_bus_lookup = 0
             positioned = set()
-            map_focus_placed = set()
             map_first_seen = {}
             candidate_first_seen = {}
             # Cold original applications can need more than thirty seconds to map.
@@ -292,12 +288,9 @@ def open_application(session, value):
                         focused = (current_focus.get("address") == window["address"]
                                    and current_focus.get("stableId") == window["stableId"]
                                    and current_focus.get("pid") == window["pid"])
-                        map_focus = (focused and identity not in positioned
-                                     and time.perf_counter() - first_seen <= MAP_FOCUS_GRACE
-                                     and not owner_pointer_moved(baseline_cursor, cursor_position(session)))
-                        if focused and identity in map_focus_placed and not owner_pointer_moved(baseline_cursor, cursor_position(session)):
-                            focused = False
-                        if focused and not map_focus:
+                        # Focus is owner-visible state, regardless of mapping age or pointer motion.
+                        # Keyboard selection with a stationary pointer is not safe automatic-map focus.
+                        if focused:
                             if identity in positioned:
                                 raise OpeningDeliveryUncertain("Opening delivery is uncertain: owner input reached the candidate after post-map placement. Inspect its current state without relaunching or refocusing")
                             return candidate_result(window, value, evidence[window["address"]], reason="owner-input",
@@ -317,14 +310,12 @@ def open_application(session, value):
                                     return candidate_result(window, value, evidence[window["address"]],
                                         reason="workspace-busy", launcher_root=root, placement_request=fitted, sampled_at_ms=sampled_at_ms)
                             try:
-                                place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
+                                place_new_window(session.transport, window, value["workspace"], fitted, allow_active=False)
                             except PlacementUnavailable:
                                 return candidate_result(window, value, evidence[window["address"]],
                                     reason="placement-unavailable", launcher_root=root,
                                     placement_request=fitted, sampled_at_ms=sampled_at_ms, forwarded=forwarded)
                             positioned.add(identity)
-                            if map_focus:
-                                map_focus_placed.add(identity)
                             time.sleep(0.05)
                             continue
                         if window.get("workspace", {}).get("id") != value["workspace"]:

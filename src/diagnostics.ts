@@ -6,7 +6,7 @@ import { OrbitError } from "./errors";
 import { stateDirectory } from "./service";
 import { version } from "../package.json";
 
-const methods = new Set(['doctor', 'session.create', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write', 'native.open', 'native.candidates', 'native.monitors', 'native.present']);
+const methods = new Set(['doctor', 'session.create', 'session.reveal', 'session.list', 'session.forget', 'session.act', 'session.pause', 'session.resume', 'session.stop', 'session.observe', 'session.presence', 'session.control', 'session.account.save', 'session.journal', 'session.narrow', 'session.restore', 'backend.exit', 'preview.open', 'viewer.browsers', 'settings.list', 'settings.write', 'native.open', 'native.candidates', 'native.monitors', 'native.present']);
 const actions = new Set(['navigate', 'fill', 'click', 'read', 'open-tab', 'select-tab', 'close-tab', 'launch', 'scroll', 'pointer', 'resize', 'window', 'text', 'paste', 'key']);
 /**
  * The codes a diagnostic event may carry. Anything not here is recorded as `BACKEND_ERROR`, which is
@@ -33,7 +33,7 @@ export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSI
   'READ_VIEW_LIMIT', 'READ_VIEW_BUSY', 'READ_VIEW_UNCONFIRMED', 'READ_VIEW_BACKEND',
   'READ_CHANNEL_INVALID', 'READ_CHANNEL_DENIED', 'READ_CHANNEL_BUSY', 'READ_CHANNEL_LIMIT', 'READ_CHANNEL_CONFLICT',
   'CAPTURE_UNAVAILABLE', 'CAPTURE_DEADLINE_EXCEEDED', 'CAPTURE_GEOMETRY_CHANGED',
-  'CONFIG_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED', 'NATIVE_STALE', 'NATIVE_INCOMPATIBLE', 'BROKER_UNAVAILABLE']);
+  'CONFIG_REQUIRED', 'APPROVAL_REQUIRED', 'CONVERSATION_REQUIRED', 'ORBIT_DISABLED', 'OUTPUT_UNAVAILABLE', 'SOCKET_UNPROTECTED', 'APPLICATION_BUSY', 'SESSION_NOT_OWNED', 'NATIVE_STALE', 'NATIVE_INCOMPATIBLE', 'BROKER_UNAVAILABLE']);
 const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const hash = (value: unknown) => typeof value === 'string' ? createHash('sha256').update(value).digest('hex').slice(0, 16) : undefined;
 export const diagnosticRoot = () => join(stateDirectory(), 'diagnostics');

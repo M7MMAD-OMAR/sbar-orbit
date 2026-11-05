@@ -196,7 +196,7 @@ class SessionCard(Gtk.Box):
         for part in (head, self.task, self.where, self.meta):
             column.append(part)
         self.select.set_child(column)
-        self.select.connect("clicked", lambda *_: panel.show_detail(session_id))
+        self.select.connect("clicked", lambda *_: panel.select_session(session_id))
         self.append(self.select)
         self.controls = Controls(panel, session_id)
         self.append(self.controls)

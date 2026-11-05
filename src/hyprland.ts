@@ -414,6 +414,13 @@ export class NativeBackend {
   async pauseLease() { if (this.borrowed) await this.worker.request("pause", {}); }
   async resumeLease() { if (this.borrowed) await this.worker.request("resume", {}); }
 
+  /** Explicit owner selection, not an agent input or observation operation. */
+  async reveal() {
+    const selected = this.selected;
+    if (!this.borrowed || !selected) throw new OrbitError("SESSION_CLOSED", "No retained native session window is available");
+    return this.worker.request("reveal", { appId: selected.appId, windowId: selected.windowId });
+  }
+
   async presence() {
     const entries = [...this.windows.values()];
     const selected = this.selected && this.windows.get(this.selected.windowId);

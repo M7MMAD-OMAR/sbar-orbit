@@ -234,30 +234,32 @@ class OpenTests(unittest.TestCase):
         self.assertNotIn("cursor.move", placed)
 
     def test_new_active_launch_bound_candidate_is_returned_without_placement(self):
-        # The owner moved the pointer after the request: the focus is real owner input, so no placement.
+        # Neither map-time focus nor keyboard focus with an unmoved pointer permits placement.
         self.control.configure(mode="full")
         original = self.exchange
+        pointer_moved = False
         def exchange(command):
             if command == "j/activewindow" and self.launched:
-                self.cursor = [400, 300]
+                if pointer_moved: self.cursor = [400, 300]
                 return json.dumps(json.loads(original("j/clients"))[0])
             return original(command)
         self.session.transport._exchange = exchange
-        for proof in ("launch-ancestry", "activation-token", "launch-scope"):
-            with self.subTest(proof=proof):
-                self.launched = False
-                self.cursor = [100, 100]
-                self.commands.clear()
-                self.activation = proof == "activation-token"
-                with patch("src.native.owner_open.belongs_to", return_value=proof == "launch-ancestry"), \
-                        patch("src.native.owner_open.OriginalLaunchScope.contains", return_value=proof == "launch-scope"):
-                    result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
-                self.assertFalse(result["opened"])
-                self.assertEqual(result["attribution"], "candidate-only")
-                self.assertFalse(result["placementChanged"])
-                self.assertEqual(result["identityEvidence"], proof)
-                self.assertEqual(result["candidateReason"], "owner-input")
-                self.assertFalse(any(command.startswith("eval local w=") for command in self.commands))
+        for pointer_moved in (False, True):
+            for proof in ("launch-ancestry", "activation-token", "launch-scope"):
+                with self.subTest(proof=proof, pointer_moved=pointer_moved):
+                    self.launched = False
+                    self.cursor = [100, 100]
+                    self.commands.clear()
+                    self.activation = proof == "activation-token"
+                    with patch("src.native.owner_open.belongs_to", return_value=proof == "launch-ancestry"), \
+                            patch("src.native.owner_open.OriginalLaunchScope.contains", return_value=proof == "launch-scope"):
+                        result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
+                    self.assertFalse(result["opened"])
+                    self.assertEqual(result["attribution"], "candidate-only")
+                    self.assertFalse(result["placementChanged"])
+                    self.assertEqual(result["identityEvidence"], proof)
+                    self.assertEqual(result["candidateReason"], "owner-input")
+                    self.assertFalse(any(command.startswith("eval local w=") for command in self.commands))
 
     def test_unreadable_pointer_keeps_the_conservative_owner_input_default(self):
         self.control.configure(mode="full")
@@ -275,9 +277,8 @@ class OpenTests(unittest.TestCase):
         self.assertEqual(result["candidateReason"], "owner-input")
         self.assertFalse(any(command.startswith("eval local w=") for command in self.commands))
 
-    def test_forwarded_window_focused_by_mapping_alone_is_placed(self):
-        # Focus with no owner pointer movement since the request is map time focus, as a
-        # forwarded single instance browser window takes it. The window is still placed.
+    def test_forwarded_window_focused_by_mapping_alone_is_returned_without_placement(self):
+        # Even immediate mapping focus with no pointer movement is never an active-move exemption.
         self.control.configure(mode="full")
         self.workspace = 3
         original = self.exchange
@@ -291,12 +292,12 @@ class OpenTests(unittest.TestCase):
                 patch("src.native.owner_open.time.sleep"):
             result = open_application(self.session, {"workspace": 4, "argv": ["/usr/bin/true"]})
         placed = [command for command in self.commands if command.startswith("eval local w=")]
-        self.assertEqual(len(placed), 1)
-        self.assertNotIn("Opening target is receiving owner input", placed[0])
-        self.assertIn("stable_id==", placed[0])
-        self.assertTrue(result["opened"])
+        self.assertEqual(placed, [])
+        self.assertFalse(result["opened"])
+        self.assertFalse(result["placementChanged"])
+        self.assertEqual(result["candidateReason"], "owner-input")
 
-    def test_pointer_movement_after_map_focus_placement_is_uncertain(self):
+    def test_stationary_pointer_focus_after_prior_unfocused_placement_is_uncertain(self):
         self.control.configure(mode="full")
         self.workspace = 3
         original = self.exchange
@@ -305,9 +306,7 @@ class OpenTests(unittest.TestCase):
             nonlocal placed
             if command.startswith("eval local w="):
                 placed = True
-            if placed and command == "j/cursorpos":
-                return json.dumps({"x": 900, "y": 500})
-            if command == "j/activewindow" and self.launched:
+            if command == "j/activewindow" and placed:
                 return json.dumps(json.loads(original("j/clients"))[0])
             return original(command)
         self.session.transport._exchange = exchange

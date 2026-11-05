@@ -86,7 +86,7 @@ import math  # noqa: E402
 
 from panel_broker import (BrokerClient, BrokerError, broker_socket, build_report, claim_the_mark, command_socket_path,
                            launcher_json, normalize_read_views, notify, read_journal, read_owner_view_status, read_sessions,
-                           read_view_summary, rpc, session_action, session_shape, stable_order, unavailable_read_views)  # noqa: E402
+                           read_view_summary, reveal_session, rpc, session_action, session_shape, stable_order, unavailable_read_views)  # noqa: E402
 from panel_draw import (MARK_PADDING, Glyph, Liquid, clamp, glass, label, metaball, rounded,
                         shell_padding)  # noqa: E402
 from panel_sessions import SESSIONS_CSS, DetailPage, SessionList  # noqa: E402
@@ -277,6 +277,7 @@ class Panel(Gtk.Application):
         self.language = language()
         self.closed = []
         self.busy = set()
+        self.revealing = set()
         self.pointer_in_cards = False
         self.notes = {}
         self.confirming = None
@@ -1186,6 +1187,45 @@ class Panel(Gtk.Application):
         self.set_expanded(True)
         self.show_list()
 
+    def select_session(self, session_id):
+        """Owner card click, never a poll/refresh/detail-open navigation hook."""
+        if self.stopping:
+            return
+        session = next((s for s in self.everyone() if s["sessionId"] == session_id), None)
+        if session is None:
+            return
+        self.set_expanded(True)
+        self.show_detail(session_id)
+        if session.get("state") in ("closed", "closing") or session_id in self.revealing:
+            return
+        self.revealing.add(session_id)
+        self.notes.pop(session_id, None)
+        def work():
+            note = None
+            try:
+                if not self.stopping:
+                    reveal_session(self.path, session_id)  # Captured exact ID, never current detail/cache address.
+            except BrokerError as error:
+                key = f"err-{error.code}"
+                note = text(key) if text(key) != key else text("unknown-error")
+            except Exception:
+                note = text("unknown-error")  # Never echo private worker output.
+            GLib.idle_add(self.reveal_done, session_id, note)
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception:
+            self.reveal_done(session_id, text("unknown-error"))
+
+    def reveal_done(self, session_id, note):
+        self.revealing.discard(session_id)
+        if not self.stopping and self.detail_id == session_id:
+            if note:
+                self.notes[session_id] = note
+            else:
+                self.notes.pop(session_id, None)
+            self.refresh_views()
+        return False
+
     def watch_sessions(self, session_id):
         """Selecting a session opens its detail."""
         self.set_expanded(True)
@@ -1207,7 +1247,7 @@ class Panel(Gtk.Application):
         self.fit()
         # Ask for the journal now rather than at the next tick.
         self.wake.set()
-        GLib.idle_add(self.detail.back.grab_focus)
+        # Detail refresh does not request keyboard focus; owner navigation is separate.
 
     def show_list(self, reopen=True):
         had = self.detail_id is not None or self.page_name is not None

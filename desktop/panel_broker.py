@@ -217,6 +217,17 @@ def session_action(path, verb, session_id):
     return rpc(path, f"session.{verb}", {"sessionId": session_id}, ACTION_TIMEOUT)
 
 
+def reveal_session(path, session_id):
+    """Explicit owner click only. One attempt; target identity stays in the broker.
+
+    Never call through the reconnecting poll client or accept raw compositor IDs.
+    Timeout is uncertainty, not cancellation or permission to replay navigation.
+    """
+    if type(session_id) is not str or not session_id:
+        raise ValueError("sessionId is required")
+    return rpc(path, "session.reveal", {"sessionId": session_id}, ACTION_TIMEOUT)
+
+
 def journal_rows(payload, limit=12):
     """The newest actions first, reduced to what the detail view shows: when, what, and how it ended.
     A denial carries the broker's reason; an allowed action carries nothing more, by design."""

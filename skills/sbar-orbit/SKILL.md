@@ -5,6 +5,15 @@ description: Control original installed desktop applications on a visible number
 
 # Sbar Orbit
 
+## Owner desktop preservation
+
+Background work and screenshots must never switch the owner's workspace, focus or
+activate a window, present an agent workspace, or warp the physical pointer. Use
+background native observation directly. Do not make a window visible just to
+capture it. Desktop navigation is an explicit owner action: clicking a session
+card targets that session's exact retained window. Never reproduce that action
+automatically from a poll, refresh, reconnect or model tool.
+
 ## The loop, in five lines
 
 1. `orbit_applications`, then `orbit_open` (omit `workspace`; Orbit picks an empty, undisplayed workspace from 1 to 10). Never open on the owner's current workspace or switch them to yours.
@@ -36,7 +45,7 @@ Launch rules request silent placement, no initial focus and disabled focus-on-ac
 
 Use `orbit_handoff_candidates` and `orbit_handoff` to select exact address and stableId. Native control requires the owner's prepared plugin matching current source and the running Hyprland ABI. Historical incident reports are diagnostic evidence, not permanent policy. Ordinary handoff covers the Wayland client. A cross-client parented dialog reports selected-dialog-family enrollment: only that dialog and its transient descendants become input targets, preserving unrelated windows of the shared portal service. Clipboard and seat protocols remain client-wide. One active lease is allowed per client; hand a portal back promptly when its dialog closes. Handoff uses the ordinary shared system clipboard and PRIMARY selection. Active background clients receive later owner copies and highlights as well as publishing their own copies. Pause stops new lease broadcasts and the unfocused selection-write exception, but does not revoke OS clipboard rights or previously offered data. Owner focus, hover and workspace changes never block a claim or end a lease, so the owner can watch the agent work. Real key, button or wheel input to the client pauses agent input until about two seconds of owner idle, then it resumes by itself; the transport retries a paused refusal for a few seconds. This applies to ordinary applications and shared portal clients. Preserve owner focus and physical pointer coordinates; never move owner focus to make a claim succeed. Copy and paste can change the shared clipboard and PRIMARY selection like normal user actions. Preserve other owner applications and focus. After the compositor restarts, `sbar-orbit native-refresh` renews the binding and keeps the owner's mode; it runs by itself at each desktop start. Work on a numbered workspace away from the owner's current pointer, then inspect candidates instead of replaying uncertain input after a takeover. XWayland and other compositor/platform adapters need their own implementation and measurement.
 
-Call `orbit_monitors` to read connected output names, displayed workspaces and focus without owner window titles. Opening does not present a workspace automatically. After the workspace exists, select an explicit unfocused output from that result and call `orbit_present` with a stable requestId, workspace and monitor. Example parameters, only if that output is connected and unfocused:
+Call `orbit_monitors` to read connected output names, displayed workspaces and focus without owner window titles. Opening does not present a workspace automatically. Do not call `orbit_present` from background agent work or to take a screenshot: agent presentation is refused. Only an explicit owner interface may present a workspace; the owner can click a session card to navigate to its window. The following presentation parameters are for a deliberate owner operation only, not an automatic next step:
 
 ```json
 {"requestId":"show-calculator-workspace-2","workspace":2,"monitor":"HDMI-A-5"}
