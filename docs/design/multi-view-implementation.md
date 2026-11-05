@@ -1137,3 +1137,21 @@ legacy preference queue was withdrawn because saturation could reject `off` whil
 earlier `on` writes remained pending; the cross-process writer race is unresolved.
 The final verifier passed 1067 tests, with 5 skipped and 0 failed, across 106
 files in 83.88 seconds. Strict TypeScript checking also passed.
+
+## 36. Signaled IPC response handling
+
+The signal-bearing `node:http` path now also bounds response bytes and retained
+slab count, rejects overflow before destroying the local request, and ignores late
+terminal events after settlement. It checks the basic response envelope and
+malformed error fields, and decodes UTF-8 with BOM handling. Local abort and
+request destruction do not prove broker work stopped. The tests cover pre-abort,
+not actual in-flight abort or timeout; total RSS and a hard deadline are not
+qualified. The ordinary path is unchanged.
+
+Owned Unix fixtures and isolated event-order simulations passed. Earlier fixture
+revisions timed out while socket termination was unknown and retained their owned
+roots; no numeric PID was signalled. The fixture now drains its own work and waits
+for actual owned socket close events before removing its root. The final verifier
+passed 1075 tests, with 5 skipped and 0 failed, across 107 files in 83.95 seconds;
+strict TypeScript checking also passed. Multi-view and original-app acceptance
+remain unavailable.

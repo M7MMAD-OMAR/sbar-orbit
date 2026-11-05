@@ -86,38 +86,117 @@ async function cancellableCall(socket: string, method: string, params: unknown, 
   const combined = AbortSignal.any([signal, AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000)]);
   combined.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ method, params });
-    const child = request({ socketPath: socket, path: "/rpc", method: "POST", headers: {
-      "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...identityHeaders(identity),
-    } }, response => {
-      const chunks: Buffer[] = [];
-      let bytes = 0;
-      response.on("data", (chunk: Buffer) => {
-        bytes += chunk.length;
-        if (bytes > 32 * 1024 * 1024) {
-          child.destroy(new OrbitError("BROKER_ERROR", "Native broker reply exceeds its client bound"));
-        } else chunks.push(chunk);
-      });
-      response.on("error", reject);
-      response.on("end", () => {
-        try {
-          const result = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { ok: boolean; result?: unknown; error?: { code?: string; message?: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
-          if (!result.ok) reject(new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId, result.error));
-          else resolve(result.result);
-        } catch { reject(new OrbitError("BROKER_ERROR", "Native broker reply is invalid JSON")); }
-      });
-    });
-    const abort = () => {
-      const error = combined.reason instanceof Error ? combined.reason : new Error("Native client request cancelled");
-      // Settle locally even when the runtime delays its socket error event.
-      reject(error); child.destroy(error);
+    let settled = false, responseStarted = false, listening = false, destroyed = false;
+    let child: import("node:http").ClientRequest | undefined;
+    let pendingDestroy: Error | undefined, abort = () => {}, releaseBody = () => {};
+    const cleanup = () => {
+      if (listening) { combined.removeEventListener("abort", abort); listening = false; }
+      releaseBody(); releaseBody = () => {};
     };
-    combined.addEventListener("abort", abort, { once: true });
-    child.on("error", reject);
-    child.once("close", () => combined.removeEventListener("abort", abort));
-    if (combined.aborted) abort(); else child.end(body);
+    const fail = (error: unknown) => {
+      if (settled) return false;
+      settled = true; cleanup(); reject(error); return true;
+    };
+    const succeed = (value: unknown) => {
+      if (settled) return;
+      settled = true; cleanup(); resolve(value);
+    };
+    const destroy = (error: Error) => {
+      if (destroyed) return;
+      if (!child) { pendingDestroy = error; return; }
+      destroyed = true;
+      try { child.destroy(error); } catch { /* Local cleanup is not producer-stop proof. */ }
+    };
+    const readFailure = () => {
+      if (settled) return;
+      const error = new OrbitError("BROKER_ERROR", "Native broker reply could not be read");
+      if (fail(error)) destroy(error);
+    };
+    abort = () => {
+      if (settled) return;
+      const error = combined.reason instanceof Error ? combined.reason : new Error("Native client request cancelled");
+      fail(error); destroy(error);
+    };
+    try {
+      listening = true;
+      combined.addEventListener("abort", abort, { once: true });
+      if (combined.aborted) { abort(); return; }
+      const body = JSON.stringify({ method, params });
+      child = request({ socketPath: socket, path: "/rpc", method: "POST", headers: {
+        "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body), ...identityHeaders(identity),
+      } }, response => {
+        responseStarted = true;
+        if (settled) { try { response.destroy(); } catch {} return; }
+        const slabs: Uint8Array[] = [], parts: string[] = [];
+        let bytes = 0;
+        releaseBody = () => { slabs.length = 0; parts.length = 0; };
+        try {
+          // Register terminal handlers before a data listener can start flowing.
+          response.on("error", readFailure);
+          response.on("aborted", readFailure);
+          response.on("close", () => { if (!settled) readFailure(); });
+          response.on("end", () => {
+            if (settled) return;
+            let text: string, value: unknown;
+            try {
+              const decoder = new TextDecoder();
+              for (let index = 0; index < slabs.length; index++) {
+                const size = Math.min(65536, bytes - index * 65536);
+                parts.push(decoder.decode(slabs[index]!.subarray(0, size), { stream: true }));
+              }
+              parts.push(decoder.decode()); text = parts.join("");
+            } catch { readFailure(); return; }
+            try { value = JSON.parse(text); }
+            catch { fail(new OrbitError("BROKER_ERROR", "Native broker reply is invalid JSON")); return; }
+            if (value === null || typeof value !== "object" || Array.isArray(value)
+                || !("ok" in value) || !Object.hasOwn(value, "ok") || typeof value.ok !== "boolean") {
+              fail(new OrbitError("BROKER_ERROR", "Native broker reply has an invalid response envelope")); return;
+            }
+            const result = value as { ok: boolean; result?: unknown; error?: { code?: string; message?: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
+            try {
+              if (!result.ok) {
+                const error = result.error;
+                if (error !== undefined && (error === null || typeof error !== "object" || Array.isArray(error)
+                    || error.code !== undefined && typeof error.code !== "string"
+                    || error.message !== undefined && typeof error.message !== "string"
+                    || error.diagnosticId !== undefined && typeof error.diagnosticId !== "string"))
+                  throw new Error("Invalid broker error fields");
+                fail(new OrbitError(error?.code ?? "BROKER_ERROR", error?.message ?? "Broker failed", error?.diagnosticId, error));
+              } else succeed(result.result);
+            } catch { fail(new OrbitError("BROKER_ERROR", "Native broker reply has an invalid response envelope")); }
+          });
+          response.on("data", (chunk: unknown) => {
+            if (settled) return;
+            try {
+              if (!(chunk instanceof Uint8Array)) { readFailure(); return; }
+              if (chunk.byteLength > 32 * 1024 * 1024 - bytes) {
+                const error = new OrbitError("BROKER_ERROR", "Native broker reply exceeds its client bound");
+                fail(error); destroy(error); return; // Reject BEFORE destroy/late end.
+              }
+              let offset = 0;
+              while (offset < chunk.byteLength) {
+                const index = Math.floor(bytes / 65536), used = bytes % 65536;
+                let slab = slabs[index];
+                if (!slab) { slab = new Uint8Array(65536); slabs.push(slab); }
+                const count = Math.min(65536 - used, chunk.byteLength - offset);
+                slab.set(chunk.subarray(offset, offset + count), used);
+                bytes += count; offset += count;
+              }
+            } catch { readFailure(); }
+          });
+        } catch { readFailure(); }
+      });
+      child.on("error", error => { if (fail(error)) destroy(error); });
+      // Request close may precede body completion. Once a response starts, only
+      // its terminal events (or explicit abort) determine body completion.
+      child.once("close", () => { if (!responseStarted && !settled) readFailure(); });
+      if (pendingDestroy) destroy(pendingDestroy);
+      if (settled) return;
+      if (combined.aborted) abort(); else child.end(body);
+    } catch { readFailure(); }
   });
 }
+
 
 /** Bound accepted response-body bytes, not total RSS, transport buffering or producer work.
  * UTF-8 decoding remains nonfatal and BOM-aware like Response.json(). Cancellation
