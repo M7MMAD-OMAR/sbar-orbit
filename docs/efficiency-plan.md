@@ -78,7 +78,7 @@ Input deduplication already exists within a live broker session: [single actions
 
 ### Explicit launch outcomes
 
-For #32 the proposed `forwarded` outcome requires the real new window to be bound exactly after the launch PID exits; otherwise return `uncertain` with bounded candidate identities. A changed candidate list alone does not establish launch ancestry. Report requested and actual geometry separately, with the proposed `min_size_enforced` flag only when evidence supports that cause. Test single-instance races, existing windows, PID/window reuse, toolkit size clamps and normal cleanup. These proposed fields are not claims about the current shipped launch API.
+For #32, production `openingOutcome` diagnostics have been present since `4d6b815`: requested, fitted and sampled actual geometry, difference/tolerance, process relation and evidence qualification. `forwarded` and `minimumSizeEnforced` remain `unknown`; sampled geometry does not prove either cause or future stability. The proposed proven-forwarding outcome requires the real new window to be bound exactly after the launch PID exits; otherwise retain an uncertain result with bounded candidate identities. A changed candidate list alone does not establish launch ancestry. Single-instance races, existing windows, PID/window reuse and toolkit constraints still need acceptance. See the [5 November issue reconciliation](issue-reconciliation-2026-11-05.md).
 
 ### Chromium, profiles and privacy
 

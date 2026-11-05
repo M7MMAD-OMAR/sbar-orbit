@@ -1,10 +1,11 @@
 # Native acceptance status
 
-Updated 4 November 2026. This is the maintained index of dated measurements, not a
+Updated 5 November 2026. This is the maintained index of dated measurements, not a
 claim that every operation works in every application or on every machine.
 
 | Evidence date | Measured scope | Record and limits |
 | --- | --- | --- |
+| 5 November 2026 | Original Nautilus 50.4, GTK 4.22.5, Hyprland 0.57.1 on presented workspace 20. Owned temporary folder opened by two clicks at the accessibility cell center; observed exact child title and empty-folder capture, normal exact closure and own session stop | [Issue reconciliation](issue-reconciliation-2026-11-05.md). One successful center activation does not establish accurate box edges or fix the residual GTK offsets. No continuous owner focus/pointer or full-desktop visibility measurement. |
 | 4 November 2026 | Owned cgroup probe with durable pre-spawn tracking: 7 scenarios, including unresolved unbound spawn, root/descendant distinction and 64 same-inode checkpoints. No desktop application operation | [Reader producer evidence](reader-producer-acceptance-2026-11-04.md). The fixed producer is fixture-tested but not production-wired; external provider completion remains unknown. |
 | 4 November 2026 | Owned reader journal: explicit initialization and 64 same-inode healthy checkpoints on real Linux cgroup2, beyond 64 KiB cumulative history; owned parent removed and shared controls unchanged | [Journal and bounded output report](reader-journal-acceptance-2026-11-04.md). No desktop application operation; output acquisition remains a separate internal utility, not scope quiescence or feature admission. |
 | 4 November 2026 | Linux cgroup2 owned reader leaf: 5 real-kernel fixture scenarios, root/descendant separation and coordinator-death recovery; fresh parent removed and shared controls unchanged. No desktop application operation | [Owned reader scope report](reader-scope-acceptance-2026-11-04.md). Narrow dormant primitive, not a fixed capture producer, two-view qualification, global memory measurement or phase-gate pass. |
