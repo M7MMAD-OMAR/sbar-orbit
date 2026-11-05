@@ -116,19 +116,69 @@ test("doctor reports the live compositor even when the service environment is em
   }
 });
 
-test("an adapter waits out a restarting broker but never retries a delivered request", async () => {
+function delayedFixtureStart(start: () => void, schedule: (callback: () => void) => ReturnType<typeof setTimeout> = callback => setTimeout(callback, 300),
+    cancel: (timer: ReturnType<typeof setTimeout>) => void = timer => clearTimeout(timer)): () => void {
+  let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, failed = false, failure: unknown;
+  const invoke = () => {
+    if (stopped) return;
+    timer = undefined;
+    try { start(); } catch (error) { failed = true; failure = error; }
+  };
+  try { timer = schedule(invoke); } catch (error) { stopped = true; throw error; }
+  return () => {
+    stopped = true; // Fence even an already queued timer callback BEFORE cancellation or root cleanup.
+    const pending = timer; timer = undefined;
+    if (pending !== undefined) cancel(pending);
+    if (failed) throw failure; // Unknown startup must not authorize deleting its root.
+  };
+}
+
+test("early readiness failure cancels its delayed listener and a queued callback cannot start it after cleanup", () => {
+  let callback!: () => void, starts = 0, cancelled = 0, removed = false;
+  const handle = {} as ReturnType<typeof setTimeout>;
+  const stop = delayedFixtureStart(() => { starts++; expect(removed).toBe(false); }, invoke => { callback = invoke; return handle; }, value => {
+    expect(value).toBe(handle); cancelled++; callback(); // Reentry during cancel is already fenced.
+  });
+  try { throw new Error("Owned early fixture refusal"); } catch { stop(); removed = true; }
+  callback(); stop();
+  expect(starts).toBe(0); expect(cancelled).toBe(1); expect(removed).toBe(true);
+});
+
+test("an adapter makes one attempt and only an explicit later call can reach a restarted broker", async () => {
   const root = await scratch();
   const socket = join(root, "broker.sock");
-  let server: ReturnType<typeof Bun.serve> | undefined;
+  let server: ReturnType<typeof Bun.serve> | undefined, stopStart: (() => void) | undefined;
+  let failed = false, primary: unknown, sleeps = 0, guards = 0;
+  const sleep = async () => { sleeps++; };
+  const guard = async () => { guards++; };
   try {
-    await expect(callPatient(socket, "doctor", {}, undefined, 60, async () => {})).rejects.toMatchObject({ code: "BROKER_UNAVAILABLE" });
-    setTimeout(() => { server = Bun.serve({ unix: socket, fetch: () => Response.json({ ok: true, result: { back: true } }) }); }, 300);
-    expect(await callPatient(socket, "doctor", {}, undefined, 5000)).toEqual({ back: true });
+    await expect(callPatient(socket, "doctor", {}, undefined, 60, sleep, guard)).rejects.toBeDefined();
+    expect(sleeps).toBe(0); expect(guards).toBe(1);
+    let signalReady!: (value: { ok: true } | { ok: false; error: unknown }) => void;
+    const started = new Promise<{ ok: true } | { ok: false; error: unknown }>(yes => { signalReady = yes; });
+    stopStart = delayedFixtureStart(() => {
+      try {
+        server = Bun.serve({ unix: socket, fetch: () => Response.json({ ok: true, result: { back: true } }) });
+        signalReady({ ok: true });
+      } catch (error) { signalReady({ ok: false, error }); throw error; }
+    });
+    const ready = await started; if (!ready.ok) throw ready.error;
+    expect(await callPatient(socket, "doctor", {}, undefined, 5000, sleep, guard)).toEqual({ back: true });
+    expect(sleeps).toBe(0); expect(guards).toBe(2);
     expect(brokerNotListening(new Error("boom"))).toBe(false);
     let attempts = 0;
-    server?.stop(true);
+    await server?.stop(true);
     server = Bun.serve({ unix: socket + "2", fetch: () => { attempts++; return new Response("not json", { status: 500 }); } });
-    await expect(callPatient(socket + "2", "doctor", {}, undefined, 2000)).rejects.toBeDefined();
-    expect(attempts).toBe(1);
-  } finally { server?.stop(true); await rm(root, { recursive: true, force: true }); }
+    await expect(callPatient(socket + "2", "doctor", {}, undefined, 2000, sleep, guard)).rejects.toBeDefined();
+    expect(attempts).toBe(1); expect(sleeps).toBe(0); expect(guards).toBe(3);
+  } catch (error) { failed = true; primary = error; }
+  try {
+    stopStart?.();
+    await server?.stop(true);
+    await rm(root, { recursive: true, force: true });
+  } catch (cleanup) {
+    if (failed) throw new AggregateError([primary, cleanup], "Owned readiness fixture and cleanup failed");
+    throw cleanup;
+  }
+  if (failed) throw primary;
 }, 15_000);

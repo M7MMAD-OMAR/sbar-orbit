@@ -1016,3 +1016,30 @@ cleanup review; no MCP enforcement is claimed by this section.
 
 The final verifier passed 997 tests, with 5 skipped and 0 failed, across 96 files
 in 84.88 seconds. Strict TypeScript checking and focused CLI fixtures passed.
+
+## 30. Single-attempt adapter dispatch and status error guard
+
+Both MCP adapters now resample the legacy usage preference immediately before
+their broker dispatch. `callPatient` no longer automatically retries any request:
+Bun fetch error codes do not establish whether an effectful request was delivered.
+A caller must inspect uncertainty and decide whether an explicit retry is safe.
+This is a deliberate availability reduction, not proof about Bun internal behavior,
+global at-most-once execution, atomic off/dispatch or cancellation of accepted work.
+A real `callPatient` and owned fake Unix peer exercise the guard, accepted reset
+and error cases; adapter wiring is checked statically, not with a live host.
+
+The one-shot CLI status path also rechecks usage when a broker read fails, before
+printing that error. This suppresses broker metadata when off is observed, while
+preserving the original error if usage remains on. It does not cover arbitrary
+MCP late-result delivery, change mutation receipts, or resolve concurrent legacy
+writers. Focused tests passed 33 cases across four files, and strict TypeScript
+checking passed. The readiness fixture also now cancels its delayed test listener
+before deleting its owned root.
+
+The first full verifier found that `BROKER_UNAVAILABLE` was no longer thrown
+literally after removing retry. It remains a real MCP and watcher fallback, so
+the diagnostic contract test now records that actual dynamic producer. The final
+full verifier passed 1011 tests, with 5 skipped and 0 failed, across 98 files in
+81.22 seconds. The old separate MCP restart integration test still expects
+automatic waiting and is outside the default verifier; its isolated replacement
+remains pending. No live MCP-host or desktop acceptance is implied.

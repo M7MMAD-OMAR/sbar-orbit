@@ -46,6 +46,7 @@ async function thrownCodes(): Promise<Set<string>> {
  * identify their real runtime producer. Unused codes belong in neither set.
  */
 const listedButNeverThrown = new Map<string, string>([
+  ["BROKER_UNAVAILABLE", "MCP errorPayload and status watcher use this fallback for unclassified transport failures"],
   ["READ_CHANNEL_INVALID", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
   ["READ_CHANNEL_BUSY", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],
   ["READ_CHANNEL_LIMIT", "Translated dynamically from ReadChannelError by protected Sessions connector dispatch"],

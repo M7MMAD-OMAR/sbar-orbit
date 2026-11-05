@@ -110,7 +110,12 @@ try {
   } else if (command === "status") {
     // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
     const { readStatus, summarize, socketFromEnvironment } = await import("./status");
-    const status = await readStatus(socketFromEnvironment(), async () => usage.assertEnabled());
+    const status = await readStatus(socketFromEnvironment(), async () => usage.assertEnabled()).catch(async error => {
+      // A failed admitted read can also carry private broker metadata. Observed
+      // usage off takes precedence; when still on, preserve the original failure.
+      await usage.assertEnabled();
+      throw error;
+    });
     // Recheck after pending-version disk reads too. This suppresses observed off,
     // not already admitted reads or an atomic filesystem-to-stdout off/on race.
     await usage.assertEnabled();

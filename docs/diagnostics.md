@@ -77,10 +77,10 @@ The full traceback stays in the worker journal for as long as the session's priv
 
 ## The MCP tools after a broker restart
 
-The MCP adapter is stateless: each tool call opens its own connection to the broker, so restarting
-the broker does not end the adapter or its tool list. A call made while the broker is down waits up to
-15 seconds for it to come back (only when nobody was listening, so nothing is ever sent twice), then
-fails with `BROKER_UNAVAILABLE`. Sessions live in the broker and are gone after a restart, so
-create a new one. A stray error inside the adapter is logged to its stderr instead of ending it.
-If a host still shows no Orbit tools, the host dropped the connection; reconnect the server from
-the host (`/mcp` in Claude Code). `tests/mcp-broker-restart.test.ts` covers the adapter side.
+The MCP adapter remains connected when the broker is unavailable, but each tool call
+now makes one broker attempt without an automatic replay. Transport error codes do
+not prove whether an effectful request was delivered. Inspect uncertain state and
+retain the request identity before deciding on an explicit retry. Sessions live in
+the broker and are gone after a restart. A stray adapter error is logged to stderr.
+If a host shows no Orbit tools, reconnect the server through the host
+(`/mcp` in Claude Code). This does not prove cancellation or exactly-once delivery.

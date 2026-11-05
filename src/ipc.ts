@@ -132,28 +132,25 @@ export async function call(socket: string, method: string, params: unknown = {},
   return result.result;
 }
 
-/** The broker was not there at all, so nothing was sent and the same request can be sent again. */
+/** Legacy errno hint only, never proof of non-delivery or permission to replay. */
 export function brokerNotListening(error: unknown): boolean {
+  // A broker-origin refusal means the RPC WAS delivered, even if its code looks
+  // like ENOENT/ECONNREFUSED. Never replay accepted work on that classification.
+  if (error instanceof OrbitError) return false;
   const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : "";
   return code === "FailedToOpenSocket" || code === "ENOENT" || code === "ECONNREFUSED" || code === "ConnectionRefused";
 }
 
-/**
- * `call` for a long lived adapter. A restarted broker is unreachable for a second or two, and an
- * adapter that reported that as a failure left the agent without an answer for a moment that
- * `systemctl restart` makes routine. Only "nobody is listening" is waited out, because then nothing
- * was delivered; a reset or a timeout after sending is never retried here, since the action may
- * have happened.
+/** Single guarded attempt for long-lived adapters.
+ * Errno from fetch/body failure cannot prove a request was never delivered. Broker
+ * restarts therefore require an explicit caller retry; this wrapper never replays.
+ * Positional wait/sleep arguments remain only for compatibility and are unused.
+ * This does not qualify Bun's internal transport behavior or global at-most-once
+ * execution, nor make preference sampling atomic with RPC dispatch.
  */
-export async function callPatient(socket: string, method: string, params: unknown = {}, identity?: ClientIdentity, waitMs = 15_000,
-    sleep: (ms: number) => Promise<unknown> = ms => new Promise(resolve => setTimeout(resolve, ms))): Promise<unknown> {
-  const deadline = Date.now() + waitMs;
-  for (;;) {
-    try { return await call(socket, method, params, undefined, identity); }
-    catch (error) {
-      if (!brokerNotListening(error)) throw error;
-      if (Date.now() >= deadline) throw new OrbitError("BROKER_UNAVAILABLE", `The Orbit broker did not answer for ${Math.round(waitMs / 1000)} seconds. It may be restarting or stopped; this adapter stays connected, so retry shortly (sbar-orbit status, journalctl --user -u sbar-orbit.service).`);
-      await sleep(250);
-    }
-  }
+export async function callPatient(socket: string, method: string, params: unknown = {}, identity?: ClientIdentity, _waitMs = 15_000,
+    _sleep: (ms: number) => Promise<unknown> = ms => new Promise(resolve => setTimeout(resolve, ms)),
+    beforeAttempt?: () => Promise<void>): Promise<unknown> {
+  if (beforeAttempt) await beforeAttempt();
+  return call(socket, method, params, undefined, identity);
 }

@@ -25,7 +25,7 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
   const invoke = async (method: string, params: Record<string, unknown> = {}): Promise<CallToolResult> => {
     try {
       await usage.assertEnabled();
-      const result = await callPatient(socket, method, { ...params, sessionId }, identity);
+      const result = await callPatient(socket, method, { ...params, sessionId }, identity, undefined, undefined, () => usage.assertEnabled());
       if (method === "session.observe") {
         return renderObservation(result);
       }
