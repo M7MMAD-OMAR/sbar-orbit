@@ -1,5 +1,8 @@
 """Actual owned socketpair + durable private store, no process/native-app startup."""
 import json
+import errno
+from contextlib import contextmanager
+from types import SimpleNamespace
 import os
 from pathlib import Path
 import select
@@ -300,10 +303,13 @@ class ServiceTests(unittest.TestCase):
 
     def test_close_after_last_check_before_completion_cannot_skip_cleanup_or_return_true(self):
         sent, at_boundary, release = threading.Event(), threading.Event(), threading.Event(); self.releases.append(release)
+        expected_ack, accumulated = frame({"id": 1, "ok": True}), bytearray()
         native_send, native_check = socket.socket.send, self.service._check
         def send(connection, data, flags=0):
             count = native_send(connection, data, flags)
-            if connection is self.service._connection and count: sent.set()
+            if connection is self.service._connection and count > 0:
+                accumulated.extend(bytes(data[:count]))
+                if len(accumulated) == len(expected_ack): sent.set()
             return count
         def check(deadline, cancel, last):
             value = native_check(deadline, cancel, last)
@@ -314,7 +320,8 @@ class ServiceTests(unittest.TestCase):
         with patch.object(socket.socket, "send", send), patch.object(self.service, "_check", side_effect=check):
             call = self.call(); self.send(frame(request()))
             try:
-                self.assertTrue(at_boundary.wait(timeout=1)); self.assertFalse(self.service.close())
+                self.assertTrue(at_boundary.wait(timeout=1)); self.assertEqual(bytes(accumulated), expected_ack)
+                self.assertFalse(self.service.close())
             finally: release.set()
             self.join(call)
         self.assertIsNone(call.result); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
@@ -417,6 +424,130 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.disk()["epoch"], 2); self.assertFalse(self.disk()["enabled"])
         self.assertEqual(bytes(sent), expected_ack + frame({"id": 2, "ok": True}))
         self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+
+    @contextmanager
+    def ack_prefix_boundary(self):
+        expected = frame({"id": 1, "ok": True})
+        at, release = threading.Event(), threading.Event(); self.releases.append(release)
+        sent, offers, hits = bytearray(), [], []
+        native_send, native_check = socket.socket.send, self.service._check
+        def send(connection, data, flags=0):
+            if connection is self.service._connection: offers.append(bytes(data))
+            count = native_send(connection, data, flags)
+            if connection is self.service._connection and count > 0: sent.extend(bytes(data[:count]))
+            return count
+        def check(deadline, cancel, last):
+            if len(sent) == len(expected)-1 and not hits:
+                hits.append("prefix-before-final-guard"); at.set()
+                if not release.wait(timeout=1): raise RuntimeError("Owned ACK-prefix barrier expired")
+            return native_check(deadline, cancel, last)
+        with patch.object(socket.socket, "send", send), patch.object(self.service, "_check", side_effect=check):
+            try: yield SimpleNamespace(expected=expected, at=at, release=release, sent=sent, offers=offers, hits=hits)
+            finally: release.set()
+
+    def test_ack_prefix_is_incomplete_until_fresh_guard_and_final_byte(self):
+        with self.ack_prefix_boundary() as gate:
+            call = self.call(); self.send(frame(request()))
+            try:
+                self.assertTrue(gate.at.wait(timeout=1))
+                prefix = self.exact(len(gate.expected)-1)
+                self.assertEqual(prefix, gate.expected[:-1]); self.assertEqual(bytes(gate.sent), prefix)
+                self.assertEqual(select.select([self.client], [], [], 0)[0], [])
+                self.assertTrue(self.service.status()["busy"]); self.assertIsNone(call.result)
+            finally: gate.release.set()
+            last = self.exact(1); self.join(call)
+        self.assertEqual(gate.hits, ["prefix-before-final-guard"])
+        self.assertEqual(prefix+last, gate.expected); self.assertEqual(bytes(gate.sent), gate.expected)
+        self.assertEqual(gate.offers[0], gate.expected[:-1]); self.assertEqual(gate.offers[-1], gate.expected[-1:])
+        self.assertIsNone(call.error); self.assertIs(call.result, True)
+
+    def test_marker_corruption_after_prefix_prevents_final_ack_byte_and_keeps_debt(self):
+        marker = self.root / ReadUsageStore.SESSION; before = marker.stat()
+        changed, failures = threading.Event(), []
+        store = self.service._store; native_guard = store._guard
+        def guard():
+            try: return native_guard()
+            except ReadUsageStoreError:
+                if changed.is_set(): failures.append("actual-marker-guard")
+                raise
+        with patch.object(store, "_guard", side_effect=guard), self.ack_prefix_boundary() as gate:
+            call = self.call(); self.send(frame(request()))
+            try:
+                self.assertTrue(gate.at.wait(timeout=1)); self.assertEqual(self.exact(len(gate.expected)-1), gate.expected[:-1])
+                fd = os.open(marker, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try: self.assertEqual(os.write(fd, b"!"), 1); os.fsync(fd); changed.set()
+                finally: os.close(fd)
+            finally: gate.release.set()
+            self.join(call)
+        self.assertEqual(gate.hits, ["prefix-before-final-guard"]); self.assertEqual(failures, ["actual-marker-guard"])
+        self.assertEqual(bytes(gate.sent), gate.expected[:-1]); self.assertEqual(self.client.recv(1024), b"")
+        self.assertIsNone(call.result); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
+        self.assertEqual((marker.stat().st_dev, marker.stat().st_ino), (before.st_dev, before.st_ino))
+        self.assertEqual(marker.read_bytes(), b"!"+ReadUsageStore.SESSION_BYTES[1:])
+        self.assertTrue(self.disk()["enabled"])  # Committed data is not an ACK/rollback/stop receipt.
+
+    def test_cancel_observed_after_prefix_prevents_final_ack_byte_not_durable_write(self):
+        cancel = threading.Event()
+        with self.ack_prefix_boundary() as gate:
+            call = self.call(cancel=cancel); self.send(frame(request()))
+            try:
+                self.assertTrue(gate.at.wait(timeout=1)); self.assertEqual(self.exact(len(gate.expected)-1), gate.expected[:-1])
+                cancel.set()
+            finally: gate.release.set()
+            self.join(call)
+        self.assertEqual(gate.hits, ["prefix-before-final-guard"]); self.assertEqual(bytes(gate.sent), gate.expected[:-1])
+        self.assertEqual(self.client.recv(1024), b""); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
+        self.assertTrue(self.disk()["enabled"]); self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+
+    def test_close_observed_after_prefix_prevents_final_ack_byte_not_pending_effects(self):
+        with self.ack_prefix_boundary() as gate:
+            call = self.call(); self.send(frame(request()))
+            try:
+                self.assertTrue(gate.at.wait(timeout=1)); self.assertEqual(self.exact(len(gate.expected)-1), gate.expected[:-1])
+                self.assertFalse(self.service.close())
+            finally: gate.release.set()
+            self.join(call)
+        self.assertEqual(gate.hits, ["prefix-before-final-guard"]); self.assertEqual(bytes(gate.sent), gate.expected[:-1])
+        self.assertEqual(self.client.recv(1024), b""); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
+        self.assertTrue(self.disk()["enabled"]); self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+
+    def test_ack_short_writes_and_eagain_recheck_without_duplicate_or_missing_bytes(self):
+        expected = frame({"id": 1, "ok": True}); sent, offered, eagain = bytearray(), [], []
+        checks, attempt_checks = [0], []; native_send, native_check = socket.socket.send, self.service._check
+        def check(deadline, cancel, last):
+            checks[0] += 1; return native_check(deadline, cancel, last)
+        def send(connection, data, flags=0):
+            if connection is not self.service._connection: return native_send(connection, data, flags)
+            if attempt_checks:
+                self.assertGreater(checks[0], attempt_checks[-1], "Every send attempt needs a fresh guard, including retry and final byte")
+            attempt_checks.append(checks[0])
+            offered.append(bytes(data))
+            if not eagain:
+                eagain.append(checks[0]); raise BlockingIOError(errno.EAGAIN, "Owned nonblocking send retry")
+            count = native_send(connection, data[:2], flags)
+            if count > 0: sent.extend(bytes(data[:count]))
+            return count
+        with patch.object(socket.socket, "send", send), patch.object(self.service, "_check", side_effect=check):
+            call = self.call(); self.send(frame(request())); self.ack(1); self.join(call)
+        self.assertEqual(len(eagain), 1); self.assertGreater(len(offered), 3)
+        self.assertEqual(len(attempt_checks), len(offered))
+        self.assertTrue(all(later > earlier for earlier, later in zip(attempt_checks, attempt_checks[1:])))
+        self.assertEqual(offered[0], expected[:-1]); self.assertEqual(offered[-1], expected[-1:])
+        self.assertEqual(bytes(sent), expected); self.assertIsNone(call.error); self.assertIs(call.result, True)
+        self.assertEqual(select.select([self.client], [], [], 0)[0], [])
+
+    def test_invalid_ack_send_counts_never_produce_success_or_remove_marker(self):
+        for index, mode in enumerate(("zero", "negative", "boolean", "oversized")):
+            service, client = (self.service, self.client) if index == 0 else self.new_service()
+            root, _fd = self.service_roots[service]
+            native_send = socket.socket.send; hits = []
+            def send(connection, data, flags=0):
+                if connection is not service._connection: return native_send(connection, data, flags)
+                hits.append(mode)
+                return {"zero": 0, "negative": -1, "boolean": True, "oversized": len(data)+1}[mode]
+            with patch.object(socket.socket, "send", send): self.fail(frame(request()), service, client)
+            self.assertEqual(hits, [mode]); self.assertTrue((root / ReadUsageStore.SESSION).exists())
+            self.assertTrue(json.loads((root / (self.entries[0][1]+".json")).read_text())["enabled"])
 
     def test_cancel_deadline_and_eof_are_sticky_and_never_create_data(self):
         event = threading.Event(); event.set()

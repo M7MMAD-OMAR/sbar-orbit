@@ -249,9 +249,15 @@ class ReadUsageStoreService:
                 _, ready, _ = select.select([], [self._connection], [], min(.05, deadline-last))
                 last = self._check(deadline, cancel, last)
                 if not ready: continue
-                try: count = self._connection.send(memoryview(frame)[offset:], socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
+                # Withhold the final byte so a complete ACK cannot precede the
+                # fresh checks in the next loop iteration. This is NOT atomic:
+                # mutation after that check/full ACK remains possible, and the
+                # final post-send guard below can still fail (no retraction).
+                end = len(frame)-1 if offset < len(frame)-1 else len(frame)
+                fragment = memoryview(frame)[offset:end]
+                try: count = self._connection.send(fragment, socket.MSG_DONTWAIT | socket.MSG_NOSIGNAL)
                 except BlockingIOError: continue
-                if count <= 0: _fail()
+                if type(count) is not int or not 0 < count <= len(fragment): _fail()
                 offset += count
             last = self._check(deadline, cancel, last)
             # Publish local completion atomically against close, not after an

@@ -1194,3 +1194,20 @@ first call returns. These tests do not bridge TypeScript to Python, prove power-
 durability, or resolve the ACK/final-guard ambiguity. Strict typing passed and the
 final verifier passed 1086 tests, with 5 skipped and 0 failed, across 108 files
 in 91.64 seconds.
+
+## 39. Guard before the final usage ACK byte
+
+The internal Python service now sends the ACK prefix first, then rechecks the
+actual store, deadline and cancellation before attempting the final byte. Short
+writes and `EAGAIN` repeat the checks; the existing post-send guard remains. A
+measured failure at the pre-final guard cannot produce a complete ACK, but a
+change after that check or a post-ACK failure remains possible. This is not an
+atomic authorization boundary, a cancellation receipt, or production readiness.
+
+Owned socketpair/store fixtures cover the prefix, marker fault, close/cancel and
+short-write paths, and retain the earlier full-ACK/late-failure counterexample.
+Strict typing and focused tests passed. One full verifier run had 1085 passes,
+5 skips and one failure in the unrelated exact-size stdin fixture; the failing
+case passed on isolated rerun. A subsequent complete run passed 1086, skipped 5
+and failed 0 across 108 files in 85.69 seconds. The first failure cause was not
+established and is not erased by the later pass.
