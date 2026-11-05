@@ -8,15 +8,19 @@ explicitly requests that browser or profile. Original browser and terminal
 registrations remain supported; this routing preference is not a category ban.
 Never copy profiles or create a hidden substitute desktop.
 
-Orbit opens original installed applications on an explicit visible numbered
-Hyprland workspace on Linux, preserving their registered launcher, HOME,
-configuration and normal process lifetime. Browser and terminal registrations
-are accepted. Hidden substitute desktops, copied profiles and browser viewers
-are absent. Caller-supplied arbitrary commands are outside the registered API.
+Orbit opens original installed applications on a numbered Hyprland workspace on
+Linux, preserving their registered launcher, HOME, configuration and normal
+process lifetime. Browser and terminal registrations are accepted. Hidden
+substitute desktops, copied profiles and browser viewers are absent.
+Caller-supplied arbitrary commands are outside the registered API.
 
-Discover an exact applicationId, then open with workspace, requestId and optional
-window dimensions. The window is requested floating and centered, default 960 by
-640 logical pixels, fitted to the monitor work area. Return actual geometry,
+Discover an exact applicationId, then open with an optional workspace and window
+dimensions. If workspace is omitted, Orbit selects the lowest empty, undisplayed
+workspace from 1 to 10; an explicit destination must also be empty and
+undisplayed. Opening does not automatically present it. See the [CLI guide](cli.md)
+for reservation limits and request IDs. The window is requested floating and
+centered, default 960 by 640 logical pixels, fitted to the monitor work area.
+Return actual geometry,
 including bounded toolkit adjustments. Newly instantiated workspaces are measured
 against their actual monitor. A snapshot does not prove continuous placement.
 

@@ -32,6 +32,8 @@ failed historical results without treating them as current runtime policy.
 - [Earlier original application openings](native-opening.md)
 - [Earlier external-agent failures](external-agent-acceptance.md)
 - [Historical compositor incident](native-handoff-incident.md)
+- [Published release 0.4.2](https://github.com/M7MMAD-OMAR/sbar-orbit/releases/tag/v0.4.2)
+- [0.4.3 source candidate and outstanding release gates](release-0.4.3.md)
 - [Release 0.3.3](release-0.3.3.md) and [changelog](../CHANGELOG.md)
 - [Research record scope](../experiments/README.md)
 

@@ -39,11 +39,17 @@ See [CLI](cli.md) and [the contract](desktop-only.md).
 ## Windows
 
 Use `install.cmd --json` from the checkout, or `install.cmd --dry-run --json` first.
-It runs the same `scripts/install.ts` as `./install.sh`, inside the shared job object
-budget. It installs no service: a Chromium family browser cannot run in session 0, so
-autostart on Windows is a per user logon task (`sbar-orbit autostart`). The installer,
-discovery and service contracts run on Windows. Native opening, input and capture are
-not implemented there; see [the Windows plan](windows-compatibility-plan.md).
+Windows preflight requires Bun 1.4.2 or newer. The command runs the same
+`scripts/install.ts` as `./install.sh`, inside the shared job object budget.
+By default, a non-dry-run installation attempts to register and start an
+account-specific logon task. It is not a system service and does not start before
+logon. `--no-service` skips the task; a dry run only reports what would happen.
+Check the resulting step status rather than assuming registration succeeded.
+
+Checkout installation is distinct from the unpublished [0.4.3 Windows desktop
+candidate](release-0.4.3.md), which has additional acceptance gates. Native
+opening, input and capture on Windows are not implemented in the published
+release; see [the Windows plan](windows-compatibility-plan.md).
 
 ## Installer reference
 

@@ -108,10 +108,10 @@ On complete success, download these separately named workflow artifacts:
   The output walk is bounded and refuses symlinks. No deployment is performed.
 
 ```sh
-gh workflow run package-release.yml --ref main -f source_ref=FULL40HEXCOMMIT -f version=0.4.2
+gh workflow run package-release.yml --ref main -f source_ref=FULL40HEXCOMMIT -f version=VERSION
 gh run watch RUN_ID --exit-status
-gh run download RUN_ID -n release-0.4.2-FULL40HEXCOMMIT -D OWNED_RELEASE_DIRECTORY
-gh run download RUN_ID -n orbit-site-0.4.2 -D OWNED_SITE_DIRECTORY
+gh run download RUN_ID -n release-VERSION-FULL40HEXCOMMIT -D OWNED_RELEASE_DIRECTORY
+gh run download RUN_ID -n orbit-site-VERSION -D OWNED_SITE_DIRECTORY
 ```
 
 Verify the run, source SHA, both receipts and downloaded byte digests before
