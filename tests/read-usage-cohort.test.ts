@@ -212,7 +212,7 @@ linux("actual Unix cohort callback fault synchronously disables every conversati
 
 // Pure per-test Socket-shaped boundary, NOT a real descriptor or adoption proof.
 function mockSocket(mode: "healthy" | "ended" | "install-error" | "resume-eof" | "resume-error" = "healthy") {
-  const emitter = new EventEmitter(), written = deferred<Buffer>();
+  const emitter = new EventEmitter(), written = deferred<Buffer>(), frames: Buffer[] = [];
   const state = { closed: 0, ended: 0, pauses: 0, resumes: 0, writes: 0 };
   let socket: Socket;
   const values = {
@@ -224,10 +224,10 @@ function mockSocket(mode: "healthy" | "ended" | "install-error" | "resume-eof" |
     pause: () => { state.pauses++; return socket; },
     resume: () => { state.resumes++; if (mode === "resume-error") throw new Error("PRIVATE-resume"); if (mode === "resume-eof") emitter.emit("end"); return socket; },
     destroy: () => { state.closed++; return socket; }, end: () => { state.ended++; return socket; },
-    write: (bytes: Uint8Array, callback: (error?: Error | null) => void) => { state.writes++; written.resolve(Buffer.from(bytes)); callback(); return true; },
+    write: (bytes: Uint8Array, callback: (error?: Error | null) => void) => { state.writes++; frames.push(Buffer.from(bytes)); written.resolve(Buffer.from(bytes)); callback(); return true; },
   };
   socket = Object.create(Socket.prototype, Object.fromEntries(Object.entries(values).map(([name, value]) => [name, { value, configurable: true, writable: true }])));
-  return { socket, emitter, state, written };
+  return { socket, emitter, state, written, frames };
 }
 
 test("cohort synchronous channel setup/subscription failure never publishes or closes owner socket", () => {
@@ -306,4 +306,54 @@ test("reentrant owner fail fences both entries before pending commit rejection",
   expect((await cohort.usageVersion(a)).enabled).toBe(false);
   expect((await cohort.usageVersion(b)).enabled).toBe(false);
   expect(f.state.closed).toBe(0); expect(f.state.ended).toBe(0);
+});
+
+
+test("poison gates current ACK before revoke callback can pump a queued second conversation", async () => {
+  const f = mockSocket(), owner = {}, a = {}, b = {}, active = {};
+  let cohort!: Readonly<ReadUsageCohort>, armed = false, activeEpoch = 0, aEpoch = 0, bEpoch = 0;
+  let currentId = 0;
+  const observations: { allDisabled: boolean; before: number; after: number }[] = [];
+  const emitAck = (id: number) => {
+    const body = Buffer.from(JSON.stringify({ id, ok: true }), "ascii"), ack = Buffer.alloc(body.length + 4);
+    ack.writeUInt32BE(body.length, 0); body.copy(ack, 4); f.emitter.emit("data", ack);
+  };
+  cohort = createReadUsageCohort({ ownerAuthority: owner, socket: f.socket,
+    mappings: [{ conversation: a, slot: 0 }, { conversation: b, slot: 1 }, { conversation: active, slot: 2 }],
+    onRevoke() {
+      if (!armed) return;
+      const allDisabled = !cohort.usageCurrent(a, aEpoch) && !cohort.usageCurrent(b, bEpoch)
+        && !cohort.usageCurrent(active, activeEpoch);
+      const before = f.state.writes;
+      emitAck(currentId); // Exact valid current ACK, synchronously inside user code.
+      cohort.fail(owner); // Reentrant failure must not recurse or bypass the gate.
+      observations.push({ allDisabled, before, after: f.state.writes });
+    } });
+  try {
+    const enabled = cohort.on(owner, active);
+    await bounded(f.written.promise); await Promise.resolve(); await Promise.resolve();
+    emitAck((JSON.parse(f.frames[0]!.subarray(4).toString("ascii")) as Frame).id);
+    await bounded(enabled);
+    const version = await cohort.usageVersion(active); activeEpoch = version.epoch;
+    expect(cohort.usageCurrent(active, activeEpoch)).toBe(true);
+    const first = cohort.on(owner, a), second = cohort.on(owner, b);
+    const settlements = Promise.allSettled([first, second]);
+    // No sleeps: these ordinary promise turns let both coordinator ordering
+    // tails enter the real transport and its synchronous mock write settle.
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    expect(f.frames).toHaveLength(2); expect(f.state.writes).toBe(2);
+    const current = JSON.parse(f.frames[1]!.subarray(4).toString("ascii")) as Frame;
+    expect(current.slot).toBe(0); currentId = current.id;
+    aEpoch = (await cohort.usageVersion(a)).epoch; bEpoch = (await cohort.usageVersion(b)).epoch;
+    armed = true; cohort.fail(owner);
+    expect(observations).toEqual(Array.from({ length: 3 }, () => ({ allDisabled: true, before: 2, after: 2 })));
+    expect(f.state.writes).toBe(2); // Queued b was never written during callback ACK.
+    for (const result of await bounded(settlements)) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toMatchObject({ code: "UNCONFIRMED" });
+    }
+    emitAck(currentId); expect(f.state.writes).toBe(2);
+    expect(f.state.closed).toBe(0); expect(f.state.ended).toBe(0);
+    // Exact synchronous JS composition evidence, not real socket/stop/durability proof.
+  } finally { cohort.fail(owner); }
 });

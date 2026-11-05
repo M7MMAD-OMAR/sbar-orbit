@@ -76,13 +76,17 @@ export function createReadUsageCohort(input: ReadUsageCohortOptions): Readonly<R
   const deadlineMs = options.deadlineMs as number | undefined;
   let coordinator: ReadUsageCoordinator | undefined, transport: Readonly<ReadUsageTransport> | undefined;
   let failed = false, ready = false;
+  const onPoisonFenced = (): void => {
+    failed = true; ready = false; // Coordinator has already fenced ALL entries.
+    // Gate ACK/pump before any user revocation callback can synchronously emit.
+    // During subscribe failure this is unassigned, but that transport is already
+    // latched failed internally. No socket/alias disposal is implied here.
+    transport?.fail(authority);
+  };
   const poison = (): void => {
     if (failed) return;
-    failed = true; ready = false; // Sticky before any external revocation callback.
-    coordinator?.poisonAll(authority); // Fence every conversation BEFORE transport rejection/cleanup.
-    // During synchronous subscribe this may still be unassigned; that transport
-    // is already failing internally. Reentry is stopped by the latch above.
-    transport?.fail(authority);
+    if (coordinator) coordinator.poisonAll(authority);
+    else { failed = true; ready = false; } // No coordinator escaped construction.
   };
   const notify = (conversation: object): void => {
     let result: unknown;
@@ -97,7 +101,7 @@ export function createReadUsageCohort(input: ReadUsageCohortOptions): Readonly<R
     return transport.store.commit(conversation, record);
   } });
   try {
-    coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, store: deferred, onRevoke: notify,
+    coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, store: deferred, onRevoke: notify, onPoisonFenced,
       ...(deadlineMs === undefined ? {} : { deadlineMs }) });
     for (const entry of snapshot) coordinator.register(authority, entry.conversation);
     if (failed) { coordinator.poisonAll(authority); refused("UNCONFIRMED"); }

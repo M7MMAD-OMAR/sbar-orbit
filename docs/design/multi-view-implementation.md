@@ -1177,3 +1177,20 @@ paused `createConnection` setup; no failure was presented as success. Final
 strict typing passed and the verifier passed 1082 tests, with 5 skipped and 0
 failed, across 108 files in 82.68 seconds. No Python service, protected host
 identity, original app or Windows desktop acceptance was exercised.
+
+## 38. Poison ordering and real service ACK window
+
+Every coordinator-wide poison now fences all registered entries before invoking
+a trusted synchronous integration hook. The cohort uses it to latch transport
+failure before external revocation callbacks can reenter with an ACK and pump a
+queued write. Hook failure does not restore authority or prove an external fence;
+coordinator-local uncertainty is not automatically cohort-wide poison. This is
+internal composition only, not a protected production ingress or cancellation.
+
+Actual Python socketpair/store fixtures demonstrate that a complete ACK can reach
+the client before the service final guard fails. A separate serial-driver fixture
+shows that a second request sent after that ACK can wait in the socket until the
+first call returns. These tests do not bridge TypeScript to Python, prove power-loss
+durability, or resolve the ACK/final-guard ambiguity. Strict typing passed and the
+final verifier passed 1086 tests, with 5 skipped and 0 failed, across 108 files
+in 91.64 seconds.

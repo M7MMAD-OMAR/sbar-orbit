@@ -536,15 +536,15 @@ for (const action of ["on", "off"] as const) test("initial unreserved clock muta
 });
 
 test("initial clock registration reentry cannot publish a new conversation after poisoning", async () => {
-  const authority = {}, conversation = {}, injected = {}; let entered = false, code = "", writes = 0;
-  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, store: { async commit() { writes++; } } });
+  const authority = {}, conversation = {}, injected = {}; let entered = false, code = "", writes = 0, fences = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: authority, onRevoke() {}, onPoisonFenced() { fences++; }, store: { async commit() { writes++; } } });
   coordinator.register(authority, conversation);
   const now = spyOn(performance, "now").mockImplementation(() => {
     if (!entered) { entered = true; try { coordinator.register(authority, injected); } catch (error) { code = (error as ReadUsageError).code; } }
     return 100;
   });
   try {
-    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED"); expect(code).toBe("UNCONFIRMED"); expect(writes).toBe(0);
+    expect(await outcome(coordinator.on(authority, conversation))).toBe("UNCONFIRMED"); expect(code).toBe("UNCONFIRMED"); expect(writes).toBe(0); expect(fences).toBe(1);
     await expect(coordinator.usageVersion(injected)).rejects.toMatchObject({ code: "DENIED" });
   } finally { now.mockRestore(); }
 });
@@ -687,13 +687,87 @@ test("counter exhaustion uses the same complete cohort poison without wrapping o
   runInNewContext(compiled, context);
   const Coordinator = context.__FixtureCoordinator as typeof ReadUsageCoordinator;
   expect(typeof Coordinator).toBe("function");
-  const authority = {}, a = {}, b = {}, notifications: object[] = [];
-  const coordinator = new Coordinator({ ownerAuthority: authority, onRevoke: key => { notifications.push(key); coordinator.poisonAll(authority); }, store: { async commit() { throw new Error("No store work"); } } });
+  const authority = {}, a = {}, b = {}, notifications: object[] = [], phases: string[] = [];
+  const coordinator = new Coordinator({ ownerAuthority: authority, onPoisonFenced: () => { phases.push("fence"); }, onRevoke: key => { phases.push("revoke"); notifications.push(key); coordinator.poisonAll(authority); }, store: { async commit() { throw new Error("No store work"); } } });
   coordinator.register(authority, a); coordinator.register(authority, b);
   let code = ""; try { coordinator.on(authority, a); } catch (error) { code = (error as ReadUsageError).code; }
-  expect(code).toBe("LIMIT"); expect(notifications).toEqual([a, b]);
+  expect(code).toBe("LIMIT"); expect(notifications).toEqual([a, b]); expect(phases).toEqual(["fence", "revoke", "revoke"]);
   const versions = await Promise.all([coordinator.usageVersion(a), coordinator.usageVersion(b)]);
   expect(versions.every(value => !value.enabled && Number.isSafeInteger(value.epoch) && value.epoch === Number.MAX_SAFE_INTEGER)).toBe(true);
   const result = await coordinator.off(authority, b).catch((error: { code: string }) => error.code);
   expect(result).toBe("UNCONFIRMED"); expect(notifications).toEqual([a, b]);
+});
+
+
+test("poison fence hook validates own synchronous callback without running it during construction", async () => {
+  const owner = {}, key = {}, store = { async commit() {} };
+  for (const value of [null, false, 1, {}, new Proxy(() => {}, {})]) {
+    expect(() => new ReadUsageCoordinator({ ownerAuthority: owner, store, onRevoke() {}, onPoisonFenced: value as never })).toThrow(ReadUsageError);
+  }
+  let getters = 0;
+  const accessor = Object.defineProperty({ ownerAuthority: owner, store, onRevoke() {} }, "onPoisonFenced", {
+    get() { getters++; return () => {}; },
+  });
+  expect(() => new ReadUsageCoordinator(accessor)).toThrow(ReadUsageError);
+  expect(getters).toBe(0);
+  let hooks = 0;
+  const coordinator = new ReadUsageCoordinator({ ownerAuthority: owner, store, onRevoke() {}, onPoisonFenced() { hooks++; } });
+  coordinator.register(owner, key); await coordinator.on(owner, key);
+  expect(hooks).toBe(0);
+  coordinator.poisonAll(owner); coordinator.poisonAll(owner);
+  expect(hooks).toBe(1);
+  expect((await coordinator.usageVersion(key)).enabled).toBe(false);
+});
+
+test("fence hook runs after all authority is disabled and before any revocation including reentry", async () => {
+  const owner = {}, keys = [{}, {}, {}], stages: string[] = [], observations: boolean[][] = [];
+  let armed = false, coordinator!: ReadUsageCoordinator;
+  let versions: { epoch: number }[] = [], hookCalls = 0;
+  const nested: Promise<string>[] = [];
+  coordinator = new ReadUsageCoordinator({ ownerAuthority: owner, store: { async commit() {} },
+    onPoisonFenced() {
+      hookCalls++; stages.push("hook");
+      observations.push(keys.map((key, index) => coordinator.usageCurrent(key, versions[index]!.epoch)));
+      coordinator.poisonAll(owner);
+      nested.push(outcome(coordinator.on(owner, keys[0]!)));
+    },
+    onRevoke() {
+      if (!armed) return;
+      stages.push("revoke");
+      observations.push(keys.map((key, index) => coordinator.usageCurrent(key, versions[index]!.epoch)));
+    } });
+  for (const key of keys) { coordinator.register(owner, key); await coordinator.on(owner, key); }
+  versions = await Promise.all(keys.map(key => coordinator.usageVersion(key)));
+  expect(keys.every((key, index) => coordinator.usageCurrent(key, versions[index]!.epoch))).toBe(true);
+  armed = true; coordinator.poisonAll(owner);
+  expect(stages).toEqual(["hook", "revoke", "revoke", "revoke"]);
+  expect(observations).toEqual(Array.from({ length: 4 }, () => [false, false, false]));
+  expect(hookCalls).toBe(1);
+  expect(await Promise.all(nested)).toEqual(["UNCONFIRMED"]);
+});
+
+test("throwing nonvoid and ordinary rejected-promise fence hooks never skip revocation or restore authority", async () => {
+  for (const mode of ["throw", "value", "promise", "thenable"] as const) {
+    const owner = {}, a = {}, b = {}, notified: object[] = [];
+    let calls = 0, thenReads = 0, armed = false;
+    const coordinator = new ReadUsageCoordinator({ ownerAuthority: owner, store: { async commit() {} },
+      onRevoke(key) { if (armed) notified.push(key); },
+      onPoisonFenced() {
+        calls++;
+        if (mode === "throw") throw new Error("PRIVATE-hook-fault");
+        if (mode === "value") return 1 as never;
+        if (mode === "promise") return Promise.reject(new Error("PRIVATE-hook-rejection")) as never;
+        return Object.defineProperty({}, "then", { get() { thenReads++; throw new Error("Not a promise"); } }) as never;
+      } });
+    coordinator.register(owner, a); coordinator.register(owner, b);
+    await coordinator.on(owner, a); await coordinator.on(owner, b);
+    armed = true;
+    expect(() => coordinator.poisonAll(owner)).not.toThrow();
+    expect(notified).toEqual([a, b]); expect(calls).toBe(1); expect(thenReads).toBe(0);
+    expect((await coordinator.usageVersion(a)).enabled).toBe(false);
+    expect((await coordinator.usageVersion(b)).enabled).toBe(false);
+    expect(await outcome(coordinator.on(owner, a))).toBe("UNCONFIRMED");
+    coordinator.poisonAll(owner); expect(calls).toBe(1); expect(notified).toEqual([a, b]);
+    // Logical poison is certain; a bad trusted hook is not an external gate ACK.
+  }
 });

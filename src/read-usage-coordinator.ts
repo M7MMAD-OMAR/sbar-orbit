@@ -48,6 +48,7 @@ export class ReadUsageCoordinator {
   readonly #authority: object;
   readonly #store: ReadUsageStore;
   readonly #revoke: (conversation: object) => void;
+  readonly #poisonFenced?: () => void;
   readonly #deadlineMs: number;
   readonly #instance = randomBytes(32).toString("hex");
   readonly #entries = new Map<object, Entry>();
@@ -56,10 +57,15 @@ export class ReadUsageCoordinator {
   #poisoned = false;
   #settingUp = false;
 
-  constructor(options: { ownerAuthority: object; store: ReadUsageStore; onRevoke: (conversation: object) => void; deadlineMs?: number }) {
+  constructor(options: { ownerAuthority: object; store: ReadUsageStore; onRevoke: (conversation: object) => void; onPoisonFenced?: () => void; deadlineMs?: number }) {
     if (!validObject(options.ownerAuthority) || !options.store || typeof options.store.commit !== "function"
         || typeof options.onRevoke !== "function" || options.deadlineMs !== undefined
         && (!Number.isSafeInteger(options.deadlineMs) || options.deadlineMs < 1 || options.deadlineMs > 3000)) fail("INVALID");
+    const hook = Object.getOwnPropertyDescriptor(options, "onPoisonFenced");
+    if (hook && !Object.hasOwn(hook, "value") || !hook && "onPoisonFenced" in options) fail("INVALID");
+    const fenced: unknown = hook?.value;
+    if (fenced !== undefined && (typeof fenced !== "function" || nodeTypes.isProxy(fenced))) fail("INVALID");
+    if (fenced !== undefined) this.#poisonFenced = fenced as () => void;
     this.#authority = options.ownerAuthority;
     this.#store = options.store;
     this.#revoke = options.onRevoke;
@@ -99,6 +105,17 @@ export class ReadUsageCoordinator {
       entry.enabled = false; entry.uncertain = true;
       entry.epoch = this.#counter;
     }
+    // Atomic owner integration point, never a public split-phase poison API.
+    // All authority is already fenced, including on internal poison paths. The
+    // trusted hook must synchronously gate its transport and return undefined.
+    // Failed/nonvoid hooks cannot restore authority or skip notifications, but
+    // do not establish an external resource fence or writer-stop receipt.
+    try {
+      const result: unknown = this.#poisonFenced?.();
+      if (result !== undefined && nodeTypes.isPromise(result)) {
+        try { void Promise.prototype.then.call(result, undefined, () => {}); } catch { /* Trusted ordinary promises only. */ }
+      }
+    } catch { /* Logical poison remains sticky; still notify every entry. */ }
     // Phase two notifies each registered conversation exactly once for this
     // cohort poison, even if another callback throws, returns a promise or reenters.
     for (const entry of entries) this.#notify(entry.conversation);

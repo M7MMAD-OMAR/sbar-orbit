@@ -320,6 +320,104 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(call.result); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
         self.assertTrue(self.service.status()["failed"]); self.assertTrue(self.service.status()["localResourcesClosed"])
 
+    def test_client_consumes_full_ack_before_actual_post_ack_marker_guard_failure(self):
+        at_boundary, release = threading.Event(), threading.Event(); self.releases.append(release)
+        expected_ack = frame({"id": 1, "ok": True})
+        sent, hits = bytearray(), []
+        native_send, native_check = socket.socket.send, self.service._check
+        def send(connection, data, flags=0):
+            count = native_send(connection, data, flags)
+            if connection is self.service._connection and count > 0: sent.extend(bytes(data[:count]))
+            return count
+        def check(deadline, cancel, last):
+            if len(sent) >= len(expected_ack) and not hits:
+                hits.append("after-full-ack-before-guard"); at_boundary.set()
+                if not release.wait(timeout=1): raise RuntimeError("Owned post-ACK barrier expired")
+            return native_check(deadline, cancel, last)  # The REAL marker/root guard must fail.
+        marker = self.root / ReadUsageStore.SESSION
+        before = marker.stat()
+        changed, guard_failures = threading.Event(), []
+        store = self.service._store
+        native_guard = store._guard
+        def guard():
+            try: return native_guard()
+            except ReadUsageStoreError:
+                if changed.is_set(): guard_failures.append("actual-store-guard")
+                raise
+        with patch.object(socket.socket, "send", send), patch.object(self.service, "_check", side_effect=check), patch.object(store, "_guard", side_effect=guard):
+            call = self.call(); self.send(frame(request()))
+            try:
+                self.assertTrue(at_boundary.wait(timeout=1))
+                self.assertEqual(bytes(sent), expected_ack)
+                self.ack(1)  # Actual peer consumed a complete canonical ACK, not a mock result.
+                self.assertTrue(self.service.status()["busy"])
+                self.assertIsNone(call.result); self.assertIsNone(call.error)
+                self.send(frame(request(2, epoch=2, enabled=False)))  # Buffered, NOT concurrently served.
+                fd = os.open(marker, os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    self.assertEqual(os.write(fd, b"!"), 1); os.fsync(fd)
+                    changed.set()
+                finally: os.close(fd)
+            finally: release.set()
+            self.join(call)
+        self.assertEqual(hits, ["after-full-ack-before-guard"])
+        self.assertEqual(guard_failures, ["actual-store-guard"])
+        self.assertIsNone(call.result); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
+        self.assertTrue(self.service.status()["failed"]); self.assertTrue(self.service.status()["closed"])
+        self.assertTrue(self.service.status()["localResourcesClosed"])
+        after = marker.stat()
+        self.assertEqual((after.st_dev, after.st_ino), (before.st_dev, before.st_ino))
+        self.assertEqual(marker.read_bytes(), b"!" + ReadUsageStore.SESSION_BYTES[1:])
+        self.assertEqual(self.disk()["epoch"], 1); self.assertTrue(self.disk()["enabled"])
+        # ACK1 cannot prove server success or that queued request2 became durable off.
+        try: reply = self.client.recv(1024)
+        except ConnectionResetError: reply = b""
+        self.assertEqual(reply, b"")
+        with self.assertRaises(subject.ReadUsageServiceError): self.service.serve_one(deadline=time.monotonic()+1)
+        with self.assertRaises(ReadUsageStoreError): ReadUsageStore(str(self.root), self.entries, expected_root_fd=self.root_fd)
+
+    def test_ack_paced_request_two_buffers_until_same_thread_serve_one_returns(self):
+        at_boundary, release, first_returned = threading.Event(), threading.Event(), threading.Event(); self.releases.append(release)
+        expected_ack = frame({"id": 1, "ok": True})
+        sent, hits = bytearray(), []
+        native_send, native_check = socket.socket.send, self.service._check
+        def send(connection, data, flags=0):
+            count = native_send(connection, data, flags)
+            if connection is self.service._connection and count > 0: sent.extend(bytes(data[:count]))
+            return count
+        def check(deadline, cancel, last):
+            if len(sent) >= len(expected_ack) and not hits:
+                hits.append("first-full-ack"); at_boundary.set()
+                if not release.wait(timeout=1): raise RuntimeError("Owned sequential ACK barrier expired")
+            return native_check(deadline, cancel, last)
+        class Sequence:
+            def __init__(inner): inner.results, inner.error = [], None
+        sequence = Sequence()
+        def serve_sequentially():
+            try:
+                sequence.results.append(self.service.serve_one(deadline=time.monotonic()+1))
+                first_returned.set()
+                sequence.results.append(self.service.serve_one(deadline=time.monotonic()+1))
+            except BaseException as error: sequence.error = error
+        sequence.thread = threading.Thread(target=serve_sequentially, name="owned-sequential-service", daemon=True)
+        self.calls.append(sequence)
+        with patch.object(socket.socket, "send", send), patch.object(self.service, "_check", side_effect=check):
+            sequence.thread.start(); self.send(frame(request()))
+            try:
+                self.assertTrue(at_boundary.wait(timeout=1)); self.assertEqual(bytes(sent), expected_ack)
+                self.ack(1)
+                self.assertFalse(first_returned.is_set()); self.assertEqual(sequence.results, [])
+                self.send(frame(request(2, epoch=2, enabled=False)))
+                self.assertTrue(self.service.status()["busy"])
+            finally: release.set()
+            self.ack(2); self.join(sequence)
+        self.assertEqual(hits, ["first-full-ack"])
+        self.assertIsNone(sequence.error); self.assertEqual(sequence.results, [True, True])
+        self.assertTrue(first_returned.is_set()); self.assertFalse(self.service.status()["failed"])
+        self.assertEqual(self.disk()["epoch"], 2); self.assertFalse(self.disk()["enabled"])
+        self.assertEqual(bytes(sent), expected_ack + frame({"id": 2, "ok": True}))
+        self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+
     def test_cancel_deadline_and_eof_are_sticky_and_never_create_data(self):
         event = threading.Event(); event.set()
         call = self.call(cancel=event); self.join(call)
