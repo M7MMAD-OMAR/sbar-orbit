@@ -36,6 +36,13 @@ Standalone observation is authorized but does not enter `Sessions.enqueue`: [ses
 
 ### Workspace allocation
 
+**Superseded allocation behavior:** the owner subsequently required empty,
+undisplayed workspaces within 1 to 10. Current opening now checks all compositor
+window occupancy and broker reservations, with a worker pre-dispatch recheck.
+See [workspace opening safety](../workspace-opening-safety.md). The paragraph
+below records the older baseline, not the current default or permission to reuse
+an occupied workspace.
+
 [session.ts:277-296](<../../src/session.ts#L277-L296>) samples displayed workspaces, other callers' sessions and recent opened-workspace records. [arbitration.ts:69-86](<../../src/arbitration.ts#L69-L86>) defaults to the visible numbered pool 20-99 and prefers a caller's existing unshown workspace. This is not an OS-enforced reservation against independent processes or owner actions. Recent opened records are aged and liveness-filtered; reservations and request maps are broker-memory state.
 
 The `nativeOpens`, `nativePresentations` and allocation lookups are keyed by supplied request ID, not explicitly by caller: [session.ts:89-98](<../../src/session.ts#L89-L98>), [277-295](<../../src/session.ts#L277-L295>), [695-721](<../../src/session.ts#L695-L721>), [750-774](<../../src/session.ts#L750-L774>). Future multi-agent work must namespace operation identities by authenticated caller/grant and broker epoch; UUID conventions alone are not an authority boundary.

@@ -28,7 +28,7 @@ export const diagnosticCodes = new Set(['INVALID_REQUEST', 'UNSUPPORTED', 'SESSI
   // Added after measuring what the layer recorded for each: every one of these was landing as
   // BACKEND_ERROR. They are refusals a person or an agent can act on, and an agent that cannot tell
   // "you hit a ceiling" from "something broke" retries the wrong thing.
-  'LIMIT_REACHED', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
+  'LIMIT_REACHED', 'WORKSPACE_BUSY', 'RESOURCE_EXHAUSTED', 'RESOURCE_BOUNDARY_LOST', 'RESOURCE_STATUS_UNAVAILABLE',
   'POLICY_CONFIRMATION_REQUIRED', 'USAGE_STATE_INVALID', 'OWNER_REQUIRED', 'READ_VIEW_INVALID', 'READ_VIEW_DENIED', 'READ_VIEW_OFF',
   'READ_VIEW_LIMIT', 'READ_VIEW_BUSY', 'READ_VIEW_UNCONFIRMED', 'READ_VIEW_BACKEND',
   'READ_CHANNEL_INVALID', 'READ_CHANNEL_DENIED', 'READ_CHANNEL_BUSY', 'READ_CHANNEL_LIMIT', 'READ_CHANNEL_CONFLICT',

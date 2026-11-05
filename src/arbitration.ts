@@ -66,23 +66,25 @@ export function parseWait(value: unknown): number {
   throw new OrbitError("INVALID_REQUEST", "wait is true or a number of seconds from 1 to 40");
 }
 
-/** `20-99` by default. Workspaces below it stay the person's. */
+/** Automatic selection stays in the first ten. Config may narrow, never widen. */
 export function workspacePool(env: Record<string, string | undefined> = process.env): [number, number] {
-  const match = /^(\d{1,6})-(\d{1,6})$/.exec(env.ORBIT_WORKSPACE_POOL ?? "");
-  if (match && Number(match[1]) >= 1 && Number(match[2]) >= Number(match[1])) return [Number(match[1]), Number(match[2])];
-  return [20, 99];
+  const value = env.ORBIT_WORKSPACE_POOL ?? "";
+  const match = /^([1-9]|10)-([1-9]|10)$/.exec(value);
+  if (match && match[0] === value && Number(match[2]) >= Number(match[1])) return [Number(match[1]), Number(match[2])];
+  return [1, 10];
 }
 
 /**
- * A free numbered workspace for one caller. A workspace this caller already holds wins, so its windows
- * stay together; otherwise the lowest one nobody uses and no monitor shows.
+ * Lowest unoccupied, undisplayed candidate in the supplied pool. The caller must
+ * supply all occupied workspaces; own allocations are reservations, not reusable
+ * candidates. This pure selection never presents, focuses or switches anything.
+ * Explicit injected pools remain supported; production env/default pools are1..10.
  */
 export function allocateWorkspace(input: { pool: [number, number]; own: number[]; used: Set<number>; shown: Set<number> }): number {
-  const free = (workspace: number) => !input.used.has(workspace) && !input.shown.has(workspace);
-  const mine = input.own.find(workspace => input.pool[0] <= workspace && workspace <= input.pool[1] && !input.shown.has(workspace));
-  if (mine !== undefined) return mine;
+  const own = new Set(input.own);
+  const free = (workspace: number) => !input.used.has(workspace) && !input.shown.has(workspace) && !own.has(workspace);
   for (let workspace = input.pool[0]; workspace <= input.pool[1]; workspace++) if (free(workspace)) return workspace;
-  throw new OrbitError("LIMIT_REACHED", "Every workspace in the agent pool is in use by a session or shown on a monitor; stop a session or widen ORBIT_WORKSPACE_POOL");
+  throw new OrbitError("LIMIT_REACHED", "No empty, undisplayed workspace is available in the workspace pool");
 }
 
 /**

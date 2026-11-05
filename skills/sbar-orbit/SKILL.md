@@ -7,7 +7,7 @@ description: Control original installed desktop applications on a visible number
 
 ## The loop, in five lines
 
-1. `orbit_applications`, then `orbit_open` (omit `workspace`; Orbit picks a free one).
+1. `orbit_applications`, then `orbit_open` (omit `workspace`; Orbit picks an empty, undisplayed workspace from 1 to 10). Never open on the owner's current workspace or switch them to yours.
 2. `orbit_handoff` on the new window, then `orbit_act` with `actions` and `capture` to act and see the result in one call.
 3. Verify by what the screen or `orbit_observe format:"text"` shows, not by an ok reply.
 4. Finish: `orbit_act close-window` for windows you opened, then `orbit_stop` with `scope: "mine"`. Every session you open must be stopped, and a file chooser or dialog is the same session, not a new one.

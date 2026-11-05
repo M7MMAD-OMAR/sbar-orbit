@@ -257,8 +257,9 @@ test("busy names the holder, queues with wait, and hands over in order", async (
 test("opening without a workspace picks a free one per caller, never another agent's and never a shown one", async () => {
   fakeNative();
   const open = spyOn(NativeBackend, "openApplication").mockResolvedValue({ opened: true } as never);
-  const monitors = spyOn(NativeBackend, "monitors").mockResolvedValue({ monitors: [{ name: "DP-1", focused: true, workspace: 20 }] } as never);
-  cleanups.push(() => { open.mockRestore(); monitors.mockRestore(); });
+  const inventory = spyOn(NativeBackend, "workspaceInventory").mockResolvedValue({ occupied: [], shown: [20] });
+  const present = spyOn(NativeBackend, "present").mockRejectedValue(new Error("Opening must not present a workspace"));
+  cleanups.push(() => { open.mockRestore(); inventory.mockRestore(); present.mockRestore(); });
   const { socket } = await broker();
   const a = agent("conv-a", "Claude"), b = agent("conv-b", "Codex"), c = agent("conv-c", "Hermes");
   // Agent B already holds a session on 21.
@@ -270,14 +271,17 @@ test("opening without a workspace picks a free one per caller, never another age
   // The same identity is the same answer, with a single launch.
   expect(await open1(a.identity, "a-1")).toEqual(first);
   expect(open).toHaveBeenCalledTimes(1);
-  // The same agent keeps its windows together; another agent is sent elsewhere.
-  expect((await open1(a.identity, "a-2")).workspace).toBe(22);
-  expect((await open1(c.identity, "c-1")).workspace).toBe(23);
+  // Fresh requests never reuse even this caller's previous opening destination.
+  expect((await open1(a.identity, "a-2")).workspace).toBe(23);
+  expect((await open1(c.identity, "c-1")).workspace).toBe(24);
   // An explicit workspace is still honoured and still passes through unchanged.
   expect(await call(socket, "native.open", { requestId: "x", workspace: 40, applicationId: "org.example.App.desktop" }, undefined, a.identity)).toEqual({ opened: true });
-  // A dead agent's workspaces are free again.
+  // A dead agent can leave real windows behind. Inventory, not process death,
+  // decides whether that workspace is occupied; B's own session on 21 also stays reserved.
   c.child.kill("SIGKILL"); await c.child.exited; await delay(400);
-  expect((await open1(b.identity, "b-1")).workspace).toBe(21);
+  inventory.mockResolvedValue({ occupied: [24], shown: [20] });
+  expect((await open1(b.identity, "b-1")).workspace).toBe(25);
+  expect(present).not.toHaveBeenCalled();
 });
 
 test("the owner credential is the only way to see other agents' ids from the command line", async () => {

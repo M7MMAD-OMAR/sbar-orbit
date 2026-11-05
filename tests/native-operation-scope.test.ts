@@ -13,7 +13,8 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "orbit-operation-scope-"));
   const sessions = new Sessions(root, undefined, undefined,
     { planPath: "/fixture/host.json", controlDirectory: join(root, "control") }, join(root, "update"));
-  return { sessions, close: async () => { await sessions.close(); await rm(root, { recursive: true, force: true }); } };
+  const inventory = spyOn(NativeBackend, "workspaceInventory").mockResolvedValue({ occupied: [], shown: [] });
+  return { sessions, inventory, close: async () => { try { await sessions.close(); } finally { inventory.mockRestore(); } await rm(root, { recursive: true, force: true }); } };
 }
 
 test("process-scoped mutations refuse across all external transports, while reads remain available", async () => {
@@ -40,6 +41,7 @@ test.skipIf(process.platform !== "linux")("real CLI processes retain conversatio
   const broker = await startBroker({ native: { planPath: "/fixture/host.json", controlDirectory: join(root, "control") } });
   const open = spyOn(NativeBackend, "openApplication").mockRejectedValue(new OrbitError("NATIVE_FAILED", "Uncertain fixture"));
   const present = spyOn(NativeBackend, "present").mockRejectedValue(new OrbitError("PRESENTATION_UNCONFIRMED", "Uncertain fixture"));
+  const inventory = spyOn(NativeBackend, "workspaceInventory").mockResolvedValue({ occupied: [], shown: [] });
   const cli = async (command: string, params: unknown, conversation?: string) => {
     const env: Record<string, string | undefined> = { ...process.env, ORBIT_SOCKET: broker.socket, ORBIT_USAGE_DIR: join(root, "usage"), ORBIT_REQUEST_ID: "must-not-override-json", ORBIT_CONVERSATION_ID: conversation };
     delete env.ORBIT_OWNER;
@@ -55,18 +57,18 @@ test.skipIf(process.platform !== "linux")("real CLI processes retain conversatio
       expect((await cli(command, params)).error.code).toBe("CONVERSATION_REQUIRED");
       expect((await cli(command, params, "fixture-a")).error.code).toBe(code);
       expect((await cli(command, params, "fixture-a")).error.code).toBe(code);
-      expect((await cli(command, { ...params, requestId: "new-json" }, "fixture-a")).error.code).toBe(code);
-      expect((await cli(command, params, "fixture-b")).error.code).toBe(code);
+      expect((await cli(command, { ...params, requestId: "new-json", ...(command === "native-open" ? { workspace: 26 } : {}) }, "fixture-a")).error.code).toBe(code);
+      expect((await cli(command, { ...params, ...(command === "native-open" ? { workspace: 27 } : {}) }, "fixture-b")).error.code).toBe(code);
     }
     expect(open).toHaveBeenCalledTimes(3);
     expect(present).toHaveBeenCalledTimes(3);
-  } finally { open.mockRestore(); present.mockRestore(); await broker.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { open.mockRestore(); present.mockRestore(); inventory.mockRestore(); await broker.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 test("opening and workspace allocation identities are caller-scoped, including concurrent retries", async () => {
   const state = await fixture();
   const open = spyOn(NativeBackend, "openApplication").mockImplementation(async (_options, target) => ({ workspace: target.workspace, receipt: target.workspace }));
-  const monitors = spyOn(NativeBackend, "monitors").mockResolvedValue({ monitors: [] });
+  const inventory = state.inventory;
   const request = { method: "native.open", params: { requestId: "same-id", applicationId: "org.example.App.desktop" } };
   const a = caller("caller:a"), b = caller("caller:b");
   try {
@@ -74,11 +76,11 @@ test("opening and workspace allocation identities are caller-scoped, including c
     expect(first).toEqual(retry);
     expect(first).not.toEqual(other);
     expect(open).toHaveBeenCalledTimes(2);
-    expect(monitors).toHaveBeenCalledTimes(2);
+    expect(inventory).toHaveBeenCalledTimes(2);
     expect(await state.sessions.dispatch(request, b)).toEqual(other);
     await expect(state.sessions.dispatch({ ...request, params: { ...request.params, workspace: 50 } }, a))
       .rejects.toMatchObject({ code: "REQUEST_CONFLICT" });
-  } finally { open.mockRestore(); monitors.mockRestore(); await state.close(); }
+  } finally { open.mockRestore(); await state.close(); }
 });
 
 test("one caller approval refusal cannot evict another caller uncertain opening", async () => {
@@ -91,9 +93,10 @@ test("one caller approval refusal cannot evict another caller uncertain opening"
   const a = caller("a"), b = caller("b");
   try {
     await expect(state.sessions.dispatch(request, a)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" });
-    await expect(state.sessions.dispatch(request, b)).rejects.toMatchObject({ code: "NATIVE_FAILED" });
+    const other = { ...request, params: { ...request.params, workspace: 26 } };
+    await expect(state.sessions.dispatch(other, b)).rejects.toMatchObject({ code: "NATIVE_FAILED" });
     await expect(state.sessions.dispatch(request, a)).resolves.toEqual({ opened: true });
-    await expect(state.sessions.dispatch(request, b)).rejects.toMatchObject({ code: "NATIVE_FAILED" });
+    await expect(state.sessions.dispatch(other, b)).rejects.toMatchObject({ code: "NATIVE_FAILED" });
     expect(open).toHaveBeenCalledTimes(3);
   } finally { open.mockRestore(); await state.close(); }
 });

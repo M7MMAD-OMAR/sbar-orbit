@@ -394,10 +394,14 @@ its adapter is alive or gone. `orbit_handoff` takes `wait` (`true` is 30 s, or 1
 caller keeps a place in a first-come queue for that application, and the answer says the position.
 A caller that did not ask to wait still respects those already waiting.
 
-**Workspaces.** `orbit_open` without `workspace` picks a free numbered workspace from the agent pool
-(20 to 99, `ORBIT_WORKSPACE_POOL=A-B`): never one another agent's session or window uses, never one a
-monitor shows, and the same one again for the same agent. The result carries `workspace` and
-`allocated: true`. A dead agent's workspaces free up.
+**Workspaces.** `orbit_open` without `workspace` selects the lowest empty, undisplayed numbered
+workspace from 1 to 10. `ORBIT_WORKSPACE_POOL=A-B` may narrow that range, not widen it. Compositor
+windows and broker reservations are excluded, including the same caller's earlier openings.
+A dead agent does not make its surviving windows disappear. If none is free, opening refuses.
+The result carries `workspace` and `allocated: true`; the same request identity is never relaunched.
+Explicit destinations must also be empty and undisplayed. Opening does not switch or present a
+workspace. A worker pre-dispatch recheck reduces stale selection, but is not an atomic reservation
+against independent owner activity.
 
 Not covered yet: windows an agent opened but has not handed off are tracked for workspace choice
 only, so another agent may still hand off to them; a CLI without `ORBIT_CONVERSATION_ID` is a new

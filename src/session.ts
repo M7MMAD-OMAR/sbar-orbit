@@ -732,20 +732,21 @@ export class Sessions {
     const key = this.operationKey(caller, requestId);
     const known = this.allocations.get(key);
     if (known !== undefined) return known;
-    const monitors = record(await NativeBackend.monitors(this.native!));
-    const shown = new Set<number>();
-    for (const monitor of Array.isArray(monitors.monitors) ? monitors.monitors : [])
-      if (typeof record(monitor).workspace === "number") shown.add(record(monitor).workspace as number);
-    const used = new Set<number>(), own: number[] = [];
-    const take = (ownerId: string, workspace: number | undefined) => {
+    const inventory = await NativeBackend.workspaceInventory(this.native!);
+    const shown = new Set(inventory.shown);
+    const used = new Set(inventory.occupied), own: number[] = [];
+    const take = (workspace: number | undefined) => {
       if (workspace === undefined) return;
-      if (ownerId === caller.id) own.push(workspace); else used.add(workspace);
+      // A previous opening is a reservation, even for this same caller. Never
+      // group a fresh launch onto an occupied or uncertain earlier destination.
+      used.add(workspace);
     };
-    for (const session of this.sessions.values()) if (session.state !== "closed") take(session.ownerId, session.backend.handoff?.workspace);
+    for (const session of this.sessions.values()) if (session.state !== "closed") take(session.backend.handoff?.workspace);
     this.opened = this.opened.filter(entry => Date.now() - entry.at < 6 * 3600_000 && this.callers.isAlive(entry.callerId) !== false);
-    for (const entry of this.opened) take(entry.callerId, entry.workspace);
+    for (const entry of this.opened) take(entry.workspace);
+    for (const reserved of this.allocations.values()) used.add(reserved);
     const workspace = allocateWorkspace({ pool: this.options.workspacePool ?? workspacePool(), own, used, shown });
-    if (this.allocations.size >= 1024) this.allocations.delete(this.allocations.keys().next().value as string);
+    if (this.allocations.size >= 1024) throw new OrbitError("LIMIT_REACHED", "Opening workspace reservation limit reached");
     this.allocations.set(key, workspace);
     this.noteOpened(caller, workspace);
     return workspace;
@@ -1208,6 +1209,18 @@ export class Sessions {
           throw new OrbitError("PROFILE_BUSY", "A broker update is in progress; retry shortly");
         if (this.shuttingDown) throw new OrbitError("SESSION_CLOSED", "Broker is stopping");
         const target = auto ? { ...opening, workspace: await this.allocateWorkspace(requestId, caller) } : opening;
+        // Explicit targets must not place a new window on the owner's displayed
+        // workspace either. Automatic targets were checked by allocation above.
+        if (!auto) {
+          const inventory = await NativeBackend.workspaceInventory(options);
+          const reserved = [...this.allocations].some(([other, workspace]) => other !== key && workspace === target.workspace)
+            || [...this.sessions.values()].some(session => session.state !== "closed" && session.backend.handoff?.workspace === target.workspace);
+          if (reserved || inventory.occupied.includes(target.workspace) || inventory.shown.includes(target.workspace))
+            throw new OrbitError("WORKSPACE_BUSY", "Opening requires an empty workspace that no monitor displays; omit workspace to choose one automatically");
+        }
+        // Keep uncertain and late-mapping launches reserved for this broker lifetime.
+        // A retry with the same key still uses its cached operation outcome.
+        this.allocations.set(key, target.workspace);
         const opened = await NativeBackend.openApplication(options, target);
         this.noteOpened(caller, target.workspace);
         return auto && opened && typeof opened === "object" && !Array.isArray(opened) ? { ...opened, workspace: target.workspace, allocated: true } : opened;

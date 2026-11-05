@@ -21,6 +21,7 @@ test("native opening accepts only registered application identity and numbered w
 test("native opening deduplicates delivery and allows retry after approval denial", async () => {
   const root = await mkdtemp(join(tmpdir(), "orbit-open-test-"));
   const sessions = new Sessions(root, undefined, undefined, { planPath: "/fixture/host.json", controlDirectory: "/fixture/control" });
+  const inventory = spyOn(NativeBackend, "workspaceInventory").mockResolvedValue({ occupied: [], shown: [] });
   const original = NativeBackend.openApplication;
   let attempts = 0;
   NativeBackend.openApplication = async () => {
@@ -34,7 +35,7 @@ test("native opening deduplicates delivery and allows retry after approval denia
     expect(await sessions.dispatch(request)).toEqual({ opened: true });
     expect(attempts).toBe(2);
     await expect(sessions.dispatch({ ...request, params: { ...request.params, workspace: 5 } })).rejects.toMatchObject({ code: "REQUEST_CONFLICT" });
-  } finally { NativeBackend.openApplication = original; await sessions.close(); await rm(root, { recursive: true, force: true }); }
+  } finally { inventory.mockRestore(); NativeBackend.openApplication = original; await sessions.close(); await rm(root, { recursive: true, force: true }); }
 });
 
 (process.platform === "linux" ? test : test.skip)("opening fixtures bind the window to the launcher and honor protected controls", async () => {

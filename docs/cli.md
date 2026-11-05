@@ -8,13 +8,21 @@ use visible numbered workspaces. Private desktop sessions are absent. See [the c
 sbar-orbit applications
 sbar-orbit applications Calculator
 sbar-orbit native-monitors
-sbar-orbit native-open '{"workspace":2,"applicationId":"org.gnome.Calculator.desktop"}'
+sbar-orbit native-open '{"applicationId":"org.gnome.Calculator.desktop"}'
 sbar-orbit native-open @/absolute/path/open.json
 sbar-orbit native-candidates 2
 sbar-orbit session list
 sbar-orbit session stop --mine
 sbar-orbit session list --owner
 ```
+
+Omit `workspace` to select the lowest empty, undisplayed workspace from 1 to 10.
+Compositor windows, broker sessions and earlier opening reservations are excluded,
+even for the same caller. If none is free, opening refuses instead of using the
+owner's desktop or a workspace above 10. Explicit destinations must also be empty
+and undisplayed. Opening never automatically presents or switches a workspace.
+The worker rechecks immediately before dispatch; this is not an atomic reservation
+against an owner or external application moving windows concurrently.
 
 Use an exact discovered registration ID. Opening keeps the normal owner profile,
 leaves the application open, and requests silent workspace placement with no initial

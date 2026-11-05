@@ -178,7 +178,7 @@ export class NativeBackend {
     return result;
   }
 
-  private static async presentationRequest(options: NativeOptions, method: "monitors" | "present", params: Record<string, unknown>) {
+  private static async presentationRequest(options: NativeOptions, method: "monitors" | "workspace_inventory" | "present", params: Record<string, unknown>) {
     requireNativeAdapter();
     let directory: string | undefined;
     let dispatched = false;
@@ -226,6 +226,16 @@ export class NativeBackend {
     return result;
   }
 
+  /** Private numeric occupancy only, never titles or a workspace-switch operation. */
+  static async workspaceInventory(options: NativeOptions): Promise<{ occupied: number[]; shown: number[] }> {
+    const result = record(await this.presentationRequest(options, "workspace_inventory", {}));
+    const numbers = (value: unknown): value is number[] => Array.isArray(value) && value.length <= 16384
+      && value.every(item => typeof item === "number" && Number.isInteger(item) && item >= 1 && item <= 2147483647);
+    if (!numbers(result.occupied) || !numbers(result.shown) || result.shown.length < 1 || result.shown.length > 64)
+      throw new OrbitError("BACKEND_ERROR", "Cannot determine empty numbered workspaces");
+    return { occupied: [...result.occupied], shown: [...result.shown] };
+  }
+
   static async monitors(options: NativeOptions) {
     const result = record(await this.presentationRequest(options, "monitors", {}));
     if (!Array.isArray(result.monitors) || result.monitors.length > 64
@@ -262,7 +272,7 @@ export class NativeBackend {
     try {
       worker = await NativeWorker.create(join(directory, "worker"), options,
         ["/usr/bin/python3", join(import.meta.dir, "native/existing_worker.py")]);
-      result = await worker.request("open", { workspace: value.workspace, argv: application.argv, ...(value.window ? { window: value.window } : {}), ...(application.cwd ? { cwd: application.cwd } : {}), ...(application.busName ? { busName: application.busName } : {}) });
+      result = await worker.request("open", { requireEmpty: true, workspace: value.workspace, argv: application.argv, ...(value.window ? { window: value.window } : {}), ...(application.cwd ? { cwd: application.cwd } : {}), ...(application.busName ? { busName: application.busName } : {}) });
       remove = true;
     } catch (error) {
       // A denied approval did not dispatch. Other errors retain uncertain launch evidence.

@@ -20,8 +20,10 @@ from .opening_identity import opening_identity
 
 
 def validate_open(value):
-    if not isinstance(value, dict) or set(value) - {"workspace", "argv", "cwd", "window", "busName"} or not {"workspace", "argv"} <= set(value):
+    if not isinstance(value, dict) or set(value) - {"workspace", "argv", "cwd", "window", "busName", "requireEmpty"} or not {"workspace", "argv"} <= set(value):
         raise SessionError("Opening requires workspace and argv")
+    if "requireEmpty" in value and type(value["requireEmpty"]) is not bool:
+        raise SessionError("Invalid empty workspace guard")
     workspace, argv = value["workspace"], value["argv"]
     if type(workspace) is not int or not 1 <= workspace <= 2147483647:
         raise SessionError("Opening requires a positive workspace number")
@@ -42,7 +44,7 @@ def validate_open(value):
     bus_name = value.get("busName")
     if bus_name is not None and (not isinstance(bus_name, str) or not BUS_NAME.fullmatch(bus_name)):
         raise SessionError("Application registration has an invalid bus name")
-    return {**({"busName": bus_name} if bus_name else {}), "workspace": workspace, "argv": arguments, "window": window_size(value.get("window")), **({"cwd": cwd} if cwd else {})}
+    return {**({"requireEmpty": True} if value.get("requireEmpty") else {}), **({"busName": bus_name} if bus_name else {}), "workspace": workspace, "argv": arguments, "window": window_size(value.get("window")), **({"cwd": cwd} if cwd else {})}
 
 
 def belongs_to(pid, root):
@@ -176,9 +178,18 @@ def open_application(session, value):
             rules = f"[workspace {value['workspace']} silent; float; size {fitted['width']} {fitted['height']}; center; no_initial_focus on; focus_on_activate off]"
             lua = "eval hl.exec_cmd(" + json.dumps(command, ensure_ascii=False) + ", {workspace=" + json.dumps(str(value["workspace"]) + " silent") + ", no_initial_focus=true, focus_on_activate=false})"
             lua = lua[:-2] + ", float=true, size=" + json.dumps(str(fitted["width"]) + " " + str(fitted["height"])) + ", center=true})"
+            if value.get("requireEmpty"):
+                from .workspace_inventory import workspace_inventory
+                inventory = workspace_inventory(session.transport)
+                if value["workspace"] in inventory["occupied"] or value["workspace"] in inventory["shown"]:
+                    raise SessionError("Selected workspace is occupied or displayed; no application was launched")
             launch_attempted = True
             response = session.transport._exchange(lua)
             if response.strip() == "eval is only supported with the lua config manager":
+                if value.get("requireEmpty"):
+                    inventory = workspace_inventory(session.transport)
+                    if value["workspace"] in inventory["occupied"] or value["workspace"] in inventory["shown"]:
+                        raise OpeningDeliveryUncertain("Selected workspace became unavailable before fallback; inspect without relaunching")
                 response = session.transport._exchange("dispatch exec " + rules + " " + command)
             if response.strip() != "ok":
                 raise SessionError("Application opening was not acknowledged: " + response.strip()[:160])
@@ -270,6 +281,11 @@ def open_application(session, value):
                                                     launcher_root=root, ancestry_proven=evidence[window["address"]] == "launch-ancestry",
                                                     placement_request=fitted, sampled_at_ms=sampled_at_ms)
                         if evidence[window["address"]] != "launch-ancestry" and identity not in positioned:
+                            if value.get("requireEmpty"):
+                                destination = workspace_inventory(session.transport, exclude=(window["address"], window["stableId"], window["pid"]))
+                                if value["workspace"] in destination["occupied"] or value["workspace"] in destination["shown"]:
+                                    return candidate_result(window, value, evidence[window["address"]],
+                                        reason="workspace-busy", launcher_root=root, placement_request=fitted, sampled_at_ms=sampled_at_ms)
                             place_new_window(session.transport, window, value["workspace"], fitted, allow_active=map_focus)
                             positioned.add(identity)
                             if map_focus:

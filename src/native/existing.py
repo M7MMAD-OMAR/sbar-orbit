@@ -96,6 +96,13 @@ class ExistingApplicationSession(NativeSession):
                 raise SessionError("Workspace contains too many handoff candidates")
         return {"workspace": selection["workspace"], "candidates": result}
 
+    def workspace_inventory(self, value):
+        require_budget()
+        if not isinstance(value, dict) or value or self.closed:
+            raise SessionError("Workspace inventory is unavailable")
+        from .workspace_inventory import workspace_inventory
+        return workspace_inventory(self.transport)
+
     def monitors(self, value):
         require_budget()
         if not isinstance(value, dict) or value:
