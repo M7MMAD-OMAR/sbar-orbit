@@ -1228,3 +1228,17 @@ host-probing import and use owned child streams; no live desktop was queried.
 Strict typing passed. The final verifier passed 1097 tests, skipped 5 and failed 0
 across 109 files in 92.92 seconds. Multi-view remains unavailable and no protected
 production ingress or original-application acceptance is claimed.
+
+## 41. Delivery signal brand before lease claim
+
+The internal accounted delivery controller validates its captured native
+`AbortSignal` getter before claiming a lease. On the installed Bun runtime a
+prototype-forged object passes `instanceof` but the native getter rejects it;
+the controller now refuses that input without reserving scratch or taking the
+lease. A valid pre-aborted signal still follows the cancellation/release path.
+This is invalid-input hardening, not evidence of a valid-signal production leak.
+
+Actual registry and resource-budget fixtures verify the same lease remains usable
+after refusal and returns its credit after a valid delivery. Strict typing passed;
+the complete verifier passed 1103 tests, skipped 5 and failed 0 across 109 files
+in 88.87 seconds. No protected production transport or native acceptance was added.

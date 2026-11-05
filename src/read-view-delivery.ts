@@ -109,6 +109,10 @@ export function createReadViewDelivery(input: ReadDeliveryOptions): Readonly<Rea
       || utilTypes.isProxy(options.signal) || !(options.signal instanceof AbortSignal)
       || typeof options.deadline !== "number" || !Number.isFinite(options.deadline)
       || options.now !== undefined && !callable(options.now) || options.arm !== undefined && !callable(options.arm)) throw new ReadDeliveryError();
+  // instanceof admits forged prototype-only objects. Validate the captured native
+  // internal-slot getter before claiming the lease or invoking any owner callback.
+  try { if (typeof nativeAbort.call(options.signal) !== "boolean") throw new ReadDeliveryError(); }
+  catch { throw new ReadDeliveryError(); }
   const now = (options.now ?? (() => performance.now())) as () => number;
   const arm = (options.arm ?? defaultArm) as (ms: number, expire: () => void) => () => void;
   const canDispatch = options.canDispatch as ReadDeliveryOptions["canDispatch"];

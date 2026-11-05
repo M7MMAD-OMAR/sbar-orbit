@@ -291,6 +291,63 @@ test("native abort during disarm after listener removal cannot become DELIVERED"
   expect((await createReadViewDelivery(f.options).run()).code).toBe("CANCELLED"); expect(f.state.releases).toBe(1);
 });
 
+async function actualDeliveryLease() {
+  const owner = {}, budget = new ReadResourceBudget();
+  const recipient: ReadRecipient = { owner: {}, connector: {}, instance: {}, conversation: {}, channel: {}, pid: 123, birth: "456" };
+  const registry = new ReadViewRegistry({ ownerAuthority: owner, budget, now: () => 1000, backend: {
+    admissionReady: () => true, recipientCurrent: () => true, bindingCurrent: () => true,
+    prepare: () => ({ cost: { scratchBytes: 8, retainedBytes: 8 }, capture: async context => {
+      context.lifecycle.confirmStopped(true); return new Uint8Array([1, 2, 3]);
+    } }),
+  } });
+  registry.setEnabled(owner, true);
+  const grant = registry.enroll(owner, { recipient, consentEpoch: 1, expiresAt: 2000, views: [{ binding: {}, bindingEpoch: 1, formats: ["image"] }] });
+  const lease = await registry.read(recipient, grant.grant, grant.views[0]!.id, "image");
+  return { owner, budget, registry, grant, lease };
+}
+
+for (const kind of ["forged", "forged-own-getter", "proxy"] as const) test("unbranded signal cannot claim a real registry lease: " + kind, async () => {
+  const actual = await actualDeliveryLease(), f = fixture(); let effects = 0, clocks = 0, guards = 0;
+  const reserve = spyOn(actual.budget, "reserveDelivery"), release = spyOn(actual.budget, "release");
+  try {
+    const forged = Object.create(AbortSignal.prototype) as AbortSignal;
+    if (kind === "forged-own-getter") Object.defineProperty(forged, "aborted", { get() { effects++; throw new Error(secret); } });
+    const signal = kind === "proxy" ? new Proxy(f.abort.signal, { get() { effects++; throw new Error(secret); }, getPrototypeOf() { effects++; throw new Error(secret); } }) : forged;
+    f.options.lease = actual.lease; f.options.signal = signal;
+    f.options.sink.write = (copy, receipt) => { f.state.writes++; receipt.complete(copy.byteLength); };
+    f.options.now = () => { clocks++; return 1000; }; f.options.canDispatch = () => { guards++; return true; };
+    const before = actual.budget.status();
+    let failure: unknown;
+    try { createReadViewDelivery(f.options); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(ReadDeliveryError); expect(String(failure)).toBe("ReadDeliveryError: Invalid accounted read delivery");
+    expect(String(failure)).not.toContain(secret); expect(effects).toBe(0); expect(clocks).toBe(0); expect(guards).toBe(0);
+    expect(f.state.writes).toBe(0); expect(f.state.stops).toBe(0); expect(reserve).not.toHaveBeenCalled(); expect(release).not.toHaveBeenCalled();
+    expect(actual.budget.status()).toEqual(before);
+    f.options.signal = f.abort.signal;
+    expect(await createReadViewDelivery(f.options).run()).toEqual({ phase: "released", code: "DELIVERED", acceptedBytes: 3, scratchHeld: false });
+    expect(reserve).toHaveBeenCalledTimes(1); expect(release).toHaveBeenCalledTimes(1);
+    actual.registry.revoke(actual.owner, actual.grant.grant);
+    expect(actual.budget.status()).toMatchObject({ entries: 0, bytes: 0, retainedReferences: 0, views: 0, conversations: 0 });
+  } finally { reserve.mockRestore(); release.mockRestore(); actual.lease.release(); actual.registry.revoke(actual.owner, actual.grant.grant); }
+});
+
+for (const kind of ["shadowed", "pre-aborted"] as const) test("real branded signal remains valid without reading altered shape: " + kind, async () => {
+  const actual = await actualDeliveryLease(), f = fixture(); let effects = 0;
+  const nativeState = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+  try {
+    f.options.lease = actual.lease;
+    f.options.sink.write = (copy, receipt) => { f.state.writes++; receipt.complete(copy.byteLength); };
+    if (kind === "shadowed") Object.defineProperty(f.abort.signal, "aborted", { get() { effects++; throw new Error(secret); } });
+    else f.abort.abort();
+    f.options.canDispatch = (deadline, signal) => f.state.now < deadline && nativeState.call(signal) === false;
+    const result = await createReadViewDelivery(f.options).run();
+    expect(result).toMatchObject({ phase: "released", code: kind === "shadowed" ? "DELIVERED" : "CANCELLED", scratchHeld: false });
+    expect(f.state.writes).toBe(kind === "shadowed" ? 1 : 0); expect(effects).toBe(0);
+    actual.registry.revoke(actual.owner, actual.grant.grant);
+    expect(actual.budget.status()).toMatchObject({ entries: 0, bytes: 0, retainedReferences: 0, views: 0 });
+  } finally { actual.lease.release(); actual.registry.revoke(actual.owner, actual.grant.grant); }
+});
+
 test("actual registry result charges frame plus copy and preserves both through revoke until stop", async () => {
   const owner = {}, budget = new ReadResourceBudget();
   const recipient: ReadRecipient = { owner: {}, connector: {}, instance: {}, conversation: {}, channel: {}, pid: 123, birth: "456" };
