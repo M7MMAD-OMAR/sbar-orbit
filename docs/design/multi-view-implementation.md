@@ -1043,3 +1043,21 @@ full verifier passed 1011 tests, with 5 skipped and 0 failed, across 98 files in
 81.22 seconds. The old separate MCP restart integration test still expects
 automatic waiting and is outside the default verifier; its isolated replacement
 remains pending. No live MCP-host or desktop acceptance is implied.
+
+## 31. MCP read delivery sampling and restart fixture
+
+Both actual MCP adapters now recheck the legacy usage preference before delivering
+successes or broker errors for eight explicitly listed read methods. When `off`
+or invalid preference state is observed, the read outcome is suppressed. This
+is sampling, not an atomic off/on generation fence or cancellation. Already
+accepted `session.act` results and errors remain visible, including embedded
+capture, so this is not a universal suppression guarantee.
+
+The old restart test was replaced with an actual in-process MCP SDK client and
+server plus an owned fake Unix peer. The call while unavailable returns an error;
+only a new explicit call reaches the restarted peer. Both adapters and all eight
+read mappings are exercised against controlled fake responses. The fixture tracks
+the inspected SDK tool handler and quarantines uncertain cleanup; it does not
+prove general SDK drain, authenticated peers, live host behavior or desktop
+acceptance. The final verifier passed 1019 tests, with 5 skipped and 0 failed,
+across 100 files in 87.29 seconds. Strict TypeScript checking also passed.

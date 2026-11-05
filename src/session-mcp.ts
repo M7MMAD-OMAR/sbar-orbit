@@ -7,7 +7,7 @@ import { OrbitError } from "./errors";
 import { errorPayload } from "./error-disposition";
 import { ConversationUsage } from "./conversation-usage";
 import { renderAct, renderObservation } from "./observation-output";
-import { orbitActionSchema, orbitBatchShape } from "./mcp";
+import { isReadDeliveryMethod, orbitActionSchema, orbitBatchShape } from "./mcp";
 import { serviceSocketPath } from "./service";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "../package.json";
@@ -26,6 +26,7 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
     try {
       await usage.assertEnabled();
       const result = await callPatient(socket, method, { ...params, sessionId }, identity, undefined, undefined, () => usage.assertEnabled());
+      if (isReadDeliveryMethod(method)) await usage.assertEnabled();
       if (method === "session.observe") {
         return renderObservation(result);
       }
@@ -34,6 +35,10 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
         ...(result && typeof result === "object" && !Array.isArray(result)
           ? { structuredContent: result as Record<string, unknown> } : {}) };
     } catch (error) {
+      // Read errors can contain private broker metadata as well as successful data.
+      if (isReadDeliveryMethod(method)) {
+        try { await usage.assertEnabled(); } catch (usageError) { error = usageError; }
+      }
       const payload = errorPayload(error, "BROKER_UNAVAILABLE", "Cannot reach the Orbit broker");
       return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
     }

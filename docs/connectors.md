@@ -21,6 +21,10 @@ automatically retries a failed call during broker restart, because the transport
 cannot prove that a failed request was not delivered. Inspect the result and
 retain the same request identity before deciding whether an explicit retry is safe.
 This does not cancel accepted work or make the usage check atomic with dispatch.
+For listed read methods, the adapter also checks before returning a result or
+broker error and suppresses it if `off` is observed. This is a point-in-time
+check, not an atomic off/on fence. An accepted `orbit_act` remains reportable,
+including its receipt, error and any embedded capture, even if usage changes.
 
 Install with `./install.sh --connect auto --json` only when host registration is
 authorized. `sbar-orbit connector-config` prints configuration and `sbar-orbit mcp`

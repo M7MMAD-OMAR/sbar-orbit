@@ -50,6 +50,15 @@ export const orbitBatchShape = {
     .optional().describe("Return post-action readback in this call: image (default) captures a bounded settled screenshot; both also includes the accessibility tree. Text requests a point-in-time untrusted tree with no image baseline or pixel settling, falling back to one image observation if the tree is unavailable. Text rejects quietMs; all modes reject graceMs. timeoutMs defaults to 1500 (100 to 3000). Image/both quietMs defaults to 100. Readback and input acknowledgements do not prove application acceptance. A replay returns receipts and metadata marked expired, with no image or tree; no actions or observations are repeated."),
 };
 
+// Result/error delivery sampling only. Not cancellation or an atomic off/on fence.
+// Observe may already refresh capture/cursor state. session.act (even windows/state
+// or embedded readback) and all other mutation receipts are intentionally excluded.
+const readDeliveryMethods = new Set([
+  "session.observe", "session.presence", "session.list", "session.journal",
+  "applications.list", "diagnostics.report", "native.monitors", "native.candidates",
+]);
+export function isReadDeliveryMethod(method: string): boolean { return readDeliveryMethods.has(method); }
+
 export function createMcpServer(socket: string, identity?: ClientIdentity) {
   const usage = new ConversationUsage();
   const server = new McpServer({ name: "sbar-orbit", version }, {
@@ -59,6 +68,7 @@ export function createMcpServer(socket: string, identity?: ClientIdentity) {
     try {
       await usage.assertEnabled();
       const result = await callPatient(socket, method, params, identity, undefined, undefined, () => usage.assertEnabled());
+      if (isReadDeliveryMethod(method)) await usage.assertEnabled();
       if (method === "session.observe") {
         return renderObservation(result);
       }
@@ -66,6 +76,10 @@ export function createMcpServer(socket: string, identity?: ClientIdentity) {
       return { content: [{ type: "text", text: JSON.stringify(result) }],
         ...(result && typeof result === "object" && !Array.isArray(result) ? { structuredContent: result as Record<string, unknown> } : {}) };
     } catch (error) {
+      // Read errors can contain private broker metadata as well as successful data.
+      if (isReadDeliveryMethod(method)) {
+        try { await usage.assertEnabled(); } catch (usageError) { error = usageError; }
+      }
       const payload = errorPayload(error, "BROKER_UNAVAILABLE", "Cannot reach the Orbit broker");
       return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
     }
