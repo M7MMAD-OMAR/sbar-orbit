@@ -1,5 +1,7 @@
 """Deterministic fake-kernel fixtures, not actual cgroup or OS drain qualification."""
 import fcntl
+import contextlib
+import runpy
 import io
 import json
 import os
@@ -7,6 +9,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import select
+import signal
+from types import SimpleNamespace
 import unittest
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
@@ -15,12 +22,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.native import reader_scope as subject
 
 
+def owned_wait_scope(child):
+    """Real kernel-wait fixture only: bypass cgroup guard, never retire this fake leaf."""
+    current = subject._proc_identity(child.pid)
+    if current is None: raise RuntimeError("Owned fixture identity unavailable")
+    result = object.__new__(subject.ReaderScope)
+    result._pid, result._mutex = os.getpid(), threading.RLock()
+    result._guard = lambda **kwargs: None
+    result._child, result._recovered = child, False
+    result._record = {"process": [child.pid, current["start"]], "leaf": "owned-wait-fixture", "leaf_identity": [1, 2]}
+    result._wait_receipt = result._wait_child = result._wait_birth = result._wait_generation = result._wait_code = None
+    result._wait_consumed = result._wait_poisoned = result._poisoned = False
+    return result
+
+
 class FakeChild(subprocess.Popen):
     """Retained Popen identity without launching, waiting for or signaling any process."""
     def __init__(self, pid):
         self.pid = pid
         self.returncode = None
         self._child_created = False
+        self._waitpid_lock = threading.Lock()
         self.stdout = io.BytesIO()
         self.stderr = io.BytesIO()
 
@@ -173,8 +195,20 @@ class ReaderScopeTests(unittest.TestCase):
         (self.leaf / "cgroup.events").write_text("populated " + str(value) + "\nfrozen 0\n")
 
     def reaped(self, child):
-        child.returncode = 0
-        self.processes.pop(child.pid, None)
+        scope = next((item for item in self.scopes if item._child is child and not item._closed and not item._recovered), None)
+        if scope is None:
+            child.returncode = 0
+            self.processes.pop(child.pid, None)
+            return
+        self.processes[child.pid]["state"] = "Z"
+        event = SimpleNamespace(si_pid=child.pid, si_code=os.CLD_EXITED, si_status=0)
+        def waitid(kind, fd, flags):
+            self.assertEqual(kind, os.P_PIDFD)
+            if not flags & os.WNOWAIT:
+                self.processes.pop(child.pid, None)
+            return event
+        with patch.object(subject, "_dup_wait_pidfd", side_effect=lambda fd, pid: os.dup(scope._root_fd)), patch.object(subject.os, "waitid", side_effect=waitid):
+            return scope.wait_root(12345, deadline=time.monotonic() + 1)
 
     def assert_code(self, code, operation):
         with self.assertRaises(subject.ReaderScopeError) as caught:
@@ -282,7 +316,7 @@ class ReaderScopeTests(unittest.TestCase):
 
     def test_root_exit_does_not_prove_descendants_empty(self):
         scope, child = self.admitted()
-        self.reaped(child)
+        wait_receipt = self.reaped(child)
         self.assertFalse(scope.empty())
         self.assert_code("UNKNOWN", scope.retire)
         self.assertTrue(scope.status()["hasDebt"])
@@ -313,17 +347,35 @@ class ReaderScopeTests(unittest.TestCase):
 
     def test_empty_and_separately_reaped_root_produce_distinct_retirement_receipt(self):
         scope, child = self.admitted()
-        self.reaped(child)
+        wait_receipt = self.reaped(child)
         self.populated(0)
-        receipt = scope.retire()
+        receipt = scope.retire(wait_receipt=wait_receipt)
         self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": True, "neverAdmitted": False, "recovered": False})
         self.assertFalse(self.leaf.exists())
         self.assertFalse(scope.status()["hasDebt"])
         self.assertEqual(self.records()[-1]["phase"], "retired")
 
+    def test_cached_returncode_and_disappeared_pid_are_not_kernel_wait_evidence(self):
+        scope, child = self.admitted()
+        child.returncode = 0
+        self.processes.pop(child.pid)
+        self.populated(0)
+        self.assert_code("UNKNOWN", scope.retire)
+        self.assertTrue(scope.status()["hasDebt"])
+
+    def test_forged_or_cloned_wait_receipt_cannot_retire_exact_scope(self):
+        scope, child = self.admitted()
+        wait_receipt = self.reaped(child)
+        self.populated(0)
+        actual = wait_receipt
+        self.assert_code("UNKNOWN", lambda: scope.retire(wait_receipt=subject.RootWaitReceipt(0)))
+        self.assert_code("UNKNOWN", lambda: scope.retire(wait_receipt=object()))
+        self.assertTrue(scope.retire(wait_receipt=actual)["rootReaped"])
+        self.assertTrue(scope._wait_consumed)
+
     def test_never_admitted_empty_leaf_never_claims_root_reaped(self):
         scope = self.prepared()
-        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": True, "recovered": False})
+        self.assertEqual(scope.retire(wait_receipt=None), {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": True, "recovered": False})
 
     def test_kill_success_is_not_scope_empty_and_never_signals_shared_parent(self):
         scope, child = self.admitted()
@@ -404,7 +456,7 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual((self.leaf / "cgroup.kill").read_text(), before)
         self.populated(0)
         self.assert_code("UNKNOWN", replacement.retire)
-        self.reaped(child)
+        wait_receipt = self.reaped(child)
         receipt = replacement.retire()
         self.assertEqual(receipt, {"scopeEmpty": True, "rootReaped": False, "neverAdmitted": False, "recovered": True})
         self.assertFalse(replacement.status()["hasDebt"])
@@ -460,7 +512,7 @@ class ReaderScopeTests(unittest.TestCase):
     def test_retired_instance_is_single_operation_and_old_callbacks_cannot_hit_new_leaf(self):
         scope = self.prepared()
         old_kill, old_empty, old_retire = scope.kill, scope.empty, scope.retire
-        scope.retire()
+        scope.retire(wait_receipt=None)
         self.assert_code("DEBT", scope.prepare)
         scope.close()
         replacement = self.scope()
@@ -524,10 +576,10 @@ class ReaderScopeTests(unittest.TestCase):
 
     def test_original_root_pid_reuse_is_distinct_from_original_birth_liveness(self):
         scope, child = self.admitted()
-        child.returncode = 0
-        self.processes[child.pid]["start"] += 1
+        wait_receipt = self.reaped(child)  # Genuine fixture kernel-wait receipt BEFORE unrelated PID reuse.
+        self.processes[child.pid] = {"pid": child.pid, "start": 201, "parent": 98765, "state": "S"}
         self.populated(0)
-        receipt = scope.retire()
+        receipt = scope.retire(wait_receipt=wait_receipt)
         self.assertTrue(receipt["scopeEmpty"])
         self.assertTrue(receipt["rootReaped"])
         self.assertFalse(receipt["recovered"])
@@ -616,7 +668,7 @@ class ReaderScopeTests(unittest.TestCase):
         original_inode = self.journal.stat().st_ino
         for _ in range(64):
             scope.prepare()
-            receipt = scope.retire()
+            receipt = scope.retire(wait_receipt=None)
             self.assertTrue(receipt["scopeEmpty"])
             total_history += self.journal.stat().st_size
             scope.checkpoint()
@@ -660,7 +712,7 @@ class ReaderScopeTests(unittest.TestCase):
     def test_retired_checkpoint_preserves_single_operation_and_old_callback_refusal(self):
         scope = self.prepared()
         old_kill, old_retire = scope.kill, scope.retire
-        scope.retire()
+        scope.retire(wait_receipt=None)
         scope.checkpoint()
         self.assert_code("DEBT", scope.prepare)
         self.assert_code("DEBT", scope.recover)
@@ -869,8 +921,8 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.synced_phases[-1], "spawn_bound")
         self.assertTrue(scope.empty())
         self.assert_code("UNKNOWN", scope.retire)
-        self.reaped(child)
-        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": True,
+        wait_receipt = self.reaped(child)
+        self.assertEqual(scope.retire(wait_receipt=wait_receipt), {"scopeEmpty": True, "rootReaped": True,
                                          "neverAdmitted": False, "recovered": False})
 
     def test_bound_running_child_still_needs_stop_before_membership_admission(self):
@@ -944,10 +996,10 @@ class ReaderScopeTests(unittest.TestCase):
         self.assertEqual(self.records()[-1]["phase"], "admitting")
         self.assertFalse(self.records()[-1]["spawn_pending"])
         scope.kill()
-        self.reaped(child)
+        wait_receipt = self.reaped(child)
         self.assert_code("UNKNOWN", scope.retire)
         self.populated(0)
-        self.assertTrue(scope.retire()["rootReaped"])
+        self.assertTrue(scope.retire(wait_receipt=wait_receipt)["rootReaped"])
 
     def test_bound_but_unmigrated_child_recovery_never_claims_original_parent_reap(self):
         scope, child = self.spawn_reserved()
@@ -982,7 +1034,7 @@ class ReaderScopeTests(unittest.TestCase):
     def test_legacy_no_spawn_scope_remains_v1_and_known_no_child_can_retire(self):
         scope = self.prepared()
         self.assertTrue(all(record["v"] == 1 and "spawn_pending" not in record for record in self.records()))
-        self.assertEqual(scope.retire(), {"scopeEmpty": True, "rootReaped": False,
+        self.assertEqual(scope.retire(wait_receipt=None), {"scopeEmpty": True, "rootReaped": False,
                                          "neverAdmitted": True, "recovered": False})
 
 
@@ -993,9 +1045,9 @@ class ReaderScopeTests(unittest.TestCase):
             self.assertTrue(self.records()[-1]["spawn_pending"])
             scope.bind_child(child)
             scope.admit(child)
-            self.reaped(child)
+            wait_receipt = self.reaped(child)
             self.populated(0)
-            self.assertTrue(scope.retire()["rootReaped"])
+            self.assertTrue(scope.retire(wait_receipt=wait_receipt)["rootReaped"])
             self.assertEqual(self.records()[-1]["v"], 2)
             self.assertFalse(self.records()[-1]["spawn_pending"])
             callbacks.append(scope.kill)
@@ -1043,6 +1095,273 @@ class ReaderScopeTests(unittest.TestCase):
                         checked += 1
         self.assertEqual(checked, sum(len(states) for states in edges.values()) * 3)
         self.assertGreater(checked, 60)
+
+
+class ProbeUnavailableTests(unittest.TestCase):
+    """Exercise only the fixed refusal/help entrypoint, never the historical live probe."""
+    def path(self):
+        return Path(__file__).resolve().parents[1] / "experiments" / "reader-scope-probe.py"
+
+    def test_imported_probe_contains_no_live_spawn_or_signal_helpers(self):
+        namespace = runpy.run_path(str(self.path()), run_name="disabled_probe_fixture")
+        for name in ("run", "spawn", "resume", "kill_root", "bootstrap_owner", "orphan_owner", "CHILD"):
+            self.assertNotIn(name, namespace)
+
+    def test_direct_python_live_flags_refuse_before_spawn_signal_or_directory_mutation(self):
+        forbidden = AssertionError("Unavailable probe attempted a side effect")
+        with patch.object(subprocess, "Popen", side_effect=forbidden) as spawn, patch.object(os, "pidfd_open", side_effect=forbidden) as pin, patch.object(signal, "pidfd_send_signal", side_effect=forbidden) as send, patch.object(os, "mkdir", side_effect=forbidden) as mkdir:
+            for args in (["--run"], ["--bootstrap-owner"], ["--orphan-owner", "unused", "unused"], []):
+                out, err = io.StringIO(), io.StringIO()
+                with patch.object(sys, "argv", [str(self.path()), *args]), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(self.path()), run_name="__main__")
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn("UNAVAILABLE", err.getvalue())
+            for operation in (spawn, pin, send, mkdir): operation.assert_not_called()
+
+    def test_direct_python_help_is_fixed_read_only_and_successful(self):
+        namespace = runpy.run_path(str(self.path()), run_name="disabled_probe_fixture")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            self.assertEqual(namespace["main"](["--help"]), 0)
+        self.assertIn("UNAVAILABLE", out.getvalue())
+        self.assertIn("No desktop/app operations", out.getvalue())
+        self.assertEqual(err.getvalue(), "")
+
+
+class ActualKernelWaitTests(unittest.TestCase):
+    """Owned direct children only. No cgroup, provider or creation-provenance qualification."""
+    def setUp(self):
+        self.children = []
+        self.addCleanup(self.cleanup)
+
+    def child(self, body="pass"):
+        process = subprocess.Popen.__new__(subprocess.Popen)
+        self.children.append([process, None])
+        subprocess.Popen.__init__(process, [sys.executable, "-I", "-S", "-c",
+            "import sys; sys.stdin.buffer.read(1); " + body], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=True)
+        scope = owned_wait_scope(process)
+        fd = os.pidfd_open(process.pid, 0)
+        self.children[-1][1] = fd
+        process.stdin.close()
+        return process, scope, fd
+
+    def cleanup(self):
+        for child, fd in self.children:
+            if not getattr(child, "_child_created", False): continue
+            if child.stdin is not None and not child.stdin.closed: child.stdin.close()
+            if fd is not None and child.returncode is None:
+                try: signal.pidfd_send_signal(fd, signal.SIGKILL)
+                except ProcessLookupError: pass
+            child.wait(timeout=1)  # Fixture disposal only, NEVER a scope receipt.
+            for stream in (child.stdout, child.stderr):
+                if stream is not None: stream.close()
+            if fd is not None: os.close(fd)
+
+    def test_normal_actual_waitid_consumes_kernel_status_and_caches_exact_receipt(self):
+        child, scope, fd = self.child("raise SystemExit(7)")
+        receipt = scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertEqual(receipt.returncode, 7)
+        self.assertEqual(child.returncode, 7)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertTrue(scope._wait_ready)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        with self.assertRaises(ChildProcessError):
+            os.waitid(os.P_PIDFD, fd, os.WEXITED | os.WNOHANG)
+
+    def test_external_reaper_cannot_become_popen_synthetic_success_receipt(self):
+        child, scope, fd = self.child()
+        os.waitpid(child.pid, 0)  # Deliberate external reaper, exact own child only.
+        with self.assertRaises(ChildProcessError): os.waitid(os.P_PIDFD, fd, os.WEXITED | os.WNOHANG)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertIsNone(scope._wait_receipt)
+        self.assertEqual(child.wait(timeout=1), 0)  # CPython ECHILD synthesis is NOT proof.
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_external_reaper_between_snapshot_and_consume_poisoned_unknown(self):
+        child, scope, fd = self.child()
+        original = subject._proc_identity
+        def identity(pid):
+            value = original(pid)
+            if pid == child.pid and value is not None:
+                os.waitpid(child.pid, 0)
+            return value
+        with patch.object(subject, "_proc_identity", side_effect=identity):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_cancel_immediately_after_consuming_wait_cannot_recover_cached_receipt(self):
+        child, scope, fd = self.child()
+        event = threading.Event()
+        native = os.waitid
+        def waitid(kind, descriptor, flags):
+            result = native(kind, descriptor, flags)
+            if result is not None and not flags & os.WNOWAIT: event.set()
+            return result
+        with patch.object(subject.os, "waitid", side_effect=waitid):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1, cancel=event)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_interruption_after_kernel_consume_before_publication_never_mints_receipt(self):
+        child, scope, fd = self.child()
+        native = os.waitid
+        def waitid(kind, descriptor, flags):
+            result = native(kind, descriptor, flags)
+            if result is not None and not flags & os.WNOWAIT: raise KeyboardInterrupt()
+            return result
+        with patch.object(subject.os, "waitid", side_effect=waitid):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_fdinfo_close_failure_before_wait_is_sticky_and_cannot_retry(self):
+        child, scope, fd = self.child()
+        native_close = os.close
+        def close(descriptor):
+            target = os.readlink("/proc/self/fd/" + str(descriptor))
+            native_close(descriptor)
+            if "/fdinfo/" in target: raise OSError("Private fdinfo close failure")
+        with patch.object(subject.os, "close", side_effect=close):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        os.fstat(fd)  # Original borrowed pidfd was never closed.
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_duplicate_close_failure_on_identity_refusal_is_sticky_and_cannot_retry(self):
+        child, scope, fd = self.child()
+        native_close, native_read = os.close, os.read
+        def read(descriptor, size):
+            target = os.readlink("/proc/self/fd/" + str(descriptor))
+            if "/fdinfo/" in target: return b"Pid:\t-1\nNSpid:\t-1\n"
+            return native_read(descriptor, size)
+        def close(descriptor):
+            target = os.readlink("/proc/self/fd/" + str(descriptor))
+            native_close(descriptor)
+            if target == "anon_inode:[pidfd]" and descriptor != fd:
+                raise OSError("Private duplicate close failure")
+        with patch.object(subject.os, "read", side_effect=read), patch.object(subject.os, "close", side_effect=close):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        os.fstat(fd)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_duplicate_pidfd_cleanup_failure_after_consume_cannot_publish_receipt(self):
+        child, scope, fd = self.child()
+        duplicate = subject._dup_wait_pidfd
+        native_close = os.close
+        owned = set()
+        def acquire(descriptor, pid):
+            result = duplicate(descriptor, pid); owned.add(result); return result
+        def close(descriptor):
+            native_close(descriptor)
+            if descriptor in owned: raise OSError("Private wait cleanup error")
+        with patch.object(subject, "_dup_wait_pidfd", side_effect=acquire), patch.object(subject.os, "close", side_effect=close):
+            with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertTrue(scope._poisoned)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_completed_wait_cannot_be_retried_with_new_deadline_or_cancel(self):
+        child, scope, fd = self.child()
+        scope.wait_root(fd, deadline=time.monotonic()+1)
+        event = threading.Event(); event.set()
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1, cancel=event)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()-1)
+
+    def test_wrong_recorded_birth_never_consumes_actual_child(self):
+        child, scope, fd = self.child()
+        scope._record["process"][1] += 1
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        self.assertIsNone(scope._wait_receipt)
+        event = os.waitid(os.P_PIDFD, fd, os.WEXITED | os.WNOWAIT)
+        self.assertEqual(event.si_pid, child.pid)
+
+    def test_interruption_after_real_lock_acquire_before_recording_keeps_sticky_unknown(self):
+        child, scope, fd = self.child()
+        injected = []
+        def acquire_then_interrupt(lock, timeout):
+            self.assertIs(lock, child._waitpid_lock)
+            self.assertTrue(lock.acquire(timeout=timeout))
+            injected.append(True)
+            # Model interruption after actual native ownership, before ownership is returned.
+            raise KeyboardInterrupt()
+        try:
+            with patch.object(subject, "_acquire_wait_lock", side_effect=acquire_then_interrupt):
+                with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+        finally:
+            stranded = child._waitpid_lock.locked()
+            if stranded: child._waitpid_lock.release()  # Fixture-only repair of its own injected lock leak.
+        self.assertEqual(injected, [True])
+        self.assertTrue(stranded)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertIsNone(scope._wait_receipt)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+
+    def test_interrupted_final_return_cannot_recover_cached_token_or_clear_poison(self):
+        import inspect
+        child, scope, fd = self.child()
+        method = subject.ReaderScope.wait_root.__wrapped__
+        lines, start = inspect.getsourcelines(method)
+        target = start + next(index for index, line in enumerate(lines) if line.strip() == "return receipt")
+        def trace(frame, event, value):
+            if event == "line" and frame.f_code is method.__code__ and frame.f_lineno == target:
+                raise KeyboardInterrupt()
+            return trace
+        try:
+            sys.settrace(trace)
+            with self.assertRaises(KeyboardInterrupt): scope.wait_root(fd, deadline=time.monotonic()+1)
+        finally:
+            sys.settrace(None)
+        self.assertTrue(scope._wait_poisoned)
+        self.assertTrue(scope._wait_ready)
+        with self.assertRaises(subject.ReaderScopeError): scope.wait_root(fd, deadline=time.monotonic()+1)
+
+    def test_sigchld_ignored_isolated_owner_refuses_auto_reaped_child(self):
+        program = """
+import os,select,signal,subprocess,sys,time
+sys.path.insert(0,sys.argv[1])
+from native_reader_scope_test import owned_wait_scope
+from src.native.reader_scope import ReaderScopeError
+if sys.stdin.buffer.read(1) != b"S": raise SystemExit(70)
+signal.signal(signal.SIGCHLD,signal.SIG_IGN)
+p=subprocess.Popen([sys.executable,'-I','-S','-c','import sys;sys.stdin.buffer.read(1)'],stdin=subprocess.PIPE)
+s=owned_wait_scope(p); fd=os.pidfd_open(p.pid,0); p.stdin.close()
+select.select([fd],[],[],1)
+try: os.waitid(os.P_PIDFD,fd,os.WEXITED|os.WNOHANG)
+except ChildProcessError: pass
+else: raise SystemExit(3)
+try: s.wait_root(fd,deadline=time.monotonic()+1)
+except ReaderScopeError: pass
+else: raise SystemExit(2)
+assert s._wait_receipt is None
+assert p.wait(timeout=1)==0
+os.close(fd)
+os.write(1,b'UNKNOWN')
+"""
+        owner = subprocess.Popen([sys.executable, "-I", "-S", "-c", program, str(Path(__file__).resolve().parent)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        owner_fd = None
+        try:
+            owner_fd = os.pidfd_open(owner.pid, 0)
+            out, err = owner.communicate(input=b"S", timeout=3)
+            self.assertEqual((owner.returncode, out, err), (0, b"UNKNOWN", b""))
+        finally:
+            if owner.stdin is not None and not owner.stdin.closed: owner.stdin.close()
+            if owner_fd is not None and owner.returncode is None:
+                try: signal.pidfd_send_signal(owner_fd, signal.SIGKILL)
+                except ProcessLookupError: pass
+            owner.communicate(timeout=1)
+            if owner_fd is not None: os.close(owner_fd)
 
 
 if __name__ == "__main__":

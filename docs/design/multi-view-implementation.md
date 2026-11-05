@@ -782,8 +782,39 @@ be created in the originally pinned directory before the operation refuses; the
 replacement is not written. This is not yet connected to the coordinator or old
 CLI/MCP writers, and no durable off acknowledgement or release gate is claimed.
 
-Strict root-reap proof remains unresolved: `Popen.wait` can synthesize success
-after `ECHILD`, and pidfd acquisition and numeric cgroup admission can race an
-external reaper. Do not treat the present root return code as qualified drain.
-The default suite after the root-pin change passed 873 tests, skipped 5 and
-failed 0, with 16582 assertions across 85 files in 74.17 seconds.
+The preceding implementation still relied on `Popen.wait`, which can synthesize
+success after `ECHILD`. The following change narrows that root-wait claim.
+
+## 19. Strict owned root wait and helper identity
+
+The dormant [reader scope](../../src/native/reader_scope.py) now obtains the
+root exit result using `waitid(P_PIDFD)` with an observed zombie birth and parent
+check, followed by consumption on the same pinned pidfd. `ECHILD`, reaping races,
+cancellation and uncertain cleanup do not become a successful `Popen.wait` result.
+Only the exact scope-local, one-shot receipt can authorize root-reap accounting.
+If pipe acquisition loses the receipt, the durable debt remains unknown rather than
+retrieving a hidden cached token. Python private fields are a trusted in-process
+convention, not an isolation boundary. Real owned child tests cover external reaping,
+ignored SIGCHLD, interruption and receipt loss. Scope emptiness and provider
+completion remain independent facts.
+
+This does not solve child-creation and numeric cgroup migration races or prove the
+initial pidfd was acquired atomically with creation. The former capture orchestrator,
+its direct legacy bootstrap and its manual live probe now refuse before spawning
+or signaling; their unsafe execution bodies were removed. This intentionally reduces
+an internal, already unqualified capability until atomic creation/placement and an authenticated
+bootstrap are available. No current owned-cgroup run or real desktop acceptance is
+claimed for this revision.
+
+The separate [helper identity pin](../../src/native/reader_helper_identity.py)
+checks a fixed root-owned installed path against a digest the caller must obtain
+from a trusted manifest, plus bounded ELF bytes, directory/file metadata, ACL and
+capability absence. The module does not authenticate the manifest. Thirty-two owned
+fixture cases passed; no fixed helper is installed or launched by this change.
+It does not authenticate a dynamic loader, protect against root or hostile in-process
+code, or grant a read capability.
+
+Final source suite: 876 pass, 5 skip, 0 fail, 16594 assertions across 86 files
+in 77.93 seconds. Strict TypeScript validation passed. The reduction in mocked
+bootstrap and capture cases reflects removal of their unsafe execution paths, not
+a passed native-capture gate.

@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.native import reader_pipe as subject
+from native_reader_scope_test import owned_wait_scope
+from src.native.reader_scope import ReaderScopeError
 
 
 class FakeChild(subprocess.Popen):
@@ -161,6 +164,19 @@ class ReaderPipeTests(unittest.TestCase):
 
     def acquire(self, child, **kwargs):
         kwargs.setdefault("deadline", self.now + .2)
+        limits = kwargs.get("limits", subject.ReaderPipeLimits())
+        def wait_root(*, deadline, cancel):
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise subject.ReaderPipeError("CANCELLED", "Fixture wait cancelled")
+                left = deadline - self.now
+                if left <= 0: raise subject.ReaderPipeError("DEADLINE", "Fixture wait expired")
+                try:
+                    code = child.wait(timeout=min(left, limits.poll_seconds))
+                    return SimpleNamespace(returncode=code)
+                except subprocess.TimeoutExpired:
+                    continue
+        kwargs.setdefault("wait_root", wait_root)
         return subject.read_reader_pipes(child, **kwargs)
 
     def assert_code(self, code, operation):
@@ -181,6 +197,13 @@ class ReaderPipeTests(unittest.TestCase):
         values = dict(stdout_bytes=8, stderr_bytes=4, poll_seconds=.02)
         values.update(kwargs)
         return subject.ReaderPipeLimits(**values)
+
+    def test_missing_trusted_waiter_never_calls_popen_wait_or_takes_streams(self):
+        child = self.child()
+        self.assert_code("INVALID", lambda: subject.read_reader_pipes(child, deadline=self.now + .2))
+        self.assertEqual(child.waits, [])
+        self.assertFalse(child.stdout.closed)
+        self.assertFalse(child.stderr.closed)
 
     def test_default_limits_and_frozen_fields(self):
         value = subject.ReaderPipeLimits()
@@ -553,17 +576,33 @@ class ReaderPipeTests(unittest.TestCase):
 
 class OwnedPipeIntegrationTests(unittest.TestCase):
     """Two finite isolated stdlib children, not desktop helpers or scope proof."""
-    def acquire_owned(self, body, limits):
-        child = subprocess.Popen(["/usr/bin/python3", "-I", "-S", "-c", body],
-                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    def acquire_owned(self, body, limits, fail_cleanup=False):
+        child = subprocess.Popen(["/usr/bin/python3", "-I", "-S", "-c", "import sys; sys.stdin.buffer.read(1); " + body],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        fd = None
         try:
-            return subject.read_reader_pipes(child, deadline=time.monotonic() + 2, limits=limits)
+            scope = owned_wait_scope(child)
+            self.last_scope = scope
+            fd = os.pidfd_open(child.pid, 0)
+            self.last_pidfd = fd
+            if fail_cleanup:
+                original_close = child.stdout.close
+                def close_then_fail():
+                    original_close()
+                    raise OSError("Private post-wait cleanup failure")
+                child.stdout.close = close_then_fail
+            child.stdin.close()  # Release only after recording birth and retaining the fixture pidfd.
+            return subject.read_reader_pipes(child, deadline=time.monotonic() + 2, limits=limits,
+                                            wait_root=lambda **boundary: scope.wait_root(fd, **boundary))
         finally:
-            if child.poll() is None:
-                child.kill()  # Retained unreaped own fixture root only.
-            child.wait(timeout=2)
-            child.stdout.close()
-            child.stderr.close()
+            if child.stdin is not None and not child.stdin.closed: child.stdin.close()
+            if fd is not None and child.returncode is None:
+                try: signal.pidfd_send_signal(fd, signal.SIGKILL)
+                except ProcessLookupError: pass
+            child.wait(timeout=2)  # Fixture disposal, not a scope receipt.
+            if fd is not None: os.close(fd)
+            if not child.stdout.closed: child.stdout.close()
+            if not child.stderr.closed: child.stderr.close()
 
     def test_real_binary_stdout_and_stderr_roundtrip(self):
         result = self.acquire_owned("import os; os.write(1, bytes([0,255,195,169])); os.write(2,b'diag')",
@@ -572,6 +611,17 @@ class OwnedPipeIntegrationTests(unittest.TestCase):
         self.assertEqual(result.stderr, b"diag")
         self.assertEqual(result.returncode, 0)
         self.assertFalse(hasattr(result, "scope_empty"))
+
+    def test_post_wait_cleanup_failure_cannot_return_or_recover_consumed_token(self):
+        acquired = None
+        with self.assertRaises(subject.ReaderPipeError) as caught:
+            acquired = self.acquire_owned("pass", subject.ReaderPipeLimits(), fail_cleanup=True)
+        self.assertEqual(caught.exception.code, "CLEANUP")
+        self.assertIsNone(acquired)
+        self.assertTrue(self.last_scope._wait_poisoned)
+        self.assertTrue(self.last_scope._wait_ready)
+        with self.assertRaises(ReaderScopeError):
+            self.last_scope.wait_root(self.last_pidfd, deadline=time.monotonic()+1)
 
     def test_real_pipe_overflow_is_bounded_and_owned_root_is_reaped(self):
         with self.assertRaises(subject.ReaderPipeError) as caught:

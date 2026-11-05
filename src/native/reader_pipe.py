@@ -53,18 +53,24 @@ class ReaderPipeResult:
     stdout: bytes
     stderr: bytes
     returncode: int
+    wait_receipt: object = None
 
 
-def read_reader_pipes(process, *, deadline, limits=ReaderPipeLimits(), cancel=None):
+def read_reader_pipes(process, *, deadline, limits=ReaderPipeLimits(), cancel=None, wait_root=None):
     """Read finite binary output; producer must separately own and drain its scope.
 
     Pipes must be dedicated unconsumed binary streams, not a buffered-prefix handoff.
+    wait_root is a trusted scope-bound actual-kernel waiter, never request code;
+    retirement independently requires the exact receipt identity registered there.
+    If post-wait validation or stream cleanup fails, no result/token is returned.
+    The consumed wait remains UNKNOWN/debt: do not retrieve private fields or
+    retry wait_root to manufacture successful acquisition.
     Invalid static arguments do not take stream ownership. After validation all
     success/failure paths close the two owned pipes, including expired/cancelled
     acquisition. Closing pipes may affect that helper but never proves it ended.
     """
     if (not isinstance(process, subprocess.Popen) or type(limits) is not ReaderPipeLimits
-            or not _finite(deadline)
+            or not _finite(deadline) or not callable(wait_root)
             or deadline - _now() > 3.0 or cancel is not None and not isinstance(cancel, threading.Event)):
         _fail("INVALID", "Invalid internal reader pipe acquisition")
     streams = (process.stdout, process.stderr)
@@ -121,17 +127,14 @@ def read_reader_pipes(process, *, deadline, limits=ReaderPipeLimits(), cancel=No
                     buffers[index].extend(chunk)
         # Root waiting remains deadline/cancel aware even after both pipes close.
         # This is only a root outcome, never a descendant-empty receipt.
-        while True:
-            left = remaining()
-            try:
-                code = process.wait(timeout=min(left, limits.poll_seconds))
-                break
-            except subprocess.TimeoutExpired:
-                continue
         remaining()
-        if type(code) is not int:
-            _fail("IO", "Reader root outcome is invalid")
-        result = ReaderPipeResult(bytes(buffers[0]), bytes(buffers[1]), code)
+        # Trusted scope callback must consume actual P_PIDFD wait status. A promise,
+        # Popen.returncode or Popen.wait(ECHILD)->0 is never root-reap evidence.
+        receipt = wait_root(deadline=deadline, cancel=cancel)
+        remaining()
+        if receipt is None or type(receipt.returncode) is not int:
+            _fail("IO", "Reader root has no actual kernel wait receipt")
+        result = ReaderPipeResult(bytes(buffers[0]), bytes(buffers[1]), receipt.returncode, receipt)
     except ReaderPipeError as caught:
         error = caught
     except BaseException:

@@ -3,12 +3,19 @@
 Only trusted owner runtime paths belong here, never model-provided resource IDs.
 A durable journal is debt until the original leaf is proved empty and retired.
 This is not an input-quiescence receipt or a 32 MiB logical-buffer/RSS promise.
+Python private fields are readable by trusted code, not an isolation boundary.
+Only directly returned wait receipts may cross the internal API; callers must
+never recover tokens from private attributes or let model data supply them.
 """
 import ctypes
 from dataclasses import dataclass
 import fcntl
 import json
+import math
 import os
+import select
+import signal
+import time
 from pathlib import Path
 import re
 import stat
@@ -23,6 +30,69 @@ class ReaderScopeError(RuntimeError):
     def __init__(self, code, message):
         self.code = code
         super().__init__(message)
+
+
+@dataclass(frozen=True)
+class RootWaitReceipt:
+    """Content-free kernel outcome; only exact instance registered by its scope is proof."""
+    returncode: int
+
+
+def _acquire_wait_lock(lock, timeout):
+    """Fixed native lock call; private deterministic fault-fixture boundary only."""
+    return lock.acquire(timeout=timeout)
+
+
+def _dup_wait_pidfd(pidfd, pid):
+    """Borrowed FD exclusive during this call; own duplicate pins the same kernel pidfd.
+
+    This does NOT prove the original pidfd was acquired atomically with creation.
+    No pidfd_open, numeric signal, process poll or fallback is performed here.
+    The owner keeps input/stdio descriptors stable during duplication. Python
+    asynchronous interruption between os.dup and recording its result remains
+    a resource-cleanup limitation, never evidence of process completion.
+    """
+    owned = None
+    failed = False
+    try:
+        if type(pidfd) is not int or pidfd < 3:
+            raise ValueError()
+        for standard in (0, 1, 2): os.fstat(standard)
+        original = os.fstat(pidfd)
+        if os.readlink(f"/proc/self/fd/{pidfd}") != "anon_inode:[pidfd]":
+            raise ValueError()
+        candidate = os.dup(pidfd)
+        if type(candidate) is not int or candidate < 3:
+            raise ValueError()
+        owned = candidate
+        copied = os.fstat(owned)
+        if (original.st_dev, original.st_ino) != (copied.st_dev, copied.st_ino):
+            raise ValueError()
+        os.set_inheritable(owned, False)
+        fd = os.open(f"/proc/self/fdinfo/{owned}", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            raw = os.read(fd, 4097)
+        finally:
+            os.close(fd)
+        if len(raw) > 4096:
+            raise ValueError()
+        fields = {}
+        for line in raw.splitlines():
+            key, sep, value = line.partition(b":")
+            if sep and key in (b"Pid", b"NSpid"):
+                if key in fields: raise ValueError()
+                fields[key] = value.split()
+        expected = [str(pid).encode("ascii")]
+        if fields.get(b"Pid") != expected or fields.get(b"NSpid") != expected:
+            raise ValueError()
+    except BaseException:
+        failed = True
+    if failed:
+        if owned is not None:
+            try: os.close(owned)
+            except BaseException: pass
+        _fail("UNKNOWN", "Reader wait pidfd identity is unconfirmed")
+    return owned
 
 
 def _fail(code, message):
@@ -164,6 +234,11 @@ class ReaderScope:
         self._limits = limits
         self._root_fd = self._journal_dir = self._journal_fd = self._leaf_fd = None
         self._child = None
+        self._wait_receipt = self._wait_child = self._wait_birth = self._wait_generation = self._wait_code = None
+        self._wait_consumed = False
+        self._wait_ready = False
+        self._wait_owner = None
+        self._wait_poisoned = False
         self._record = None
         self._poisoned = False
         self._closed = False
@@ -588,7 +663,131 @@ class ReaderScope:
         # Caller explicitly chooses kill/empty/retire; recovery itself never signals.
 
     @_serialized
-    def retire(self):
+    def wait_root(self, pidfd, *, deadline, cancel=None):
+        """Observe AND consume exact P_PIDFD wait status; ECHILD is always UNKNOWN.
+
+        The scope must already bind the retained direct child. Birth/PPid are checked
+        while the WNOWAIT zombie still exists, never inferred after reaping. This is
+        not atomic creation/admission provenance, descendant or provider completion.
+        Retained Popen/pidfd are exclusive owner state, not public poll/wait handles.
+        returncode may become visible after an interrupted consuming syscall; ONLY
+        an exact directly returned receipt may acknowledge root accounting. There
+        is no cached token recovery; interruption after publication retains poison
+        until the caller explicitly supplies its returned token to retire. Arbitrary
+        async exceptions during lock/FD acquisition cannot promise leak-free
+        cleanup or bounded termination/reaping. The owner must exclude arbitrary
+        asynchronous interruption at ownership-acquisition boundaries for liveness.
+        Unknown stays sticky; it never becomes a root-reaped receipt.
+        """
+        self._guard(leaf=True)
+        child = self._child
+        birth = self._record["process"]
+        generation = (self._record["leaf"], tuple(self._record["leaf_identity"]))
+        if (self._recovered or child is None or birth is None or child.pid != birth[0]
+                or getattr(os, "P_PIDFD", None) != 3 or not hasattr(os, "WNOWAIT")):
+            _fail("UNKNOWN", "Reader root wait has no exact retained binding")
+        if self._wait_poisoned:
+            _fail("UNKNOWN", "Reader wait consumption is unresolved")
+        try:
+            finite = type(deadline) in (int, float) and math.isfinite(deadline)
+        except (OverflowError, ValueError):
+            finite = False
+        if not finite or cancel is not None and type(cancel) is not threading.Event:
+            _fail("UNKNOWN", "Reader root wait boundary is invalid")
+        now = time.monotonic()
+        if not math.isfinite(now) or not 0 < deadline - now <= 3 or cancel is not None and threading.Event.is_set(cancel):
+            _fail("UNKNOWN", "Reader root wait exceeded its boundary")
+        if self._wait_receipt is not None:
+            _fail("UNKNOWN", "Reader wait is one-shot; no cached receipt retrieval")
+        fd, acquired, failed, receipt = None, False, False, None
+        last = now
+        def check():
+            nonlocal last
+            sampled = time.monotonic()
+            if not math.isfinite(sampled) or sampled < last or sampled >= deadline:
+                raise RuntimeError()
+            last = sampled
+            if cancel is not None and threading.Event.is_set(cancel):
+                raise RuntimeError()
+            return deadline - sampled
+        # Poison before ANY ownership acquisition; interrupted acquire/assignment
+        # can strand a lock or FD, but must never permit a fresh wait or retirement.
+        self._wait_poisoned = True
+        try:
+            lock = child._waitpid_lock
+            if type(lock) is not type(threading.Lock()): raise RuntimeError()
+            while not acquired:
+                acquired = _acquire_wait_lock(lock, min(.05, check()))
+            if child.returncode is not None: raise RuntimeError()
+            # Acquisition/cleanup uncertainty is sticky too, not only reap uncertainty.
+            self._wait_poisoned = True
+            fd = _dup_wait_pidfd(pidfd, birth[0])
+            while True:
+                check()
+                observed = os.waitid(os.P_PIDFD, fd, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                if observed is None:
+                    select.select([fd], [], [], min(.05, check()))
+                    continue
+                if (observed.si_pid != birth[0] or observed.si_code not in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)
+                        or type(observed.si_status) is not int): raise RuntimeError()
+                current = _proc_identity(birth[0])
+                if (current is None or _birth(current) != birth or current["parent"] != self._pid
+                        or current["state"] != "Z" or child.pid != birth[0] or child.returncode is not None):
+                    raise RuntimeError()
+                check()
+                # Consuming is irreversible. Any interruption from here quarantines
+                # the binding, even if Popen.returncode later becomes available.
+                self._wait_poisoned = True
+                consumed = os.waitid(os.P_PIDFD, fd, os.WEXITED | os.WNOHANG)
+                if (consumed is None or (consumed.si_pid, consumed.si_code, consumed.si_status)
+                        != (observed.si_pid, observed.si_code, observed.si_status)):
+                    raise RuntimeError()
+                status = consumed.si_status
+                if consumed.si_code == os.CLD_EXITED:
+                    if not 0 <= status <= 255: raise RuntimeError()
+                    code = status
+                else:
+                    if not 0 < status < signal.NSIG: raise RuntimeError()
+                    code = -status
+                if child.pid != birth[0] or child.returncode is not None: raise RuntimeError()
+                child.returncode = code  # Actual waitid result, never Popen ECHILD synthesis.
+                receipt = RootWaitReceipt(code)
+                self._wait_owner = self
+                self._wait_receipt, self._wait_code, self._wait_child = receipt, code, child
+                self._wait_birth, self._wait_generation = tuple(birth), generation
+                check()
+                break
+        except BaseException:
+            failed = True
+        finally:
+            if fd is not None:
+                try: os.close(fd)
+                except BaseException:
+                    failed = True
+                    self._poisoned = True
+            if acquired:
+                try:
+                    lock.release()
+                except BaseException:
+                    failed = True
+        if not failed:
+            try:
+                check()
+            except BaseException:
+                failed = True
+        if failed:
+            self._wait_ready = False
+            self._wait_receipt = None
+            _fail("UNKNOWN", "Reader root has no confirmed kernel wait outcome")
+        # Explicit acknowledgement: keep poison until retire receives the exact
+        # object actually returned to the caller. An interrupted return cannot
+        # recover a token through a cached wait_root retry. Private fields are
+        # not a token retrieval API or an authority channel.
+        self._wait_ready = True
+        return receipt
+
+    @_serialized
+    def retire(self, wait_receipt=None):
         """Return separate scope-empty/root-reaped facts after original-leaf removal."""
         self._guard(leaf=True)
         if self._record.get("spawn_pending", False):
@@ -602,17 +801,21 @@ class ReaderScope:
                 if current is not None and _birth(current) == self._record["process"]:
                     _fail("UNKNOWN", "Original reader root may still be alive outside its leaf")
             else:
-                if (self._child is None or self._child.pid != self._record["process"][0]
-                        or self._child.returncode is None):
-                    _fail("UNKNOWN", "Reader root must be separately reaped by its retained owner")
-                current = _proc_identity(self._record["process"][0])
-                if current is not None and _birth(current) == self._record["process"]:
-                    _fail("UNKNOWN", "Original reader root still exists; root wait alone is insufficient")
+                if (self._wait_owner is not self or not self._wait_ready or wait_receipt is None or wait_receipt is not self._wait_receipt or self._wait_consumed
+                        or self._child is None or self._wait_child is not self._child
+                        or self._wait_birth != tuple(self._record["process"])
+                        or self._wait_generation != (self._record["leaf"], tuple(self._record["leaf_identity"]))
+                        or self._child.returncode != self._wait_code):
+                    _fail("UNKNOWN", "Reader root requires its exact consumed kernel wait receipt")
                 root_reaped = True
         self._guard(leaf=True)
         os.rmdir(self._record["leaf"], dir_fd=self._root_fd)
         # A crash before this durable event leaves debt, not permission to infer empty.
         self._append("retired")
+        if root_reaped:
+            self._wait_consumed = True
+            self._wait_ready = False
+            self._wait_poisoned = False
         os.close(self._leaf_fd)
         self._leaf_fd = None
         self._child = None
