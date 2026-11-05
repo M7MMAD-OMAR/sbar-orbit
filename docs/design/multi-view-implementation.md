@@ -1155,3 +1155,25 @@ for actual owned socket close events before removing its root. The final verifie
 passed 1075 tests, with 5 skipped and 0 failed, across 107 files in 83.95 seconds;
 strict TypeScript checking also passed. Multi-view and original-app acceptance
 remain unavailable.
+
+## 37. Internal protected usage cohort composition
+
+A new internal factory binds the actual usage coordinator, framed transport and
+Unix channel around an already owner-adopted socket and a fixed dense mapping of
+up to four opaque conversations. All registrations precede subscription; channel
+failure synchronously fences the cohort before transport failure settles pending
+work. A revocation callback failure disables the cohort, but does not prove that
+external grants were revoked or that a producer stopped. The factory does not
+connect, authenticate a peer, start a worker, adopt descriptors, qualify storage,
+or expose a production route. The caller retains an uncertain socket on setup
+failure. A coordinator-local deadline is not automatically a shared-channel
+poison.
+
+Owned Unix sockets with a fake framed ACK peer exercise on/off, late peer EOF
+and callback failure. Separate in-process fixtures exercise setup failures and
+input snapshots; the ACK is not durable storage evidence. Three initial test
+cases failed at socket admission until the fixture used the previously qualified
+paused `createConnection` setup; no failure was presented as success. Final
+strict typing passed and the verifier passed 1082 tests, with 5 skipped and 0
+failed, across 108 files in 82.68 seconds. No Python service, protected host
+identity, original app or Windows desktop acceptance was exercised.
