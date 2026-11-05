@@ -294,6 +294,39 @@ ancestor in the tree, so they are not recoverable from the tree alone; they are 
 Clicks on controls larger than twice the error still land. Small GTK4 controls near the edge can miss, and a
 pixel check against the capture is the open next step.
 
+### Pixel-backed named-control regions (5 November 2026)
+
+`format: both` now uses the already captured image to calibrate named GTK click
+regions in `src/native/a11y_pixels.py`. It accepts a complete, unique rendered
+label with high OCR confidence near the provider rectangle, then returns the
+visible text rectangle as `box`, preserving the original as `providerBox` and
+setting `boxSource: capture-text`. This is a clickable label region, not an
+inferred outer widget border. There is no constant GTK offset. Duplicate labels,
+partial/low-confidence text, distant matches and icon-only controls retain their
+provider bounds. Text-only and passive observations do not start OCR or capture
+extra pixels. These geometry checks do not establish accessible-object lifetime.
+
+The optional fixed `/usr/bin/tesseract` process uses installed English OCR data,
+a shared observation deadline and an additional 0.8 second maximum. Its image,
+output file, memory and CPU are bounded; timeout kills and reaps the owned
+process, and worker death kills it. Missing OCR support or an uncertain result
+leaves the provider geometry unchanged. OCR text and captures remain private.
+Additional provenance fields still obey the existing 16000-byte tree limit.
+
+Live acceptance used original Nautilus 50.4, GTK 4.22.5 and Hyprland 0.57.1 on
+workspace 21 presented on the unfocused `HDMI-A-5`. The owned `PixelTarget`
+folder's provider box `[194,43,112,101]` became the image-backed label region
+`[229,139,78,16]`. Two ordinary native clicks at its returned center `(268,147)`
+opened that exact child. Independent image/tree observation showed the
+`PixelTarget` breadcrumb and `Folder is Empty`. The named `tmp` header breadcrumb
+was calibrated to `[428,17,31,14]`; clicking its returned center `(443.5,24)`
+opened `tmp`, verified by capture and title. Exact normal test-window closure,
+empty candidate list and own-session handback were verified, then the owned
+empty fixture directories were removed. No broker restart or owner pointer/focus
+movement was requested. Continuous owner-state preservation was not measured.
+Icon-only header buttons and unmatched text-only boxes still need visual
+inspection; this evidence does not claim their provider rectangles became exact.
+
 ## Browsers and Electron
 
 What works without touching the owner's settings. Gecko (Firefox, Thunderbird) already publishes a full
@@ -312,6 +345,53 @@ every window of the owner's running process (accessibility slows page loads) and
 therefore does not enable it by itself. An agent that was asked to use a browser through Orbit may open
 `chrome://accessibility` in a window it opened and tick the two boxes, knowing that this affects that
 whole browser process until it exits. The enabled windows were closed afterwards.
+
+### Explicit renderer accessibility registration, 5 November 2026
+
+Decision for issue 29: keep screenshot fallback as the default and provide an explicit
+registration opt-in for a new native Chromium/Electron process. In its `[Desktop Entry]`
+group an owner can set `X-Orbit-Accessibility=chromium-renderer`. The resolver adds exactly
+`--force-renderer-accessibility` to the original direct native executable, preserving its
+other arguments, working directory and normal profile. `false` or an absent key changes
+nothing. Unknown modes, conflicting accessibility switches, wrappers and terminal recipes
+are refused. Orbit does not rewrite the registration, application settings or profile.
+
+The new opt-in checks current-user executable identities before launch. An already running
+matching executable is refused with `APPLICATION_BUSY`; incomplete or unreadable process
+identity is refused with `UNSUPPORTED`. This is a preflight, not a global singleton lock:
+an external launcher can still race it, and normal window attribution must still succeed.
+An uncertain or forwarded launch does not establish that renderer accessibility became
+enabled. Observe the actual tree; never restart an owner process or toggle its settings to
+turn a refusal into success. On this host, active unreadable same-user service processes
+prevent the guarded key from passing its idle preflight, so its source fixtures are not
+an installed guarded-key success claim.
+
+Live effect and cost were measured independently using two temporary explicit desktop
+registrations of the original `/usr/share/code/code` executable, normal owner state and
+one owned local text document. VS Code 1.145.0 had no running process before either launch.
+Both launches used Orbit, exact native handoff, visible workspaces 22 and 23 on the
+explicitly selected unfocused `HDMI-A-5`, then normal exact closure and own-session stop.
+The temporary registrations and document were removed; unrelated windows were preserved.
+The baseline returned no visible accessibility content. With the explicit startup flag,
+the tree returned 85 Chromium nodes including the document's editable text and normal
+workbench controls. `truncated:depth` remained explicit; this is a usable partial tree,
+not a claim of complete application content.
+
+The application's own Developer: Startup Performance table reported these milliseconds:
+
+| Electron workbench metric | No flag | Explicit flag |
+| --- | --- | --- |
+| Overall workbench load | 381 | 618 |
+| Workbench ready | 1332 | 1489 |
+| Renderer ready | 926 | 1125 |
+
+This is one descriptive pair on the same machine, not a causal overhead estimate or a
+general browser-page benchmark. The first launch also opened update release notes and
+both windows later negotiated different geometry. The result supports keeping the feature
+explicit, with honest tree fallback and no default enablement. It does not support an
+efficiency gain. Source registration/guard fixtures and the real explicit-flag effect are
+separate evidence. Chromium documents the switch as a launch-time accessibility option in
+its [accessibility overview](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/accessibility/overview.md).
 
 With the tree on (fixture page served from localhost: form, links, a select, a checkbox, a modal dialog and
 a 200 row scrolling list, Chrome window 960 by 640 at scale 1.5):

@@ -7,3 +7,10 @@ import { join } from "node:path";
   expect({ out, code, err }).toMatchObject({ out: "", code: 0 });
   expect(err).toContain("OK");
 });
+
+(process.platform === "linux" ? test : test.skip)("pixel-backed GTK label regions reject ambiguous and unproven geometry", async () => {
+  const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native_a11y_pixels_test.py")], { stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect({ out, code, err }).toMatchObject({ out: "", code: 0 });
+  expect(err).toContain("OK");
+});

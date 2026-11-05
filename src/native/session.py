@@ -15,6 +15,7 @@ import uuid
 import zlib
 
 from . import a11y
+from . import a11y_pixels
 from .budget import require_budget
 from .host import HostError, TargetClosed, UnsupportedText, verify_host
 from .paste import paste_text
@@ -526,7 +527,8 @@ class NativeSession:
                     frame["settle"] = settle
                 if tree is not None:
                     # Fallback or both: the tree status says which, including why no tree came back.
-                    frame["tree"] = tree
+                    frame["tree"] = (a11y_pixels.calibrate(tree, image, (width, height), surface_size, observation_deadline)
+                                     if action["format"] == "both" and not passive else tree)
                 return {key: value for key, value in frame.items() if key != "image"} | {
                     "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest()}
             if kind == "close-window":

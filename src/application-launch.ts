@@ -6,9 +6,10 @@ import { resolveExecutable } from "./applications/executable";
 import { terminalInvocation } from "./applications/terminal";
 import { assertEnabledRegistration } from "./applications/launch-policy";
 import { findApplicationRegistration } from "./applications/registration";
+import { rendererAccessibilityArguments } from "./applications/renderer-accessibility";
 import type { DiscoveryOptions, ResolvedApplication } from "./applications/types";
 
-/** Execute the installed registration unchanged, including its original setup and profile. */
+/** Preserve the installed recipe and profile, with an explicit registered accessibility opt-in. */
 export async function resolveInstalledApplication(applicationId: string, options: DiscoveryOptions = {}): Promise<ResolvedApplication> {
   const { registration, fields, env } = await findApplicationRegistration(applicationId, options);
   assertEnabledRegistration(fields);
@@ -18,6 +19,7 @@ export async function resolveInstalledApplication(applicationId: string, options
   const path = await resolveExecutable(command, env);
   if (fields.TryExec) await resolveExecutable(fields.TryExec, env);
   let argv = [path, ...expandDesktopArguments(args, fields, applicationId, registration)];
+  argv = await rendererAccessibilityArguments(fields, argv, options);
   if (fields.Terminal === "true") argv = await terminalInvocation(argv, options);
   let cwd: string | undefined;
   if (fields.Path) {
