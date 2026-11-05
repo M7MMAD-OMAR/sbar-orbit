@@ -8,7 +8,8 @@ import { join } from "node:path";
   const [out, err, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
   ]);
-  expect({ out, code }).toMatchObject({ out: "", code: 0 });
+  // Include Python diagnostics when a fixture fails rather than hiding its traceback.
+  expect({ out, err, code }).toMatchObject({ out: "", code: 0 });
   expect(err).toContain("Ran 17 tests");
   expect(err).toContain("OK");
   expect(err).not.toContain("skipped");

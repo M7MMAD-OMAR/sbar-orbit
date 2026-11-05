@@ -868,3 +868,28 @@ not release uncertain resource credit.
 Final verification for sections 21 and 22: strict TypeScript checking passed; the
 default suite passed 888 tests, with 5 skipped and 0 failed, across 86 files in
 77.93 seconds. These are source and owned-fixture results, not desktop acceptance.
+
+## 23. Owned usage store channel components
+
+The dormant [Python service](../../src/native/read_usage_store_service.py) accepts a
+pre-owned Unix socket and an already-open owner root descriptor. A bounded canonical
+request commits to the real descriptor-backed store before sending its matching ACK.
+Owned socketpair tests cover persistent on/off, malformed frames, lost ACK and a
+close-versus-commit race. A local close is not cancellation or proof that a writer
+stopped; a synchronous filesystem call may complete after a deadline.
+
+The separate [TypeScript transport](../../src/read-usage-store-transport.ts) serializes
+a bounded global queue and, on channel failure, calls a trusted synchronous owner
+fence before rejecting pending work. It retains unresolved in-flight identity and
+does not reconnect or release storage ownership. Its tests use the real coordinator
+and an in-memory byte channel. The two language implementations have matching wire
+formats by source review, but have not been run together. The owner must establish
+and verify the protected socket, exact slot-to-identity mapping, failure callback,
+serial service loop, worker lifetime and exclusive root domain. No production route,
+peer identity, CLI/MCP off, process termination or native acceptance is claimed.
+
+The first full run of this slice failed one existing peer-channel fixture without
+its Python traceback being surfaced. The standalone fixture subsequently passed;
+its wrapper now includes diagnostics on failure. After the service cleanup fixes,
+the full verifier passed 910 tests, with 5 skipped and 0 failed, across 88 files in
+103.19 seconds. The earlier failure is not attributed to a proven cause.
