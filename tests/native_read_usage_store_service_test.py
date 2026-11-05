@@ -151,6 +151,11 @@ class ServiceTests(unittest.TestCase):
             reply = b""  # Unread request can reset AF_UNIX on close; never an ACK.
         self.assertEqual(reply, b"")
 
+    def assert_no_slot_records(self, service):
+        root, _fd = self.service_roots[service]
+        for _conversation, key in self.entries:
+            self.assertFalse((root / (key + ".json")).exists(), "Rejected request mutated its exact service root")
+
     def disk(self, slot=0):
         return json.loads((self.root / (self.entries[slot][1] + ".json")).read_text())
 
@@ -182,7 +187,7 @@ class ServiceTests(unittest.TestCase):
         for index, value in enumerate(values):
             service, client = (self.service, self.client) if index == 0 else self.new_service()
             self.fail(frame(value), service, client)
-            self.assertFalse((self.root / (self.entries[0][1] + ".json")).exists())
+            self.assert_no_slot_records(service)
 
     def test_duplicate_keys_wrong_order_whitespace_escapes_and_nonascii_are_noncanonical(self):
         raw = encoded(request())
@@ -192,6 +197,7 @@ class ServiceTests(unittest.TestCase):
         for index, value in enumerate(samples):
             service, client = (self.service, self.client) if index == 0 else self.new_service()
             self.fail(struct.pack(">I", len(value)) + value, service, client)
+            self.assert_no_slot_records(service)
 
     def test_zero_oversized_truncated_and_extra_pipelined_frames_fail_closed(self):
         samples = [struct.pack(">I", 0), struct.pack(">I", 1025), frame(request()) + frame(request(2, epoch=2))]
@@ -201,8 +207,10 @@ class ServiceTests(unittest.TestCase):
             self.send(payload, client); call = self.call(service); self.join(call)
             self.assertIsInstance(call.error, subject.ReadUsageServiceError)
             self.assertTrue(service.status()["failed"])
+            self.assert_no_slot_records(service)
         service, client = self.new_service(); self.send(b"\x00\x00", client); client.shutdown(socket.SHUT_WR)
         call = self.call(service); self.join(call); self.assertIsInstance(call.error, subject.ReadUsageServiceError)
+        self.assert_no_slot_records(service)
 
     def test_duplicate_or_skipped_request_ids_are_sticky_not_replayed(self):
         self.roundtrip(request()); self.fail(frame(request(1, epoch=2)))
@@ -219,15 +227,19 @@ class ServiceTests(unittest.TestCase):
             value = request(); value["record"].update(change)
             service, client = (self.service, self.client) if index == 0 else self.new_service()
             self.fail(frame(value), service, client)
-        self.assertFalse((self.root / (self.entries[0][1] + ".json")).exists())
+            self.assert_no_slot_records(service)
 
-    def test_commit_fsync_failure_has_no_ack_and_keeps_durable_pending_barrier(self):
+    def test_commit_fsync_failure_has_no_ack_and_retains_uncertain_pending_marker(self):
         native = os.fsync
         def fsync(fd):
             if os.readlink("/proc/self/fd/" + str(fd)).endswith(".pending"): raise OSError(SECRET)
             return native(fd)
         with patch.object(os, "fsync", side_effect=fsync): self.fail(frame(request()))
         self.assertTrue((self.root / (self.entries[0][1] + ".pending")).exists())
+        # The injected failure occurs BEFORE native fsync; visibility is uncertainty,
+        # not a claim that this file survives power loss.
+        self.assertTrue(self.service.status()["failed"])
+        self.assert_no_slot_records(self.service)
 
     def test_ack_waits_for_actual_final_directory_fsync_to_return(self):
         entered, release = threading.Event(), threading.Event(); self.releases.append(release)
@@ -404,20 +416,63 @@ class ServiceTests(unittest.TestCase):
             fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC); self.extra_root_fds.append(fd)
             root_info = os.fstat(fd)
             server, client = socket.socketpair(); server.setblocking(False)
+            hits = []
             def fsync(descriptor):
                 path = os.readlink("/proc/self/fd/" + str(descriptor))
                 info = os.fstat(descriptor)
                 marker_exists = (root / ReadUsageStore.SESSION).exists()
                 if (stage == "marker" and path.endswith(ReadUsageStore.SESSION)
                         or stage == "directory" and marker_exists and (info.st_dev, info.st_ino) == (root_info.st_dev, root_info.st_ino)):
+                    hits.append(stage)
                     raise OSError("Owned session fsync failpoint")
                 return native(descriptor)
             try:
                 with patch.object(os, "fsync", side_effect=fsync):
                     with self.assertRaises(subject.ReadUsageServiceError): subject.ReadUsageStoreService(server, str(root), self.entries, expected_root_fd=fd)
+                self.assertEqual(hits, [stage], "Targeted session fsync failure did not occur exactly once")
                 self.assertTrue((root / ReadUsageStore.SESSION).exists())
                 with self.assertRaises(ReadUsageStoreError): ReadUsageStore(str(root), self.entries, expected_root_fd=fd)
             finally: server.close(); client.close()
+
+    def test_marker_unlink_after_durable_commit_is_no_ack_not_proof_of_clean_root(self):
+        native = ReadUsageStore.commit
+        def commit(store, conversation, value):
+            native(store, conversation, value)
+            (self.root / ReadUsageStore.SESSION).unlink()  # Owned failpoint violates stability contract.
+        with patch.object(ReadUsageStore, "commit", commit): self.fail(frame(request()))
+        self.assertFalse((self.root / ReadUsageStore.SESSION).exists())
+        self.assertTrue(self.disk()["enabled"])  # Absence is not rollback/cleanliness.
+        server, client = socket.socketpair(); server.setblocking(False)
+        try:
+            with self.assertRaises(subject.ReadUsageServiceError):
+                subject.ReadUsageStoreService(server, str(self.root), self.entries, expected_root_fd=self.root_fd)
+        finally: server.close(); client.close()
+
+    def test_lock_replacement_after_commit_prevents_ack_without_removing_foreign_inode(self):
+        native = ReadUsageStore.commit
+        replacement = b"owned-foreign-lock"
+        def commit(store, conversation, value):
+            native(store, conversation, value)
+            lock = self.root / ReadUsageStore.LOCK
+            lock.rename(self.base / "original-retained-lock")
+            lock.write_bytes(replacement); lock.chmod(0o600)
+        with patch.object(ReadUsageStore, "commit", commit): self.fail(frame(request()))
+        self.assertEqual((self.root / ReadUsageStore.LOCK).read_bytes(), replacement)
+        self.assertTrue((self.root / ReadUsageStore.SESSION).exists())
+        self.assertTrue((self.base / "original-retained-lock").exists())
+
+    def test_root_path_replacement_after_commit_never_acknowledges_or_writes_replacement(self):
+        native = ReadUsageStore.commit
+        moved = self.base / "retained-original-root"
+        def commit(store, conversation, value):
+            native(store, conversation, value)
+            self.root.rename(moved)
+            self.root.mkdir(mode=0o700)
+        with patch.object(ReadUsageStore, "commit", commit): self.fail(frame(request()))
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertTrue((moved / ReadUsageStore.SESSION).exists())
+        record = json.loads((moved / (self.entries[0][1] + ".json")).read_text())
+        self.assertTrue(record["enabled"])
 
     def test_status_and_error_are_content_free_and_no_peer_or_stop_authority(self):
         status = dict(self.service.status())

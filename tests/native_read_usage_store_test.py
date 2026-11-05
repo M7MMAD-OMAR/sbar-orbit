@@ -616,5 +616,77 @@ class UsageStoreTests(unittest.TestCase):
         self.code("UNCONFIRMED", lambda: self.store(entries=entries))
 
 
+    def test_session_interrupted_file_or_directory_fsync_never_returns_ready(self):
+        for stage in ("file", "directory"):
+            for error_type in (InterruptedError, KeyboardInterrupt):
+                root = self.base / ("interrupted-" + stage + "-" + error_type.__name__)
+                root.mkdir(mode=0o700)
+                store = self.store(root=root)
+                root_info = root.stat()
+                hits = []
+                def fsync(fd):
+                    self.real_fsync(fd)
+                    info = os.fstat(fd)
+                    if (stage == "file" and self.fd_path(fd).name == store.SESSION
+                            or stage == "directory" and (info.st_dev, info.st_ino) == (root_info.st_dev, root_info.st_ino)):
+                        hits.append(stage)
+                        raise error_type("Owned session fsync interruption")
+                with patch.object(os, "fsync", side_effect=fsync):
+                    self.code("UNCONFIRMED", store._seal_session)
+                self.assertEqual(hits, [stage], "Targeted fsync interruption was not exercised exactly once")
+                marker = root / store.SESSION
+                self.assertEqual(marker.read_bytes(), store.SESSION_BYTES)
+                self.code("UNCONFIRMED", lambda: store.commit(self.first, self.value()))
+                store.close()
+                self.code("UNCONFIRMED", lambda: self.store(root=root))
+
+    def test_session_zero_write_keeps_empty_marker_and_never_allows_reopen(self):
+        store = self.store()
+        calls = []
+        native = os.write
+        def bounded_write(fd, data):
+            if self.fd_path(fd).name == store.SESSION:
+                calls.append(len(data)); return 0
+            return native(fd, data)
+        with patch.object(os, "write", side_effect=bounded_write): self.code("UNCONFIRMED", store._seal_session)
+        self.assertEqual(calls, [len(store.SESSION_BYTES)])
+        marker = self.root / store.SESSION
+        self.assertEqual(marker.read_bytes(), b"")
+        self.assertFalse(self.path().exists())
+        store.close()
+        self.code("UNCONFIRMED", self.store)
+        self.assertTrue(marker.exists())
+
+    def test_session_positive_partial_writes_finish_exactly_before_seal_ready(self):
+        store = self.store()
+        native = os.write
+        counts = []
+        def write(fd, data):
+            if self.fd_path(fd).name == store.SESSION:
+                count = native(fd, data[:2]); counts.append(count); return count
+            return native(fd, data)
+        with patch.object(os, "write", side_effect=write): store._seal_session()
+        self.assertGreater(len(counts), 1)
+        self.assertEqual(sum(counts), len(store.SESSION_BYTES))
+        self.assertEqual((self.root / store.SESSION).read_bytes(), store.SESSION_BYTES)
+        store.commit(self.first, self.value())
+        self.assertEqual(json.loads(self.path().read_text())["epoch"], 1)
+
+    def test_session_marker_close_uncertainty_preserves_fence_and_closes_other_owned_fds(self):
+        store = self.store(); store._seal_session()
+        marker_fd, lock_fd = store._session_fd, store._lock
+        marker = self.root / store.SESSION
+        identity = (marker.stat().st_dev, marker.stat().st_ino)
+        def close(fd):
+            self.real_close(fd)
+            if fd == marker_fd: raise OSError("Owned marker close uncertainty")
+        with patch.object(os, "close", side_effect=close): self.code("UNCONFIRMED", store.close)
+        for fd in (marker_fd, lock_fd):
+            with self.assertRaises(OSError): os.fstat(fd)
+        self.assertEqual((marker.stat().st_dev, marker.stat().st_ino), identity)
+        self.assertEqual(marker.read_bytes(), store.SESSION_BYTES)
+        self.code("UNCONFIRMED", self.store)
+
+
 if __name__ == "__main__":
     unittest.main()

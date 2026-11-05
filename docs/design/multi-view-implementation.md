@@ -929,3 +929,18 @@ marker does not establish an atomic client acknowledgement or writer-stop proof.
 The TypeScript and Python components have still not been run together. Focused tests
 passed all 42 store and 25 service Python cases; the full verifier passed 922 tests,
 with 5 skipped and 0 failed, across 89 files in 85.76 seconds.
+
+## 26. Shared protocol vectors and marker fault checks
+
+The real Python request parser and ACK encoder and the real TypeScript transport
+were each checked against the same [literal wire vectors](../../tests/fixtures/read-usage-wire-vectors.json).
+The checks include canonical bytes, malformed frames and safe-integer bounds. The
+maximum TypeScript request ID uses a test-only compiled copy with a seeded counter;
+it is not a live production counter test. These vectors do not establish interprocess
+execution, descriptor ownership or durable ACK delivery.
+
+Additional owned-filesystem tests inject interrupted and partial marker writes,
+fsync failures and post-commit marker, lock and root replacement. Each targeted
+failpoint is asserted to have fired, and failures preserve uncertainty rather than
+claiming a durable barrier. The full verifier passed 945 tests, with 5 skipped and
+0 failed, across 91 files in 81.99 seconds; strict TypeScript checking also passed.
