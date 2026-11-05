@@ -1121,3 +1121,19 @@ storage passed. The final verifier passed 1060 tests, with 5 skipped and 0 faile
 across 105 files in 87.25 seconds; strict TypeScript checking also passed. These
 fixtures do not establish protected host identity, legacy writer serialization,
 original-application acceptance or Windows file-race safety.
+
+## 35. Bounded ordinary IPC response
+
+The ordinary no-signal IPC path now limits accepted response-body bytes to
+32 MiB, using at most 512 owned 64 KiB slabs before UTF-8 decoding. Invalid
+JSON, invalid response envelopes and body-read failures return fixed errors; a
+valid broker refusal still carries its public metadata. The limit is not a total
+RSS, native buffering, hard deadline or producer-stop guarantee. The separate
+signal path is unchanged and its BOM/envelope differences remain unqualified.
+
+Owned Unix fake-peer and isolated reader fixtures cover the byte boundary,
+fragmented UTF-8, tiny chunks and sanitized failures. The attempted in-process
+legacy preference queue was withdrawn because saturation could reject `off` while
+earlier `on` writes remained pending; the cross-process writer race is unresolved.
+The final verifier passed 1067 tests, with 5 skipped and 0 failed, across 106
+files in 83.88 seconds. Strict TypeScript checking also passed.

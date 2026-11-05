@@ -119,6 +119,62 @@ async function cancellableCall(socket: string, method: string, params: unknown, 
   });
 }
 
+/** Bound accepted response-body bytes, not total RSS, transport buffering or producer work.
+ * UTF-8 decoding remains nonfatal and BOM-aware like Response.json(). Cancellation
+ * is best effort and must not wait for a possibly uncooperative stream source.
+ * A transport abort is not a hard wall-time bound if its body reader ignores it. */
+async function readBrokerJson(response: Response): Promise<unknown> {
+  const slabs: Uint8Array[] = [], parts: string[] = [];
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let bytes = 0, complete = false, overflow = false, text = "";
+  try {
+    if (response.body) {
+      reader = response.body.getReader();
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (next.value.byteLength > 32 * 1024 * 1024 - bytes) {
+          overflow = true;
+          throw new Error("Response body bound exceeded");
+        }
+        // Bound metadata independently of wire chunking: at most 512 owned
+        // 64 KiB slabs, not one retained object/string for each incoming byte.
+        let offset = 0;
+        while (offset < next.value.byteLength) {
+          const index = Math.floor(bytes / 65536), used = bytes % 65536;
+          let slab = slabs[index];
+          if (!slab) { slab = new Uint8Array(65536); slabs.push(slab); }
+          const count = Math.min(65536 - used, next.value.byteLength - offset);
+          slab.set(next.value.subarray(offset, offset + count), used);
+          bytes += count; offset += count;
+        }
+      }
+      const decoder = new TextDecoder();
+      for (let index = 0; index < slabs.length; index++) {
+        const size = Math.min(65536, bytes - index * 65536);
+        parts.push(decoder.decode(slabs[index]!.subarray(0, size), { stream: true }));
+      }
+      parts.push(decoder.decode());
+    }
+    complete = true;
+    text = parts.join("");
+  } catch {
+    slabs.length = 0; parts.length = 0;
+    throw new OrbitError("BROKER_ERROR", overflow
+      ? "Native broker reply exceeds its client bound" : "Native broker reply could not be read");
+  } finally {
+    slabs.length = 0; parts.length = 0;
+    if (reader) {
+      if (!complete) {
+        try { void reader.cancel().catch(() => {}); } catch { /* No stop proof. */ }
+      }
+      try { reader.releaseLock(); } catch { /* Best effort local cleanup only. */ }
+    }
+  }
+  try { return JSON.parse(text); }
+  catch { throw new OrbitError("BROKER_ERROR", "Native broker reply is invalid JSON"); }
+}
+
 /** `identity` overrides who the call claims to be; the adapters and tests use it, everything else is this process. */
 export async function call(socket: string, method: string, params: unknown = {}, signal?: AbortSignal, identity?: ClientIdentity): Promise<unknown> {
   const who = clientIdentity(socket, identity);
@@ -127,7 +183,12 @@ export async function call(socket: string, method: string, params: unknown = {},
   const response = await fetch("http://localhost/rpc", { unix: socket, method: "POST",
     headers: { "Content-Type": "application/json", ...identityHeaders(who) }, body: JSON.stringify({ method, params }),
     signal: AbortSignal.timeout(method === "native.open" ? 80_000 : 45_000) });
-  const result = await response.json() as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
+  const value = await readBrokerJson(response);
+  // Normal-fetch envelope validation only; the signal transport is unchanged.
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+      || !("ok" in value) || !Object.hasOwn(value, "ok") || typeof value.ok !== "boolean")
+    throw new OrbitError("BROKER_ERROR", "Native broker reply has an invalid response envelope");
+  const result = value as { ok: boolean; result?: unknown; error?: { code: string; message: string; diagnosticId?: string; disposition?: unknown; suggestion?: unknown } };
   if (!result.ok) throw new OrbitError(result.error?.code ?? "BROKER_ERROR", result.error?.message ?? "Broker failed", result.error?.diagnosticId, result.error);
   return result.result;
 }

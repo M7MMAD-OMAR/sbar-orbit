@@ -209,7 +209,14 @@ test("accepted request followed by server reset is never retried", () => fixture
   try { await f.track(callPatient(f.socket, "session.act", { requestId: "accepted-before-reset" }, identity, 1000,
     async () => { sleeps++; throw new Error("Unexpected post-send retry"); }, async () => { guards++; })); }
   catch (error) { observed = error; }
-  expect(observed).toBeDefined(); expect(observed).not.toBeInstanceOf(OrbitError);
+  expect(observed).toBeDefined();
+  // Reset may fail before fetch returns (raw transport error), or while the
+  // bounded reader consumes the body (fixed BROKER_ERROR). Neither proves no delivery.
+  if (observed instanceof OrbitError) {
+    expect(observed.code).toBe("BROKER_ERROR");
+    expect(observed.disposition).toEqual({ delivery: "unknown", retry: "unsafe" });
+    expect(["Native broker reply could not be read", "Native broker reply is invalid JSON"]).toContain(observed.message);
+  } else expect(observed).toBeInstanceOf(Error);
   expect(progress).toEqual({ acceptedBody: true, headersFlushed: true, bodyQueued: true, reset: true });
   // Queued server bytes are not a claim that the client consumed a partial body.
   expect(f.requests).toHaveLength(1); expect(guards).toBe(1); expect(sleeps).toBe(0);
