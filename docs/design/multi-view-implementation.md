@@ -1242,3 +1242,32 @@ Actual registry and resource-budget fixtures verify the same lease remains usabl
 after refusal and returns its credit after a valid delivery. Strict typing passed;
 the complete verifier passed 1103 tests, skipped 5 and failed 0 across 109 files
 in 88.87 seconds. No protected production transport or native acceptance was added.
+
+## 42. Owner workspace selection
+
+The owner required original applications to open on empty, undisplayed numbered
+workspaces within 1 to 10, without switching their desktop. The scoped change and
+its staged-source verification are recorded in [workspace opening safety](../workspace-opening-safety.md).
+No shared broker was restarted or original application launched for that change.
+
+## 43. Actual TypeScript/Python usage-store interop
+
+A new Linux fixture uses the actual cohort, Unix channel and framed transport
+against the actual Python store service over one private established Unix socket.
+The Python side pins its fresh private root and serves exactly three requests
+sequentially. The parent waits for both the real ACK-backed operation and an
+independent step emitted after `serve_one` returns, then checks the persisted
+on/off records. Closing the service poisons the still-enabled second conversation
+through actual EOF before fixture cleanup. No fake ACK peer is used in this test.
+
+This qualifies one owned happy-path exchange only. Local opaque objects are
+joined by the fixed test slot mapping, not cross-process object identity or peer
+authentication. There is no production startup, grant route, containment proof,
+power-loss test or original-application acceptance. A reported local timeout never
+authorizes deletion of an unknown child root. Two initial fixture attempts failed
+at adoption until the actual socket was paused immediately before channel
+construction; their roots were retained, with no numeric PID signalling.
+
+Strict typing passed. The exact staged-source verifier passed 1123 tests, skipped
+5 and failed 0 across 114 files in 82.12 seconds. The running shared broker and
+owner desktop were not changed. Multi-view remains unavailable.
