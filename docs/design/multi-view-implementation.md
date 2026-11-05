@@ -1097,3 +1097,27 @@ failed on an unawaited Bun stdin write; its child and pipe state became unknown
 and were not signalled by numeric PID. The feeder was corrected and the final
 verifier passed 1037 tests, with 5 skipped and 0 failed, across 102 files in
 81.70 seconds. Strict TypeScript checking also passed.
+
+## 34. CLI read delivery, POSIX file bounds and policy errors
+
+Ordinary CLI read results and broker errors are resampled against the legacy
+usage preference before delivery. A file observation is checked before its
+write, and diagnostics fallback is not started after observed `off`. This is not
+an atomic off/on fence or cancellation: an already accepted observation may have
+effects, and mutation receipts, errors and embedded capture remain visible.
+Local `doctor --report` and other separately routed maintenance/status paths are
+not qualified by this change.
+
+On POSIX, action `@FILE` input uses one nonblocking-open descriptor, checks its
+type, and reads at most 1 MiB plus one detection byte. The initial pathname check
+is advisory: device-open effects during replacement and filesystem stalls remain
+unqualified. Windows keeps its earlier path-based implementation. Policy
+validation errors no longer echo invalid origin, action class or rule IDs into
+diagnostics. Valid rule IDs and reasons remain intentional journal content; this
+is not a general hostile JavaScript getter/proxy boundary.
+
+Owned CLI and fake-peer fixtures, isolated helper cases and real Diagnostics
+storage passed. The final verifier passed 1060 tests, with 5 skipped and 0 failed,
+across 105 files in 87.25 seconds; strict TypeScript checking also passed. These
+fixtures do not establish protected host identity, legacy writer serialization,
+original-application acceptance or Windows file-race safety.

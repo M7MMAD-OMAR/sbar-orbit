@@ -53,9 +53,12 @@ sbar-orbit native-present @/absolute/path/presentation.json
 
 `native-present JSON|@FILE|-` also accepts standard input. JSON read from stdin
 is limited to 1 MiB of raw bytes; input at the limit still requires EOF. This
-bound does not impose a read deadline or qualify native buffering. The separate
-`@FILE` path still has its existing pre-read size check, not a pinned-descriptor
-growth or replacement guarantee. Supply a stable
+bound does not impose a read deadline or qualify native buffering. On POSIX,
+`@FILE` reads at most 1 MiB from one opened regular-file descriptor and checks
+one extra byte for growth. Its path check is advisory: a concurrent replacement
+can still cause device-open effects, and no filesystem deadline is guaranteed.
+Windows retains the earlier path-based file read and is not qualified against
+replacement or growth. Supply a stable
 `requestId` in the document, or set `ORBIT_REQUEST_ID`; otherwise the CLI generates
 one. Reuse the identity after an uncertain reply. The broker rejects a conflicting
 workspace or monitor for an existing identity, and does not replay an uncertain
@@ -142,6 +145,9 @@ the preference; it does not cancel work that was already admitted. The direct
 `status --watch` entry rechecks the preference before subsequent status reads and
 before output, then exits when it observes `off`. Those checks are not atomic with
 concurrent changes, and already admitted broker requests are not cancelled.
+Ordinary CLI read results and errors are also rechecked before delivery; an
+observation file is checked before writing, not atomically fenced during the
+write. Accepted action receipts and embedded capture remain visible after `off`.
 `session list` shows your sessions in full and other agents' as summaries without ids.
 `session stop --mine` stops exactly your own sessions and prints what it stopped; `session stop ID`
 on someone else's session is refused with `SESSION_NOT_OWNED`. `--owner` (or `ORBIT_OWNER=1`)

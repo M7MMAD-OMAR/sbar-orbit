@@ -211,6 +211,16 @@ export const readOnlyPolicy: SessionPolicy = { mode: "supervised", origins: [], 
 /** Native owner controls authorize actions; callers may explicitly narrow the session policy. */
 export const nativeApplicationPolicy: SessionPolicy = { mode: "autonomous", origins: "any", allow: ["read", "navigate", "write", "irreversible"], deny: [] };
 
+/** Preserve successful legacy coercions, but never forward an input hook exception.
+ * This is not a general accessor/proxy boundary; JSON IPC supplies data objects.
+ * Valid rule IDs and owner reasons remain deliberate policy/journal content. */
+function policyText(value: unknown, message: string): string {
+  try { return String(value); } catch { throw new OrbitError("INVALID_REQUEST", message); }
+}
+function advisorTimeout(value: unknown): number {
+  try { return Number(value); } catch { throw new OrbitError("INVALID_REQUEST", "An advisor timeout must be between 100 and 30000 ms"); }
+}
+
 function normaliseOrigin(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new OrbitError("INVALID_REQUEST", "An origin must be a non-empty string");
   // Explicit origin lists contain exact origins. Unbounded policies use the
@@ -218,17 +228,18 @@ function normaliseOrigin(value: unknown): string {
   if (value === "*" || value.includes("://*")) throw new OrbitError("INVALID_REQUEST", "A wildcard origin is not allowed; name each origin the session may reach");
   let url: URL;
   try { url = new URL(value.includes("://") ? value : `https://${value}`); }
-  catch { throw new OrbitError("INVALID_REQUEST", `Not a usable origin: ${value.slice(0, 80)}`); }
+  catch { throw new OrbitError("INVALID_REQUEST", "Policy origin must name a usable http or https origin"); }
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new OrbitError("INVALID_REQUEST", "Origins must be http or https");
   return url.origin;
 }
 
 /** Action classes on their own, with no cross field rule attached. Narrowing needs exactly this. */
 export function parseActionClasses(value: unknown, field = "allow"): ActionClass[] {
-  if (!Array.isArray(value)) throw new OrbitError("INVALID_REQUEST", `Policy ${field} must be an array of action classes`);
+  const label = field === "allow" ? "allow" : field === "deny" ? "deny" : "action classes";
+  if (!Array.isArray(value)) throw new OrbitError("INVALID_REQUEST", `Policy ${label} must be an array of action classes`);
   return value.map(entry => {
     if (!actionClasses.includes(entry as ActionClass))
-      throw new OrbitError("INVALID_REQUEST", `Unknown action class in ${field}: ${String(entry).slice(0, 40)}`);
+      throw new OrbitError("INVALID_REQUEST", `Unknown action class in policy ${label}`);
     return entry as ActionClass;
   });
 }
@@ -242,16 +253,9 @@ export function parseOrigins(value: unknown): string[] {
 
 export function parsePolicy(value: unknown): SessionPolicy {
   const input = record(value);
-  const mode = input.mode === undefined ? "supervised" : String(input.mode);
+  const mode = input.mode === undefined ? "supervised" : policyText(input.mode, "Policy mode must be supervised or autonomous");
   if (mode !== "supervised" && mode !== "autonomous") throw new OrbitError("INVALID_REQUEST", "Policy mode must be supervised or autonomous");
-  const list = (field: unknown, name: string): ActionClass[] => {
-    if (field === undefined) return [];
-    if (!Array.isArray(field)) throw new OrbitError("INVALID_REQUEST", `Policy ${name} must be an array of action classes`);
-    return field.map(entry => {
-      if (!actionClasses.includes(entry as ActionClass)) throw new OrbitError("INVALID_REQUEST", `Unknown action class in ${name}: ${String(entry).slice(0, 40)}`);
-      return entry as ActionClass;
-    });
-  };
+  const list = (field: unknown, name: string): ActionClass[] => field === undefined ? [] : parseActionClasses(field, name);
   const origins: string[] | "any" = input.origins === undefined ? [] : input.origins === "any" ? "any" : (() => {
     if (!Array.isArray(input.origins)) throw new OrbitError("INVALID_REQUEST", "Policy origins must be an array of origins, or the string \"any\"");
     if (input.origins.length > 64) throw new OrbitError("INVALID_REQUEST", "Name at most 64 origins for one session");
@@ -271,11 +275,11 @@ export function parsePolicy(value: unknown): SessionPolicy {
     return input.rules.map(entry => {
       const rule = record(entry);
       if (typeof rule.id !== "string" || !rule.id.trim()) throw new OrbitError("INVALID_REQUEST", "Every rule needs a stable id");
-      if (!["allow", "deny", "consult"].includes(String(rule.decision)))
-        throw new OrbitError("INVALID_REQUEST", `Rule ${rule.id} needs a decision of allow, deny or consult`);
+      if (!["allow", "deny", "consult"].includes(policyText(rule.decision, "Policy rule needs a decision of allow, deny or consult")))
+        throw new OrbitError("INVALID_REQUEST", "Policy rule needs a decision of allow, deny or consult");
       const verb = rule.verb;
       if (typeof verb !== "string" && !(Array.isArray(verb) && verb.every(v => typeof v === "string")))
-        throw new OrbitError("INVALID_REQUEST", `Rule ${rule.id} needs a verb, or a list of them`);
+        throw new OrbitError("INVALID_REQUEST", "Policy rule needs a verb, or a list of verbs");
       // NORMALISED, not merely validated. This line used to be `origins.forEach(normaliseOrigin)`,
       // which threw on a malformed origin and then discarded every normalised value, so the rule was
       // stored with whatever spelling the caller wrote. `ruleMatches` then compared that raw string
@@ -290,8 +294,8 @@ export function parsePolicy(value: unknown): SessionPolicy {
         reason: typeof rule.reason === "string" && rule.reason.trim() ? rule.reason : `Rule ${rule.id}.`,
         ...(rule.backend === undefined ? {} : { backend: rule.backend as Rule["backend"] }),
         ...(normalisedOrigin === undefined ? {} : { origin: normalisedOrigin }),
-        ...(rule.pathPrefix === undefined ? {} : { pathPrefix: String(rule.pathPrefix) }),
-        ...(rule.method === undefined ? {} : { method: String(rule.method) }),
+        ...(rule.pathPrefix === undefined ? {} : { pathPrefix: policyText(rule.pathPrefix, "Policy rule pathPrefix must be usable as text") }),
+        ...(rule.method === undefined ? {} : { method: policyText(rule.method, "Policy rule method must be usable as text") }),
       } satisfies Rule;
     });
   })();
@@ -307,7 +311,7 @@ export function parsePolicy(value: unknown): SessionPolicy {
     // a UNC path is refused because a policy should not consult a program across the network.
     if (typeof first !== "string" || !isAbsolute(first) || first.startsWith("\\\\"))
       throw new OrbitError("INVALID_REQUEST", "An advisor command must name an absolute local executable");
-    const timeoutMs = given.timeoutMs === undefined ? 5000 : Number(given.timeoutMs);
+    const timeoutMs = given.timeoutMs === undefined ? 5000 : advisorTimeout(given.timeoutMs);
     if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000)
       throw new OrbitError("INVALID_REQUEST", "An advisor timeout must be between 100 and 30000 ms");
     return { command: given.command as string[], timeoutMs };

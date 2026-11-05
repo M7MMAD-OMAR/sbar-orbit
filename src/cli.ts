@@ -59,6 +59,60 @@ async function readActionStdin(): Promise<string> {
   }
 }
 
+/** POSIX-only bounded reads from one opened handle. Advisory path stat avoids ordinary
+ * special files, but a hostile swap can still cause device OPEN side effects. O_NONBLOCK
+ * is not a filesystem deadline, namespace lock, or universal hostile-path guarantee. */
+async function readActionFile(path: string): Promise<string> {
+  const maximum = 1_048_576;
+  const { statSync, constants } = await import("node:fs");
+  const { open } = await import("node:fs/promises");
+  const missing = () => new OrbitError("INVALID_REQUEST", `No action document at ${path}`);
+  const unreadable = () => new OrbitError("INVALID_REQUEST", `Could not read action document at ${path}`);
+  const knownSize = (size: number) => new OrbitError("INVALID_REQUEST", `The action document at ${path} is ${size} bytes. An action document is a small JSON object, and anything past 1 MiB is a mistyped path.`);
+  const notRegular = new OrbitError("INVALID_REQUEST", `The action document at ${path} is not a regular file. A device, a FIFO or a directory cannot be read as one.`);
+  const oversized = new OrbitError("INVALID_REQUEST", `The action document at ${path} exceeds 1 MiB.`);
+  const nonblocking = constants.O_NONBLOCK;
+  if (typeof nonblocking !== "number" || !Number.isSafeInteger(nonblocking) || nonblocking <= 0 || nonblocking > 0x7fffffff
+      || typeof constants.O_RDONLY !== "number" || !Number.isSafeInteger(constants.O_RDONLY) || constants.O_RDONLY < 0)
+    throw new OrbitError("INVALID_REQUEST", "Nonblocking action-file input is unavailable; use standard input with a bare -");
+  let observed: import("node:fs").Stats;
+  try { observed = statSync(path); } catch (error) {
+    const code: unknown = error && typeof error === "object" ? Object.getOwnPropertyDescriptor(error, "code")?.value : undefined;
+    throw code === "ENOENT" ? missing() : unreadable();
+  }
+  if (!observed.isFile()) throw notRegular;
+  // Conservatively refuse an observed oversized file even if it later shrinks.
+  if (observed.size > maximum) throw knownSize(observed.size);
+  let handle: Awaited<ReturnType<typeof open>> | undefined, openedTooBig: OrbitError | undefined, primary: OrbitError | undefined;
+  try {
+    // Follow regular-file symlinks as before. This descriptor, not the path, supplies all data.
+    handle = await open(path, constants.O_RDONLY | nonblocking);
+    const opened = await handle.stat();
+    if (!opened.isFile()) throw notRegular;
+    if (opened.size > maximum) { openedTooBig = knownSize(opened.size); throw openedTooBig; }
+    const bytes = new Uint8Array(maximum + 1); let used = 0;
+    for (;;) {
+      const requested = Math.min(65_536, maximum + 1 - used);
+      const result = await handle.read(bytes, used, requested, used);
+      if (!Number.isSafeInteger(result.bytesRead) || result.bytesRead < 0 || result.bytesRead > requested) throw missing();
+      if (result.bytesRead === 0) return new TextDecoder().decode(bytes.subarray(0, used));
+      used += result.bytesRead;
+      if (used > maximum) throw oversized;
+    }
+  } catch (error) {
+    primary = error === notRegular ? notRegular : error === oversized ? oversized
+      : openedTooBig !== undefined && error === openedTooBig ? openedTooBig : unreadable();
+    throw primary;
+  } finally {
+    if (handle) {
+      const owned = handle; handle = undefined;
+      // One API close attempt. Keep an earlier sanitized refusal, never a raw close
+      // cause; close failure on an otherwise valid document prevents RPC too.
+      try { await owned.close(); } catch { if (!primary) throw unreadable(); }
+    }
+  }
+}
+
 async function actionDocument(argument: string | undefined): Promise<unknown> {
   let source = "the command line";
   let raw = argument ?? "null";
@@ -66,6 +120,9 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
   else if (argument?.startsWith("@")) {
     const path = argument.slice(1);
     source = path;
+    if (process.platform !== "win32") raw = await readActionFile(path);
+    else {
+    // Windows legacy file behavior is unchanged and is not newly qualified here.
     // A REGULAR FILE, checked before anything is read. `Bun.file(path).text()` on a character device
     // reads without bound: measured on Fedora 44, `act s @/dev/zero` reached 8.4 GiB resident in 8
     // seconds with nothing on stdout and no error, and a FIFO nobody writes to hangs on the same
@@ -86,6 +143,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
       `The action document at ${path} is ${file.size} bytes. An action document is a small JSON object, and anything past 1 MiB is a mistyped path.`);
     try { raw = await file.text(); }
     catch { throw new OrbitError("INVALID_REQUEST", `No action document at ${path}`); }
+    }
   }
   try { return JSON.parse(raw); }
   catch (error) {
@@ -113,7 +171,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
     // useful: it separates "the shell truncated my JSON" from "my JSON is wrong" without quoting a
     // single byte of it.
     throw new OrbitError("INVALID_REQUEST",
-      `The action document from ${source} is not JSON (${raw.length} bytes read). Where a shell eats quotes, pass it as a file with @path or on standard input with a bare -.`);
+      `The action document from ${source} is not JSON (${raw.length} characters read). Where a shell eats quotes, pass it as a file with @path or on standard input with a bare -.`);
   }
 }
 
@@ -142,7 +200,13 @@ try {
     const socket = process.env.ORBIT_SOCKET ?? serviceSocketPath();
     let report: unknown;
     try { report = await call(socket, "diagnostics.report"); }
-    catch { report = await new Diagnostics(diagnosticRoot()).report(); }
+    catch {
+      // Observed off also prevents reading the local fallback, not merely stdout.
+      await usage.assertEnabled();
+      try { report = await new Diagnostics(diagnosticRoot()).report(); }
+      catch (error) { await usage.assertEnabled(); throw error; }
+    }
+    await usage.assertEnabled();
     console.log(JSON.stringify(report, null, 2));
   } else if (command === "status") {
     // Read-only, and reachable without ORBIT_SOCKET when the managed broker is running.
@@ -386,7 +450,20 @@ try {
     } else throw new OrbitError("INVALID_REQUEST", "Use serve, status, clean, doctor, applications, native-monitors, native-present JSON|@FILE|-, native-candidates WORKSPACE, session handoff JSON|@FILE|-, session list/stop/pause/resume/observe/journal, or act ID JSON|@FILE|-");
     // A document read from stdin or disk may have blocked after the first gate.
     await usage.assertEnabled();
-    const result = await call(socket, method, params);
+    // Explicit read-result delivery sampling, not cancellation or an atomic off/on
+    // fence. Observe may already have capture/cursor effects. All action receipts
+    // and embedded readback remain visible; unknown methods are not generalized.
+    const readDelivery = new Set(["session.observe", "session.presence", "session.list", "session.journal",
+      "applications.list", "native.monitors", "native.candidates", "doctor", "views.owner-status"]).has(method);
+    let result: unknown;
+    try { result = await call(socket, method, params); }
+    catch (error) {
+      if (readDelivery) await usage.assertEnabled();
+      throw error;
+    }
+    // Check BEFORE creating any image artifact. Off after this point cannot
+    // retroactively cancel a file write or stdout already handed to the caller.
+    if (readDelivery) await usage.assertEnabled();
     await writeCliOutput({ ok: true, result: observation?.mode === "file" ? await saveObservation(result, observation.path) : result });
   }
 } catch (error) {
