@@ -972,3 +972,26 @@ The first full verifier exposed an ordering assumption in a transport test after
 the coordinator change; the test now waits for the actual second write. The final
 verifier passed 977 tests, with 5 skipped and 0 failed, across 92 files in 83.87
 seconds. Strict TypeScript checking and the focused real CLI fixture also passed.
+
+## 28. Owner status and watcher usage checks
+
+The actual [CLI](../../src/cli.ts) now exposes the existing owner-only
+`views.owner-status` metadata as `--owner views status`, with exact arguments and
+the normal conversation usage check. The route does not issue a read grant, start
+a worker, or enable multi-view. An actual Linux launcher was exercised against a
+private fake peer, while the real broker authorization is separately covered by
+the existing private IPC tests. No original application or Windows machine was
+used for that evidence.
+
+The direct [status watcher](../../src/status.ts) now checks legacy usage before
+new list, presence and pending-version reads and before publishing output. It
+stops after observing `off` or invalid state; checks are point-in-time and cannot
+cancel already admitted broker work or serialize concurrent legacy writers. A
+real watcher child and private fake peer exercise those boundaries. On an
+unconfirmed fixture timeout, the child and fixture may remain rather than being
+signalled by an unproven PID or having resources deleted underneath them.
+
+The first full verifier identified an unregistered `OWNER_REQUIRED` diagnostic
+code; it was added to the diagnostic allowlist. The final verifier passed 991
+tests, with 5 skipped and 0 failed, across 94 files in 81.81 seconds. Strict
+TypeScript checking and focused IPC, owner CLI and watcher tests also passed.

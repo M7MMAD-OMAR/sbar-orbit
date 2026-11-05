@@ -87,6 +87,7 @@ async function actionDocument(argument: string | undefined): Promise<unknown> {
 // credential file next to the broker socket: it is for the person at their own terminal, and an agent
 // shelling out does not pass it, so the broker keeps seeing that agent as itself. --mine limits
 // `session stop` to the sessions this caller owns.
+const invocationArguments = process.argv.slice(2);
 const owner = process.argv.includes("--owner") || process.env.ORBIT_OWNER === "1";
 const mine = process.argv.includes("--mine");
 for (const flag of ["--owner", "--mine"]) while (process.argv.includes(flag)) process.argv.splice(process.argv.indexOf(flag), 1);
@@ -282,6 +283,15 @@ try {
     let params: unknown = {};
     if (command === "session" && verb === "create") throw new OrbitError("UNSUPPORTED", "Private session creation was removed. Use native-open with a registered applicationId and explicit workspace");
     if (command === "doctor") method = "doctor";
+    else if (command === "views") {
+      // Owner metadata deliberately does not inherit ORBIT_OWNER or permissive legacy flag removal.
+      if (!invocationArguments.includes("--owner"))
+        throw new OrbitError("OWNER_REQUIRED", "Use --owner views status for owner-only read-view metadata");
+      if (invocationArguments.length !== 3 || invocationArguments[0] !== "--owner"
+          || invocationArguments[1] !== "views" || invocationArguments[2] !== "status")
+        throw new OrbitError("INVALID_REQUEST", "Use exactly --owner views status without other arguments or flags");
+      method = "views.owner-status";
+    }
     else if (command === "profiles") throw new OrbitError("UNSUPPORTED", "Browser profile APIs are retired. Orbit is desktop-only.");
     else if (command === "applications") {
       if (arg !== undefined) throw new OrbitError("INVALID_REQUEST", "Use applications [QUERY]");

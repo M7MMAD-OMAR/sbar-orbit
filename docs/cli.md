@@ -95,6 +95,7 @@ sbar-orbit native-leases
 sbar-orbit native-leases release LEASE_ID
 sbar-orbit native-check
 sbar-orbit status
+sbar-orbit --owner views status
 sbar-orbit doctor
 sbar-orbit doctor --report
 sbar-orbit diagnostics
@@ -108,6 +109,13 @@ sbar-orbit usage on CONVERSATION_ID
 configuration notice, `config` edits supported panel settings. No command opens
 a browser viewer. Original browser registrations use native-open. The panel shows
 native status without a substitute desktop viewer.
+
+`--owner views status` requests only the broker's owner-authenticated read-view
+metadata. The literal `--owner` flag is required, with no additional arguments;
+`ORBIT_OWNER` alone does not select this route. The normal conversation usage
+preference still applies. An older broker can return `UNSUPPORTED`; the CLI does
+not invent a status. The current unavailable result is not permission to capture
+or evidence that multi-view is enabled.
 
 Existing application handoff is experimental. With the compatible plugin loaded,
 `session handoff JSON|@FILE|-`, `act ID JSON|@FILE|-`, and session pause, resume,
@@ -124,6 +132,12 @@ version stored `off` under a padded ID, Orbit does not migrate or merge that fil
 review the host's exact conversation ID and explicitly set `usage off` for the
 correct canonical ID before continuing. A canonical ID can otherwise have its own
 independent default-on state. This preference is cooperative, not authentication.
+Concurrent legacy `on` and `off` writers are not serialized: an older pending `on`
+can overwrite an acknowledged `off`. Stop or drain other writers before relying on
+the preference; it does not cancel work that was already admitted. The direct
+`status --watch` entry rechecks the preference before subsequent status reads and
+before output, then exits when it observes `off`. Those checks are not atomic with
+concurrent changes, and already admitted broker requests are not cancelled.
 `session list` shows your sessions in full and other agents' as summaries without ids.
 `session stop --mine` stops exactly your own sessions and prints what it stopped; `session stop ID`
 on someone else's session is refused with `SESSION_NOT_OWNED`. `--owner` (or `ORBIT_OWNER=1`)

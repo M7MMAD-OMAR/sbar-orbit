@@ -1,6 +1,7 @@
 import { call } from "./ipc";
 import { serviceSocketPath } from "./service";
 import { OrbitError } from "./errors";
+import { ConversationUsage } from "./conversation-usage";
 
 /**
  * One read-only view of everything the broker owns, for a desktop indicator, a bar module or a
@@ -44,17 +45,22 @@ async function pendingVersion() {
   } catch { return {}; }
 }
 
-export async function readStatus(socket: string): Promise<Status> {
+/** Optional trusted direct-entry guard; imported CLI/panel callers retain their existing behavior. */
+export async function readStatus(socket: string, check?: () => Promise<void>): Promise<Status> {
+  if (check) await check();
   const list = await call(socket, "session.list") as SessionStatus[];
+  if (check) await check(); // A completed list does not authorize later presence calls.
   const open = list.filter(session => !["closed", "closing"].includes(session.state));
   const sessions = await Promise.all(open.map(async session => {
     // Another agent's session arrives as a summary with no id, so there is no presence to read.
     if (!session.sessionId) return session;
+    if (check) await check(); // Outside the catch: usage refusal must propagate.
     try {
       const presence = await call(socket, "session.presence", { sessionId: session.sessionId }) as Partial<SessionStatus>;
       return { ...session, title: presence.title, location: presence.location, tabs: presence.tabs, pointer: presence.pointer ?? null };
     } catch { return session; }
   }));
+  if (check) await check(); // Before starting the pending-version disk reads below.
   const count = (backend: string) => sessions.filter(s => s.backend === backend).reduce((sum, s) => sum + (s.tabs?.length ?? 0), 0);
   return {
     socket, sampledAt: new Date().toISOString(),
@@ -80,18 +86,48 @@ export function summarize(status: Status): string {
 
 if (import.meta.main) {
   const watch = process.argv.includes("--watch");
-  let previous = "";
+  let previous = "", delay = 1000, stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let usage: ConversationUsage | undefined;
+  const stopUsage = (error: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
+    const code = error instanceof OrbitError && ["ORBIT_DISABLED", "INVALID_REQUEST", "USAGE_STATE_INVALID"].includes(error.code)
+      ? error.code : "USAGE_STATE_INVALID";
+    // Usage refusal is terminal, not a broker reachability failure. Never echo
+    // the conversation ID, state path, socket or an arbitrary exception string.
+    console.error(JSON.stringify({ ok: false, error: { code, message: "Status unavailable under conversation usage settings" } }));
+    process.exitCode = 1;
+  };
+  try { usage = new ConversationUsage(); } catch (error) { stopUsage(error); }
+  const enabled = async () => {
+    if (stopped) return false;
+    if (!usage) { stopUsage(undefined); return false; }
+    try { await usage.assertEnabled(); return !stopped; }
+    catch (error) { stopUsage(error); return false; }
+  };
   const once = async () => {
     let socket = "";
+    if (!await enabled()) return; // Before broker calls or pending-version reads.
     try {
       socket = socketFromEnvironment();
-      const status = await readStatus(socket);
+      const status = await readStatus(socket, async () => {
+        if (!await enabled()) throw new OrbitError("ORBIT_DISABLED", "Status unavailable");
+      });
+      // This suppresses delivery after off is observed, but cannot cancel list,
+      // concurrent presence calls or disk reads already admitted by readStatus.
+      // This is a point-in-time preference check, not an atomic off/on fence
+      // spanning the filesystem read and console output.
+      if (!await enabled()) return;
       delay = status.working ? 1000 : status.sessions.length ? 2000 : 3000;
       const line = JSON.stringify({ ...status, summary: summarize(status) });
       // Timestamps change every read; compare everything else so a quiet desktop prints nothing.
       const shape = JSON.stringify({ ...status, sampledAt: undefined, summary: summarize(status) });
       if (shape !== previous) { console.log(line); previous = shape; }
     } catch (error) {
+      // Off during a failing broker read must not become "Orbit not running".
+      if (!await enabled()) return;
       const line = JSON.stringify({ socket, reachable: false, summary: "Orbit not running",
         code: error instanceof OrbitError ? error.code : "BROKER_UNAVAILABLE" });
       if (line !== previous) { console.log(line); previous = line; }
@@ -99,10 +135,11 @@ if (import.meta.main) {
       if (!watch) process.exitCode = 1;
     }
   };
-  // One read at a time: a slow broker must not accumulate overlapping reads. The cadence is the
-  // panel's: a second while an agent is acting, slower as there is less to see, so an idle desktop
-  // costs one list call every three seconds rather than one a second.
-  let delay = 1000;
-  const loop = async () => { await once(); if (watch) setTimeout(loop, delay); };
+  // One admitted poll at a time. A terminal usage refusal never schedules another.
+  const loop = async () => {
+    timer = undefined;
+    await once();
+    if (watch && !stopped) timer = setTimeout(() => { void loop(); }, delay);
+  };
   await loop();
 }
