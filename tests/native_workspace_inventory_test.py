@@ -61,6 +61,37 @@ class WorkspaceInventoryTests(unittest.TestCase):
     def test_zero_and_negative_special_workspaces_never_become_numbered_choices(self):
         self.assertEqual(workspace_inventory(Transport([client(0), client(-1), client(-99), client(5)])), {"occupied": [5], "shown": [1]})
 
+    def test_explicit_special_workspace_object_without_numeric_id_is_not_numbered_occupancy(self):
+        special = {"address": "special:special", "type": "special", "name": "special:special"}
+        transport = Transport([{"workspace": special}, client(3), client(7)], [monitor(1)])
+        self.assertEqual(workspace_inventory(transport), {"occupied": [3, 7], "shown": [1]})
+        self.assertEqual(special, {"address": "special:special", "type": "special", "name": "special:special"})
+        self.assertEqual(transport.calls, ["j/clients", "j/monitors"])
+
+    def test_missing_numeric_id_requires_consistent_explicit_special_identity(self):
+        malformed = (
+            {"address": "special:special", "name": "special:special"},
+            {"address": "special:special", "type": "regular", "name": "special:special"},
+            {"address": "4", "type": "special", "name": "special:special"},
+            {"address": "special:special", "type": "special", "name": "4"},
+            {"address": "special:special", "type": "special"},
+            {"type": "special", "name": "special:special"},
+            {"address": "special:", "type": "special", "name": "special:"},
+        )
+        for workspace in malformed:
+            with self.subTest(workspace=workspace):
+                self.fixed(Transport([{"workspace": workspace}]))
+
+    def test_special_workspace_marker_cannot_hide_a_positive_numbered_id(self):
+        for number in (1, 4, 2147483647):
+            with self.subTest(number=number):
+                self.fixed(Transport([{"workspace": {"id": number,
+                    "address": "special:special", "type": "special", "name": "special:special"}}]))
+
+    def test_explicit_special_workspace_without_numeric_id_cannot_be_a_shown_numbered_workspace(self):
+        special = {"address": "special:special", "type": "special", "name": "special:special"}
+        self.fixed(Transport([], [{"activeWorkspace": special}]))
+
     def test_maximum_numbered_id_is_preserved_without_rounding(self):
         self.assertEqual(workspace_inventory(Transport([client(2147483647)], [monitor(2147483647)])),
                          {"occupied": [2147483647], "shown": [2147483647]})

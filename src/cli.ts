@@ -189,7 +189,7 @@ for (const flag of ["--owner", "--mine"]) while (process.argv.includes(flag)) pr
 configureCaller({ kind: "cli", owner });
 const [command, verb, arg, fourth] = process.argv.slice(2);
 try {
-  const usage = new ConversationUsage(command === "usage" ? arg ?? process.env.ORBIT_CONVERSATION_ID : undefined);
+  const usage = new ConversationUsage(command === "usage" ? arg : undefined);
   if (command !== "usage" && command !== "serve" && command !== "native-settings" && command !== "native-prepare" && command !== "native-plugin" && command !== "native-refresh" && command !== "native-check" && command !== "native-leases") await usage.assertEnabled();
   if (command === "usage") {
     if (!usage.conversationId) throw new OrbitError("CONVERSATION_REQUIRED", "Set ORBIT_CONVERSATION_ID for this conversation, or use usage on|off|status ID");

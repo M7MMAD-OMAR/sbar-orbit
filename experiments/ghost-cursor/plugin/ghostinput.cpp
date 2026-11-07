@@ -842,8 +842,6 @@ struct SLeasedWindow {
     bool createdWhileLeased = false;
     std::optional<bool> noInitialFocus;
     std::string originalWorkspace;
-    std::optional<bool> originalFloating, originalCenter;
-    std::optional<Math::SExpressionVec2> originalSize;
 };
 // BEGIN lease-owner
 // The Orbit worker that claimed a lease names itself as pid:starttime. A lease whose
@@ -906,7 +904,6 @@ struct SApplicationLease {
     std::set<uint64_t> baselineWindows;
     std::string homeWorkspace;
     std::string homeWorkspaceRule;
-    std::optional<Math::SExpressionVec2> newWindowSize;
     std::string id;
     lease_owner::Owner owner;
     std::chrono::steady_clock::time_point claimedAt = std::chrono::steady_clock::now();
@@ -954,8 +951,7 @@ static void retainApplicationWindow(SApplicationLease& lease, PHLWINDOW window, 
     lease.windows.emplace(window->metadata().stableID(), SLeasedWindow{window,
         saved(window->m_ruleApplicator->renderUnfocused()), saved(window->m_ruleApplicator->focusOnActivate()),
         std::ranges::find(g_pHyprRenderer->m_renderUnfocused, window) != g_pHyprRenderer->m_renderUnfocused.end(),
-        createdWhileLeased, window->m_ruleApplicator->static_.noInitialFocus, window->m_ruleApplicator->static_.workspace,
-        window->m_ruleApplicator->static_.floating, window->m_ruleApplicator->static_.center, window->m_ruleApplicator->static_.size});
+        createdWhileLeased, window->m_ruleApplicator->static_.noInitialFocus, window->m_ruleApplicator->static_.workspace});
 }
 static void applyApplicationWindow(PHLWINDOW window) {
     using namespace Desktop::Types;
@@ -1238,13 +1234,6 @@ static void restoreClientSelectionGuards(Guards& guards, wl_client* client) {
     }
 }
 
-static void restoreApplicationGeometry(Desktop::Rule::CWindowRuleApplicator* rules, const SLeasedWindow& retained) {
-    if (!retained.createdWhileLeased) return;
-    rules->static_.floating = retained.originalFloating;
-    rules->static_.center = retained.originalCenter;
-    rules->static_.size = retained.originalSize;
-}
-
 static void restoreRelatedWindows(SApplicationLease& lease, wl_client* selectedClient = nullptr,
                                   const SApplicationLease* selection = nullptr) {
     for (auto it = lease.relatedWindows.begin(); it != lease.relatedWindows.end();) {
@@ -1255,8 +1244,7 @@ static void restoreRelatedWindows(SApplicationLease& lease, wl_client* selectedC
         if (window && window->metadata().stableID() == it->first) {
             auto rules = window->m_ruleApplicator.get();
             rules->static_.noInitialFocus = it->second.noInitialFocus;
-            rules->static_.workspace = it->second.originalWorkspace;
-            restoreApplicationGeometry(rules, it->second);
+            if (!window->mapped()) rules->static_.workspace = it->second.originalWorkspace;
         }
         it = lease.relatedWindows.erase(it);
     }
@@ -1340,8 +1328,8 @@ static void handbackApplication(const std::string& id) {
             std::erase_if(g_pHyprRenderer->m_renderUnfocused, [&](const auto& entry) { return entry.lock() == window; });
         window->m_ruleApplicator->focusOnActivate().matchOptional(retained.focusOnActivate, PRIORITY_SET_PROP);
         window->m_ruleApplicator->static_.noInitialFocus = retained.noInitialFocus;
-        window->m_ruleApplicator->static_.workspace = std::move(retained.originalWorkspace);
-        restoreApplicationGeometry(window->m_ruleApplicator.get(), retained);
+        if (retained.createdWhileLeased && !window->mapped())
+            window->m_ruleApplicator->static_.workspace = std::move(retained.originalWorkspace);
     }
     for (auto awake = awakeWindows.begin(); awake != awakeWindows.end();) {
         const auto marker = awake->first.rfind("@lease-");
@@ -1468,10 +1456,6 @@ static std::string claimApplication(const std::string& address, const std::strin
         retained->baselineWindows.insert(window->metadata().stableID());
     retained->homeWorkspace = selected->m_workspace->addressableName();
     retained->homeWorkspaceRule = retained->homeWorkspace + " silent";
-    const auto selectedSize = selected->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
-    if (selected->isFloating() && std::isfinite(selectedSize.x) && std::isfinite(selectedSize.y) &&
-        selectedSize.x >= 320 && selectedSize.x <= 3840 && selectedSize.y >= 240 && selectedSize.y <= 2160)
-        retained->newWindowSize = Math::SExpressionVec2{std::to_string(std::lround(selectedSize.x)), std::to_string(std::lround(selectedSize.y))};
     for (const auto& window : Desktop::windowState()->windows()) {
         auto resource = window->resource();
         if (window->mapped() && resource && resource->client() == client && applicationWindowAllowed(*retained, window)) {
@@ -1639,13 +1623,6 @@ static void privateSimulatedMotion(CInputManager* manager) {
     reinterpret_cast<Original>(simulatedMotionHook->m_original)(manager);
 }
 
-static void applyNewApplicationGeometry(Desktop::Rule::CWindowRuleApplicator* rules, const SApplicationLease& lease) {
-    if (!lease.newWindowSize) return;
-    rules->static_.floating = true;
-    rules->static_.center = true;
-    rules->static_.size = lease.newWindowSize;
-}
-
 static SApplicationLease* relatedApplicationLease(PHLWINDOW window) {
     std::set<uint64_t> visited;
     auto parent = window ? window->backend().parent() : PHLWINDOW{};
@@ -1653,7 +1630,7 @@ static SApplicationLease* relatedApplicationLease(PHLWINDOW window) {
         if (!visited.insert(parent->metadata().stableID()).second) return nullptr;
         auto surface = parent->resource();
         auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
-        if (lease && !lease->paused && parent->mapped() && parent->m_workspace &&
+        if (lease && !lease->paused && !ownerInputActive(*lease) && parent->mapped() && parent->m_workspace &&
             parent->m_workspace->addressableName() == lease->homeWorkspace && lease->windows.contains(parent->metadata().stableID()) &&
             !lease->baselineWindows.contains(window->metadata().stableID())) return lease;
     }
@@ -1662,7 +1639,7 @@ static SApplicationLease* relatedApplicationLease(PHLWINDOW window) {
 
 static void routeRelatedApplicationWindow(Desktop::Rule::CWindowRuleApplicator* rules, PHLWINDOW window) {
     auto lease = relatedApplicationLease(window);
-    if (!lease) return;
+    if (!lease || window->mapped()) return;
     std::erase_if(lease->relatedWindows, [](const auto& entry) { return !entry.second.window.lock(); });
     if (!lease->relatedWindows.contains(window->metadata().stableID())) {
         if (lease->relatedWindows.size() >= 64) return;
@@ -1670,39 +1647,38 @@ static void routeRelatedApplicationWindow(Desktop::Rule::CWindowRuleApplicator* 
         saved.window = window; saved.createdWhileLeased = true;
         saved.noInitialFocus = rules->static_.noInitialFocus;
         saved.originalWorkspace = rules->static_.workspace;
-        saved.originalFloating = rules->static_.floating; saved.originalCenter = rules->static_.center;
-        saved.originalSize = rules->static_.size;
         lease->relatedWindows.emplace(window->metadata().stableID(), std::move(saved));
     }
     rules->static_.workspace = lease->homeWorkspaceRule;
     rules->static_.noInitialFocus = true;
-    applyNewApplicationGeometry(rules, *lease);
 }
 
 static void enforceApplicationRules(Desktop::Rule::CWindowRuleApplicator* rules) {
     auto window = rules->m_window.lock();
     auto surface = window ? window->resource() : SP<CWLSurfaceResource>{};
     auto lease = surface ? applicationLeaseForClient(surface->client()) : nullptr;
+    // Owner takeover also suspends rule mutations for windows the owner opens.
+    if (lease && (lease->paused || ownerInputActive(*lease))) return;
     if (!lease || !applicationWindowAllowed(*lease, window)) { routeRelatedApplicationWindow(rules, window); return; }
     const auto existing = lease->windows.find(window->metadata().stableID());
     const bool newlyObserved = existing == lease->windows.end();
-    const bool clampWorkspace = newlyObserved || existing->second.createdWhileLeased;
-    const auto originalFloating = rules->static_.floating, originalCenter = rules->static_.center;
-    const auto originalSize = rules->static_.size;
+    // Only verified children receive initial routing. An unparented sibling
+    // can belong to the owner even after the physical-input idle timer expires.
+    const bool initialPlacement = !window->mapped() && relatedApplicationLease(window) == lease;
+    const bool newlyCreated = newlyObserved && initialPlacement;
+    const bool clampWorkspace = initialPlacement && (newlyCreated || (!newlyObserved && existing->second.createdWhileLeased));
     std::string originalWorkspace;
-    if (newlyObserved) originalWorkspace = std::move(rules->static_.workspace);
+    if (newlyObserved) originalWorkspace = rules->static_.workspace;
     try {
-        // Place new same-client windows before bounded enrollment can refuse them.
+        // Place verified new same-client children before bounded enrollment can refuse them.
         // Existing windows keep their original workspace throughout the lease.
         if (clampWorkspace) {
             rules->static_.workspace = lease->homeWorkspaceRule;
-            applyNewApplicationGeometry(rules, *lease);
         }
-        retainApplicationWindow(*lease, window, true);
+        retainApplicationWindow(*lease, window, newlyCreated);
         if (newlyObserved) {
             auto& saved = lease->windows.at(window->metadata().stableID());
             saved.originalWorkspace = std::move(originalWorkspace);
-            saved.originalFloating = originalFloating; saved.originalCenter = originalCenter; saved.originalSize = originalSize;
         }
         applyApplicationWindow(window);
     } catch (const std::exception& error) { recordApplicationFailure(surface->client(), error.what()); }

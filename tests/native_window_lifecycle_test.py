@@ -1,4 +1,4 @@
-"""Compile actual new-window geometry and handback operations."""
+"""Compile actual window routing and geometry preservation operations."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -132,25 +132,39 @@ struct W{uint64_t m_stableID;bool m_isMapped=true;std::shared_ptr<Workspace>m_wo
  struct Meta{uint64_t v;uint64_t stableID()const{return v;}};struct Back{PHLWINDOW p;PHLWINDOW parent()const{return p;}bool isX11()const{return false;}};
  Meta metadata()const{return Meta{m_stableID};}Back backend()const{return Back{ancestor};}bool mapped()const{return m_isMapped;}};
 struct SLeasedWindow{std::weak_ptr<W>window;bool createdWhileLeased=false;std::optional<bool>noInitialFocus,originalFloating,originalCenter;std::optional<Math::SExpressionVec2>originalSize;std::string originalWorkspace;};
-struct SApplicationLease{bool paused=false,windowBound=false;std::weak_ptr<W>windowRoot;std::string homeWorkspace="2",homeWorkspaceRule="2 silent";std::optional<Math::SExpressionVec2>newWindowSize=Math::SExpressionVec2{"900","650"};std::map<uint64_t,SLeasedWindow>windows,relatedWindows;std::set<uint64_t>baselineWindows;};
+struct SApplicationLease{bool paused=false,ownerInput=false,windowBound=false;std::weak_ptr<W>windowRoot;std::string homeWorkspace="2",homeWorkspaceRule="2 silent";std::optional<Math::SExpressionVec2>newWindowSize=Math::SExpressionVec2{"900","650"};std::map<uint64_t,SLeasedWindow>windows,relatedWindows;std::set<uint64_t>baselineWindows;};
 static SApplicationLease lease;
+static bool ownerInputActive(const SApplicationLease& target){return target.ownerInput;}
 static SApplicationLease* applicationLeaseForClient(void* client){return client==reinterpret_cast<void*>(1)?&lease:nullptr;}
 static int enrollments=0,configurations=0;
-static void retainApplicationWindow(SApplicationLease& target,PHLWINDOW window,bool){++enrollments;target.windows[window->m_stableID].window=window;}
+static void retainApplicationWindow(SApplicationLease& target,PHLWINDOW window,bool created){if(target.windows.contains(window->m_stableID))return;++enrollments;auto&saved=target.windows[window->m_stableID];saved.window=window;saved.createdWhileLeased=created;}
 static void applyApplicationWindow(PHLWINDOW){++configurations;}
 static void recordApplicationFailure(void*,const char*){}
 '''
         main=r'''
 int main(){
  auto parent=std::make_shared<W>();parent->m_stableID=1;parent->m_workspace=std::make_shared<Workspace>("2");parent->surface=std::make_shared<Surface>(reinterpret_cast<void*>(1));lease.windows[1]={};
- auto dialog=std::make_shared<W>();dialog->m_stableID=2;dialog->ancestor=parent;dialog->surface=std::make_shared<Surface>(reinterpret_cast<void*>(2));
+ auto dialog=std::make_shared<W>();dialog->m_stableID=2;dialog->m_isMapped=false;dialog->ancestor=parent;dialog->surface=std::make_shared<Surface>(reinterpret_cast<void*>(2));
  Desktop::Rule::CWindowRuleApplicator rules;rules.m_window=dialog;rules.static_.workspace="1";rules.static_.floating=false;
+ rules.static_.center=false;rules.static_.size=Math::SExpressionVec2{"420","310"};rules.static_.noInitialFocus=false;
+ auto sameClient=std::make_shared<W>();sameClient->m_stableID=41;sameClient->m_isMapped=false;sameClient->surface=parent->surface;
+ // Owner-created windows and portal dialogs stay untouched throughout pause or physical input.
+ for(int mode=0;mode<2;++mode){
+  lease.paused=mode==0;lease.ownerInput=mode==1;
+  for(auto target:{dialog,sameClient}){
+   rules.m_window=target;enforceApplicationRules(&rules);
+   if(rules.static_.workspace!="1"||rules.static_.floating!=false||rules.static_.center!=false||rules.static_.size!=Math::SExpressionVec2{"420","310"}||rules.static_.noInitialFocus!=false)return 17;
+   if(lease.windows.size()!=1||!lease.relatedWindows.empty()||enrollments||configurations)return 18;
+  }
+ }
+ lease.paused=false;lease.ownerInput=false;rules.m_window=dialog;
  enforceApplicationRules(&rules);
- if(rules.static_.workspace!="2 silent"||rules.static_.floating!=true||rules.static_.noInitialFocus!=true)return 1;
+ if(rules.static_.workspace!="2 silent"||rules.static_.floating!=false||rules.static_.noInitialFocus!=true)return 1;
  if(lease.windows.size()!=1||lease.windows.contains(2)||lease.relatedWindows.size()!=1||enrollments||configurations)return 2;
- if(lease.relatedWindows.at(2).originalWorkspace!="1"||lease.relatedWindows.at(2).originalFloating!=false)return 3;
- rules.static_.workspace="2 silent";enforceApplicationRules(&rules);
- if(lease.relatedWindows.at(2).originalWorkspace!="1")return 4;
+ if(lease.relatedWindows.at(2).originalWorkspace!="1")return 3;
+ dialog->m_isMapped=true;rules.static_.workspace="5";rules.static_.floating=false;rules.static_.center=false;
+ rules.static_.size=Math::SExpressionVec2{"420","310"};enforceApplicationRules(&rules);
+ if(lease.relatedWindows.at(2).originalWorkspace!="1"||rules.static_.workspace!="5"||rules.static_.floating!=false||rules.static_.center!=false||rules.static_.size!=Math::SExpressionVec2{"420","310"})return 4;
  lease.paused=true;if(relatedApplicationLease(dialog))return 5;lease.paused=false;
  lease.baselineWindows.insert(2);if(relatedApplicationLease(dialog))return 6;lease.baselineWindows.clear();
  parent->m_workspace->m_name="3";if(relatedApplicationLease(dialog))return 7;parent->m_workspace->m_name="2";
@@ -165,22 +179,39 @@ int main(){
  enforceApplicationRules(&rules);
  if(rules.static_.workspace!="4"||rules.static_.noInitialFocus!=false||rules.static_.floating!=false||lease.windows.contains(11)||enrollments||configurations)return 11;
  // The selected dialog's own transient children still belong to its family.
- ownerDialog->ancestor=parent;enforceApplicationRules(&rules);
- if(rules.static_.workspace!="2 silent"||!lease.windows.contains(11)||enrollments!=1||configurations!=1)return 12;
+ ownerDialog->ancestor=parent;ownerDialog->m_isMapped=false;enforceApplicationRules(&rules);
+ if(rules.static_.workspace!="2 silent"||!lease.windows.contains(11)||enrollments!=1||configurations!=1||rules.static_.floating!=false)return 12;
+ // Rechecking a mapped new sibling preserves later toolkit and owner geometry/workspace.
+ ownerDialog->m_isMapped=true;rules.static_.workspace="special:owner";rules.static_.floating=false;
+ rules.static_.center=false;rules.static_.size=Math::SExpressionVec2{"510","390"};enforceApplicationRules(&rules);
+ if(rules.static_.workspace!="special:owner"||rules.static_.floating!=false||rules.static_.center!=false||rules.static_.size!=Math::SExpressionVec2{"510","390"})return 14;
+ // A late-observed already mapped sibling is enrolled without changing its workspace rule.
+ auto late=std::make_shared<W>();late->m_stableID=31;late->surface=parent->surface;late->ancestor=parent;
+ rules.m_window=late;rules.static_.workspace="special:late";enforceApplicationRules(&rules);
+ if(rules.static_.workspace!="special:late"||lease.windows.at(31).createdWhileLeased)return 15;
  // Taking one dialog must not restore another parent's placement in that service.
  auto otherDialog=std::make_shared<W>();otherDialog->m_stableID=21;otherDialog->surface=dialog->surface;
  otherDialog->m_ruleApplicator->static_.workspace="6 silent";
  SLeasedWindow saved;saved.window=otherDialog;saved.createdWhileLeased=true;saved.originalWorkspace="4";
  lease.relatedWindows[21]=saved;
  SApplicationLease selected;selected.windowBound=true;selected.windowRoot=dialog;
+ dialog->m_ruleApplicator->static_.workspace="special:owner";
+ dialog->m_ruleApplicator->static_.floating=false;dialog->m_ruleApplicator->static_.size=Math::SExpressionVec2{"360","270"};
  restoreRelatedWindows(lease,reinterpret_cast<void*>(2),&selected);
  if(lease.relatedWindows.contains(2)||!lease.relatedWindows.contains(21)||otherDialog->m_ruleApplicator->static_.workspace!="6 silent")return 13;
+ if(dialog->m_ruleApplicator->static_.workspace!="special:owner"||dialog->m_ruleApplicator->static_.floating!=false||dialog->m_ruleApplicator->static_.size!=Math::SExpressionVec2{"360","270"})return 16;
+ // A delayed owner-created top-level sibling has no causal parent after idle.
+ lease.windowBound=false;lease.paused=false;lease.ownerInput=false;
+ rules.m_window=sameClient;rules.static_.workspace="special:owner-idle";
+ rules.static_.floating=false;rules.static_.center=false;rules.static_.size=Math::SExpressionVec2{"470","330"};
+ enforceApplicationRules(&rules);
+ if(rules.static_.workspace!="special:owner-idle"||rules.static_.floating!=false||rules.static_.center!=false||rules.static_.size!=Math::SExpressionVec2{"470","330"}||lease.windows.at(41).createdWhileLeased)return 19;
 }
 '''
         related=(definition(source,"static SApplicationLease* relatedApplicationLease(")+definition(source,"static void routeRelatedApplicationWindow(")) if "static SApplicationLease* relatedApplicationLease(" in source else "static SApplicationLease* relatedApplicationLease(PHLWINDOW){return nullptr;}"
         allowed=definition(source,"static bool applicationWindowAllowed(") if "static bool applicationWindowAllowed(" in source else ""
-        restoration=definition(source,"static void restoreApplicationGeometry(")+definition(source,"static void restoreRelatedWindows(")
-        self.compile_probe(fixture+allowed+restoration+definition(source,"static void applyNewApplicationGeometry(")+related+definition(source,"static void enforceApplicationRules(")+main)
+        restoration=(definition(source,"static void restoreApplicationGeometry(") if "static void restoreApplicationGeometry(" in source else "")+definition(source,"static void restoreRelatedWindows(")
+        self.compile_probe(fixture+allowed+restoration+(definition(source,"static void applyNewApplicationGeometry(") if "static void applyNewApplicationGeometry(" in source else "")+related+definition(source,"static void enforceApplicationRules(")+main)
 
     def compile_probe(self, source):
         with tempfile.TemporaryDirectory(prefix="orbit-window-lifecycle-")as directory:
@@ -189,33 +220,19 @@ int main(){
             subprocess.run(["g++","-std=c++23",str(cpp),"-o",str(binary)],check=True,timeout=30)
             subprocess.run([str(binary)],check=True,timeout=5)
 
-    def test_new_windows_inherit_bounded_floating_geometry_and_handback_restores_rules(self):
+    def test_lease_never_infers_or_restores_geometry_from_selected_parent(self):
         source=(Path(__file__).resolve().parents[1]/"experiments/ghost-cursor/plugin/ghostinput.cpp").read_text()
-        fixture=r'''
-#include <optional>
-#include <string>
-namespace Math{struct SExpressionVec2{std::string x,y;bool operator==(const SExpressionVec2&)const=default;};}
-namespace Desktop::Rule{struct CWindowRuleApplicator{struct{std::optional<bool>floating,center;std::optional<Math::SExpressionVec2>size;}static_;};}
-struct SLeasedWindow{bool createdWhileLeased;std::optional<bool>originalFloating,originalCenter;std::optional<Math::SExpressionVec2>originalSize;};
-struct SApplicationLease{std::optional<Math::SExpressionVec2>newWindowSize;};
-'''
-        main=r'''
-int main(){Desktop::Rule::CWindowRuleApplicator rules;rules.static_={false,false,Math::SExpressionVec2{"1200","900"}};
- SLeasedWindow saved{true,rules.static_.floating,rules.static_.center,rules.static_.size};
- SApplicationLease lease{Math::SExpressionVec2{"1000","720"}};applyNewApplicationGeometry(&rules,lease);
- if(rules.static_.floating!=true||rules.static_.center!=true||rules.static_.size!=lease.newWindowSize)return 1;
- restoreApplicationGeometry(&rules,saved);
- if(rules.static_.floating!=false||rules.static_.center!=false||rules.static_.size!=saved.originalSize)return 2;
- lease.newWindowSize.reset();applyNewApplicationGeometry(&rules,lease);if(rules.static_.floating!=false)return 3;
- saved.createdWhileLeased=false;rules.static_.floating=true;restoreApplicationGeometry(&rules,saved);
- if(rules.static_.floating!=true)return 4;
-}
-'''
-        with tempfile.TemporaryDirectory(prefix="orbit-window-lifecycle-")as directory:
-            root=Path(directory);cpp=root/"probe.cpp";binary=root/"probe"
-            cpp.write_text(fixture+definition(source,"static void applyNewApplicationGeometry(")+definition(source,"static void restoreApplicationGeometry(")+main)
-            subprocess.run(["g++","-std=c++23",str(cpp),"-o",str(binary)],check=True,timeout=30)
-            subprocess.run([str(binary)],check=True,timeout=5)
+        for signature in ("static std::string claimApplication(", "static void handbackApplication(",
+                          "static void restoreRelatedWindows(", "static void enforceApplicationRules(",
+                          "static void routeRelatedApplicationWindow("):
+            body=definition(source,signature)
+            self.assertNotIn("newWindowSize",body)
+            self.assertNotIn("applyNewApplicationGeometry",body)
+            self.assertNotIn("restoreApplicationGeometry",body)
+        self.assertNotIn("newWindowSize",source)
+        self.assertNotIn("originalFloating",source)
+        self.assertNotIn("originalCenter",source)
+        self.assertNotIn("originalSize",source)
 
 
 if __name__=="__main__":unittest.main()

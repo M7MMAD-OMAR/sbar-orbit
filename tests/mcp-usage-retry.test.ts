@@ -239,6 +239,6 @@ test("both adapter invoke implementations statically bind the seventh usage guar
     const end = source.indexOf("server.registerTool", start);
     expect(start).toBeGreaterThanOrEqual(0); expect(end).toBeGreaterThan(start);
     const invoke = source.slice(start, end);
-    expect(invoke).toContain("undefined, undefined, () => usage.assertEnabled()");
+    expect(invoke).toContain("undefined, undefined, scope.assertEnabled");
   }
 });

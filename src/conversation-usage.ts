@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { OrbitError } from "./errors";
 import { stateDirectory } from "./service";
-import { isCanonicalConversationId } from "./caller";
+import { hostConversationId, isCanonicalConversationId } from "./caller";
 
 export type UsageMode = "on" | "off";
 
@@ -11,7 +11,7 @@ export type UsageMode = "on" | "off";
 export class ConversationUsage {
   private enabled = true;
   private readonly path?: string;
-  constructor(readonly conversationId = process.env.ORBIT_CONVERSATION_ID,
+  constructor(readonly conversationId = hostConversationId(),
     private readonly root = process.env.ORBIT_USAGE_DIR ?? join(stateDirectory(), "usage")) {
     if (conversationId !== undefined) {
       if (!isCanonicalConversationId(conversationId))

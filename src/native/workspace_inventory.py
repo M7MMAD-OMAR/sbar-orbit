@@ -48,7 +48,21 @@ def workspace_inventory(transport, *, exclude=None):
         for client in clients:
             if type(client) is not dict or type(client.get("workspace")) is not dict:
                 raise ValueError("Invalid client workspace")
-            number = client["workspace"].get("id")
+            workspace = client["workspace"]
+            number = workspace.get("id")
+            # New Hyprland replies identify named special workspaces by address
+            # and type, without a numeric id. They occupy no numbered slot.
+            address, name = workspace.get("address"), workspace.get("name")
+            special = (workspace.get("type") == "special"
+                       or type(address) is str and address.startswith("special:")
+                       or type(name) is str and name.startswith("special:"))
+            if special:
+                if (workspace.get("type") != "special" or type(address) is not str
+                        or not address.startswith("special:") or not 8 < len(address) <= 256
+                        or name != address or any(ord(char) < 32 or ord(char) == 127 for char in address)
+                        or "id" in workspace and (type(number) is not int or number > 0)):
+                    raise ValueError("Inconsistent special workspace")
+                continue
             if type(number) is not int or number > _MAX:
                 raise ValueError("Invalid client workspace ID")
             # Only an exact already-attributed new candidate may be excluded

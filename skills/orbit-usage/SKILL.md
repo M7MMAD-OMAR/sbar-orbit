@@ -5,6 +5,49 @@ description: Control original installed desktop applications on a visible number
 
 # Sbar Orbit
 
+## Conversation identity
+
+Pass the actual host thread ID as `conversationId` on every MCP tool call when
+`orbit_usage` reports `scope: "connection"`. Keep the same ID for discovery,
+opening, handoff, actions, observation, cleanup, retries and reconnects. Do not
+bind a shared MCP process or global host configuration to one conversation.
+Do not invent an ID or change it to bypass conversation off.
+
+CLI and adapters resolve the invocation environment in this order:
+`ORBIT_CONVERSATION_ID`, `T3CODE_THREAD_ID`, `CODEX_THREAD_ID`,
+`HERMES_SESSION_ID`. An explicit invalid value refuses; it does not fall through.
+An MCP argument cannot override an existing fixed conversation binding.
+
+After an adapter update, an already loaded MCP process retains its old schemas
+until the host reloads that connection. If `conversationId` is absent from its
+tool schema, use the installed CLI with the actual host ID in
+`ORBIT_CONVERSATION_ID` for all operations in the task. Check that conversation's
+usage status in the existing MCP connection first, then check CLI usage for the actual conversation. Honor off in either scope. Never re-enable it merely to repair a tool.
+Do not restart a shared broker or discard another task's work to reload tools.
+
+`CONVERSATION_REQUIRED` from an updated MCP adapter's opening preflight means
+that attempt did not launch an application. Supply the actual identity and keep
+the same requestId. An older error without delivery metadata proves no such
+guarantee; inspect candidates before any potentially repeated launch.
+
+## Owner desktop preservation
+
+Background work and screenshots must never switch the owner's workspace, focus or
+activate a window, present an agent workspace, or warp the physical pointer. Use
+background native observation directly. Do not make a window visible just to
+capture it. Desktop navigation is an explicit owner action: clicking a session
+card targets that session's exact retained window. Never reproduce that action
+automatically from a poll, refresh, reconnect or model tool.
+
+## The loop, in five lines
+
+1. `orbit_applications`, then `orbit_open` (omit `workspace`; Orbit picks an empty, undisplayed workspace from 1 to 10). Never open on the owner's current workspace or switch them to yours.
+2. `orbit_handoff` on the new window, then `orbit_act` with `actions` and `capture` to act and see the result in one call.
+3. Verify by what the screen or `orbit_observe format:"text"` shows, not by an ok reply.
+4. Finish: `orbit_act close-window` for windows you opened, then `orbit_stop` with `scope: "mine"`. Every session you open must be stopped, and a file chooser or dialog is the same session, not a new one.
+5. Never open a second session for the same application; reuse yours.
+
+
 Use the [current contract](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/desktop-only.md)
 and [acceptance index](https://github.com/M7MMAD-OMAR/sbar-orbit/blob/main/docs/acceptance.md)
 for operational guidance. Dated incident, compliance and experiment reports are
@@ -27,7 +70,7 @@ Launch rules request silent placement, no initial focus and disabled focus-on-ac
 
 Use `orbit_handoff_candidates` and `orbit_handoff` to select exact address and stableId. Native control requires the owner's prepared plugin matching current source and the running Hyprland ABI. Historical incident reports are diagnostic evidence, not permanent policy. Ordinary handoff covers the Wayland client. A cross-client parented dialog reports selected-dialog-family enrollment: only that dialog and its transient descendants become input targets, preserving unrelated windows of the shared portal service. Clipboard and seat protocols remain client-wide. One active lease is allowed per client; hand a portal back promptly when its dialog closes. Handoff uses the ordinary shared system clipboard and PRIMARY selection. Active background clients receive later owner copies and highlights as well as publishing their own copies. Pause stops new lease broadcasts and the unfocused selection-write exception, but does not revoke OS clipboard rights or previously offered data. Owner focus, hover and workspace changes never block a claim or end a lease, so the owner can watch the agent work. Real key, button or wheel input to the client pauses agent input until about two seconds of owner idle, then it resumes by itself; the transport retries a paused refusal for a few seconds. This applies to ordinary applications and shared portal clients. Preserve owner focus and physical pointer coordinates; never move owner focus to make a claim succeed. Copy and paste can change the shared clipboard and PRIMARY selection like normal user actions. Preserve other owner applications and focus. After the compositor restarts, `sbar-orbit native-refresh` renews the binding and keeps the owner's mode; it runs by itself at each desktop start. Work on a numbered workspace away from the owner's current pointer, then inspect candidates instead of replaying uncertain input after a takeover. XWayland and other compositor/platform adapters need their own implementation and measurement.
 
-Call `orbit_monitors` to read connected output names, displayed workspaces and focus without owner window titles. Opening does not present a workspace automatically. After the workspace exists, select an explicit unfocused output from that result and call `orbit_present` with a stable requestId, workspace and monitor. Example parameters, only if that output is connected and unfocused:
+Call `orbit_monitors` to read connected output names, displayed workspaces and focus without owner window titles. Opening does not present a workspace automatically. Do not call `orbit_present` from background agent work or to take a screenshot: agent presentation is refused. Only an explicit owner interface may present a workspace; the owner can click a session card to navigate to its window. The following presentation parameters are for a deliberate owner operation only, not an automatic next step:
 
 ```json
 {"requestId":"show-calculator-workspace-2","workspace":2,"monitor":"HDMI-A-5"}
@@ -35,7 +78,7 @@ Call `orbit_monitors` to read connected output names, displayed workspaces and f
 
 CLI equivalents are `sbar-orbit native-monitors` and `sbar-orbit native-present JSON|@FILE|-`. Presentation must not focus the agent workspace and then restore owner focus. It preserves owner focus and physical pointer within the compositor presentation call, without cursor warps or global focus-setting changes. Never choose an output automatically or replace the owner's focused monitor. With no unfocused output, leave the owner on their current workspace. A numbered workspace and compositor acknowledgement are not proof of physical visibility. Check the displayed monitor/workspace and a full desktop capture. Reuse the same requestId after an uncertain response and inspect monitors; do not repeat with a new identity. PRESENTATION_NOT_READY is a verified pre-mutation readiness refusal. Inspect monitors and retry the same requestId with the same workspace and monitor only after that condition clears. Changed parameters still conflict. PRESENTATION_UNCONFIRMED can follow a mutation: inspect actual state, reuse the same identity and never treat a cached uncertainty as permission to replay. Deduplication lasts for the current broker process; inspect actual state after a restart.
 
-The original soft gradient edge glow, a numbered workspace label and an automatic render-only agent cursor show active work. Orbit blue (#255fce) remains the default; do not redesign the owner's activity indicator. Existing frameColor, framePulse and frame panel preferences are read at handoff, not continuously. Supported user GTK CSS may resolve accent; otherwise the worker records the original Orbit blue fallback without claiming a full theme match. Only the monitor displaying the controlled workspace is marked. The latest interaction pointer is shown per monitor; a brief ring marks actual clicks. Pause hides them and resume restores them. Keep these visible while working. New windows from an actively controlled client receive a request for the selected floating size and numbered workspace. Toolkit constraints can change the size; verify actual geometry. A new cross-client dialog with a compositor-verified parent in the controlled application receives the same workspace and size request before mapping. This grants placement only. Discover and hand off that dialog separately before input. Existing unrelated dialogs are preserved. Refresh windows after startup screens or dialogs replace a target, then use its current acknowledged identity.
+The original soft gradient edge glow, a numbered workspace label and an automatic render-only agent cursor show active work. Orbit blue (#255fce) remains the default; do not redesign the owner's activity indicator. Existing frameColor, framePulse and frame panel preferences are read at handoff, not continuously. Supported user GTK CSS may resolve accent; otherwise the worker records the original Orbit blue fallback without claiming a full theme match. Only the monitor displaying the controlled workspace is marked. The latest interaction pointer is shown per monitor; a brief ring marks actual clicks. Pause hides them and resume restores them. Keep these visible while working. During a lease, Orbit never copies the parent size to new windows or dialogs and never forces floating, centering or size on rule refresh. Only explicit opening applies its requested initial bounds. Only compositor-verified parented new windows and dialogs can be routed to the selected numbered workspace before mapping; mapped windows keep their current geometry and workspace during rechecks and handback. Toolkit and owner size changes remain in effect. This grants placement only. Discover and hand off that dialog separately before input. Existing unrelated dialogs are preserved. Refresh windows after startup screens or dialogs replace a target, then use its current acknowledged identity.
 
 Use acknowledged appId/windowId for cursor, move, click, scroll, text, key and target capture. A protocol acknowledgement is not application acceptance. Observe after redraw and verify the application result; do not replay uncertain input. Inspect dialogs and actual target changes. Never claim a fixture proves a real application task. `close-window` requests normal closure of one exact target. Verify disappearance with native candidates and handle unsaved prompts. An ended lease is not proof of closure; it never kills the process. Legacy `close-application` hands control back. `stop` hands the application back and leaves it open.
 

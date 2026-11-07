@@ -14,6 +14,32 @@ process lifetime. Browser and terminal registrations are accepted. Hidden
 substitute desktops, copied profiles and browser viewers are absent.
 Caller-supplied arbitrary commands are outside the registered API.
 
+## Conversation identity
+
+CLI and MCP adapters use the first defined invocation environment value among
+`ORBIT_CONVERSATION_ID`, `T3CODE_THREAD_ID`, `CODEX_THREAD_ID`, and
+`HERMES_SESSION_ID`. Invalid explicit values refuse without falling through.
+All transports use the same exact ID for caller ownership and usage preferences.
+
+Some hosts launch shared MCP processes without a thread environment. Every
+Orbit MCP tool therefore accepts optional `conversationId`: pass the actual
+host conversation ID on every call, including status, usage, cleanup, retries
+and reconnects. The adapter resolves identity and off checks once per call and
+removes this field before dispatching native operation parameters. Concurrent
+calls do not change each other's scope. A supplied ID cannot replace an existing
+fixed adapter identity. A connection-local off still blocks explicitly scoped
+work. Do not store a thread ID in global host configuration.
+
+After updating an adapter, the host must reload its existing MCP connection to
+discover the new schemas. The installed CLI remains usable with the actual ID
+set in `ORBIT_CONVERSATION_ID`; check the existing MCP connection's usage status
+first, then check CLI usage for the actual conversation. Honor off in either
+scope, since a connection-local off is not visible to the CLI. This is
+the same scope, not permission to bypass off. No broker restart is needed for
+the adapter repair. Missing-identity opening preflight errors from the updated
+adapter explicitly report not-delivered and direct the caller to correct its
+identity with the same requestId.
+
 Discover an exact applicationId, then open with an optional workspace and window
 dimensions. If workspace is omitted, Orbit selects the lowest empty, undisplayed
 workspace from 1 to 10; an explicit destination must also be empty and
@@ -23,6 +49,15 @@ centered, default 960 by 640 logical pixels, fitted to the monitor work area.
 Return actual geometry,
 including bounded toolkit adjustments. Newly instantiated workspaces are measured
 against their actual monitor. A snapshot does not prove continuous placement.
+
+Initial bounds belong only to an explicit opening request. Handoff, observation,
+input, rule refresh and handback must not resize, float or center an existing
+window, or copy its dimensions to sibling windows and dialogs. Only new unmapped windows with a verified parent in the controlled
+application may receive initial workspace routing. Uncorrelated top-level
+siblings retain their own workspace; use explicit opening to place new top-level
+agent windows. Once mapped, rule refresh and handback preserve their current workspace
+and geometry, including later owner or toolkit changes. Owner input and explicit
+pause also suppress automatic new-window routing.
 
 A launch acknowledgement includes address, stableId and PID bound to its launch
 receipt. Detached wrappers and single-instance forwarding can open a real window

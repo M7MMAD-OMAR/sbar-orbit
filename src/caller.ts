@@ -84,8 +84,15 @@ export function isCanonicalConversationId(value: unknown): value is string {
 }
 
 /** What this process says about itself on every request. */
+export function hostConversationId(env: Record<string, string | undefined> = process.env): string | undefined {
+  // These variables belong to this invocation, never to a shared host config.
+  // Keep an explicitly invalid value so usage validation refuses it, rather
+  // than silently switching to another conversation and bypassing its off state.
+  return env.ORBIT_CONVERSATION_ID ?? env.T3CODE_THREAD_ID ?? env.CODEX_THREAD_ID ?? env.HERMES_SESSION_ID;
+}
+
 export function localClaim(kind: CallerKind, env: Record<string, string | undefined> = process.env, pid = process.pid): CallerClaim {
-  const conversation = env.ORBIT_CONVERSATION_ID;
+  const conversation = hostConversationId(env);
   return { v: 1, kind, pid, start: processStart(pid),
     ...(isCanonicalConversationId(conversation) ? { conversationId: conversation } : {}),
     host: hostName(env) };

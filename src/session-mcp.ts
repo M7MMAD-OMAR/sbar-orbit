@@ -5,7 +5,7 @@ import { call, callPatient } from "./ipc";
 import { configureCaller, type ClientIdentity } from "./caller";
 import { OrbitError } from "./errors";
 import { errorPayload } from "./error-disposition";
-import { ConversationUsage } from "./conversation-usage";
+import { McpConversations, orbitConversationShape } from "./mcp-conversation";
 import { renderAct, renderObservation } from "./observation-output";
 import { isReadDeliveryMethod, orbitActionSchema, orbitBatchShape, orbitSnapshotShape } from "./mcp";
 import { serviceSocketPath } from "./service";
@@ -18,15 +18,17 @@ const id = z.string().min(1).max(16384);
 export function createSessionMcpServer(socket: string, sessionId: string, identity?: ClientIdentity) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId))
     throw new OrbitError("INVALID_REQUEST", "A session adapter needs an Orbit session ID");
-  const usage = new ConversationUsage();
+  const conversations = new McpConversations(socket, identity);
   const server = new McpServer({ name: "sbar-orbit-session", version }, {
-    instructions: "These tools control one already created Orbit session. The session ID is fixed by the adapter and cannot be chosen in a tool call. Only its acknowledged original native application is subject to the session policy. Original browser and terminal applications use native controls. Hidden substitute desktops and copied profiles are absent. The user may disable Orbit usage for this conversation.",
+    instructions: "These tools control one already created Orbit session. The session ID is fixed by the adapter and cannot be chosen in a tool call. Only its acknowledged original native application is subject to the session policy. Original browser and terminal applications use native controls. Hidden substitute desktops and copied profiles are absent. Pass the actual host conversationId on every tool call when no thread identity is configured. The user may disable Orbit usage for this conversation.",
   });
   const invoke = async (method: string, params: Record<string, unknown> = {}): Promise<CallToolResult> => {
+    let scope: ReturnType<McpConversations["scope"]> | undefined;
     try {
-      await usage.assertEnabled();
-      const result = await callPatient(socket, method, { ...params, sessionId }, identity, undefined, undefined, () => usage.assertEnabled());
-      if (isReadDeliveryMethod(method)) await usage.assertEnabled();
+      scope = conversations.scope(params);
+      await scope.assertEnabled();
+      const result = await callPatient(socket, method, { ...scope.request, sessionId }, scope.identity, undefined, undefined, scope.assertEnabled);
+      if (isReadDeliveryMethod(method)) await scope.assertEnabled();
       if (method === "session.observe") {
         return renderObservation(result);
       }
@@ -37,7 +39,7 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
     } catch (error) {
       // Read errors can contain private broker metadata as well as successful data.
       if (isReadDeliveryMethod(method)) {
-        try { await usage.assertEnabled(); } catch (usageError) { error = usageError; }
+        try { await (scope?.assertEnabled() ?? conversations.usage.assertEnabled()); } catch (usageError) { error = usageError; }
       }
       const payload = errorPayload(error, "BROKER_UNAVAILABLE", "Cannot reach the Orbit broker");
       return { isError: true, content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload };
@@ -45,23 +47,23 @@ export function createSessionMcpServer(socket: string, sessionId: string, identi
   };
   server.registerTool("orbit_observe", {
     description: "Observe this session only. Experimental native capture accepts appId and windowId, or the last explicitly acknowledged target. Native metadata is cached acknowledged state. Metadata mode avoids image capture.",
-    inputSchema: { mode: z.enum(["image", "metadata"]).default("image"),
+    inputSchema: { ...orbitConversationShape, mode: z.enum(["image", "metadata"]).default("image"),
       format: z.enum(["image", "text", "both"]).default("image").describe("image returns a screenshot. text returns a compact accessibility tree (role, name, states, box in click coordinates) and no screenshot, falling back to the screenshot when the application exposes no tree. both returns the two. Ignored when mode is metadata."),
       appId: z.string().regex(/^[a-f0-9]{32}$/).optional(), windowId: z.string().regex(/^[a-f0-9]{32}$/).optional(), ...orbitSnapshotShape },
   }, ({ mode, format, appId, windowId, ...selectors }) => invoke(mode === "metadata" ? "session.presence" : "session.observe",
     { ...(format === "image" ? {} : { format }), ...(appId === undefined ? {} : { appId }), ...(windowId === undefined ? {} : { windowId }), ...selectors }));
   server.registerTool("orbit_act", {
     description: "Act on this acknowledged original native application. Verify actual application acceptance after redraw. No launch or private profile actions exist. Reuse requestId after uncertain delivery.",
-    inputSchema: { requestId: id, action: orbitActionSchema.optional(), ...orbitBatchShape },
+    inputSchema: { ...orbitConversationShape, requestId: id, action: orbitActionSchema.optional(), ...orbitBatchShape },
   }, params => invoke("session.act", params));
   for (const operation of ["pause", "resume", "stop", "journal"] as const) {
     server.registerTool(`orbit_${operation}`, {
-      description: `${operation} this session only.`, inputSchema: {},
-    }, () => invoke(`session.${operation}`));
+      description: `${operation} this session only.`, inputSchema: { ...orbitConversationShape },
+    }, params => invoke(`session.${operation}`, params));
   }
   server.registerTool("orbit_narrow", {
     description: "Tighten this session policy. It cannot widen permissions.",
-    inputSchema: {
+    inputSchema: { ...orbitConversationShape,
       origins: z.array(z.string().url()).max(64).optional(),
       allow: z.array(z.enum(["read", "navigate", "write", "irreversible"])).max(4).optional(),
     },

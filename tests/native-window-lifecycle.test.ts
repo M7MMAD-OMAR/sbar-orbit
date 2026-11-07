@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-(process.platform === "linux" ? test : test.skip)("new same-client windows inherit floating geometry and handback restores their original rules", async () => {
+(process.platform === "linux" ? test : test.skip)("native leases preserve window geometry and route only new unmapped windows", async () => {
   const child = Bun.spawn(["/usr/bin/python3", join(import.meta.dir, "native_window_lifecycle_test.py")], { stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   expect({ out, code }).toEqual({ out: "", code: 0 });

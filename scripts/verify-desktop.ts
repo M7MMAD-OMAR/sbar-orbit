@@ -2,7 +2,7 @@
 export {};
 const requested = process.argv.slice(2);
 const files = requested.length ? requested : [
-  "tests/platform-native.test.ts", "tests/platform-native-routing.test.ts",
+  "tests/mcp-conversation-scope.test.ts", "tests/platform-native.test.ts", "tests/platform-native-routing.test.ts",
   "tests/native-qt-widget.test.ts",
   "tests/native-semantic.test.ts", "tests/session-semantic.test.ts",
   "tests/architecture.test.ts", "tests/native-only.test.ts", "tests/native-window-geometry.test.ts", "tests/native-open.test.ts", "tests/native-owner-reveal.test.ts", "tests/session-owner-reveal.test.ts", "tests/workspace-allocation.test.ts", "tests/workspace-opening-safety.test.ts", "tests/native-workspace-inventory.test.ts", "tests/native-workspace-open-guard.test.ts", "tests/native-opening-identity.test.ts", "tests/native-existing.test.ts",
@@ -20,6 +20,9 @@ if (!requested.length) for (const file of files) {
   if (!await Bun.file(file).exists()) throw new Error(`Default verification file is missing: ${file}`);
 }
 const child = Bun.spawn([process.execPath, "--smol", "run", "scripts/limited.ts", process.execPath, "--smol", "test", ...files], {
+  // Tests supply owned identities explicitly, never inherit the invoking agent's conversation.
+  env: { ...process.env, ORBIT_CONVERSATION_ID: undefined, T3CODE_THREAD_ID: undefined,
+    CODEX_THREAD_ID: undefined, HERMES_SESSION_ID: undefined },
   stdin: "inherit", stdout: "inherit", stderr: "inherit",
 });
 process.exitCode = await child.exited;

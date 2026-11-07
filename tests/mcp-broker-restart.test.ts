@@ -75,7 +75,7 @@ posix("in-process MCP reports unavailable across a fake broker restart and accep
     const identity: ClientIdentity = { claim: { v: 1, kind: "adapter", pid: process.pid, start: "1", conversationId: "owned-restart" } };
     try {
       process.env.ORBIT_USAGE_DIR = join(root, "usage");
-      process.env.ORBIT_CONVERSATION_ID = "owned-restart-" + crypto.randomUUID();
+      process.env.ORBIT_CONVERSATION_ID = identity.claim.conversationId;
       server = createMcpServer(socket, identity);
     } finally {
       for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
