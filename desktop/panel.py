@@ -1098,7 +1098,11 @@ class Panel(Gtk.Application):
             GLib.idle_add(self.settle)
 
     def sync_frame(self, force=False):
-        working = any((s.get("activity") or {}).get("state") == "working" for s in self.sessions)
+        # Native leases draw the original frame in the compositor. Mapping a
+        # second GTK frame also makes Hyprland recalculate the monitor layout
+        # on activity transitions, even when the strips reserve no space.
+        working = any(s.get("backend") != "native" and
+                      (s.get("activity") or {}).get("state") == "working" for s in self.sessions)
         wanted = working and bool(self.settings["frame"])
         if wanted and not self.frame:
             self.build_frame()
