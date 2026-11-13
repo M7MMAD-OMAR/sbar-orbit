@@ -1,6 +1,6 @@
 # Install Orbit for native applications
 
-The latest official release is [0.4.4](release-0.4.4.md). Extract its versioned
+The latest official release is [0.4.5](release-0.4.5.md). Extract its versioned
 source or installable package, verify the SHA-256 sidecar, then use Bun from that
 directory. Keep the extracted directory because the installed launcher points to it.
 

@@ -2,6 +2,18 @@
 
 Versions follow Semantic Versioning. A version with an `-alpha.N` suffix is a prerelease and may change interfaces without compatibility guarantees.
 
+## 0.4.5 (13 November 2026)
+
+Native activity no longer maps duplicate GTK frame layers. The existing compositor
+indicator retains its frame, workspace label and cursor. This removes an unnecessary
+layer lifecycle that causes Hyprland to recalculate monitor layouts. It is not proof
+that every reported native window displacement has been resolved.
+
+Conversation identity is preserved across CLI and MCP calls. Handoff, rule refresh
+and handback retain existing native window geometry, with initial routing limited
+to verified new children. Platform support and deferred work remain unchanged.
+See [release notes](docs/release-0.4.5.md).
+
 ## 0.4.4 (6 November 2026)
 
 Linux release freeze: bounded snapshot refs with typed stale refusal, skeleton/root
