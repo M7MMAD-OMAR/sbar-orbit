@@ -107,3 +107,14 @@ and a three-step quick guide in both languages. Deeper technical reference stays
 on GitHub. Source rendering tests do not certify current visual layout, native
 input or live session state. Use [the current product contract](../docs/desktop-only.md)
 and [acceptance index](../docs/acceptance.md) for operational meaning.
+
+## Visit statistics
+
+Aggregate, cookie-free visit counts use a self-hosted counter. The host, website id
+and allowed hostnames live only in `analytics.config.mjs` (env overrides
+`ORBIT_STATS_HOST`, `ORBIT_STATS_WEBSITE_ID`, `ORBIT_STATS_DOMAINS`); `vite.config.mjs`
+injects the tag into each built page, so `index.html` carries none. Events are plain
+`data-umami-event` attributes on real elements in `src/App.tsx`: `cta-click{where}`,
+`download{target}`, `outbound-click{to}` (hostname only) and `copy-command{what}`.
+No personal data or free text goes into properties. No Content-Security-Policy is set
+today; if one is added, allow the host origin in `script-src` and `connect-src`.
