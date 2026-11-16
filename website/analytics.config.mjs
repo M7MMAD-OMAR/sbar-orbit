@@ -14,6 +14,12 @@ export function analyticsTag({ host, websiteId, domains } = analytics) {
   return `<script defer src="${host}/script.js" data-website-id="${websiteId}" data-domains="${domains}" data-do-not-track="true" data-performance="true" data-errors="true"></script>`;
 }
 
+// The heatmap recorder reads only data-website-id (and an optional data-host-url,
+// which defaults to the origin of its own src). It has no domain filter attribute.
+export function recorderTag({ host, websiteId } = analytics) {
+  return `<script defer src="${host}/recorder.js" data-website-id="${websiteId}"></script>`;
+}
+
 // A Content-Security-Policy is not set today (see public/_headers). If one is
 // added, build its script-src and connect-src from this origin.
 export const analyticsOrigin = new URL(analytics.host).origin;

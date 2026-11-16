@@ -91,6 +91,7 @@ export const arabic: Record<string, string> = {
   "Open your original native applications.": "افتح تطبيقات نظامك الأصلية.",
   "Choose the workspace and window size. See the actual support limits.": "اختر سطح المكتب وحجم النافذة، واطلع على حدود الدعم الفعلية.",
   "View on GitHub": "المشروع على GitHub",
+  "This website also records where visitors click and how far they scroll, in aggregate, without recording screens, text or form inputs.": "يسجل هذا الموقع أيضا مواضع النقر ومدى التمرير في مجموع الزيارات، دون تسجيل الشاشات أو النصوص أو ما يدخل في النماذج.",
   "No telemetry": "بلا تتبع للاستخدام",
   "Workspace 1: your work.": "سطح المكتب 1: عملك.",
   "Workspace 2: requested native windows.": "سطح المكتب 2: نوافذ التطبيقات المطلوبة.",
